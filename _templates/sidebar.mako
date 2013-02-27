@@ -1,4 +1,12 @@
 <aside>
+<section>
+Search
+<form action="http://google.com/search" method="get">
+  <fieldset role="search">
+    <input type="hidden" name="q" value="site:jkitchin.github.com" />
+    <input class="search" type="text" name="q" results="0" placeholder="Search"/>
+  </fieldset>
+</form>
 <section><h1 class="post_header_gradient theme_font">Links</h1>
   <ul>
     <li><a href="/blog/category">Categories</a></li>
