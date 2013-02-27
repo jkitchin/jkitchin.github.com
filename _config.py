@@ -19,12 +19,12 @@
 #  If you're hosting a blogofile powered site as a subdirectory of a larger
 #  non-blogofile site, then you would set the site_url to the full URL
 #  including that subdirectory: "http://www.yoursite.com/path/to/blogofile-dir"
-site.url = "http://www.example.com"
+site.url = "http://jkitchin.github.com"
 
 ## site.author -- Your name, the author of the website.
 # This is optional. If set to anything other than None, the
 # simple_blog template creates a meta tag for the site author.
-site.author = "Your Name"
+site.author = "John Kitchin"
 
 #### Blog Settings ####
 blog = plugins.blog
@@ -43,7 +43,7 @@ blog.path = "/blog"
 
 ## blog_name -- Your Blog's name.
 # This is used repeatedly in default blog templates
-blog.name = "My Blogofile Example"
+blog.name = "The Kitchin Research Group"
 
 ## HTML5 example customizes the blog templates.
 ## Delete this setting to use the default ones instead.
@@ -51,14 +51,14 @@ blog.template_path = "_templates/blog"
 
 ## blog_description -- A short one line description of the blog
 # used in the RSS/Atom feeds.
-blog.description = "Just a simple HTML5 blog"
+blog.description = "Chemical Engineering at Carnegie Mellon University"
 
 ## blog_timezone -- the timezone that you normally write your blog posts from
 blog.timezone = "US/Eastern"
 
 ## blog_googleanaltics_id -- enable Google Analytics tracking
 ## TODO: move to plugin/filter?
-blog.googleanlytics_id = "UA-XXXXX-X"
+blog.googleanlytics_id = "UA-35731398-1"
 
 ## Markdown extensions
 ## These are turned off by default, but turned on
@@ -69,3 +69,11 @@ filters.markdown.extensions.footnotes.enabled = True
 filters.markdown.extensions.fenced_code.enabled = True
 filters.markdown.extensions.headerid.enabled = True
 filters.markdown.extensions.tables.enabled = True
+
+## disqus
+blog.disqus.enabled = True
+blog.disqus.name = "kitchinresearchgroup"
+
+## permalink setup
+blog.auto_permalink.enabled = True
+blog.auto_permalink.path = ":blog_path/:year/:month/:day/:title"
