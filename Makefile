@@ -10,7 +10,7 @@ deploy:
 	cd _deploy
 	git add .
 	git add -u 
-	git commit -m "deployment"
+	git commit -a -m "deployment"
 	git push origin master --force
 	cd ..
 
