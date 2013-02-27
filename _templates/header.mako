@@ -12,12 +12,23 @@ def nav_class(path):
    return ""
 %>
     <ul class="theme_font">
-      <li><a href="${bf.util.site_path_helper()}"
-             class="${nav_class(bf.util.site_path_helper())}">Home</a></li>
       <li><a href="${bf.util.site_path_helper(bf.config.blog.path)}"
              class="${nav_class(bf.util.site_path_helper(bf.config.blog.path))}">Blog</a></li>
+
       <li><a href="${bf.util.site_path_helper(bf.config.blog.path,'archive')}"
              class="${nav_class(bf.util.site_path_helper(bf.config.blog.path,'archive'))}">Archives</a></li>
+
+      <li><a href="${bf.util.site_path_helper('publications.html')}"
+             class="${nav_class(bf.util.site_path_helper('publications.html'))}">Publications</a></li>
+
+      <li><a href="${bf.util.site_path_helper('research.html')}"
+             class="${nav_class(bf.util.site_path_helper('research.html'))}">Research</a></li>
+
+      <li><a href="${bf.util.site_path_helper('group.html')}"
+             class="${nav_class(bf.util.site_path_helper('group.html'))}">Group</a></li>
+
+      <li><a href="${bf.util.site_path_helper('about.html')}"
+             class="${nav_class(bf.util.site_path_helper('about.html'))}">About us</a></li>
     </ul>
   </div>
 </header>
