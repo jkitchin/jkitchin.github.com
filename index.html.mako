@@ -2,18 +2,22 @@
 <article class="page_box">
 <%self:filter chain="markdown">
 
-Welcome to Blogofile
-====================
+Welcome to the Kitchin Group Research
+=====================================
 
-This is an example [Blogofile](http://www.blogofile.com) site that is
-optimized for HTML5 browsers.
+Our group utilizes chemistry, catalysis and engineering to develop solutions to energy and environment related problems such as CO_2 capture and efficient energy conversion. We use experimental and computational methods in electrochemistry, sorbent development and electrocatalyst design.
 
-Please see the [Documentation](http://www.blogofile.com/documentation)
-for getting started and for customizing your site.
 
-Specific customization points for this example:
+We gratefully acknowledge funding from:
 
- * ``_templates/theme.mako`` imports the stylesheet and a few custom web fonts from [Google's CDN](http://www.google.com/webfonts).
- * To change the twitter search for the widget on the right, see ``js/site.js`` and ``_templates/sidebar.mako``.
+-  NETL-RUA
+-  DOE-BES 	
+-  Siemens
+-  IFYRE/SURF
+-  CMU
+-  Berkman Foundation
+-  CMU REU/PREM
+
+
 </%self:filter>
 </article>
