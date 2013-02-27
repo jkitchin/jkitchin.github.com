@@ -9,8 +9,8 @@ jQuery.fn.loadRepositories = function(username) {
     var target = this;
     $.githubUser(username, function(data) {
         var repos = data.data; // JSON Parsing
-        sortByName(repos);    
-     
+        //sortByName(repos);    
+        sortByPushDate(repos);
         var list = $('<dl/>');
         target.empty().append(list);
         $(repos).each(function() {
@@ -26,6 +26,16 @@ jQuery.fn.loadRepositories = function(username) {
         return a.name - b.name;
        });
     }
-};
+
+    function sortByPushDate(repos) {
+	repos.sort(function(a,b) {
+	    var aDate = new Date(a.pushed_at).valueOf(),
+                bDate = new Date(b.pushed_at).valueOf();
+	if (aDate === bDate) { return 0; }
+            return aDate > bDate ? -1 : 1;
+          });
+	};
+    }
+
 
 
