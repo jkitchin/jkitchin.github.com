@@ -14,5 +14,7 @@
   <link rel="stylesheet" href="${bf.util.site_path_helper(bf.config.filters.syntax_highlight.css_dir,'/pygments_'+bf.config.filters.syntax_highlight.style+'.css')}" type="text/css" />
 
   <script src="${bf.util.site_path_helper('js/libs/modernizr-1.7.min.js')}"></script>
-
+<script type="text/javascript"
+  src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+</script>
   <%include file="theme.mako"/>
