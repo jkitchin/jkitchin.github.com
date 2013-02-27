@@ -7,6 +7,8 @@ Search
     <input class="search" type="text" name="q" results="0" placeholder="Search"/>
   </fieldset>
 </form>
+</section>
+
 <section><h1 class="post_header_gradient theme_font">Links</h1>
   <ul>
     <li><a href="/blog/category">Categories</a></li>
@@ -21,14 +23,14 @@ Search
       % endfor
     </ul>
   </section>
+
 <section>
-<h1 class="post_header_gradient theme_font">Latest GitHub Repos</h1>	
+  <h1>GitHub Repos</h1>
   <ul id="gh_repos">
     <li class="loading">Status updating&#8230;</li>
   </ul>
   
   <a href="https://github.com/jkitchin">@jkitchin</a> on GitHub
-  
   <script type="text/javascript">
     $.domReady(function(){
         if (!window.jXHR){
@@ -47,6 +49,15 @@ Search
         });
     });
   </script>
-  <script src="/js/github.js" type="text/javascript"> </script>
+  <script src="/js/github.js" type="text/javascript"></script>
+</section>
+
+<section>
+<h1 class="post_header_gradient theme_font">Latest GitHub Repos</h1>
+  <a href="https://github.com/jkitchin">@jkitchin</a> on GitHub.
+<ul id="my-github-projects">
+    <li class="loading">Status updating&#8230;</li>
+  </ul>
+
 </section>
 </aside>

@@ -35,3 +35,32 @@ ${self.head()}
 <%def name="sidebar()"><%include file="sidebar.mako" /></%def>
 <%def name="footer()"><%include file="footer.mako" /></%def>
 <%def name="body_scripts()"><%include file="body_scripts.mako" /></%def>
+
+<script src="http://ajax.microsoft.com/ajax/jquery/jquery-1.4.2.min.js" type="text/javascript"></script>
+<script src="/js/git.js" type="text/javascript"></script>
+<script type="text/javascript">
+    $(function() {
+        $("#my-github-projects").loadRepositories("jkitchin");
+    });
+</script>
+
+
+  <script type="text/javascript">
+    $.domReady(function(){
+        if (!window.jXHR){
+            var jxhr = document.createElement('script');
+            jxhr.type = 'text/javascript';
+            jxhr.src = '/js/libs/jXHR.js';
+            var s = document.getElementsByTagName('script')[0];
+            s.parentNode.insertBefore(jxhr, s);
+        }
+
+        github.showRepos({
+            user: 'jkitchin',
+            count: 8,
+            skip_forks: true,
+            target: '#gh_repos'
+        });
+    });
+  </script>
+  <script src="/js/github.js" type="text/javascript"></script>
