@@ -1,0 +1,145 @@
+** Using constrained optimization to find the amount of each phase present
+   :PROPERTIES:
+   :categories: [thermodynamics, optimization]
+   :date:     2013/02/12 09:00:00
+   :updated:  2013/02/27 10:36:14
+   :END:
+The problem we solve here is that we have several compounds containing Ni and Al, and a bulk mixture of a particular composition of Ni and Al. We want to know which mixture of phases will minimize the total energy. The tricky part is that the optimization is constrained because the mixture of phases must have the overall stoichiometry we want.  We formulate the problem like this.
+
+Basically, we want to minimize the function $E = \sum w_i E_i$, where $w_i$ is the mass of phase $i$, and $E_i$ is the energy per unit mass of phase $i$. There are some constraints to ensure conservation of mass. Let us consider the following compounds: Al, NiAl, Ni3Al, and Ni, and consider a case where the bulk composition of our alloy is 93.8% Ni and balance Al. We want to know which phases are present, and in what proportions. There are some subtleties in considering the formula and molecular weight of an alloy. We consider the formula with each species amount normalized so the fractions all add up to one. For example, Ni_3Al is represented as Ni_{0.75}Al_{0.25}, and the molecular weight is computed as 0.75*MW_{Ni} + 0.25*MW_{Al}.
+
+We use scipy.optimize.fmin_slsqp to solve this problem, and define two equality constraint functions, and the bounds on each weight fraction.
+
+Note: the energies in this example were computed by density functional theory at 0K.
+
+#+BEGIN_SRC python
+import numpy as np
+from scipy.optimize import fmin_slsqp
+
+# these are atomic masses of each species
+Ni = 58.693
+Al = 26.982
+
+COMPOSITIONS = ['Al', 'NiAl',              'Ni3Al',  'Ni']
+MW = np.array(  [Al,  (Ni + Al)/2.0, (3*Ni + Al)/4.0, Ni])
+
+xNi = np.array([0.0, 0.5, 0.75, 1.0])  # mole fraction of nickel in each compd
+WNi = xNi*Ni / MW                      # weight fraction of Ni in each cmpd
+
+ENERGIES = np.array([0.0, -0.7, -0.5, 0.0])
+
+BNi = 0.938
+
+def G(w):
+    'function to minimize. w is a vector of weight fractions, ENERGIES is defined above.'
+    return np.dot(w, ENERGIES)
+
+def ec1(w):
+    'conservation of Ni constraint'
+    return BNi - np.dot(w, WNi)
+
+def ec2(w):
+    'weight fractions sum to one constraint'
+    return 1 - np.sum(w)
+
+w0 = np.array([0.0, 0.0, 0.5, 0.5]) # guess weight fractions
+
+y = fmin_slsqp(G,   
+               w0,
+               eqcons=[ec1, ec2], 
+               bounds=[(0,1)]*len(w0))
+
+for ci, wi in zip(COMPOSITIONS, y):
+    print '{0:8s} {1:+8.2%}'.format(ci, wi)
+#+END_SRC
+
+#+RESULTS:
+: Optimization terminated successfully.    (Exit mode 0)
+:             Current function value: -0.233299644373
+:             Iterations: 2
+:             Function evaluations: 12
+:             Gradient evaluations: 2
+: Al         -0.00%
+: NiAl       +0.00%
+: Ni3Al     +46.66%
+: Ni        +53.34%
+
+So, the sample will be about 47% /by weight/ of Ni3Al, and 53% /by weight/ of pure Ni.
+
+It may be convenient to formulate this in terms of moles.
+
+#+BEGIN_SRC python
+import numpy as np
+from scipy.optimize import fmin_slsqp
+
+COMPOSITIONS = ['Al', 'NiAl', 'Ni3Al',  'Ni']
+xNi = np.array([0.0, 0.5, 0.75, 1.0])   # define this in mole fractions
+
+ENERGIES = np.array([0.0, -0.7, -0.5, 0.0]) 
+
+xNiB = 0.875  # bulk Ni composition
+
+def G(n):
+    'function to minimize'
+    return np.dot(n, ENERGIES)
+
+def ec1(n):
+    'conservation of Ni'
+    Ntot = np.sum(n)
+    return (Ntot * xNiB) - np.dot(n,  xNi)
+
+def ec2(n):
+    'mole fractions sum to one'
+    return 1 - np.sum(n)
+
+n0 = np.array([0.0, 0.0, 0.45, 0.55]) # initial guess of mole fractions
+
+y = fmin_slsqp(G,   
+               n0,
+               eqcons=[ec1, ec2], 
+               bounds=[(0, 1)]*(len(n0)))
+
+for ci, xi in zip(COMPOSITIONS, y):
+    print '{0:8s} {1:+8.2%}'.format(ci, xi)
+#+END_SRC
+
+#+RESULTS:
+: Optimization terminated successfully.    (Exit mode 0)
+:             Current function value: -0.25
+:             Iterations: 2
+:             Function evaluations: 12
+:             Gradient evaluations: 2
+: Al         +0.00%
+: NiAl       -0.00%
+: Ni3Al     +50.00%
+: Ni        +50.00%
+
+This means we have a 1:1 molar ratio of Ni and Ni_{0.75}Al_{0.25}. That works out to the overall bulk composition in this particular problem.
+
+Let us verify that these two approaches really lead to the same conclusions. On a weight basis we estimate 53.3%wt Ni and 46.7%wt Ni3Al, whereas we predict an equimolar mixture of the two phases. Below we compute the mole fraction of Ni in each case.
+
+#+BEGIN_SRC python
+# these are atomic masses of each species
+Ni = 58.693
+Al = 26.982
+
+# Molar case
+# 1 mol Ni + 1 mol Ni_{0.75}Al_{0.25}
+N1 = 1.0; N2 = 1.0
+mol_Ni = 1.0 * N1 + 0.75 * N2
+xNi = mol_Ni / (N1 + N2)
+print xNi
+
+# Mass case
+M1 = 0.533; M2 = 0.467
+MW1 = Ni; MW2 = 0.75*Ni + 0.25*Al
+
+xNi2 = (1.0 * M1/MW1 + 0.75 * M2 / MW2) / (M1/MW1 + M2/MW2)
+print xNi2
+#+END_SRC
+
+#+RESULTS:
+: 0.875
+: 0.874192746385
+
+You can see the overall mole fraction of Ni is practically the same in each case.
