@@ -27,6 +27,9 @@ def nav_class(path):
       <li><a href="${bf.util.site_path_helper('group.html')}"
              class="${nav_class(bf.util.site_path_helper('group.html'))}">Group</a></li>
 
+      <li><a href="${bf.util.site_path_helper('categories.html')}"
+             class="${nav_class(bf.util.site_path_helper('categories.html'))}">Categories</a></li>
+
       <li><a href="${bf.util.site_path_helper('about.html')}"
              class="${nav_class(bf.util.site_path_helper('about.html'))}">About us</a></li>
     </ul>
