@@ -9,12 +9,19 @@ Our group utilizes chemistry, catalysis and engineering to develop solutions to 
 
 News
 ====
+<%
+posts = []
+for post in bf.config.blog.posts:
+    if "news" in post.categories:
+        posts.append(post)
+%>
 
 <ul>
-% for post in bf.config.blog.posts:
-  % if "news" in post.categories:
-     <li>${post.date.strftime("%B %d, %Y")}<a href="${post.path}">${post.title}</a></li>
-  % endif
+% for post in posts[0:5]:
+<%
+var = "{0:20s}".format(post.date.strftime("%B %d, %Y"))
+%>
+     <li>${var}   <a href="${post.path}">${post.title}</a></li>
 % endfor
 </ul>
 

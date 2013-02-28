@@ -1,4 +1,6 @@
-build:
+Sources = $(wildcard _posts/* _templates/*)
+
+build:	${SOURCES}
 	blogofile build
 
 serve:
