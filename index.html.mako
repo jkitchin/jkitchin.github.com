@@ -7,7 +7,7 @@ Welcome to the Kitchin Group Research
 
 Our group utilizes chemistry, catalysis and engineering to develop solutions to energy and environment related problems such as CO<sub>2</sub> capture and chemical energy storage. We use experimental and computational methods in electrochemistry, sorbent development and electrocatalyst design.
 
-News
+<a href="http://127.0.0.1:8080/blog/category/news/">News</a>
 ====
 <%
 posts = []
@@ -25,15 +25,19 @@ var = "{0:20s}".format(post.date.strftime("%B %d, %Y"))
 % endfor
 </ul>
 
-We gratefully acknowledge funding from:
+Current post
+============
 
--  NETL-RUA
--  DOE-BES 	
--  Siemens
--  IFYRE/SURF
--  CMU
--  Berkman Foundation
--  CMU REU/PREM
+<%
+post = bf.config.blog.posts[0]
+date = "{0:20s}".format(post.date.strftime("%B %d, %Y"))
+excerpt = post.content[0:200] + " ... "
+%>
+<a href="${post.path}">${post.title}</a>
+${date}  ${excerpt} <a href="${post.path}">click here for more</a>
+
+
+
 
 
 </%self:filter>

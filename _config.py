@@ -77,3 +77,7 @@ blog.disqus.name = "kitchinresearchgroup"
 ## permalink setup
 blog.auto_permalink.enabled = True
 blog.auto_permalink.path = ":blog_path/:year/:month/:day/:title"
+
+#blog.post_excerpts.enabled = True
+#blog.post_excerpts.word_length = 25
+
