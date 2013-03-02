@@ -10,6 +10,7 @@ Our group utilizes chemistry, catalysis and engineering to develop solutions to 
 <a href="http://127.0.0.1:8080/blog/category/news/">News</a>
 ====
 <%
+nposts = len(bf.config.blog.posts)
 posts = []
 for post in bf.config.blog.posts:
     if "news" in post.categories:
@@ -25,8 +26,8 @@ var = "{0:20s}".format(post.date.strftime("%B %d, %Y"))
 % endfor
 </ul>
 
-Current post
-============
+Current post (${nposts} and counting)
+=====================================
 
 <%
 post = bf.config.blog.posts[0]
