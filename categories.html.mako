@@ -15,7 +15,6 @@
 </td>
 
 
-
 <% all_tags = {}
 for post in bf.config.blog.posts:
     for tag in getattr(post,'tags', None):
