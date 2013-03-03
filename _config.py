@@ -81,3 +81,25 @@ blog.auto_permalink.path = ":blog_path/:year/:month/:day/:title"
 #blog.post_excerpts.enabled = True
 #blog.post_excerpts.word_length = 25
 
+from markupsafe import Markup
+import six
+# Word separators and punctuation for slug creation
+PUNCT_RE = re.compile(r'[\t !"#$%&\'()*\-/<=>?@\[\\\]^_`{|},.]+')
+from unidecode import unidecode
+from .cache import bf
+
+def slugify(title, delim='-'):
+    # Get rid of any HTML entities
+    slug = Markup(title).unescape()
+    result = []
+    for word in PUNCT_RE.split(slug):
+        if not bf.config.site.slug_unicode:
+            result.extend(unidecode(word).split())
+        else:
+            result.append(word)
+    slug = six.text_type(delim.join(result))
+    return slug
+
+
+
+site.slugify = slugify
