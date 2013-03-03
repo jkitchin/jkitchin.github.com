@@ -6,6 +6,10 @@ build:	${SOURCES}
 serve:
 	blogofile serve 
 
+status:
+	cd _deploy
+	ls
+
 deploy:
 	rm -fr _deploy/*
 	cp -R _site/* _deploy
