@@ -28,13 +28,13 @@ tag_count = [(tag, all_tags[tag]) for tag in all_tags]
 <td style="vertical-align:top">
 <div id="tags">
 <h3>Tags</h3>
-Coming soon.
 <ul>
-% for tag,count in tag_count:
-<li>${tag} (${count})</li>
+% for tag, num_posts in bf.config.blog.all_tags:
+<li><a href="${tag.path}">${tag}</a> (<a href="${tag.path}/feed">rss</a>) (${num_posts})</li>
 % endfor
 </ul>
 </div>
+
 </td></tr></table>
 
 </%self:filter>
