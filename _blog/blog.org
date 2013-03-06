@@ -16,3 +16,298 @@ Here are a few others I came across:
 - http://www.trypython.org/#
 - http://www.pythontutor.com/
 - http://py-ide-online.appspot.com/
+* A gradebook app for emacs
+  :PROPERTIES:
+  :categories: emacs-lisp
+  :END:
+The goal is to create an emacs library to compute grades from a table in org-mode. 
+
+All grades are stored in a table with this structure. 
+
+#+tblname: gradebook
+| first name | last name | email       | Hwk 1 | Hwk2 | exam1 | project 1 |
+|            |           |             | 10    | 10   | 60    | 20        |
+|------------+-----------+-------------+-------+------+-------+-----------|
+| Jane       | Doe       | jd@cmu.edu  | A     | A    | B     | B         |
+| John       | Dillinger | jdi@cmu.edu | B     | B/C  | A     | C         |
+| jill       | wutz      | jw@cmu.edu  | D     | D    | R     | R         |
+
+The grading system works like this: 
+
+1. Each assignment is worth a certain number of points (in row2).
+2. Each assignment for a student is given a letter grade.
+3. Each letter grade corresponds to a point multiplier:
+
+| A++ |  1.0 |
+| A+  | 0.95 |
+| A   |  0.9 |
+| A-  | 0.85 |
+| A/B |  0.8 |
+| B+  | 0.75 |
+| B   |  0.7 |
+| B-  | 0.65 |
+| C/B |  0.6 |
+| C+  | 0.55 |
+| C   |  0.5 |
+| C-  | 0.45 |
+| C/D |  0.4 |
+| D+  | 0.35 |
+| D   |  0.3 |
+| D-  | 0.25 |
+| D/R |  0.2 |
+| R+  | 0.15 |
+| R   |  0.1 |
+| R-  | 0.05 |
+| R-- |  0.0 |
+
+4. The number of points earned for an assignment is the point multiplier for the letter grade times the number of points for that assignment.
+5. The overall grade is computed as sum(multiplier*points)/sum(points).
+6. The overall letter grade is determined by the fraction of overall points received, mapped back on to the letter grade scale.
+
+For example, in the table above, Jane Doe's grade is:
+
+#+BEGIN_SRC emacs-lisp :results value
+(let* ((multipliers '(0.9 0.9 0.7 0.7))
+       (points '(10 10 60 20))
+       (earned-points (mapcar* (lambda (a b) (* a b)) multipliers points))
+       (total-earned-points (apply '+ earned-points))
+       (total-points (apply '+ points)))
+  (/ total-earned-points total-points))
+#+END_SRC
+#+RESULTS:
+: 0.74
+
+Which corresponds to an overall grade of B.
+
+The goal here is to write emacs-lisp code to compute the overall grade of each student and convert it to an overall letter grade and write a little report. 
+
+We start by defining a variable to hold the multipliers. We will use an association list. We will prefix every variable and function with =gb/= to indicate it is part of our gradebook code.
+
+#+BEGIN_SRC emacs-lisp
+(defvar gb/MULTIPLIERS
+  '(("A++" . 1.0)
+    ("A+"   . 0.95)
+    ("A"    . 0.9)
+    ("A-"   . 0.85)
+    ("A/B"  . 0.8)
+    ("B+"   . 0.75)
+    ("B"    . 0.7)
+    ("B-"   . 0.65)
+    ("B/C"  . 0.6)
+    ("C+"   . 0.55)
+    ("C"    . 0.5)
+    ("C-"   . 0.45)
+    ("C/D"  . 0.4)
+    ("D+"   . 0.35)
+    ("D"    . 0.3)
+    ("D-"   . 0.25)
+    ("D/R"  . 0.2)
+    ("R+"   . 0.15)
+    ("R"    . 0.1)
+    ("R-"   . 0.05)
+    ("R--"  . 0.0))
+  "Numeric multipliers for letter grades")
+#+END_SRC
+
+#+RESULTS:
+
+Here are two examples of using the gb/MULTIPLIER variable. It is an association list, so the multipler we want is the =cdr= of what the letter is associated with. We take the =cdr= of the return value, which is the numeric multiplier
+
+#+BEGIN_SRC emacs-lisp :results value
+(cdr (assoc "A" gb/MULTIPLIERS))
+#+END_SRC
+
+#+RESULTS:
+: 0.9
+
+We are going to write a series of functions that will compute the overall grade for each student. 
+
+A function we will need is to move the cursor into the table. Here is a function that will do that. This function moves the cursor to the beginning of the buffer, searches forward to find a line starting with a #+tblname: "name", and then moves the cursor to the next line which is in the table. 
+
+#+BEGIN_SRC emacs-lisp 
+(defun gb/goto-table (tblname)
+  "move cursor into the table labeled tblname"
+  (interactive)
+  (goto-char (point-min))
+  (search-forward-regexp (format "^#\\+tblname:\s+%s" tblname))
+  (next-line))
+#+END_SRC
+
+#+RESULTS:
+
+We use the function to move the cursor into the table, and then extract all the contents out.  We wrap the function call inside =save-excursion= so that the cursor gets put back where we want it. In this snippet, we use the (org-table-to-lisp) function to convert the table to a lisp structure which we can do further analysis on. 
+
+#+BEGIN_SRC emacs-lisp :results value verbatim
+;; http://orgmode.org/worg/org-api/org-table-api.html
+(require 'org-table) ; needed for access to org-table api
+
+(defun gb/get-gradebook-lisp ()
+  (interactive)
+  (save-excursion
+    (gb/goto-table "gradebook")
+    (org-table-to-lisp)))
+
+(gb/get-gradebook-lisp)
+#+END_SRC
+#+RESULTS:
+: (("first name" "last name" "email" "Hwk 1" "Hwk2" "exam1" "project 1") ("" "" "" "10" "10" "60" "20") hline ("Jane" "Doe" "jd@cmu.edu" "A" "A" "B" "B") ("John" "Dillinger" "jdi@cmu.edu" "B" "B/C" "A" "C") ("jill" "wutz" "jw@cmu.edu" "D" "D" "R" "R"))
+
+This is handy. Now we can think about processing the lisp data. Let us get the assignment names, and point values and save them in variables. The assignment names are in the first row, and start in column 3.
+
+#+BEGIN_SRC emacs-lisp :results value verbatim
+(let ((row1 (car (gb/get-gradebook-lisp))))
+ (setq gb/ASSIGNMENTS (mapcar 'identity (nthcdr 3 row1))))
+
+gb/ASSIGNMENTS
+#+END_SRC
+
+#+RESULTS:
+: ("Hwk 1" "Hwk2" "exam1" "project 1")
+
+And now the point values, and total points.
+#+BEGIN_SRC emacs-lisp :results value verbatim
+(let ((row2 (cadr (gb/get-gradebook-lisp))))
+ (setq gb/ASSIGNMENT-POINTS (mapcar 'string-to-number (nthcdr 3 row2)))
+ (setq gb/TOTAL-POINTS (apply '+ gb/ASSIGNMENT-POINTS)))
+
+(format "ASSIGNMENT-POINTS=%s TOTAL-POINTS=%s" gb/ASSIGNMENT-POINTS gb/TOTAL-POINTS)
+#+END_SRC
+
+#+RESULTS:
+: "ASSIGNMENT-POINTS=(10 10 60 20) TOTAL-POINTS=100"
+
+So far, so good. Now, we need to get the letter grades for each student, and turn them into point multipliers. 
+
+#+BEGIN_SRC emacs-lisp :results value verbatim
+(defun gb/get-multiplier (LG)
+  "return numeric multiplier for a letter grade"
+  (interactive)
+  (cdr (assoc (upcase LG) gb/MULTIPLIERS)))
+
+(defun gb/get-multipliers(LGS)
+  "apply get-multiplier to a list of letter grades"
+  (interactive)
+  (mapcar 'gb/get-multiplier LGS))
+
+(defun gb/get-all-student-multipliers ()
+  (mapcar 'gb/get-multipliers
+	  (mapcar (lambda (x) 
+		    (nthcdr 3 x)) 
+		  (cdddr (gb/get-gradebook-lisp)))))
+
+(gb/get-all-student-multipliers)
+#+END_SRC
+
+#+RESULTS:
+: ((0.9 0.9 0.7 0.7) (0.7 0.6 0.9 0.5) (0.3 0.3 0.1 0.1))
+
+
+Finally, we need the product of each multiplier with the gb/ASSIGNMENT-POINTS. This needs some care; some grades may be nil, which we cannot multiply. For now we neglect this detail. 
+
+#+BEGIN_SRC emacs-lisp :results value verbatim
+(defun gb/get-earned-points (multipliers)
+  (mapcar* (lambda (a  b) (* a b)) multipliers gb/ASSIGNMENT-POINTS))
+
+(defun gb/get-all-earned-points ()
+  "returns total points earned by each student"
+  (mapcar 'gb/get-earned-points  (gb/get-all-student-multipliers)))
+
+(gb/get-all-earned-points)
+#+END_SRC
+
+#+RESULTS:
+: ((9.0 9.0 42.0 14.0) (7.0 6.0 54.0 10.0) (3.0 3.0 6.0 2.0))
+
+Next, we need to sum all the points and divide by the total points to get the overall numeric grade.
+
+#+BEGIN_SRC emacs-lisp :results value verbatim
+(defun gb/get-all-numeric-grades ()
+(mapcar (lambda (x) 
+	  (/ (apply '+ x) gb/TOTAL-POINTS))
+	  (gb/get-all-earned-points)))
+
+(gb/get-all-numeric-grades)
+#+END_SRC
+
+#+RESULTS:
+: (0.74 0.77 0.14)
+
+And finally, convert the numeric grades to letter grades. This involves finding the highest letter grade multiplier that the overall grade is larger than.
+
+#+BEGIN_SRC emacs-lisp :results value verbatim
+(defun gb/get-final-letter-grade (grade)
+ (dolist (pair gb/MULTIPLIERS letter-grade)
+   (if (< (cdr pair) grade) 
+       (progn
+	 (setq letter-grade (car pair))
+	 (return letter-grade)))))
+
+(mapcar 'gb/get-final-letter-grade (gb/get-all-numeric-grades))
+#+END_SRC
+
+#+RESULTS:
+: ("B" "B+" "R")
+
+That looks good. Now, let's make a final report of the results.
+
+#+BEGIN_SRC emacs-lisp :results value 
+(let ((emails (mapcar '(lambda (x) (nth 2 x)) (cdddr (gb/get-gradebook-lisp))))
+      (first-names (mapcar '(lambda (x) (nth 0 x)) (cdddr (gb/get-gradebook-lisp))))
+      (last-names (mapcar '(lambda (x) (nth 1 x)) (cdddr (gb/get-gradebook-lisp))))
+      (final-grades (mapcar 'gb/get-final-letter-grade (gb/get-all-numeric-grades))))
+(mapcar* (lambda (fn ln em fg)
+	   `(,fn ,ln ,em ,fg)) 
+	 first-names
+	 last-names
+	 emails
+	 final-grades))
+
+#+END_SRC
+
+#+RESULTS:
+| Jane | Doe       | jd@cmu.edu  | B  |
+| John | Dillinger | jdi@cmu.edu | B+ |
+| jill | wutz      | jw@cmu.edu  | R  |
+
+** Summary
+This is a pretty functional bit of code for computing final grades of a fixed format gradebook. It is missing some features. For example, it would not work well if any grades are missing, or if the gradebook is incomplete.
+
+** Miscellaneous						   :noexport:
+
+The next thing I need to do is identify the row of a record. I could not find an index function in emacs-lisp. The =position= function seems to work for numbers, but not strings. Here is a version that works on strings.
+#+BEGIN_SRC emacs-lisp :results value verbatim
+(defun index (item list)
+  "return index of item in list or nil"
+  (let ((counter 0)
+	(found nil))
+    (dolist (listelement list)
+      (if (string= item listelement)
+	(progn 
+	  (setf found counter) ; save found result
+	  (return nil)) ; exit the loop
+	;; else increment counter
+	(incf counter)))
+    ;; return value
+    found))
+
+(index "test" '("a" "test" "y"))
+#+END_SRC
+
+#+RESULTS:
+: 1
+
+Let us try it out on our email lists.
+#+BEGIN_SRC emacs-lisp  :results value verbatim
+(index "jdi@cmu.edu" (mapcar '(lambda (x) (nth 2 x)) (cdddr (get-gradebook-lisp))))
+#+END_SRC
+
+#+RESULTS:
+: 1
+
+#+BEGIN_SRC emacs-lisp  :results value verbatim
+(nth (+ 3 1) (get-gradebook-lisp))
+#+END_SRC
+
+#+RESULTS:
+: ("John" "Dillinger" "jdi@cmu.edu" "B" "C/B" "nil" "C")
+
