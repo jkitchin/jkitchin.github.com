@@ -17,7 +17,7 @@
            #For drafts, we don't write to the category dirs, so just write the categories as text
            tag_links.append(tag)
        else:
-           tag_links.append("{0}".format(tag))
+           tag_links.append("<a href='{0}'>{1}</a>".format(tag.path, tag.name))
 %>
 
 <article>
