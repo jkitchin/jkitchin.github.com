@@ -35,7 +35,8 @@ date = "{0:20s}".format(post.date.strftime("%B %d, %Y"))
 excerpt = post.content[0:200] + " ... "
 %>
 <a href="${post.path}">${post.title}</a>
-${date}  ${excerpt} <a href="${post.path}">click here for more</a>
+${date}  ${excerpt} 
+<a href="${post.path}">click here for more</a>
 
 
 
