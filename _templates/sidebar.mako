@@ -9,7 +9,15 @@ Search
 </form>
 </section>
 
-</section>
+
+  <section>
+    <h1 class="post_header_gradient theme_font">Links</h1>
+    <ul>
+    <li><a href="/pycse">Pycse</a></li>
+    <li><a href="/dft-book">DFT-book</a></li>
+    </ul>
+  </section>
+
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
