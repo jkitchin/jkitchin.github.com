@@ -27,21 +27,26 @@ DONE [2013-03-01 Fri]
 + Bin Liu
 + Computing topic: John
 
-[2013-03-14 Thu] 1pm - 3pm
+DONE [2013-03-14 Thu] 1pm - 3pm
 ==============================
 + Jacob Boes
 + Steve Illes
 + Computing topic: John
 
-[2013-03-29 Fri] TBD
+[2013-03-29 Fri] 
 ========================
++ Alex Hallenbeck
++ Prateek Mehta
 
 [2013-04-12 Fri] TBD
 =======================
++ Matt Curnan
++ Bin Liu
 
-[2013-04-26 Fri] TBD
+[2013-04-26 Fri] 
 =======================
-+ Albert Liang
++ Albert Liang at 9am
++ Anita Lee PhD Defense 10am-noon
 
 </%self:filter>
 </article>

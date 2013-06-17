@@ -1,4 +1,5 @@
   <title>${bf.config.blog.name}</title>
+  <meta name="google-site-verification" content="CGcacJdHc2YoZyI0Vey9XRA5qwhhFDzThKJezbRFcJ4" />
   <meta name="description" content="${bf.config.blog.description}">
 %if bf.config.site.author:
   <meta name="author" content="${bf.config.site.author}">

@@ -10,6 +10,8 @@ Our group combines experimental and computational research to work on problems i
 
 I use this site to test concepts in using Python in engineering education, as well as integration of code and narrative text.
 
+<img src="media/group-2013.JPG">
+
 Current postdocs
 ----------------
 
@@ -18,8 +20,6 @@ Current postdocs
 Current PhD students
 --------------------
 
-    Ethan Demeter
-    Anita Lee
     Alex Hallenbeck
     Matt Curnan
     Zhongnan Xu
@@ -29,13 +29,12 @@ Current PhD students
 Current Master's students
 -------------------------
 
-    Vivek Vinodan
-    Zhizhong Ding
+    Prateek Mehta
 
 Current Undergraduates
 -----------------------
 
-    Albert Liang
+    Andrew Yee
 
 Former Group members
 ------------------------
@@ -48,8 +47,10 @@ Former Group members
     Nilay Inoglu (PhD 2011)
     Rich Alesi (PhD 2012)
     Robin Chao (PhD 2012)
-
-
+    Vivek Vinodan (M.S. 2013)
+    Zhizhong Ding (M.S. 2013)
+    Ethan Demeter (PhD 2013)
+    Anita Lee (PhD 2013)
 
 </%self:filter>
 </article>
