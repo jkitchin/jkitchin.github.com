@@ -19,7 +19,7 @@
 #  If you're hosting a blogofile powered site as a subdirectory of a larger
 #  non-blogofile site, then you would set the site_url to the full URL
 #  including that subdirectory: "http://www.yoursite.com/path/to/blogofile-dir"
-site.url = "http://jkitchin.github.com"
+site.url = "http://jkitchin.github.io"
 
 ## site.author -- Your name, the author of the website.
 # This is optional. If set to anything other than None, the
