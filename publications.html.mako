@@ -3,6 +3,10 @@
 <%self:filter chain="markdown">
 <h1>Publications</h1>
 
+41. Alex Hallenbeck and John R. Kitchin, O2 and SO2 tolerance of an ion exchange resin functionalized with benzyl amine groups for post-combustion CO2 capture applications, Accepted in  I&ECR, July 2013.
+
+40. Anita Lee, John Eslick, David Miller, John R. Kitchin, Comparisons of Amine Solvents for Post-combustion CO2 Capture: A Multi-objective Analysis Approach, International Journal of Greenhouse Gas Control, 18, 68-74 (2013). http://dx.doi.org/10.1016/j.ijggc.2013.06.020. 
+
 1. James X. Mao, Anita Lee, John R. Kitchin, Hunaid B. Nulwala, David R. Luebke, and Krishnan Damodaran, Interactions in 1-Ethyl-3-Methyl Imidazolium Tetracyanoborate Ion Pair: Spectroscopic and Density Functional Study, Journal of Molecular Structure,  1038, 12-18 (2013). http://dx.doi.org/10.1016/j.molstruc.2013.01.046 
 
 38. Federico Calle-Vallejo*, Nilay G. Inoglu, Hai-Yan Su, Jose I. Martinez, Isabela C. Man, Marc T. M. Koper, John R. Kitchin, and Jan Rossmeisl, Number of Outer Electrons as Descriptor of the Reactivity of Transition Metals and Their Oxides. Chemical Science, 4, 1245-1249 (2013). http://dx.doi.org/10.1039/C2SC21601A 

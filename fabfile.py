@@ -12,15 +12,9 @@ def build():
 
 def deploy():
     'copy _site to _deploy amd push to github'
-    os.chdir('_deploy')
-    # delete contents
-    import glob
-    for fd in glob.glob('*'):
-        if os.path.isdir(fd):
-            shutil.rmtree(fd)
-        else:
-            os.unlink(fd)
+    local('rm -fr _deploy/*')
 
+    os.chdir('_deploy')
     # now copy _site here and commit the results
     local('cp -R ../_site/* .')
     local('git add .')
