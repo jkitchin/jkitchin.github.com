@@ -13,7 +13,6 @@ def build():
 def deploy():
     'copy _site to _deploy amd push to github'
     local('rm -fr _deploy/*')
-
     os.chdir('_deploy')
     # now copy _site here and commit the results
     local('cp -R ../_site/* .')
