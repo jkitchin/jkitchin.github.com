@@ -658,3 +658,423 @@ print np.__version__
 : 1.6.1
 : 1.6.1
 
+* Capturing stderr and exceptions from python in org-mode
+  :PROPERTIES:
+  :categories: org-mode,python
+  :date:     2013/09/27 19:37:05
+  :updated:  2013/09/27 19:47:53
+  :END:
+I have used org-mode extensively to create examples of using python using the code blocks. For example to illustrate the difference between integer and float division you can do this:
+
+#+BEGIN_SRC python
+print 1 / 3
+print 1.0 / 3.0
+#+END_SRC
+
+#+RESULTS:
+: 0
+: 0.333333333333
+
+There are some limitations to showing output though. For example, the code blocks do not capture anything from stderr.
+
+#+BEGIN_SRC python
+import sys
+
+print >>sys.stderr, 'message to stderr'
+#+END_SRC
+
+#+RESULTS:
+
+And exceptions result in no output whatsoever. That is not helpful if you are trying to teach about exceptions! 
+
+I discovered a way around this. The key is using a python sandbox that redirects stdout, stderr and that captures anything sent to those channels. You can also capture any exceptions, and redirect them to a variable. Finally, you can construct the output anyway you see fit. 
+
+Below is the code that runs python code in a sandbox, with redirected outputs. I defined a function that temporarily redirects the output to stdout and stderr, so they can be captured. I execute the code wrapped in a try/except block to capture any exceptions that occur. Finally, I construct a string formatted in a way that lets you know what was on stdout, stderr, and what was an exception.
+
+#+BEGIN_SRC python :tangle sandbox.py
+#!/usr/bin/env python
+from cStringIO import StringIO
+import os, sys
+
+def Sandbox(code):
+    '''Given code as a string, execute it in a sandboxed python environment
+
+    return the output, stderr, and any exception code
+    '''
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    redirected_output = sys.stdout = StringIO()
+    redirected_error = sys.stderr = StringIO()
+
+    ns_globals = {}
+    ns_locals = {}
+    out, err, exc = None, None, None
+
+    try:
+        exec(code, ns_globals, ns_locals)
+    except:
+        import traceback
+        exc = traceback.format_exc()
+
+    out = redirected_output.getvalue()
+    err = redirected_error.getvalue()
+
+    # reset outputs to the original values
+    sys.stdout = old_stdout
+    sys.stderr = old_stderr
+
+    return out, err, exc
+
+
+if __name__ == '__main__':
+    content = sys.stdin.read()
+    out, err, exc =  Sandbox(content)
+
+    s = '''---stdout-----------------------------------------------------------
+{0}
+'''.format(out)
+
+    if err:
+        s += '''---stderr-----------------------------------------------------------
+{0}
+'''.format(err)
+
+    if exc:
+        s += '''---Exception--------------------------------------------------------
+{0}
+'''.format(exc)
+
+    print s
+
+#+END_SRC
+
+To use this, we have to put this file (sandbox.py) in our PYTHONPATH. Then, we tell org-babel to run python using our new sandbox.py module. org-babel pipes the code in a src block to stdin of the python command, which will be intercepted by our sandbox module. If you put this in your init.el, or other customization location, then subsequent uses of python in org-mode will use your sandbox module. I usually only run this for a session as needed.
+
+#+BEGIN_SRC emacs-lisp
+(setq org-babel-python-command "python -m sandbox")
+#+END_SRC
+
+Now, when we use python, we can capture output to stderr!
+
+#+BEGIN_SRC python
+import sys
+
+print >>sys.stderr, 'message to stderr'
+#+END_SRC
+
+#+RESULTS:
+: ---stdout-----------------------------------------------------------
+: 
+: ---stderr-----------------------------------------------------------
+: message to stderr
+: 
+: 
+And, we can capture exceptions!
+
+#+BEGIN_SRC python
+print 1 / 0
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+---stdout-----------------------------------------------------------
+
+---Exception--------------------------------------------------------
+Traceback (most recent call last):
+  File "c:\Users\jkitchin\Dropbox\blogofile-jkitchin.github.com\_blog\sandbox.py", line 20, in Sandbox
+    exec(code, ns_globals, ns_locals)
+  File "<string>", line 1, in <module>
+ZeroDivisionError: integer division or modulo by zero
+
+
+#+end_example
+
+There is a little obfuscation in the exception, since it technically occurs in the Sandbox, but this is better than getting no output whatsoever! I have not tested the sandbox.py code extensively, so I don't know if there will be things that do not work as expected. If you find any, please let me know!
+* Customizing the export of org-mode elements
+In a recent project I have used org-mode to create a document with lots of src blocks describing how to use python. I wanted to find a way to modify the export process so that each code block would be saved to a file, and a link to that file would be put in the exported pdf. I could have used tangling to do that, but I did not want the burden of having to name the code blocks. I wanted them named sequentially, and I often rearrange the blocks or add new ones in. 
+
+
+#+BEGIN_SRC emacs-lisp 
+(let ((counter 0))
+
+  (defun ox-mrkup-filter-src-block (text back-end info)
+
+    ;; we are processing a src block. Increment counter
+    (setq counter (+ counter 1))
+
+    (format "%s 
+
+"middle text"
+
+%s" back-end text))
+
+  (let ((org-export-filter-src-block-functions '(ox-mrkup-filter-src-block))
+        (async nil)
+        (subtreep t)
+        (visible-only nil)
+        (body-only t)
+        (ext-plist '()))
+    (org-html-export-as-html async subtreep visible-only body-only ext-plist)))
+
+
+
+#+END_SRC
+* Notice anything different
+  :PROPERTIES:
+  :date:     2013/09/29 11:07:00
+  :updated:  2013/09/29 11:41:28
+  :END:
+Based on the last few posts on [[http://jkitchin.github.io/blog/2013/09/28/Changing-links-to-files-so-they-work-in-a-blog/][making links to external files work in the blog]], and [[http://jkitchin.github.io/blog/2013/09/28/Customizing-export-of-code-blocks-in-HTML/][customizing code block export in HTML]], I have rewritten [[https://github.com/jkitchin/jmax/blob/prelude/blogofile.el][blogofile.el]] to more cleanly support the use of images and data files in my blog posts. Now, I should be able to include a data file (like this [[../../pycse/data/antoine_data.dat][one]]) in a post and you should be able to click on the link to open it after I publish the post in the usual way by pressing F10. That should process the post, construct URLs for all the links, including images, copy the relevant files to the blog directory, and generate the HTML file for blogofile to build. This is a little more robust than it used to be, as all files are stored in a directory named based on the post title, so there is less concern of using duplicate filenames for images and datafiles.
+
+Here is a gratuitous image, just to see if it works ;)
+
+#+CAPTION: test image
+[[./images/heat-transfer-roots-1.png]]
+
+Hopefully, there is nothing different on the outside! URLs to images are now in a different place, but that should not be apparent unless you read source code. The real difference is that now there are working links to data files! And it is easier for me to write my posts including them, with simple publishing. 
+* TODO Testing out a new python units package
+  :PROPERTIES:
+  :categories: units
+  :END:
+
+#+BEGIN_SRC python
+from pint import UnitRegistry
+u = UnitRegistry()
+
+distance = 1.0 * u.meter
+
+dd = distance / (1*u.cm)
+print 'dd = ',dd
+print dd.magnitude, dd.dimensionality
+print dd.to('dimensionless')
+print 
+print 5 * dd * u.cm
+print 'float = ',float(dd)
+import numpy as np
+print np.log(dd)
+
+
+E = 10 * u.kJ/u.mol
+R = 2 * u.cal/u.mol/u.K
+T = 300 * u.K
+
+print E/R/T
+#+END_SRC
+
+#+RESULTS:
+: dd =  1.0 meter / centimeter
+: 1.0 dimensionless
+
+: 100.0 dimensionless
+: 
+: 5.0 meter
+: float =  100.0
+: 4.60517018599
+: 0.0166666666667 kilojoule / cal
+
+
+
+#+BEGIN_SRC python
+from pint import UnitRegistry
+u = UnitRegistry()
+
+
+from scipy.optimize import fsolve
+Fa0 = 3.0                 # mol/min
+Fa = Fa0 * (1.0 - 0.8)    # mol/min
+G = Fa / Fa0
+
+def objective(D):
+    return 1 - G - D * G
+
+Dsol, = fsolve(objective, 1.0)
+
+
+nu = 1 * u.L / u.min
+k = 0.34 * 1 / u.hr
+
+# V = D * nu / k
+print Dsol * nu / k   # this prints oddly because the units are not simplified
+print (Dsol * nu / k).to(u.L)
+
+#+END_SRC
+
+#+RESULTS:
+: 11.7647058824 hour * liter / minute
+: 705.882352941 liter
+
+
+* Getting headline labels out of org-mode
+
+#+BEGIN_SRC emacs-lisp :results value
+(setq my-alist '((title . "the title")
+		 (author . "John Kitchin")
+		 (email . "jkitchin@cmu.edu")))
+
+(cdr (assoc 'email my-alist))
+
+#+END_SRC 
+
+#+BEGIN_SRC emacs-lisp
+(find-file "exam.org")   ; open the file
+
+(setq my-info (org-export-collect-tree-properties (org-element-parse-buffer) '()))
+
+(princ (plist-get my-info :headline-numbering ))
+
+;(princ (org-export--collect-headline-numbering (plist-get my-info :headline-numbering) '()))
+
+;(princ (org-element-map (org-element-parse-buffer) 'headline
+;(lambda (headline) (cdr (assoc headline (plist-get my-info :headline-numbering))))))
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+(((headline (:raw-value Do you get it? :begin 18 :end 110 :pre-blank 0 :hiddenp outline :contents-begin 35 :contents-end 109 :level 1 :priority nil :tags nil :todo-keyword nil :todo-type nil :post-blank 0 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :POINTS 5 :CATEGORY exam :title (Do you get it?) :parent (org-data nil (section (:begin 1 :end 18 :contents-begin 1 :contents-end 17 :post-blank 1 :parent #4) (keyword (:key TITLE :value Exam 1 :begin 1 :end 17 :post-blank 0 :post-affiliated 1 :parent #5))) #2 (headline (:raw-value Multipart question :begin 110 :end 290 :pre-blank 0 :hiddenp outline :contents-begin 131 :contents-end 289 :level 1 :priority nil :tags nil :todo-keyword nil :todo-type nil :post-blank 0 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :CATEGORY exam :title (Multipart question) :parent #4) (headline (:raw-value Circle the best answer :begin 131 :end 229 :pre-blank 0 :hiddenp outline :contents-begin 157 :contents-end 229 :level 2 :priority nil :tags nil :todo-keyword nil :todo-type nil :post-blank 1 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :POINTS 10 :CATEGORY exam :title (Circle the best answer) :parent #5) (section (:begin 157 :end 229 :contents-begin 157 :contents-end 229 :post-blank 0 :parent #6) (property-drawer (:begin 157 :end 199 :hiddenp outline :contents-begin 173 :contents-end 190 :post-blank 0 :post-affiliated 157 :parent #7) (node-property (:key points :value 10 :begin 173 :end 190 :post-blank 0 :parent #8))) (paragraph (:begin 199 :end 229 :contents-begin 199 :contents-end 229 :post-blank 0 :post-affiliated 199 :parent #7) What is 1 + 1?
+a) 2
+b) 3
+c) 4
+))) (headline (:raw-value Describe a cat. :begin 229 :end 290 :pre-blank 0 :hiddenp outline :contents-begin 248 :contents-end 289 :level 2 :priority nil :tags nil :todo-keyword nil :todo-type nil :post-blank 0 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :POINTS 4 :CATEGORY exam :title (Describe a cat.) :parent #5) (section (:begin 248 :end 290 :contents-begin 248 :contents-end 289 :post-blank 1 :parent #6) (property-drawer (:begin 248 :end 289 :hiddenp outline :contents-begin 264 :contents-end 280 :post-blank 0 :post-affiliated 248 :parent #7) (node-property (:key points :value 4 :begin 264 :end 280 :post-blank 0 :parent #8)))))) (headline (:raw-value Essay question :begin 290 :end 403 :pre-blank 0 :hiddenp outline :contents-begin 307 :contents-end 396 :level 1 :priority nil :tags nil :todo-keyword nil :todo-type nil :post-blank 6 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :POINTS 25 :CATEGORY exam :title (Essay question) :parent #4) (section (:begin 307 :end 403 :contents-begin 307 :contents-end 396 :post-blank 7 :parent #5) (property-drawer (:begin 307 :end 346 :hiddenp outline :contents-begin 322 :contents-end 338 :post-blank 0 :post-affiliated 307 :parent #6) (node-property (:key points :value 25 :begin 322 :end 338 :post-blank 0 :parent #7))) (paragraph (:begin 346 :end 380 :contents-begin 346 :contents-end 378 :post-blank 2 :post-affiliated 346 :parent #6) Expound on the meaning of life.
+) (paragraph (:begin 380 :end 396 :contents-begin 380 :contents-end 396 :post-blank 0 :post-affiliated 380 :parent #6) gradesheet:here
+))))) (section (:begin 35 :end 110 :contents-begin 35 :contents-end 109 :post-blank 1 :parent #2) (property-drawer (:begin 35 :end 73 :hiddenp outline :contents-begin 50 :contents-end 65 :post-blank 0 :post-affiliated 35 :parent #3) (node-property (:key points :value 5 :begin 50 :end 65 :post-blank 0 :parent #4))) (paragraph (:begin 73 :end 109 :contents-begin 73 :contents-end 109 :post-blank 0 :post-affiliated 73 :parent #3) What is the answer to the universe?
+))) 1) ((headline (:raw-value Multipart question :begin 110 :end 290 :pre-blank 0 :hiddenp outline :contents-begin 131 :contents-end 289 :level 1 :priority nil :tags nil :todo-keyword nil :todo-type nil :post-blank 0 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :CATEGORY exam :title (Multipart question) :parent (org-data nil (section (:begin 1 :end 18 :contents-begin 1 :contents-end 17 :post-blank 1 :parent #4) (keyword (:key TITLE :value Exam 1 :begin 1 :end 17 :post-blank 0 :post-affiliated 1 :parent #5))) (headline (:raw-value Do you get it? :begin 18 :end 110 :pre-blank 0 :hiddenp outline :contents-begin 35 :contents-end 109 :level 1 :priority nil :tags nil :todo-keyword nil :todo-type nil :post-blank 0 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :POINTS 5 :CATEGORY exam :title (Do you get it?) :parent #4) (section (:begin 35 :end 110 :contents-begin 35 :contents-end 109 :post-blank 1 :parent #5) (property-drawer (:begin 35 :end 73 :hiddenp outline :contents-begin 50 :contents-end 65 :post-blank 0 :post-affiliated 35 :parent #6) (node-property (:key points :value 5 :begin 50 :end 65 :post-blank 0 :parent #7))) (paragraph (:begin 73 :end 109 :contents-begin 73 :contents-end 109 :post-blank 0 :post-affiliated 73 :parent #6) What is the answer to the universe?
+))) #2 (headline (:raw-value Essay question :begin 290 :end 403 :pre-blank 0 :hiddenp outline :contents-begin 307 :contents-end 396 :level 1 :priority nil :tags nil :todo-keyword nil :todo-type nil :post-blank 6 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :POINTS 25 :CATEGORY exam :title (Essay question) :parent #4) (section (:begin 307 :end 403 :contents-begin 307 :contents-end 396 :post-blank 7 :parent #5) (property-drawer (:begin 307 :end 346 :hiddenp outline :contents-begin 322 :contents-end 338 :post-blank 0 :post-affiliated 307 :parent #6) (node-property (:key points :value 25 :begin 322 :end 338 :post-blank 0 :parent #7))) (paragraph (:begin 346 :end 380 :contents-begin 346 :contents-end 378 :post-blank 2 :post-affiliated 346 :parent #6) Expound on the meaning of life.
+) (paragraph (:begin 380 :end 396 :contents-begin 380 :contents-end 396 :post-blank 0 :post-affiliated 380 :parent #6) gradesheet:here
+))))) (headline (:raw-value Circle the best answer :begin 131 :end 229 :pre-blank 0 :hiddenp outline :contents-begin 157 :contents-end 229 :level 2 :priority nil :tags nil :todo-keyword nil :todo-type nil :post-blank 1 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :POINTS 10 :CATEGORY exam :title (Circle the best answer) :parent #2) (section (:begin 157 :end 229 :contents-begin 157 :contents-end 229 :post-blank 0 :parent #3) (property-drawer (:begin 157 :end 199 :hiddenp outline :contents-begin 173 :contents-end 190 :post-blank 0 :post-affiliated 157 :parent #4) (node-property (:key points :value 10 :begin 173 :end 190 :post-blank 0 :parent #5))) (paragraph (:begin 199 :end 229 :contents-begin 199 :contents-end 229 :post-blank 0 :post-affiliated 199 :parent #4) What is 1 + 1?
+a) 2
+b) 3
+c) 4
+))) (headline (:raw-value Describe a cat. :begin 229 :end 290 :pre-blank 0 :hiddenp outline :contents-begin 248 :contents-end 289 :level 2 :priority nil :tags nil :todo-keyword nil :todo-type nil :post-blank 0 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :POINTS 4 :CATEGORY exam :title (Describe a cat.) :parent #2) (section (:begin 248 :end 290 :contents-begin 248 :contents-end 289 :post-blank 1 :parent #3) (property-drawer (:begin 248 :end 289 :hiddenp outline :contents-begin 264 :contents-end 280 :post-blank 0 :post-affiliated 248 :parent #4) (node-property (:key points :value 4 :begin 264 :end 280 :post-blank 0 :parent #5)))))) 2) ((headline (:raw-value Circle the best answer :begin 131 :end 229 :pre-blank 0 :hiddenp outline :contents-begin 157 :contents-end 229 :level 2 :priority nil :tags nil :todo-keyword nil :todo-type nil :post-blank 1 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :POINTS 10 :CATEGORY exam :title (Circle the best answer) :parent (headline (:raw-value Multipart question :begin 110 :end 290 :pre-blank 0 :hiddenp outline :contents-begin 131 :contents-end 289 :level 1 :priority nil :tags nil :todo-keyword nil :todo-type nil :post-blank 0 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :CATEGORY exam :title (Multipart question) :parent (org-data nil (section (:begin 1 :end 18 :contents-begin 1 :contents-end 17 :post-blank 1 :parent #6) (keyword (:key TITLE :value Exam 1 :begin 1 :end 17 :post-blank 0 :post-affiliated 1 :parent #7))) (headline (:raw-value Do you get it? :begin 18 :end 110 :pre-blank 0 :hiddenp outline :contents-begin 35 :contents-end 109 :level 1 :priority nil :tags nil :todo-keyword nil :todo-type nil :post-blank 0 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :POINTS 5 :CATEGORY exam :title (Do you get it?) :parent #6) (section (:begin 35 :end 110 :contents-begin 35 :contents-end 109 :post-blank 1 :parent #7) (property-drawer (:begin 35 :end 73 :hiddenp outline :contents-begin 50 :contents-end 65 :post-blank 0 :post-affiliated 35 :parent #8) (node-property (:key points :value 5 :begin 50 :end 65 :post-blank 0 :parent #9))) (paragraph (:begin 73 :end 109 :contents-begin 73 :contents-end 109 :post-blank 0 :post-affiliated 73 :parent #8) What is the answer to the universe?
+))) #4 (headline (:raw-value Essay question :begin 290 :end 403 :pre-blank 0 :hiddenp outline :contents-begin 307 :contents-end 396 :level 1 :priority nil :tags nil :todo-keyword nil :todo-type nil :post-blank 6 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :POINTS 25 :CATEGORY exam :title (Essay question) :parent #6) (section (:begin 307 :end 403 :contents-begin 307 :contents-end 396 :post-blank 7 :parent #7) (property-drawer (:begin 307 :end 346 :hiddenp outline :contents-begin 322 :contents-end 338 :post-blank 0 :post-affiliated 307 :parent #8) (node-property (:key points :value 25 :begin 322 :end 338 :post-blank 0 :parent #9))) (paragraph (:begin 346 :end 380 :contents-begin 346 :contents-end 378 :post-blank 2 :post-affiliated 346 :parent #8) Expound on the meaning of life.
+) (paragraph (:begin 380 :end 396 :contents-begin 380 :contents-end 396 :post-blank 0 :post-affiliated 380 :parent #8) gradesheet:here
+))))) #2 (headline (:raw-value Describe a cat. :begin 229 :end 290 :pre-blank 0 :hiddenp outline :contents-begin 248 :contents-end 289 :level 2 :priority nil :tags nil :todo-keyword nil :todo-type nil :post-blank 0 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :POINTS 4 :CATEGORY exam :title (Describe a cat.) :parent #4) (section (:begin 248 :end 290 :contents-begin 248 :contents-end 289 :post-blank 1 :parent #5) (property-drawer (:begin 248 :end 289 :hiddenp outline :contents-begin 264 :contents-end 280 :post-blank 0 :post-affiliated 248 :parent #6) (node-property (:key points :value 4 :begin 264 :end 280 :post-blank 0 :parent #7))))))) (section (:begin 157 :end 229 :contents-begin 157 :contents-end 229 :post-blank 0 :parent #2) (property-drawer (:begin 157 :end 199 :hiddenp outline :contents-begin 173 :contents-end 190 :post-blank 0 :post-affiliated 157 :parent #3) (node-property (:key points :value 10 :begin 173 :end 190 :post-blank 0 :parent #4))) (paragraph (:begin 199 :end 229 :contents-begin 199 :contents-end 229 :post-blank 0 :post-affiliated 199 :parent #3) What is 1 + 1?
+a) 2
+b) 3
+c) 4
+))) 2 1) ((headline (:raw-value Describe a cat. :begin 229 :end 290 :pre-blank 0 :hiddenp outline :contents-begin 248 :contents-end 289 :level 2 :priority nil :tags nil :todo-keyword nil :todo-type nil :post-blank 0 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :POINTS 4 :CATEGORY exam :title (Describe a cat.) :parent (headline (:raw-value Multipart question :begin 110 :end 290 :pre-blank 0 :hiddenp outline :contents-begin 131 :contents-end 289 :level 1 :priority nil :tags nil :todo-keyword nil :todo-type nil :post-blank 0 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :CATEGORY exam :title (Multipart question) :parent (org-data nil (section (:begin 1 :end 18 :contents-begin 1 :contents-end 17 :post-blank 1 :parent #6) (keyword (:key TITLE :value Exam 1 :begin 1 :end 17 :post-blank 0 :post-affiliated 1 :parent #7))) (headline (:raw-value Do you get it? :begin 18 :end 110 :pre-blank 0 :hiddenp outline :contents-begin 35 :contents-end 109 :level 1 :priority nil :tags nil :todo-keyword nil :todo-type nil :post-blank 0 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :POINTS 5 :CATEGORY exam :title (Do you get it?) :parent #6) (section (:begin 35 :end 110 :contents-begin 35 :contents-end 109 :post-blank 1 :parent #7) (property-drawer (:begin 35 :end 73 :hiddenp outline :contents-begin 50 :contents-end 65 :post-blank 0 :post-affiliated 35 :parent #8) (node-property (:key points :value 5 :begin 50 :end 65 :post-blank 0 :parent #9))) (paragraph (:begin 73 :end 109 :contents-begin 73 :contents-end 109 :post-blank 0 :post-affiliated 73 :parent #8) What is the answer to the universe?
+))) #4 (headline (:raw-value Essay question :begin 290 :end 403 :pre-blank 0 :hiddenp outline :contents-begin 307 :contents-end 396 :level 1 :priority nil :tags nil :todo-keyword nil :todo-type nil :post-blank 6 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :POINTS 25 :CATEGORY exam :title (Essay question) :parent #6) (section (:begin 307 :end 403 :contents-begin 307 :contents-end 396 :post-blank 7 :parent #7) (property-drawer (:begin 307 :end 346 :hiddenp outline :contents-begin 322 :contents-end 338 :post-blank 0 :post-affiliated 307 :parent #8) (node-property (:key points :value 25 :begin 322 :end 338 :post-blank 0 :parent #9))) (paragraph (:begin 346 :end 380 :contents-begin 346 :contents-end 378 :post-blank 2 :post-affiliated 346 :parent #8) Expound on the meaning of life.
+) (paragraph (:begin 380 :end 396 :contents-begin 380 :contents-end 396 :post-blank 0 :post-affiliated 380 :parent #8) gradesheet:here
+))))) (headline (:raw-value Circle the best answer :begin 131 :end 229 :pre-blank 0 :hiddenp outline :contents-begin 157 :contents-end 229 :level 2 :priority nil :tags nil :todo-keyword nil :todo-type nil :post-blank 1 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :POINTS 10 :CATEGORY exam :title (Circle the best answer) :parent #4) (section (:begin 157 :end 229 :contents-begin 157 :contents-end 229 :post-blank 0 :parent #5) (property-drawer (:begin 157 :end 199 :hiddenp outline :contents-begin 173 :contents-end 190 :post-blank 0 :post-affiliated 157 :parent #6) (node-property (:key points :value 10 :begin 173 :end 190 :post-blank 0 :parent #7))) (paragraph (:begin 199 :end 229 :contents-begin 199 :contents-end 229 :post-blank 0 :post-affiliated 199 :parent #6) What is 1 + 1?
+a) 2
+b) 3
+c) 4
+))) #2)) (section (:begin 248 :end 290 :contents-begin 248 :contents-end 289 :post-blank 1 :parent #2) (property-drawer (:begin 248 :end 289 :hiddenp outline :contents-begin 264 :contents-end 280 :post-blank 0 :post-affiliated 248 :parent #3) (node-property (:key points :value 4 :begin 264 :end 280 :post-blank 0 :parent #4))))) 2 2) ((headline (:raw-value Essay question :begin 290 :end 403 :pre-blank 0 :hiddenp outline :contents-begin 307 :contents-end 396 :level 1 :priority nil :tags nil :todo-keyword nil :todo-type nil :post-blank 6 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :POINTS 25 :CATEGORY exam :title (Essay question) :parent (org-data nil (section (:begin 1 :end 18 :contents-begin 1 :contents-end 17 :post-blank 1 :parent #4) (keyword (:key TITLE :value Exam 1 :begin 1 :end 17 :post-blank 0 :post-affiliated 1 :parent #5))) (headline (:raw-value Do you get it? :begin 18 :end 110 :pre-blank 0 :hiddenp outline :contents-begin 35 :contents-end 109 :level 1 :priority nil :tags nil :todo-keyword nil :todo-type nil :post-blank 0 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :POINTS 5 :CATEGORY exam :title (Do you get it?) :parent #4) (section (:begin 35 :end 110 :contents-begin 35 :contents-end 109 :post-blank 1 :parent #5) (property-drawer (:begin 35 :end 73 :hiddenp outline :contents-begin 50 :contents-end 65 :post-blank 0 :post-affiliated 35 :parent #6) (node-property (:key points :value 5 :begin 50 :end 65 :post-blank 0 :parent #7))) (paragraph (:begin 73 :end 109 :contents-begin 73 :contents-end 109 :post-blank 0 :post-affiliated 73 :parent #6) What is the answer to the universe?
+))) (headline (:raw-value Multipart question :begin 110 :end 290 :pre-blank 0 :hiddenp outline :contents-begin 131 :contents-end 289 :level 1 :priority nil :tags nil :todo-keyword nil :todo-type nil :post-blank 0 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :CATEGORY exam :title (Multipart question) :parent #4) (headline (:raw-value Circle the best answer :begin 131 :end 229 :pre-blank 0 :hiddenp outline :contents-begin 157 :contents-end 229 :level 2 :priority nil :tags nil :todo-keyword nil :todo-type nil :post-blank 1 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :POINTS 10 :CATEGORY exam :title (Circle the best answer) :parent #5) (section (:begin 157 :end 229 :contents-begin 157 :contents-end 229 :post-blank 0 :parent #6) (property-drawer (:begin 157 :end 199 :hiddenp outline :contents-begin 173 :contents-end 190 :post-blank 0 :post-affiliated 157 :parent #7) (node-property (:key points :value 10 :begin 173 :end 190 :post-blank 0 :parent #8))) (paragraph (:begin 199 :end 229 :contents-begin 199 :contents-end 229 :post-blank 0 :post-affiliated 199 :parent #7) What is 1 + 1?
+a) 2
+b) 3
+c) 4
+))) (headline (:raw-value Describe a cat. :begin 229 :end 290 :pre-blank 0 :hiddenp outline :contents-begin 248 :contents-end 289 :level 2 :priority nil :tags nil :todo-keyword nil :todo-type nil :post-blank 0 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :POINTS 4 :CATEGORY exam :title (Describe a cat.) :parent #5) (section (:begin 248 :end 290 :contents-begin 248 :contents-end 289 :post-blank 1 :parent #6) (property-drawer (:begin 248 :end 289 :hiddenp outline :contents-begin 264 :contents-end 280 :post-blank 0 :post-affiliated 248 :parent #7) (node-property (:key points :value 4 :begin 264 :end 280 :post-blank 0 :parent #8)))))) #2)) (section (:begin 307 :end 403 :contents-begin 307 :contents-end 396 :post-blank 7 :parent #2) (property-drawer (:begin 307 :end 346 :hiddenp outline :contents-begin 322 :contents-end 338 :post-blank 0 :post-affiliated 307 :parent #3) (node-property (:key points :value 25 :begin 322 :end 338 :post-blank 0 :parent #4))) (paragraph (:begin 346 :end 380 :contents-begin 346 :contents-end 378 :post-blank 2 :post-affiliated 346 :parent #3) Expound on the meaning of life.
+) (paragraph (:begin 380 :end 396 :contents-begin 380 :contents-end 396 :post-blank 0 :post-affiliated 380 :parent #3) gradesheet:here
+))) 3))
+#+end_example
+
+* Writing exams in org-mode
+There are a few aspects of writing exams that are tedious the way I normally do it. Typically I write exams in Word because I can easily see the layout, how much whitespace there is to write answers in, etc... I like to put a gradesheet on the final page which lists each problem, the points it is worth, and a blank to put the grade for that problem into.  It is tedious to go back through 10 pages of questions to look up all the points, enter them in, add them up, etc... And if I decide to renumber the questions or move them, it must be repeated.
+
+Construction of the grade sheet ought to be automated. That is not going to happen in my hands in MS Word. I have seen this done in LaTeX in the Acrotex educational package, but I don't see myself hacking LaTeX any  time soon. Enter org-mode. I could see writing the exam in org-mode, and defining a custom link that would insert the grade sheet in an exported latex file. I will explore this idea in this post.
+
+
+The idea is that we would store the points in a PROPERTY of an org-heading. Then, to create the table, we just loop through the headlines, gather the levels and points, and then construct a table to put in the exported LaTeX. The first thing we will do is look at some code that will parse the org buffer and create a list of headings and the points on each heading. I have written a small test exam at [[./exam.org]]. We will use that file for the example. 
+
+Let us look at the first headline.
+#+BEGIN_SRC emacs-lisp 
+(find-file "exam.org")
+(princ (car (org-element-map 
+    (org-element-parse-buffer 'headline) 'headline 
+  ;; function to print headline, level and points
+  (lambda (headline) headline))))
+
+#+END_SRC
+
+#+RESULTS:
+: (headline (:raw-value Do you get it? :begin 18 :end 110 :pre-blank 0 :hiddenp outline :contents-begin 35 :contents-end 109 :level 1 :priority nil :tags nil :todo-keyword nil :todo-type nil :post-blank 0 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :POINTS 5 :CATEGORY exam :title Do you get it? :parent (org-data nil #0 (headline (:raw-value Multipart question :begin 110 :end 290 :pre-blank 0 :hiddenp outline :contents-begin 131 :contents-end 289 :level 1 :priority nil :tags nil :todo-keyword nil :todo-type nil :post-blank 0 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :CATEGORY exam :title Multipart question :parent #2) (headline (:raw-value Circle the best answer :begin 131 :end 229 :pre-blank 0 :hiddenp outline :contents-begin 157 :contents-end 229 :level 2 :priority nil :tags nil :todo-keyword nil :todo-type nil :post-blank 1 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :POINTS 10 :CATEGORY exam :title Circle the best answer :parent #3)) (headline (:raw-value Describe a cat. :begin 229 :end 290 :pre-blank 0 :hiddenp outline :contents-begin 248 :contents-end 289 :level 2 :priority nil :tags nil :todo-keyword nil :todo-type nil :post-blank 0 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :POINTS 4 :CATEGORY exam :title Describe a cat. :parent #3))) (headline (:raw-value Essay question :begin 290 :end 396 :pre-blank 0 :hiddenp outline :contents-begin 307 :contents-end 396 :level 1 :priority nil :tags nil :todo-keyword nil :todo-type nil :post-blank 0 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :POINTS 25 :CATEGORY exam :title Essay question :parent #2)))))
+
+Now, let us parse the file, and just print the headline, its level, and the points it is worth. We will parse the buffer to get the headlines, and then extract some properties from each headline. For each headline we will print a summary, and finally the total number of points.
+
+#+BEGIN_SRC emacs-lisp 
+(find-file "exam.org")   ; open the file
+(setq total-points 0)    ; counter for the total points
+
+;; now loop over headlines
+(org-element-map 
+    (org-element-parse-buffer 'headline) 'headline 
+  ;; function to print headline, level and points
+  (lambda (headline) 
+    (let* ((level (org-element-property :level headline))
+           (points (org-element-property :POINTS headline)))
+      (if points (setq total-points (+ total-points (string-to-number points))))
+(princ (format "label: %s\n" (mapconcat 'number-to-string
+			       (org-export-get-headline-number headline (org-element-parse-buffer))
+			       "-")))
+      (princ (format "level=%s\nPOINTS=%s\n\n" level points)))))
+
+(princ (format "Total points = %s" total-points))
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+label: 
+level=1
+POINTS=5
+
+label: 
+level=1
+POINTS=nil
+
+label: 
+level=2
+POINTS=10
+
+label: 
+level=2
+POINTS=4
+
+label: 
+level=1
+POINTS=25
+
+Total points = 44
+#+end_example
+
+That is the foundation for the grade table. What I would like is the grade table to be structured like this:
+
+| problem        | Points  | grade |
+| ref to heading | #points |       |
+
+Where the ~ref to heading~ is the same number as the actual heading. During the export, labels are generated for each section, which we could refer to. To take advantage of this we need to export once to get the labels, construct the table, and then export again. 
+
+
+(sec-num (plist-get info :section-numbers))
+
+(org-latex-export-as-latex nil t t nil '())
+
+#+BEGIN_SRC emacs-lisp
+(find-file "exam.org")   ; open the file
+(princ (org-export--collect-headline-numbering (org-element-parse-buffer) '()))
+#+END_SRC
+
+
+
+
+#+BEGIN_SRC emacs-lisp 
+(find-file "exam.org")   ; open the file
+(setq info (org-export-collect-tree-properties (org-element-parse-buffer) '()))
+(princ (format "%s" info))
+;; now loop over headlines
+(org-element-map 
+    (org-element-parse-buffer 'headline) 'headline 
+  ;; function to print headline, level and points
+  (lambda (headline) 
+    (princ (format "label: %s\n" (mapconcat 'number-to-string
+                                            (org-export-get-headline-number headline info)
+                                            "-")))))
+#+END_SRC
+
+** subheading
+*** subsubheading
+**** sub3heading 1
+**** sub3heading 2
+** next sub heading
+
+
+

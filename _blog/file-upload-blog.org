@@ -1,0 +1,141 @@
+* Getting links to files in a post to point to the actual file
+
+Occasionally I use a data file in post. In the local org-file buffer I can make a link to the file, and it opens just fine. However, when I publish the post, there is not a mechanism to copy the file to the blog directory, and rewrite the link in exported html so it opens the file. 
+
+** link one
+This is an explicit file link
+file:news.org
+
+** link two
+Here we just use a path inside [[]]
+[[./news.org]]
+
+** link three
+Here we use a decorated link.
+[[./news.org][Org-file containing news]]
+
+** Checkout all the links
+
+Let us now check out the links. We will use org-element-map to parse the elements and print the link number, the link type, and the :path. For fun, let us put an emacs-lisp link in: [[elisp:(princ "test")]] and a link to an image:
+
+[[../img/tooltip-emacs.png]]
+
+And finally, I want a link to a file in another directory: file:../fabfile.py
+
+#+BEGIN_SRC emacs-lisp
+(let ((parsetree (org-element-parse-buffer))
+      (counter 0))
+  (org-element-map parsetree 'link
+    (lambda (link) 
+      (let ((type (nth 0 link))
+            (plist (nth 1 link))
+            (content (nth 2 link)))
+        (princ (format "%s %s: %s %s\n" counter (plist-get plist ':type) (plist-get plist :path) content))
+        (setq counter (+ counter 1))))))
+#+END_SRC
+
+#+RESULTS:
+: 0 file: news.org nil
+: 1 file: ./news.org nil
+: 2 file: ./news.org Org-file containing news
+: 3 elisp: (princ "test") nil
+: 4 file: ../img/tooltip-emacs.png nil
+: 5 file: ../fabfile.py nil
+: 6 http: //orgmode.org/worg/exporters/filter-markup.html nil
+: 7 https: //github.com/jkitchin/jmax/blob/prelude/blogofile.el blogofile.el
+
+So we can see all the links this way, and we will have to differentiate what kind of links they are. What needs to happen when exporting is that the files we want to refer to in the post must be copied to the media folder of the blog, and a url to that file needs to be put in the exported html in the place of the link. We are going to try the following strategy:
+
+1. Parse the org-file.
+2. For each file link we will copy the file to the blogofile media folder and make a list of URLS for each link
+3. Write a link filter that gets the nth value of our list of urls and replace the link text with a url to the file. If the link had any content, use that for the URL text.
+
+
+Ok. Now let us write a block of code that does all those things. I want to avoid overwriting files with the same name from other posts, so we will copy all these files to a directory based on the blog post title: "Changing-links-to-files-so-they work-in-a-blog". We construct URLS for each link type that we want and store them in a list in the variable =url-list=.
+
+#+BEGIN_SRC emacs-lisp
+(setq url-list (let ((parsetree (org-element-parse-buffer))
+                     (counter 0))
+                 (org-element-map parsetree 'link
+                   (lambda (link) 
+                     (let* ((type (nth 0 link))
+                            (plist (nth 1 link))
+                            (content (nth 2 link))
+                            (path (plist-get plist :path))
+                            (type (plist-get plist ':type))
+                            (fname (car (last (split-string path "/"))))
+                            )
+                       ;; make directory if it does not exist
+                       (make-directory "../media/Changing-links-to-files-so-they work-in-a-blog" t)
+                       (cond
+                        ;; image
+                        ((and (string= type "file")
+                              (string-match "png" (file-name-extension fname))) 
+                         (progn 
+                           (copy-file path (concat "../media/Changing-links-to-files-so-they work-in-a-blog/" fname) t)
+                           (format "<img src=\"/media/Changing-links-to-files-so-they work-in-a-blog/%s\">" fname)))
+                        ;; regular file with content
+                        ((and (string= type "file")  content)
+                         (progn (copy-file path (concat "../media/Changing-links-to-files-so-they work-in-a-blog/" fname) t)
+                                (format "<a href=\"/media/Changing-links-to-files-so-they work-in-a-blog/%s\">%s</a>" fname content)))
+                        ;; regular file with no content
+                        ((and (string= type "file"))
+                         (progn (copy-file path (concat "../media/Changing-links-to-files-so-they work-in-a-blog/" fname) t)
+                                (format "<a href=\"/media/Changing-links-to-files-so-they work-in-a-blog/%s\">%s</a>" fname fname)))
+                        ;; URLS
+                        ((string-match "http" type) (format "<a href=\"%s\">%s</a>" 
+                          (plist-get plist :raw-link) (plist-get plist :raw-link)))
+                        ;; all other links will be formatted as <pre> blocks on the raw link
+                        (t (format "<pre>%s</pre>" (plist-get plist :raw-link)))))))))
+(princ url-list)
+;(princ (org-element-parse-buffer))
+#+END_SRC
+
+#+RESULTS:
+: (<a href="/media/Changing-links-to-files-so-they work-in-a-blog/news.org">news.org</a> <a href="/media/Changing-links-to-files-so-they work-in-a-blog/news.org">news.org</a> <a href="/media/Changing-links-to-files-so-they work-in-a-blog/news.org">Org-file containing news</a> <pre>elisp:(princ "test")</pre> <img src="/media/Changing-links-to-files-so-they work-in-a-blog/tooltip-emacs.png"> <a href="/media/Changing-links-to-files-so-they work-in-a-blog/fabfile.py">fabfile.py</a> <a href="http://orgmode.org/worg/exporters/filter-markup.html">http://orgmode.org/worg/exporters/filter-markup.html</a> <a href="https://github.com/jkitchin/jmax/blob/prelude/blogofile.el">https://github.com/jkitchin/jmax/blob/prelude/blogofile.el</a>)
+
+Now, we are ready to consider the filter. Again, building off of http://orgmode.org/worg/exporters/filter-markup.html we are going to setup a counter, increment the counter in the filter, and get the nth url from the list we constructed above, and replace the text if the URL is not nil. 
+
+#+BEGIN_SRC emacs-lisp 
+(let ((counter 0))
+
+  (defun ox-mrkup-filter-link (text back-end info)
+    (let ((url (nth counter url-list)))
+      (if (not (string= url "nil")) (setq output   (format "%s" url))
+        (setq output (format "%s" text)))
+      (setq counter (+ counter 1))
+      output))
+
+  (let ((org-export-filter-link-functions '(ox-mrkup-filter-link))
+        (async nil)
+        (subtreep nil)
+        (visible-only nil)
+        (body-only t)
+        (ext-plist '()))
+    (org-html-export-as-html async subtreep visible-only body-only ext-plist))
+
+    ; now get the output into the org output
+    (switch-to-buffer "*Org HTML Export*")
+
+    (setq HTML (buffer-string))
+    (setq YAML "---
+title: Changing links to files so they work in a blog
+date: 2013/09/28 17:49:00
+updated: 2013/09/29 08:14:00
+categories: org-mode
+---
+
+
+
+")
+  (with-temp-buffer
+(insert YAML)
+(insert HTML)
+(write-region (point-min) (point-max) "../_posts/2013-09-28-Changing-links-to-files-so-they-work-in-a-blog.html")))
+(princ "Done.")
+#+END_SRC
+
+#+RESULTS:
+: Done.
+
+You can see from this that we were able to process the org-buffer to get all the links, identify which of those links were external files that were not images (png files), and copy those files to our blog directory. Finally, we used a filter to modify the link text to point towards the blog url for publishing to HTML. I don't have this fully automated in [[https://github.com/jkitchin/jmax/blob/prelude/blogofile.el][blogofile.el]], but now all the pieces are done to enable that one day!

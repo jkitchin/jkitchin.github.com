@@ -1,0 +1,660 @@
+* Interesting online python sites
+  :PROPERTIES:
+  :categories: python
+  :date:     2013/02/28 18:58:21
+  :updated:  2013/02/28 19:01:33
+  :permalink: http://jkitchin.github.com/blog/2013-02-28-interesting-online-python-sites/index.html
+  :END:
+I have come across some very interesting online, /interactive/ python sites recently.
+
+- http://interactivepython.org has some interactive books with embedded python interpreters in the exercises. 
+
+- sympy actually has an [[http://live.sympy.org/][online shell]]! The [[http://docs.sympy.org/0.7.2/index.html][documentation]] has live examples in a shell you can use that is integrated with Sphinx. 
+
+Here are a few others I came across:
+- https://www.pythonanywhere.com/try-ipython/ Ipython in your browser!
+- http://www.trypython.org/#
+- http://www.pythontutor.com/
+- http://py-ide-online.appspot.com/
+* A gradebook app for emacs
+  :PROPERTIES:
+  :categories: emacs-lisp
+  :END:
+The goal is to create an emacs library to compute grades from a table in org-mode. 
+
+All grades are stored in a table with this structure. 
+
+#+tblname: gradebook
+| first name | last name | email       | Hwk 1 | Hwk2 | exam1 | project 1 |
+|            |           |             | 10    | 10   | 60    | 20        |
+|------------+-----------+-------------+-------+------+-------+-----------|
+| Jane       | Doe       | jd@cmu.edu  | A     | A    | B     | B         |
+| John       | Dillinger | jdi@cmu.edu | B     | B/C  | A     | C         |
+| jill       | wutz      | jw@cmu.edu  | D     | D    | R     | R         |
+
+The grading system works like this: 
+
+1. Each assignment is worth a certain number of points (in row2).
+2. Each assignment for a student is given a letter grade that indicates the quality and correctness of the work.
+3. Each letter grade corresponds to a point multiplier:
+
+| A++ |  1.0 |
+| A+  | 0.95 |
+| A   |  0.9 |
+| A-  | 0.85 |
+| A/B |  0.8 |
+| B+  | 0.75 |
+| B   |  0.7 |
+| B-  | 0.65 |
+| C/B |  0.6 |
+| C+  | 0.55 |
+| C   |  0.5 |
+| C-  | 0.45 |
+| C/D |  0.4 |
+| D+  | 0.35 |
+| D   |  0.3 |
+| D-  | 0.25 |
+| D/R |  0.2 |
+| R+  | 0.15 |
+| R   |  0.1 |
+| R-  | 0.05 |
+| R-- |  0.0 |
+
+4. The number of points earned for an assignment is the point multiplier for the letter grade times the number of points for that assignment.
+5. The overall grade is computed as sum(multiplier*points)/sum(points).
+6. The overall letter grade is determined by the fraction of overall points received, mapped back on to the letter grade scale.
+
+For example, in the table above, Jane Doe's grade is:
+
+#+BEGIN_SRC emacs-lisp :results value
+(let* ((multipliers '(0.9 0.9 0.7 0.7))
+       (points '(10 10 60 20))
+       (earned-points (mapcar* (lambda (a b) (* a b)) multipliers points))
+       (total-earned-points (apply '+ earned-points))
+       (total-points (apply '+ points)))
+  (/ total-earned-points total-points))
+#+END_SRC
+#+RESULTS:
+: 0.74
+
+Which corresponds to an overall grade of B.
+
+The goal here is to write emacs-lisp code to compute the overall grade of each student and convert it to an overall letter grade and write a little report. 
+
+We start by defining a variable to hold the multipliers. We will use an association list. We will prefix every variable and function with =gb/= to indicate it is part of our gradebook code.
+
+#+BEGIN_SRC emacs-lisp
+(defvar gb/MULTIPLIERS
+  '(("A++" . 1.0)
+    ("A+"   . 0.95)
+    ("A"    . 0.9)
+    ("A-"   . 0.85)
+    ("A/B"  . 0.8)
+    ("B+"   . 0.75)
+    ("B"    . 0.7)
+    ("B-"   . 0.65)
+    ("B/C"  . 0.6)
+    ("C+"   . 0.55)
+    ("C"    . 0.5)
+    ("C-"   . 0.45)
+    ("C/D"  . 0.4)
+    ("D+"   . 0.35)
+    ("D"    . 0.3)
+    ("D-"   . 0.25)
+    ("D/R"  . 0.2)
+    ("R+"   . 0.15)
+    ("R"    . 0.1)
+    ("R-"   . 0.05)
+    ("R--"  . 0.0))
+  "Numeric multipliers for letter grades")
+#+END_SRC
+
+#+RESULTS:
+
+Here are two examples of using the gb/MULTIPLIER variable. It is an association list, so the multipler we want is the =cdr= of what the letter is associated with. We take the =cdr= of the return value, which is the numeric multiplier
+
+#+BEGIN_SRC emacs-lisp :results value
+(cdr (assoc "A" gb/MULTIPLIERS))
+#+END_SRC
+
+#+RESULTS:
+: 0.9
+
+We are going to write a series of functions that will compute the overall grade for each student. 
+
+A function we will need is to move the cursor into the table. Here is a function that will do that. This function moves the cursor to the beginning of the buffer, searches forward to find a line starting with a #+tblname: "name", and then moves the cursor to the next line which is in the table. 
+
+#+BEGIN_SRC emacs-lisp 
+(defun gb/goto-table (tblname)
+  "move cursor into the table labeled tblname"
+  (interactive)
+  (goto-char (point-min))
+  (search-forward-regexp (format "^#\\+tblname:\s+%s" tblname))
+  (next-line))
+#+END_SRC
+
+#+RESULTS:
+
+We use the function to move the cursor into the table, and then extract all the contents out.  We wrap the function call inside =save-excursion= so that the cursor gets put back where we want it. In this snippet, we use the (org-table-to-lisp) function to convert the table to a lisp structure which we can do further analysis on. 
+
+#+BEGIN_SRC emacs-lisp :results value verbatim
+;; http://orgmode.org/worg/org-api/org-table-api.html
+(require 'org-table) ; needed for access to org-table api
+
+(defun gb/get-gradebook-lisp ()
+  (interactive)
+  (save-excursion
+    (gb/goto-table "gradebook")
+    (org-table-to-lisp)))
+
+(gb/get-gradebook-lisp)
+#+END_SRC
+#+RESULTS:
+: (("first name" "last name" "email" "Hwk 1" "Hwk2" "exam1" "project 1") ("" "" "" "10" "10" "60" "20") hline ("Jane" "Doe" "jd@cmu.edu" "A" "A" "B" "B") ("John" "Dillinger" "jdi@cmu.edu" "B" "B/C" "A" "C") ("jill" "wutz" "jw@cmu.edu" "D" "D" "R" "R"))
+
+This is handy. Now we can think about processing the lisp data. Let us get the assignment names, and point values and save them in variables. The assignment names are in the first row, and start in column 3.
+
+#+BEGIN_SRC emacs-lisp :results value verbatim
+(let ((row1 (car (gb/get-gradebook-lisp))))
+ (setq gb/ASSIGNMENTS (mapcar 'identity (nthcdr 3 row1))))
+
+gb/ASSIGNMENTS
+#+END_SRC
+
+#+RESULTS:
+: ("Hwk 1" "Hwk2" "exam1" "project 1")
+
+And now the point values, and total points.
+#+BEGIN_SRC emacs-lisp :results value verbatim
+(let ((row2 (cadr (gb/get-gradebook-lisp))))
+ (setq gb/ASSIGNMENT-POINTS (mapcar 'string-to-number (nthcdr 3 row2)))
+ (setq gb/TOTAL-POINTS (apply '+ gb/ASSIGNMENT-POINTS)))
+
+(format "ASSIGNMENT-POINTS=%s TOTAL-POINTS=%s" gb/ASSIGNMENT-POINTS gb/TOTAL-POINTS)
+#+END_SRC
+
+#+RESULTS:
+: "ASSIGNMENT-POINTS=(10 10 60 20) TOTAL-POINTS=100"
+
+So far, so good. Now, we need to get the letter grades for each student, and turn them into point multipliers. 
+
+#+BEGIN_SRC emacs-lisp :results value verbatim
+(defun gb/get-multiplier (LG)
+  "return numeric multiplier for a letter grade"
+  (interactive)
+  (cdr (assoc (upcase LG) gb/MULTIPLIERS)))
+
+(defun gb/get-multipliers(LGS)
+  "apply get-multiplier to a list of letter grades"
+  (interactive)
+  (mapcar 'gb/get-multiplier LGS))
+
+(defun gb/get-all-student-multipliers ()
+  (mapcar 'gb/get-multipliers
+	  (mapcar (lambda (x) 
+		    (nthcdr 3 x)) 
+		  (cdddr (gb/get-gradebook-lisp)))))
+
+(gb/get-all-student-multipliers)
+#+END_SRC
+
+#+RESULTS:
+: ((0.9 0.9 0.7 0.7) (0.7 0.6 0.9 0.5) (0.3 0.3 0.1 0.1))
+
+
+Finally, we need the product of each multiplier with the gb/ASSIGNMENT-POINTS. This needs some care; some grades may be nil, which we cannot multiply. For now we neglect this detail. 
+
+#+BEGIN_SRC emacs-lisp :results value verbatim
+(defun gb/get-earned-points (multipliers)
+  (mapcar* (lambda (a  b) (* a b)) multipliers gb/ASSIGNMENT-POINTS))
+
+(defun gb/get-all-earned-points ()
+  "returns total points earned by each student"
+  (mapcar 'gb/get-earned-points  (gb/get-all-student-multipliers)))
+
+(gb/get-all-earned-points)
+#+END_SRC
+
+#+RESULTS:
+: ((9.0 9.0 42.0 14.0) (7.0 6.0 54.0 10.0) (3.0 3.0 6.0 2.0))
+
+Next, we need to sum all the points and divide by the total points to get the overall numeric grade.
+
+#+BEGIN_SRC emacs-lisp :results value verbatim
+(defun gb/get-all-numeric-grades ()
+(mapcar (lambda (x) 
+	  (/ (apply '+ x) gb/TOTAL-POINTS))
+	  (gb/get-all-earned-points)))
+
+(gb/get-all-numeric-grades)
+#+END_SRC
+
+#+RESULTS:
+: (0.74 0.77 0.14)
+
+And finally, convert the numeric grades to letter grades. This involves finding the highest letter grade multiplier that the overall grade is larger than.
+
+#+BEGIN_SRC emacs-lisp :results value verbatim
+(defun gb/get-final-letter-grade (grade)
+ (dolist (pair gb/MULTIPLIERS letter-grade)
+   (if (< (cdr pair) grade) 
+       (progn
+	 (setq letter-grade (car pair))
+	 (return letter-grade)))))
+
+(mapcar 'gb/get-final-letter-grade (gb/get-all-numeric-grades))
+#+END_SRC
+
+#+RESULTS:
+: ("B" "B+" "R")
+
+That looks good. Now, let's make a final report of the results.
+
+#+BEGIN_SRC emacs-lisp :results value 
+(let ((emails (mapcar '(lambda (x) (nth 2 x)) (cdddr (gb/get-gradebook-lisp))))
+      (first-names (mapcar '(lambda (x) (nth 0 x)) (cdddr (gb/get-gradebook-lisp))))
+      (last-names (mapcar '(lambda (x) (nth 1 x)) (cdddr (gb/get-gradebook-lisp))))
+      (final-grades (mapcar 'gb/get-final-letter-grade (gb/get-all-numeric-grades))))
+(mapcar* (lambda (fn ln em fg)
+	   `(,fn ,ln ,em ,fg)) 
+	 first-names
+	 last-names
+	 emails
+	 final-grades))
+#+END_SRC
+
+#+RESULTS:
+| Jane | Doe       | jd@cmu.edu  | B  |
+| John | Dillinger | jdi@cmu.edu | B+ |
+| jill | wutz      | jw@cmu.edu  | R  |
+
+** Summary
+This is a pretty functional bit of code for computing final grades of a fixed format gradebook. It is missing some features. For example, it would not work well if any grades are missing, or if the gradebook is incomplete.
+
+* An index function for strings in emacs-lisp
+  :PROPERTIES:
+  :categories: emacs-lisp
+  :date:     2013/03/05 19:28:30
+  :updated:  2013/03/05 19:28:31
+  :END:
+
+I could not find an index function for strings in emacs-lisp. The =position= function seems to work for numbers, but not strings. Here is a version that works on strings.
+#+BEGIN_SRC emacs-lisp :results value verbatim
+(defun index (item list)
+  "return index of item in list or nil"
+  (let ((counter 0)
+        (found nil))
+    (dolist (listelement list counter)
+      (if (string= item listelement)
+	(progn 
+	  (setq found t)
+	  (return counter)) ; exit the loop
+	;; else increment counter
+	(incf counter)))
+    ;; if we found it return counter otherwise return nil
+    (if found counter nil)))
+#+END_SRC
+
+#+RESULTS:
+: index
+
+Here are some example uses:
+
+#+BEGIN_SRC emacs-lisp :results value
+(index "test" '("a" "test" "y"))
+#+END_SRC
+
+#+RESULTS:
+: 1
+
+#+BEGIN_SRC emacs-lisp :results value
+(index "z" '("a" "b" "z"))
+#+END_SRC
+
+#+RESULTS:
+: 2
+
+#+BEGIN_SRC emacs-lisp :results value verbatim
+(index "testy" '("a" "test" "y"))
+#+END_SRC
+
+#+RESULTS:
+: nil
+
+This raises an error because we use string=.
+
+#+BEGIN_SRC emacs-lisp :results value verbatim
+(index 1 '("a" "test" "y" 1))
+#+END_SRC
+* Integrating the Fermi distribution to compute entropy
+  :PROPERTIES:
+  :categories: dft, integration, gotcha
+  :date:     2013/03/06 09:39:42
+  :updated:  2013/03/06 09:47:19
+  :END:
+
+The Fermi distribution is defined by $f(\epsilon) = \frac{1}{e^{(\epsilon - \mu)/(k T)} + 1}$. This function describes the occupation of energy levels at temperatures above absolute zero. We use this function to compute electronic entropy in a metal, which contains an integral of $\int n(\epsilon) (f \ln f + (1 - f) \ln (1-f)) d\epsilon$, where $n(\epsilon)$ is the electronic density of states. Here we plot the Fermi distribution function. It shows that well below the Fermi level the states are fully occupied, and well above the Fermi level, they are unoccupied. Near the Fermi level, the states go from occupied to unoccupied smoothly.
+
+#+BEGIN_SRC python 
+import numpy as np
+import matplotlib.pyplot as plt
+
+mu = 0
+k = 8.6e-5
+T = 1000
+
+def f(e):
+    return 1.0 / (np.exp((e - mu)/(k*T)) + 1)
+
+espan = np.linspace(-10, 10, 200)
+plt.plot(espan, f(espan))
+plt.ylim([-0.1, 1.1])
+plt.savefig('images/fermi-entropy-integrand-1.png')
+#+END_SRC
+
+#+RESULTS:
+
+[[./images/fermi-entropy-integrand-1.png]]
+
+Let us consider a simple density of states function, just a parabola. This could represent a s-band for example. We will use this function to explore the integral.
+
+#+BEGIN_SRC python
+import numpy as np
+import matplotlib.pyplot as plt
+
+mu = 0
+k = 8.6e-5
+T = 1000
+
+def f(e):
+    return 1.0 / (np.exp((e - mu)/(k*T)) + 1)
+
+def dos(e):
+    d = (np.ones(e.shape) - 0.03 * e**2) 
+    return d * (d > 0)
+espan = np.linspace(-10, 10)
+
+plt.plot(espan, dos(espan), label='Total dos')
+plt.plot(espan, f(espan) * dos(espan), label='Occupied states')
+plt.legend(loc='best')
+plt.savefig('images/fermi-entropy-integrand-2.png')
+#+END_SRC
+
+#+RESULTS:
+
+[[./images/fermi-entropy-integrand-2.png]]
+Now, we consider the integral to compute the electronic entropy. The entropy is proportional to this integral.
+
+\( \int n(\epsilon) (f \ln f + (1 - f) \ln (1-f)) d\epsilon \)
+
+It looks straightforward to compute, but it turns out there is a wrinkle. Evaluating the integrand leads to =nan= elements because the ln(0) is -\infty. 
+
+#+BEGIN_SRC python
+import numpy as np
+mu = 0
+k = 8.6e-5
+T = 100
+
+def fermi(e):
+    return 1.0 / (np.exp((e - mu)/(k*T)) + 1)
+
+espan = np.array([-20, -10, -5, 0.0, 5, 10])
+f = fermi(espan)
+
+print f * np.log(f)
+print (1 - f) * np.log(1 - f) 
+#+END_SRC
+
+#+RESULTS:
+: [  0.00000000e+000   0.00000000e+000   0.00000000e+000  -3.46573590e-001
+:   -1.85216532e-250               nan]
+: [        nan         nan         nan -0.34657359  0.          0.        ]
+
+In this case, these =nan= elements should be equal to zero (x ln(x) goes to zero as x goes to zero). So, we can just ignore those elements in the integral. Here is how to do that.
+
+#+BEGIN_SRC python
+import numpy as np
+import matplotlib.pyplot as plt
+
+mu = 0
+k = 8.6e-5
+T = 1000
+
+def fermi(e):
+    return 1.0 / (np.exp((e - mu)/(k*T)) + 1)
+
+def dos(e):
+    d = (np.ones(e.shape) - 0.03 * e**2) 
+    return d * (d > 0)
+
+espan = np.linspace(-20, 10)
+f = fermi(espan)
+n = dos(espan)
+
+g = n * (f * np.log(f) + (1 - f) * np.log(1 - f))
+
+print np.trapz(espan, g) # nan because of the nan in the g vector
+print g
+
+plt.plot(espan, g)
+plt.savefig('images/fermi-entropy-integrand-3.png')
+
+# find the elements that are not nan
+ind = np.logical_not(np.isnan(g))
+
+# evaluate the integrand for only those points
+print np.trapz(espan[ind], g[ind])
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+nan
+[             nan              nan              nan              nan
+              nan              nan              nan              nan
+              nan              nan              nan              nan
+              nan              nan              nan              nan
+              nan              nan              nan              nan
+              nan              nan              nan              nan
+              nan              nan              nan              nan
+  -9.75109643e-14  -1.05987106e-10  -1.04640574e-07  -8.76265644e-05
+  -4.92684641e-02  -2.91047740e-01  -7.75652579e-04  -1.00962241e-06
+  -1.06972936e-09  -1.00527877e-12  -8.36436686e-16  -6.48930917e-19
+  -4.37946336e-22  -2.23285389e-25  -1.88578082e-29   0.00000000e+00
+   0.00000000e+00   0.00000000e+00   0.00000000e+00   0.00000000e+00
+   0.00000000e+00   0.00000000e+00]
+0.208886080897
+#+end_example
+
+[[./images/fermi-entropy-integrand-3.png]]
+
+The integrand is pretty well behaved in the figure above. You do not see the full range of the x-axis, because the integrand evaluates to =nan= for very negative numbers. This causes the =trapz= function to return =nan= also. We can solve the problem by only integrating the parts that are not =nan=. We have to use numpy.logical_not to get an element-wise array of which elements are not =nan=. In this example, the integrand is not well sampled, so the area under that curve may not be very accurate. 
+* Uncertainty in implicit functions
+  :PROPERTIES:
+  :categories: statistics
+  :date:     2013/03/08 17:04:02
+  :updated:  2013/03/14 15:34:19
+  :END:
+Suppose we have an equation $y = e^{a y}$ that we want to solve, where $a$ is a constant with some uncertainty. What is the uncertainty in the solution $y$?
+
+Finding a solution is not difficult. The uncertainty in the solution, however, is not easy, since we do not have an explicit function to propagate errors through. Let us examine the solution first.
+#+BEGIN_SRC python
+import numpy as np
+from scipy.optimize import fsolve
+
+a = 0.20
+
+def f(y):
+    return y - np.exp(a * y)
+
+sol, = fsolve(f, 1)
+print sol
+#+END_SRC
+
+#+RESULTS:
+: 1.2958555091
+
+A way to estimate the uncertainty is by Monte Carlo simulation. We solve the equation many times, using values sampled from the uncertainty distribution. Here we assume that the $a$ parameter is normally distributed  with an average of 0.2 and a std deviation of 0.02. We solve the equation 10000 times for different values of $a$ sampled according to the normal distribution. That gives us a distribution of solutions that we can do statistical analysis of to get the average and std deviation.
+
+#+BEGIN_SRC python
+import numpy as np
+from scipy.optimize import fsolve
+N = 10000
+
+A = np.random.normal(0.2, 0.02, size=N)
+
+sol = np.zeros(A.shape)
+
+for i, a in enumerate(A):
+    s, = fsolve(lambda y:y - np.exp(a * y), 1)
+    sol[i] = s
+
+ybar = np.mean(sol)
+s_y = np.std(sol)
+
+print ybar, s_y, s_y / ybar
+
+import matplotlib.pyplot as plt
+count, bins, ignored = plt.hist(sol)
+plt.savefig('images/implicit-uncertainty.png')
+#+END_SRC
+
+#+RESULTS:
+: 1.29887470397 0.0465110111613 0.0358086973433
+
+We get approximately the same answer, and you can see here the distribution of solution values is not quite normal. We compute the standard deviation anyway, and find the standard deviation is about 3.6%. It would be nice to have some analytical method to estimate this uncertainty. So far I have not figured that out.
+
+This method could have relevance in estimating the uncertainty in the friction factor for turbulent flow ($Re > 2100$). In that case we have the implicit equation $\frac{1}{\sqrt{f_F}}=4.0 \log(Re \sqrt{f_F})-0.4$. Uncertainties in the Re number would lead to uncertainties in the friction factor. Whether those uncertainties are larger than the uncertainties from the original correlation would require some investigation.
+
+* Class attributes with validation
+
+#+BEGIN_SRC python
+import numpy as np
+
+class SolidVaporPressure(object):
+    def __init__(self, A, B, C, D, mp):
+        self.A = A
+        self.B = B
+        self.C = C
+        self.D = D
+        self.mp = mp
+
+    
+    def __call__(self, t):
+        T = np.array(t, dtype=np.float)
+        Pvap = 10.0**(5.006 
+                      + self.A
+                      + self.B * T**-1
+                      + self.C * np.log10(T)
+                      + self.D * T**-3)
+        #Pvap[t > self.mp] = np.nan
+        return Pvap
+
+Al = SolidVaporPressure(9.459, -17342, -0.7927, 0.0, 933)
+
+
+print Al([800, 900])
+#+END_SRC
+
+#+RESULTS:
+: [  3.06351892e-10   7.14962188e-08]
+
+* Testing units
+#+BEGIN_SRC python
+from pycse.units import units
+
+u = units()
+
+a = 5 * u.kJ
+print repr(a)
+
+b = u.kJ**2# * (1.0 / u.kJ)
+print repr(b)
+c = (1.0 / u.kJ)
+print repr(c)
+
+print repr(b*c)
+print a.AS((1.0 / u.kJ) * u.kJ**2)
+#print a.as_units(u.m)
+
+#print '{0:1.3e}'.format(a)
+#print '{0:f kJ}'.format(a)
+#+END_SRC
+
+#+RESULTS:
+: Unit(5000.0, exponents=[ 2 -2  1  0  0  0  0], label=kJ)
+: Unit(1000000.0, exponents=[ 4 -4  2  0  0  0  0], label=kJ^2)
+: Unit(0.001, exponents=[-2  2 -1  0  0  0  0], label=kJ^-1)
+: Unit(1000.0, exponents=[ 2 -2  1  0  0  0  0], label=(kJ^2)*(kJ^-1))
+: 5.0 * (kJ^-1)*(kJ^2)
+
+
+
+#+BEGIN_SRC python
+from pycse.units import *
+from pycse.umath import quad
+
+
+u = units()
+k = 0.23 * 1 / u.min
+Cao = 2 * u.mol / u.L
+V = 1 * u.L
+
+Nao = Cao * V
+
+def integrand(Na):
+    return 1 / (k * Na)
+
+t, terr = quad(integrand, 0.5 * Nao, Nao)
+print t
+#+END_SRC
+
+#+RESULTS:
+: 180.821003624 * s
+
+* Overloading subclass methods
+
+#+BEGIN_SRC python
+import numpy as np
+
+class A(np.ndarray):
+    
+    def __new__(cls, input_array, label=None):
+        # Input array is an already formed ndarray instance
+        # We first cast to be our class type
+        obj = np.asarray(input_array).view(cls)
+        # add the new attribute to the created instance
+        obj.label = label
+        # Finally, we must return the newly created object:
+        return obj
+
+    def __array_finalize__(self, obj):
+        if obj is None: return
+        self.label = getattr(obj, 'label', None)
+        
+    def __array_wrap__(self, out_arr, context=None):
+        return np.ndarray.__array_wrap__(self, out_arr, context)
+
+    def __str__(self):
+        return 'A({0}, label={1!s})'.format(np.array(self), self.label)
+        
+
+a = A(2)
+print a 
+
+print a * 2
+print np.float(2) * a
+print np.float32(2) * a
+print np.float64(2) * a
+print np.__version__
+
+#+END_SRC
+
+#+RESULTS:
+: A(2, label=None)
+: A(4, label=None)
+: A(4.0, label=None)
+: A(4.0, label=None)
+: 4.0
+: 1.6.1
+: 1.6.1
+

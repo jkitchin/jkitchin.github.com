@@ -1,0 +1,87 @@
+* Converting elisp links to their value on export
+
+Someone asked on the mailing list if it would be possible to replace a lisp expression in org-mode with its value. I thought this should work with the filter system I have been exploring.  The idea is to preprocess the org buffer, get all the links, and handle the elisp links specially. Then, we use a filter to replace elisp links with the output we got from preprocessing. We need to have a few different links in this file to make it more obvious what we are doing. For example we do not want this [[empty section][link]] to be changed. The link to http://orgmode.org should not be changed. But we want a link like ~elisp:(+ 2 3)~ to be replaced by ~5~.
+
+The following text:
+#+BEGIN_EXAMPLE
+This file was exported on [[elisp:(format-time-string "%Y-%m-%d at %H:%m %p")]].
+
+The answer to 2 + 3 is [[elisp:(+ 2 3)]].
+#+END_EXAMPLE
+Renders like this:
+
+This file was exported on [[elisp:(format-time-string "%Y-%m-%d at %H:%m %p")]].
+
+The answer to 2 + 3 is [[elisp:(+ 2 3)]].
+
+First, we get the links. If there is an elisp link we set the list value to the value of the link evaluated, otherwise we set it to nil. In the filter, we will replace the output of the link if the value in this list is not nil.
+
+#+BEGIN_SRC emacs-lisp
+(setq link-list (let ((parsetree (org-element-parse-buffer))
+                      (counter 0))
+                  (org-element-map parsetree 'link
+                    (lambda (link) 
+                      (let* ((type (nth 0 link))
+                             (plist (nth 1 link))
+                             (content (nth 2 link))
+                             (path (plist-get plist :path))
+                             (type (plist-get plist ':type))
+                             (fname (car (last (split-string path "/"))))
+                             )
+                       (if (string-match "elisp" type) (format "%s" (eval (read (plist-get plist :path)))) "nil"))))))
+
+(princ link-list)
+
+#+END_SRC
+
+#+RESULTS:
+: (nil nil 2013-10-14 at 20:10 PM 5 nil)
+
+Now, we have the output of what we want for each link. Now, we will setup the filter, and export this file to a blogpost.
+
+#+BEGIN_SRC emacs-lisp
+(let ((counter 0))
+
+  (defun ox-mrkup-filter-link (text back-end info)
+    (let ((link-content (nth counter link-list)))
+      (if (not (string= link-content "nil")) 
+          (setq output (format "%s" link-content)) ;; this was an elisp link
+        (setq output text))) ; this was some other kind of link
+      (setq counter (+ counter 1))
+      output)
+
+  (let ((org-export-filter-link-functions '(ox-mrkup-filter-link))
+        (async nil)
+        (subtreep nil)
+        (visible-only nil)
+        (body-only t)
+        (ext-plist '()))
+    (org-html-export-as-html async subtreep visible-only body-only ext-plist))
+
+    ; now get the output into the org output
+    (switch-to-buffer "*Org HTML Export*")
+
+    (setq HTML (buffer-string))
+    (setq YAML "---
+title: Lisp links in org-mode to dynamically generated content
+date: 2013/10/14 22:49:00
+categories: org-mode
+---
+
+
+
+")
+  (with-temp-buffer
+(insert YAML)
+(insert HTML)
+(write-region (point-min) (point-max) "../_posts/2013-10-14-Lisp-links-in-org-mode-to-dynamically-generted-content.html")))
+(princ "Done.")
+
+#+END_SRC
+
+#+RESULTS:
+: Done.
+
+
+Finally, let us check [[../_posts/2013-10-14-Lisp-links-in-org-mode-to-dynamically-generted-content.html]].
+** empty section
