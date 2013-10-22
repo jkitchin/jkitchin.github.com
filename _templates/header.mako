@@ -1,8 +1,13 @@
 <header>
-  <div id="header" class="header_gradient theme_font">
+<div id="header" class="header_gradient theme_font">
+<table><tr><td>
     <h1><a href="${bf.util.site_path_helper()}">${bf.config.blog.name}</a></h1>
     <h2>${bf.config.blog.description}</h2>
-  </div>
+</td>
+<td colspan=100%><div style="float:right;width:100%;text-align:right;"> <span id='badgeCont737515' style='width:126px'><script src='http://labs.researcherid.com/mashlets?el=badgeCont737515&mashlet=badge&showTitle=false&className=a&rid=A-2363-2010'></script></span></div>
+</td></tr>
+</table>
+</div>
   <div id="navigation" class="grid_12">
 <%
 def nav_class(path):
