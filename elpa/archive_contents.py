@@ -28,10 +28,10 @@ def get_archive_contents_entry(tfile):
                                     ver.patch)
 
     with closing(tarfile.open(tfile)) as t:
-        f = t.extractfile(pkgname + '/docstring.txt')
+        f = t.extractfile(base + '/docstring.txt')
         DOCSTRING = f.read().strip()
 
-        f = t.extractfile(pkgname + '/requirements.txt')
+        f = t.extractfile(base + '/requirements.txt')
         REQUIREMENTS = f.read().strip()
 
         return '''({pkgname} . [{version} {REQUIREMENTS} "{DOCSTRING}" tar])'''.format(**locals())
