@@ -34,7 +34,7 @@ def get_archive_contents_entry(tfile):
         f = t.extractfile(base + '/requirements.txt')
         REQUIREMENTS = f.read().strip()
 
-        return '''({pkgname} . [{version} {REQUIREMENTS} "{DOCSTRING}" tar])'''.format(**locals())
+        return '''({pkgname} . [{version} nil "{DOCSTRING}" tar])'''.format(**locals())
 
 # build up a dictionary 
 mostrecent = {}
