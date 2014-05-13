@@ -83,6 +83,171 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Subclassing-an-ase-calculators-vasp-calculator-to-do-post-analysis"></div>
+      <h2 class="blog_post_title"><a href="/blog/2013/02/19/Subclassing-an-ase-calculators-vasp-calculator-to-do-post-analysis/" rel="bookmark" title="Permanent Link to Subclassing an ase.calculators.vasp calculator to do post analysis">Subclassing an ase.calculators.vasp calculator to do post analysis</a></h2>
+      <p><small><span class="blog_post_date">Posted February 19, 2013 at 09:00 AM</span> | categories: 
+        <span class="blog_post_categories"><a href='/blog/category/vasp/'>vasp</a>, <a href='/blog/category/ase/'>ase</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2013/02/19/Subclassing-an-ase-calculators-vasp-calculator-to-do-post-analysis#disqus_thread">View Comments</a>
+      <p><small><span class="blog_post_date">Updated March 01, 2013 at 02:54 PM</span>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+
+<p>
+Recently someone <a href="https://listserv.fysik.dtu.dk/pipermail/ase-users/2013-February/001683.html" >reported</a> on the ase-users mail list an issue they had with the Vasp calculator where the maximum number of electronic steps and then stops, even though the calculation is not converged. They asked how to make this raise an exception. This is not a built in feature in ase.calculators.vasp, but we can add it via a subclass. The idea is create a new class that inherits from ase.calculators.vasp, and then augment the calculate function to do some post analysis. In this case, we will parse the OUTCAR file looking for lines like:
+</p>
+
+<pre class="example">
+----------------------------------------- Iteration    1(   1)  ---------------------------------------
+</pre>
+
+<p>
+I think the first integer corresponds to an ionic iteration, while the number in parentheses corresponds to an electronic iteration.  We will just count them up, and see if they match the values we specified. If they do, we can print an error message, or raise an exception. Here is the code:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">from</span> ase.calculators.vasp <span style="color: #8b0000;">import</span> Vasp
+<span style="color: #8b0000;">from</span> ase <span style="color: #8b0000;">import</span> Atom, Atoms
+<span style="color: #8b0000;">import</span> os, re
+
+os.chdir(<span style="color: #228b22;">'h2o-relax'</span>)
+
+<span style="color: #8b0000;">class</span> <span style="color: #4682b4;">myvasp</span>(Vasp):
+    <span style="color: #228b22;">'''subclass to run VASP and then check OUTCAR to see if the number</span>
+<span style="color: #228b22;">    of electronic steps is equal to the max NELM specified, or if the</span>
+<span style="color: #228b22;">    number of geometry steps is equal to NSW. Either case indicates</span>
+<span style="color: #228b22;">    VASP may not be converged, but just stopped because it was told</span>
+<span style="color: #228b22;">    too.'''</span>
+
+    <span style="color: #ff0000; font-weight: bold;">#</span><span style="color: #ff0000; font-weight: bold;">save original function</span>
+    
+    <span style="color: #8b0000;">def</span> <span style="color: #8b2323;">calculate</span>(<span style="color: #8b0000;">self</span>, *args):
+        <span style="color: #228b22;">'Run VASP, then check if nsw or nelm is met'</span>
+
+        <span style="color: #ff0000; font-weight: bold;">#</span><span style="color: #ff0000; font-weight: bold;">run original calculate method</span>
+        Vasp.calculate(<span style="color: #8b0000;">self</span>, *args)
+        
+        <span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">now do post analysis</span>
+        NELM = <span style="color: #8b0000;">self</span>.int_params[<span style="color: #228b22;">'nelm'</span>]
+        NSW = <span style="color: #8b0000;">self</span>.int_params[<span style="color: #228b22;">'nsw'</span>]
+
+        max_nelm, max_nsw = 0, 0
+
+        <span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">open OUTCAR and check for what you want</span>
+        <span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">parse this line: - Iteration    1(   1)</span>
+        regexp = re.compile(<span style="color: #228b22;">'Iteration\s+(?P&lt;nsw&gt;\d*)\(\s+(?P&lt;nelm&gt;\d*)\)'</span>)
+        count = 0
+        <span style="color: #8b0000;">with</span> <span style="color: #8b0000;">open</span>(<span style="color: #228b22;">'OUTCAR'</span>) <span style="color: #8b0000;">as</span> f:
+            <span style="color: #8b0000;">for</span> line <span style="color: #8b0000;">in</span> f:
+                <span style="color: #8b0000;">if</span> <span style="color: #228b22;">'Iteration'</span> <span style="color: #8b0000;">in</span> line:
+                    m = regexp.search(line)
+                    nsw = <span style="color: #8b0000;">int</span>(m.groupdict().get(<span style="color: #228b22;">'nsw'</span>))
+                    <span style="color: #8b0000;">if</span> nsw &gt; max_nsw:
+                        max_nsw = nsw
+                    nelm = <span style="color: #8b0000;">int</span>(m.groupdict().get(<span style="color: #228b22;">'nelm'</span>))
+                    <span style="color: #8b0000;">if</span> nelm &gt; max_nelm:
+                        max_nelm = nelm
+
+        <span style="color: #8b0000;">if</span> max_nelm == NELM:
+            <span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">raise exception here if you prefer</span>
+            <span style="color: #8b0000;">print</span> (<span style="color: #228b22;">'{0} NELM steps taken! check convergence'</span>.format(max_nelm))
+        <span style="color: #8b0000;">if</span> max_nsw == NSW:
+            <span style="color: #8b0000;">print</span>(<span style="color: #228b22;">'{0} NSW steps taken! check convergence'</span>.format(max_nsw))
+
+
+atoms = Atoms([Atom(<span style="color: #228b22;">'H'</span>, [0.5960812, -0.7677068, 0.0000000]),
+               Atom(<span style="color: #228b22;">'O'</span>, [0.0000000, 0.0000000, 0.0000000]),
+               Atom(<span style="color: #228b22;">'H'</span>, [0.5960812, 0.7677068, 0.0000000])],
+               cell=(8, 8, 8))
+
+calc = myvasp(xc=<span style="color: #228b22;">'PBE'</span>,
+              nelm=2,
+              encut=400,
+              ismear=0,<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">Gaussian smearing</span>
+              ibrion=2,
+              ediff=1e-8,
+              nsw=3)
+
+atoms.set_calculator(calc)
+
+<span style="color: #8b0000;">print</span> <span style="color: #228b22;">'Forces'</span>
+<span style="color: #8b0000;">print</span> <span style="color: #228b22;">'==========================='</span>
+<span style="color: #8b0000;">print</span> atoms.get_forces()
+</pre>
+</div>
+
+<pre class="example">
+Forces
+===========================
+ running on    1 nodes
+ distr:  one band on    1 nodes,    1 groups
+ vasp.5.2.12 11Nov11 complex                                                    
+  
+ POSCAR found :  2 types and       3 ions
+ LDA part: xc-table for Pade appr. of Perdew
+ found WAVECAR, reading the header
+ POSCAR, INCAR and KPOINTS ok, starting setup
+ WARNING: small aliasing (wrap around) errors must be expected
+ FFT: planning ...(           1 )
+ reading WAVECAR
+ the WAVECAR file was read sucessfully
+ initial charge from wavefunction
+ entering main loop
+       N       E                     dE             d eps       ncg     rms          rms(c)
+DAV:   1    -0.142298749169E+02   -0.14230E+02   -0.10298E-01    24   0.330E+00    0.231E-01
+DAV:   2    -0.142281671566E+02    0.17078E-02   -0.36659E-03    24   0.581E-01
+   1 F= -.14228167E+02 E0= -.14228167E+02  d E =-.142282E+02
+ curvature:   0.00 expect dE= 0.000E+00 dE for cont linesearch  0.000E+00
+ trial: gam= 0.00000 g(F)=  0.114E-04 g(S)=  0.000E+00 ort = 0.000E+00 (trialstep = 0.100E+01)
+ search vector abs. value=  0.114E-04
+ bond charge predicted
+       N       E                     dE             d eps       ncg     rms          rms(c)
+DAV:   1    -0.142273929196E+02    0.24820E-02   -0.17613E-03    24   0.419E-01    0.149E-02
+DAV:   2    -0.142274190765E+02   -0.26157E-04   -0.20256E-04    16   0.115E-01
+   2 F= -.14227419E+02 E0= -.14227419E+02  d E =0.748080E-03
+ trial-energy change:    0.000748  1 .order   -0.000006   -0.000011   -0.000001
+ step:   1.0700(harm=  1.0700)  dis= 0.00047  next Energy=   -14.228173 (dE=-0.609E-05)
+ bond charge predicted
+       N       E                     dE             d eps       ncg     rms          rms(c)
+DAV:   1    -0.142274279955E+02   -0.35076E-04   -0.72088E-06    32   0.308E-02    0.758E-03
+DAV:   2    -0.142274385490E+02   -0.10553E-04   -0.97783E-07    24   0.858E-03
+   3 F= -.14227439E+02 E0= -.14227439E+02  d E =0.728608E-03
+ curvature:  -0.53 expect dE=-0.133E-03 dE for cont linesearch -0.931E-08
+ trial: gam=21.74088 g(F)=  0.248E-03 g(S)=  0.000E+00 ort = 0.445E-06 (trialstep = 0.204E-02)
+ search vector abs. value=  0.565E-02
+ writing wavefunctions
+Running vanilla serial job
+2 NELM steps taken! check convergence
+3 NSW steps taken! check convergence
+[[ 0.024 -0.028  0.   ]
+ [-0.048  0.     0.   ]
+ [ 0.024  0.028  0.   ]]
+</pre>
+<p>Copyright (C) 2013 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2013/02/19/Subclassing-an-ase.calculators.vasp-calculator-to-do-post-analysis.org">org-mode source</a><p>
+
+
+    </div>
+  </div>
+</article>
+
+
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2013/02/19/Subclassing-an-ase-calculators-vasp-calculator-to-do-post-analysis#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Are-averages-different"></div>
       <h2 class="blog_post_title"><a href="/blog/2013/02/18/Are-averages-different/" rel="bookmark" title="Permanent Link to Are averages different">Are averages different</a></h2>
       <p><small><span class="blog_post_date">Posted February 18, 2013 at 09:00 AM</span> | categories: 
@@ -540,84 +705,6 @@ plt.savefig(<span style="color: #228b22;">'images/linefit-1.png'</span>)
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2013/02/18/Fit-a-line-to-numerical-data#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Fitting-a-numerical-ODE-solution-to-data"></div>
-      <h2 class="blog_post_title"><a href="/blog/2013/02/18/Fitting-a-numerical-ODE-solution-to-data/" rel="bookmark" title="Permanent Link to Fitting a numerical ODE solution to data">Fitting a numerical ODE solution to data</a></h2>
-      <p><small><span class="blog_post_date">Posted February 18, 2013 at 09:00 AM</span> | categories: 
-        <span class="blog_post_categories"><a href='/blog/category/data-analysis/'>data analysis</a>, <a href='/blog/category/nonlinear-regression/'>nonlinear regression</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2013/02/18/Fitting-a-numerical-ODE-solution-to-data#disqus_thread">View Comments</a>
-      <p><small><span class="blog_post_date">Updated February 27, 2013 at 02:39 PM</span>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-<a href="http://matlab.cheme.cmu.edu/2011/09/29/fitting-a-numerical-ode-solution-to-data/" >Matlab post</a>
-</p>
-
-<p>
-Suppose we know the concentration of A follows this differential equation: \(\frac{dC_A}{dt} = -k C_A\), and we have data we want to fit to it. Here is an example of doing that.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
-<span style="color: #8b0000;">from</span> scipy.optimize <span style="color: #8b0000;">import</span> curve_fit
-<span style="color: #8b0000;">from</span> scipy.integrate <span style="color: #8b0000;">import</span> odeint
-
-<span style="color: #ff0000; font-weight: bold;"># given data we want to fit</span>
-tspan = [0, 0.1, 0.2, 0.4, 0.8, 1]
-Ca_data = [2.0081,  1.5512,  1.1903,  0.7160,  0.2562,  0.1495]
-
-<span style="color: #8b0000;">def</span> <span style="color: #8b2323;">fitfunc</span>(t, k):
-    <span style="color: #228b22;">'Function that returns Ca computed from an ODE for a k'</span>
-    <span style="color: #8b0000;">def</span> <span style="color: #8b2323;">myode</span>(Ca, t):
-        <span style="color: #8b0000;">return</span> -k * Ca
-
-    Ca0 = Ca_data[0]
-    Casol = odeint(myode, Ca0, t)
-    <span style="color: #8b0000;">return</span> Casol[:,0]
-
-k_fit, kcov = curve_fit(fitfunc, tspan, Ca_data, p0=1.3)
-<span style="color: #8b0000;">print</span> k_fit
-
-tfit = np.linspace(0,1);
-fit = fitfunc(tfit, k_fit)
-
-<span style="color: #8b0000;">import</span> matplotlib.pyplot <span style="color: #8b0000;">as</span> plt
-plt.plot(tspan, Ca_data, <span style="color: #228b22;">'ro'</span>, label=<span style="color: #228b22;">'data'</span>)
-plt.plot(tfit, fit, <span style="color: #228b22;">'b-'</span>, label=<span style="color: #228b22;">'fit'</span>)
-plt.legend(loc=<span style="color: #228b22;">'best'</span>)
-plt.savefig(<span style="color: #228b22;">'images/ode-fit.png'</span>)
-</pre>
-</div>
-
-<pre class="example">
-[ 2.58893455]
-</pre>
-
-<p><img src="/img/./images/ode-fit.png"><p>
-<p>Copyright (C) 2013 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2013/02/18/Fitting-a-numerical-ODE-solution-to-data.org">org-mode source</a><p>
-
-    </div>
-  </div>
-</article>
-
-
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2013/02/18/Fitting-a-numerical-ODE-solution-to-data#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="../39">« Previous Page</a>
   --  
  <a href="../41">Next Page »</a>
@@ -648,11 +735,11 @@ Search
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2014/05/13/Using-org-ref-for-citations-and-references/">Using org-ref for citations and references</a></li>
       <li><a href="/blog/2014/05/12/Autogenerating-functions-in-emacs-lisp/">Autogenerating functions in emacs-lisp</a></li>
       <li><a href="/blog/2014/04/29/Finding-missing-citation-entries-in-an-org-file/">Finding missing citation entries in an org-file</a></li>
       <li><a href="/blog/2014/04/28/A-popup-menu-for-citation-links-in-org-mode/">A popup menu for citation links in org-mode</a></li>
       <li><a href="/blog/2014/04/27/A-better-insert-citation-function-for-org-mode/">A better insert citation function for org-mode</a></li>
-      <li><a href="/blog/2014/04/22/Putting-link-references-to-lines-of-code-in-a-source-block/">Putting link references to lines of code in a source block</a></li>
     </ul>
   </section>
 
