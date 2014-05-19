@@ -1,0 +1,1296 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed
+  xmlns="http://www.w3.org/2005/Atom"
+  xmlns:thr="http://purl.org/syndication/thread/1.0"
+  xml:lang="en"
+   >
+  <title type="text">The Kitchin Research Group</title>
+  <subtitle type="text">Chemical Engineering at Carnegie Mellon University</subtitle>
+
+  <updated>2014-05-17T19:30:03Z</updated>
+  <generator uri="http://blogofile.com/">Blogofile</generator>
+
+  <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog" />
+  <id>http://jkitchin.github.io/blog/feed/atom/</id>
+  <link rel="self" type="application/atom+xml" href="http://jkitchin.github.io/blog/feed/atom/" />
+  <entry>
+    <author>
+      <name></name>
+      <uri>http://jkitchin.github.io/blog</uri>
+    </author>
+    <title type="html"><![CDATA[Calling lapack directly from scipy]]></title>
+    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2013/05/21/Calling-lapack-directly-from-scipy" />
+    <id>http://jkitchin.github.io/blog/2013/05/21/Calling-lapack-directly-from-scipy</id>
+    <updated>2013-06-26T18:55:43Z</updated>
+    <published>2013-05-21T11:28:27Z</published>
+    <category scheme="http://jkitchin.github.io/blog" term="linear algebra" />
+    <summary type="html"><![CDATA[Calling lapack directly from scipy]]></summary>
+    <content type="html" xml:base="http://jkitchin.github.io/blog/2013/05/21/Calling-lapack-directly-from-scipy"><![CDATA[
+
+
+<p>
+If the built in linear algebra functions in numpy and scipy do not meet your needs, it is often possible to directly call lapack functions. Here we call a function to solve a set of complex linear equations. The lapack function for this is ZGBSV. The description of this function (<a href="http://linux.die.net/man/l/zgbsv">http://linux.die.net/man/l/zgbsv</a>) is:
+</p>
+
+<p>
+ZGBSV computes the solution to a complex system of linear equations A * X = B, where A is a band matrix of order N with KL subdiagonals and KU superdiagonals, and X and B are N-by-NRHS matrices. The LU decomposition with partial pivoting and row interchanges is used to factor A as A = L * U, where L is a product of permutation and unit lower triangular matrices with KL subdiagonals, and U is upper triangular with KL+KU superdiagonals. The factored form of A is then used to solve the system of equations A * X = B. 
+</p>
+
+<p>
+The python signature is (<a href="http://docs.scipy.org/doc/scipy/reference/generated/scipy.linalg.lapack.zgbsv.html#scipy.linalg.lapack.zgbsv">http://docs.scipy.org/doc/scipy/reference/generated/scipy.linalg.lapack.zgbsv.html#scipy.linalg.lapack.zgbsv</a>): 
+</p>
+
+<p>
+lub,piv,x,info = zgbsv(kl,ku,ab,b,[overwrite_ab,overwrite_b])
+</p>
+
+<p>
+We will look at an example from <a href="http://www.nag.com/lapack-ex/node22.html">http://www.nag.com/lapack-ex/node22.html</a>.
+</p>
+
+<p>
+We solve \(A x = b\) with
+</p>
+
+<p>
+\( 
+A = \left(
+</p>
+\begin{array}{cccc}
+   -1.65 + 2.26 i & -2.05 - 0.85 i &  0.97 - 2.84 i &       0        \\
+           6.30 i & -1.48 - 1.75 i & -3.99 + 4.01 i &  0.59 - 0.48 i \\
+         0        & -0.77 + 2.83 i & -1.06 + 1.94 i &  3.33 - 1.04 i \\
+         0        &       0        &  4.48 - 1.09 i & -0.46 - 1.72 i
+\end{array}
+<p>
+       \right)
+\)
+</p>
+
+<p>
+\(
+b = \left(
+</p>
+\begin{array}{cc}
+    -1.06 + 21.50 i \\
+   -22.72 - 53.90 i \\
+    28.24 - 38.60 i \\
+   -34.56 + 16.73 i
+\end{array}
+<p>
+       \right).
+\)
+</p>
+
+<p>
+The \(A\) matrix has one lower diagonal (kl = 1) and two upper diagonals (ku = 2), four equations (n = 4) and one right-hand side.
+</p>
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">import</span> scipy.linalg.lapack <span style="color: #8b0000;">as</span> la
+
+<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">http://www.nag.com/lapack-ex/node22.html</span>
+<span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
+A = np.array([[-1.65 + 2.26j, -2.05 - 0.85j,  0.97 - 2.84j,  0.0         ],
+              [6.30j,         -1.48 - 1.75j, -3.99 + 4.01j,  0.59 - 0.48j],
+              [0.0,           -0.77 + 2.83j, -1.06 + 1.94j,  3.33 - 1.04j],
+              [0.0,            0.0,           4.48 - 1.09j, -0.46 - 1.72j]])
+
+<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">construction of Ab is tricky.  Fortran indexing starts at 1, not</span>
+<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">0. This code is based on the definition of Ab at</span>
+<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">http://linux.die.net/man/l/zgbsv. First, we create the Fortran</span>
+<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">indices based on the loops, and then subtract one from them to index</span>
+<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">the numpy arrays.</span>
+Ab = np.zeros((5,4),dtype=np.complex)
+n, kl, ku = 4, 1, 2
+
+<span style="color: #8b0000;">for</span> j <span style="color: #8b0000;">in</span> <span style="color: #8b0000;">range</span>(1, n + 1):
+    <span style="color: #8b0000;">for</span> i <span style="color: #8b0000;">in</span> <span style="color: #8b0000;">range</span>(max(1, j - ku), <span style="color: #8b0000;">min</span>(n, j + kl) + 1):
+        Ab[kl + ku + 1 + i - j - 1, j - 1] = A[i-1, j-1]
+
+b = np.array([[-1.06  + 21.50j],
+              [-22.72 - 53.90j],
+              [28.24 - 38.60j],
+              [-34.56 + 16.73j]])
+
+lub, piv, x, info = la.flapack.zgbsv(kl, ku, Ab, b)
+
+<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">compare to results at http://www.nag.com/lapack-ex/examples/results/zgbsv-ex.r</span>
+<span style="color: #8b0000;">print</span> <span style="color: #228b22;">'x = '</span>,x
+<span style="color: #8b0000;">print</span> <span style="color: #228b22;">'info = '</span>,info
+
+<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">check solution</span>
+<span style="color: #8b0000;">print</span> <span style="color: #228b22;">'solved: '</span>,np.all(np.dot(A,x) - b &lt; 1e-12)
+
+<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">here is the easy way!!!</span>
+<span style="color: #8b0000;">print</span> <span style="color: #228b22;">'\n\nbuilt-in solver'</span>
+<span style="color: #8b0000;">print</span> np.linalg.solve(A,b)
+</pre>
+</div>
+
+<pre class="example">
+x =  [[-3.+2.j]
+ [ 1.-7.j]
+ [-5.+4.j]
+ [ 6.-8.j]]
+info =  0
+solved:  True
+
+
+built-in solver
+[[-3.+2.j]
+ [ 1.-7.j]
+ [-5.+4.j]
+ [ 6.-8.j]]
+</pre>
+
+<p>
+Some points of discussion. 
+</p>
+
+<ol class="org-ol">
+<li>Kind of painful! but, nevertheless, possible. You have to do a lot more work figuring out the dimensions of the problem, how to setup the problem, keeping track of indices, etc&#x2026;  
+</li>
+</ol>
+
+<p>
+But, one day it might be helpful to know this can be done, e.g. to debug an installation, to validate an approach against known results, etc&#x2026;
+</p>
+<p>Copyright (C) 2013 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2013/05/21/Calling-lapack-directly-from-scipy.org">org-mode source</a><p>]]></content>
+  </entry>
+  <entry>
+    <author>
+      <name></name>
+      <uri>http://jkitchin.github.io/blog</uri>
+    </author>
+    <title type="html"><![CDATA[Computing determinants from matrix decompositions]]></title>
+    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2013/04/01/Computing-determinants-from-matrix-decompositions" />
+    <id>http://jkitchin.github.io/blog/2013/04/01/Computing-determinants-from-matrix-decompositions</id>
+    <updated>2013-04-02T08:18:25Z</updated>
+    <published>2013-04-01T19:57:29Z</published>
+    <category scheme="http://jkitchin.github.io/blog" term="linear algebra" />
+    <summary type="html"><![CDATA[Computing determinants from matrix decompositions]]></summary>
+    <content type="html" xml:base="http://jkitchin.github.io/blog/2013/04/01/Computing-determinants-from-matrix-decompositions"><![CDATA[
+
+
+<p>
+
+There are a few properties of a matrix that can make it easy to compute determinants.
+</p>
+
+<ol>
+<li>The determinant of a triangular matrix is the product of the elements on the diagonal. 
+</li>
+<li>The determinant of a permutation matrix is (-1)**n where n is the number of permutations. Recall a permutation matrix is a matrix with a one in each row, and column, and zeros everywhere else. 
+</li>
+<li>The determinant of a product of matrices is equal to the product of the determinant of the matrices.
+</li>
+</ol>
+
+<p>
+The LU decomposition computes three matrices such that \(A = P L U\). Thus, \(\det A = \det P \det L \det U\). \(L\) and \(U\) are triangular, so we just need to compute the product of the diagonals. \(P\) is not triangular, but if the elements of the diagonal are not 1, they will be zero, and then there has been a swap. So we simply subtract the sum of the diagonal from the length of the diagonal and then subtract 1 to get the number of swaps.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
+<span style="color: #8b0000;">from</span> scipy.linalg <span style="color: #8b0000;">import</span> lu
+
+A = np.array([[6, 2, 3],
+              [1, 1, 1],
+              [0, 4, 9]])
+
+P, L, U = lu(A)
+
+nswaps = <span style="color: #8b0000;">len</span>(np.diag(P)) - np.sum(np.diag(P)) - 1
+
+detP = (-1)**nswaps
+detL =  np.prod(np.diag(L)) 
+detU = np.prod(np.diag(U))
+
+<span style="color: #8b0000;">print</span> detP * detL * detU
+
+<span style="color: #8b0000;">print</span> np.linalg.det(A)
+</pre>
+</div>
+
+<pre class="example">
+24.0
+24.0
+</pre>
+
+<p>
+According to the numpy documentation, a method similar to this is used to compute the determinant. 
+</p>
+<p>Copyright (C) 2013 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2013/04/01/Computing-determinants-from-matrix-decompositions.org">org-mode source</a><p>]]></content>
+  </entry>
+  <entry>
+    <author>
+      <name></name>
+      <uri>http://jkitchin.github.io/blog</uri>
+    </author>
+    <title type="html"><![CDATA[Potential gotchas in linear algebra in numpy]]></title>
+    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2013/03/12/Potential-gotchas-in-linear-algebra-in-numpy" />
+    <id>http://jkitchin.github.io/blog/2013/03/12/Potential-gotchas-in-linear-algebra-in-numpy</id>
+    <updated>2013-03-12T22:19:53Z</updated>
+    <published>2013-03-12T22:19:53Z</published>
+    <category scheme="http://jkitchin.github.io/blog" term="linear algebra" />
+    <category scheme="http://jkitchin.github.io/blog" term="gotcha" />
+    <summary type="html"><![CDATA[Potential gotchas in linear algebra in numpy]]></summary>
+    <content type="html" xml:base="http://jkitchin.github.io/blog/2013/03/12/Potential-gotchas-in-linear-algebra-in-numpy"><![CDATA[
+
+
+<p>
+Numpy has some gotcha features for linear algebra purists. The first is that a 1d array is neither a row, nor a column vector. That is, \(a\) = \(a^T\) if \(a\) is a 1d array. That means you can take the dot product of \(a\) with itself, without transposing the second argument. This would not be allowed in Matlab.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
+
+a = np.array([0, 1, 2])
+<span style="color: #8b0000;">print</span> a.shape
+<span style="color: #8b0000;">print</span> a
+<span style="color: #8b0000;">print</span> a.T
+
+<span style="color: #8b0000;">print</span>
+<span style="color: #8b0000;">print</span> np.dot(a, a)
+<span style="color: #8b0000;">print</span> np.dot(a, a.T)
+</pre>
+</div>
+
+<pre class="example">
+&gt;&gt;&gt; &gt;&gt;&gt; (3L,)
+[0 1 2]
+[0 1 2]
+&gt;&gt;&gt;
+5
+5
+</pre>
+
+<p>
+Compare the previous behavior with this 2d array. In this case, you cannot take the dot product of \(b\) with itself, because the dimensions are incompatible. You must transpose the second argument to make it dimensionally consistent. Also, the result of the dot product is not a simple scalar, but a 1 &times; 1 array.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python">b = np.array([[0, 1, 2]])
+<span style="color: #8b0000;">print</span> b.shape
+<span style="color: #8b0000;">print</span> b
+<span style="color: #8b0000;">print</span> b.T
+
+<span style="color: #8b0000;">print</span> np.dot(b, b)    <span style="color: #ff0000; font-weight: bold;"># this is not ok, the dimensions are wrong.</span>
+<span style="color: #8b0000;">print</span> np.dot(b, b.T)
+<span style="color: #8b0000;">print</span> np.dot(b, b.T).shape
+</pre>
+</div>
+
+<pre class="example">
+(1L, 3L)
+[[0 1 2]]
+[[0]
+ [1]
+ [2]]
+&gt;&gt;&gt; Traceback (most recent call last):
+  File "&lt;stdin&gt;", line 1, in &lt;module&gt;
+ValueError: objects are not aligned
+[[5]]
+(1L, 1L)
+</pre>
+
+<p>
+Try to figure this one out! x is a column vector, and y is a 1d vector. Just by adding them you get a 2d array.
+</p>
+<div class="org-src-container">
+
+<pre class="src src-python">x = np.array([[2], [4], [6], [8]])
+y = np.array([1, 1, 1, 1, 1, 2])
+<span style="color: #8b0000;">print</span> x + y
+</pre>
+</div>
+
+<pre class="example">
+&gt;&gt;&gt; [[ 3  3  3  3  3  4]
+ [ 5  5  5  5  5  6]
+ [ 7  7  7  7  7  8]
+ [ 9  9  9  9  9 10]]
+</pre>
+
+<p>
+Or this crazy alternative way to do the same thing.
+</p>
+<div class="org-src-container">
+
+<pre class="src src-python">x = np.array([2, 4, 6, 8])
+y = np.array([1, 1, 1, 1, 1, 1, 2])
+
+<span style="color: #8b0000;">print</span> x[:, np.newaxis] + y
+</pre>
+</div>
+
+<pre class="example">
+&gt;&gt;&gt; &gt;&gt;&gt; [[ 3  3  3  3  3  3  4]
+ [ 5  5  5  5  5  5  6]
+ [ 7  7  7  7  7  7  8]
+ [ 9  9  9  9  9  9 10]]
+</pre>
+
+<p>
+In the next example,  we have a 3 element vector and a 4 element vector. We convert \(b\) to a 2D array with np.newaxis, and compute the outer product of the two arrays. The result is a 4 &times; 3 array.
+</p>
+<div class="org-src-container">
+
+<pre class="src src-python">a = np.array([1, 2, 3])
+b = np.array([10, 20, 30, 40])
+
+<span style="color: #8b0000;">print</span> a * b[:, np.newaxis]
+</pre>
+</div>
+
+<pre class="example">
+&gt;&gt;&gt; &gt;&gt;&gt; [[ 10  40  90]
+ [ 20  80 180]
+ [ 30 120 270]
+ [ 40 160 360]]
+</pre>
+
+<p>
+These concepts are known in numpy as array broadcasting. See <a href="http://www.scipy.org/EricsBroadcastingDoc" >http://www.scipy.org/EricsBroadcastingDoc</a> and <a href="http://docs.scipy.org/doc/numpy/user/basics.broadcasting.html" >http://docs.scipy.org/doc/numpy/user/basics.broadcasting.html</a> for more details.
+</p>
+
+<p>
+These are points to keep in mind, as the operations do not strictly follow the conventions of linear algebra, and may be confusing at times.
+</p>
+<p>Copyright (C) 2013 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2013/03/12/Potential-gotchas-in-linear-algebra-in-numpy.org">org-mode source</a><p>]]></content>
+  </entry>
+  <entry>
+    <author>
+      <name></name>
+      <uri>http://jkitchin.github.io/blog</uri>
+    </author>
+    <title type="html"><![CDATA[Determining linear independence of a set of vectors]]></title>
+    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2013/03/01/Determining-linear-independence-of-a-set-of-vectors" />
+    <id>http://jkitchin.github.io/blog/2013/03/01/Determining-linear-independence-of-a-set-of-vectors</id>
+    <updated>2013-05-05T14:10:05Z</updated>
+    <published>2013-03-01T16:44:46Z</published>
+    <category scheme="http://jkitchin.github.io/blog" term="linear algebra" />
+    <summary type="html"><![CDATA[Determining linear independence of a set of vectors]]></summary>
+    <content type="html" xml:base="http://jkitchin.github.io/blog/2013/03/01/Determining-linear-independence-of-a-set-of-vectors"><![CDATA[
+
+
+<p>
+ <a href="http://matlab.cheme.cmu.edu/2011/08/02/determining-linear-independence-of-a-set-of-vectors/" >Matlab post</a>
+Occasionally we have a set of vectors and we need to determine whether the vectors are linearly independent of each other. This may be necessary to determine if the vectors form a basis, or to determine how many independent equations there are, or to determine how many independent reactions there are.
+</p>
+
+<p>
+Reference: Kreysig, Advanced Engineering Mathematics, sec. 7.4
+</p>
+
+<p>
+Matlab provides a rank command which gives you the number of singular values greater than some tolerance. The numpy.rank function, unfortunately, does not do that. It returns the number of dimensions in the array. We will just compute the rank from singular value decomposition.
+</p>
+
+<p>
+The default tolerance used in Matlab is max(size(A))*eps(norm(A)). Let us break that down. eps(norm(A)) is the positive distance from abs(X) to the next larger in magnitude floating point number of the same precision as X. Basically, the smallest significant number. We multiply that by the size of A, and take the largest number. We have to use some judgment in what the tolerance is, and what &ldquo;zero&rdquo; means.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
+v1 = [6, 0, 3, 1, 4, 2];
+v2 = [0, -1, 2, 7, 0, 5];
+v3 = [12, 3, 0, -19, 8, -11];
+
+A = np.row_stack([v1, v2, v3])
+
+<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">matlab definition</span>
+eps = np.finfo(np.linalg.norm(A).dtype).eps
+TOLERANCE = <span style="color: #8b0000;">max</span>(eps * np.array(A.shape))
+
+U, s, V = np.linalg.svd(A)
+<span style="color: #8b0000;">print</span> s
+<span style="color: #8b0000;">print</span> np.sum(s &gt; TOLERANCE)
+
+TOLERANCE = 1e-14
+<span style="color: #8b0000;">print</span> np.sum(s &gt; TOLERANCE)
+</pre>
+</div>
+
+<pre class="example">
+&gt;&gt;&gt; &gt;&gt;&gt; &gt;&gt;&gt; &gt;&gt;&gt; &gt;&gt;&gt; &gt;&gt;&gt; ... &gt;&gt;&gt; &gt;&gt;&gt; &gt;&gt;&gt; &gt;&gt;&gt; [  2.75209239e+01   9.30584482e+00   1.42425400e-15]
+3
+&gt;&gt;&gt; &gt;&gt;&gt; 2
+</pre>
+
+<p>
+You can see if you choose too small a TOLERANCE, nothing looks like zero. the result with TOLERANCE=1e-14 suggests the rows are not linearly independent. Let us show that one row can be expressed as a linear combination of the other rows. 
+</p>
+
+<p>
+The number of rows is greater than the rank, so these vectors are not
+independent. Let's demonstrate that one vector can be defined as a linear
+combination of the other two vectors. Mathematically we represent this
+as:
+</p>
+
+<p>
+\(x_1 \mathit{v1} + x_2 \mathit{v2} = v3\)
+</p>
+
+<p>
+or
+</p>
+
+<p>
+\([x_1 x_2][v1; v2] = v3\)
+</p>
+
+<p>
+This is not the usual linear algebra form of Ax = b. To get there, we
+transpose each side of the equation to get:
+</p>
+
+<p>
+[v1.T v2.T][x_1; x_2] = v3.T
+</p>
+
+<p>
+which is the form Ax = b. We solve it in a least-squares sense.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python">A = np.column_stack([v1, v2])
+x = np.linalg.lstsq(A, v3)
+<span style="color: #8b0000;">print</span> x[0]
+</pre>
+</div>
+
+<pre class="example">
+&gt;&gt;&gt; [ 2. -3.]
+</pre>
+
+<p>
+This shows that v3 = 2*v1 - 3*v2
+</p>
+
+<div id="outline-container-1" class="outline-2">
+<h2 id="sec-1"><span class="section-number-2">1</span> another example</h2>
+<div class="outline-text-2" id="text-1">
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #ff0000; font-weight: bold;">#</span><span style="color: #ff0000; font-weight: bold;">Problem set 7.4 #17</span>
+<span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
+
+v1 = [0.2, 1.2, 5.3, 2.8, 1.6]
+v2 = [4.3, 3.4, 0.9, 2.0, -4.3]
+
+A = np.row_stack([v1, v2])
+U, s, V = np.linalg.svd(A)
+<span style="color: #8b0000;">print</span> s
+</pre>
+</div>
+
+<pre class="example">
+[ 7.57773162  5.99149259]
+</pre>
+
+<p>
+You can tell by inspection the rank is 2 because there are no near-zero singular values. 
+</p>
+</div>
+</div>
+<div id="outline-container-2" class="outline-2">
+<h2 id="sec-2"><span class="section-number-2">2</span> Near deficient rank</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+the rank command roughly works in the following way: the matrix is converted to a reduced row echelon form, and then the number of rows that are not all equal to zero are counted. Matlab uses a tolerance to determine what is equal to zero. If there is uncertainty in the numbers, you may have to define what zero is, e.g. if the absolute value of a number is less than 1e-5, you may consider that close enough to be zero. The default tolerance is usually very small, of order 1e-15. If we believe that any number less than 1e-5 is practically equivalent to zero, we can use that information to compute the rank like this.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
+
+A = [[1, 2, 3],
+     [0, 2, 3],
+     [0, 0, 1e-6]]
+
+U, s, V = np.linalg.svd(A)
+<span style="color: #8b0000;">print</span> s
+<span style="color: #8b0000;">print</span> np.sum(np.abs(s) &gt; 1e-15)
+<span style="color: #8b0000;">print</span> np.sum(np.abs(s) &gt; 1e-5)
+</pre>
+</div>
+
+<pre class="example">
+[  5.14874857e+00   7.00277208e-01   5.54700196e-07]
+3
+2
+</pre>
+</div>
+</div>
+<div id="outline-container-3" class="outline-2">
+<h2 id="sec-3"><span class="section-number-2">3</span> Application to independent chemical reactions.</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+reference: Exercise 2.4 in Chemical Reactor Analysis and Design Fundamentals by Rawlings and Ekerdt.
+</p>
+
+<p>
+The following reactions are proposed in the hydrogenation of bromine:
+</p>
+
+<p>
+Let this be our species vector: v = [H2 H Br2 Br HBr].T
+</p>
+
+<p>
+the reactions are then defined by M*v where M is a stoichometric matrix in which each row represents a reaction with negative stoichiometric coefficients for reactants, and positive stoichiometric coefficients for products. A stoichiometric coefficient of 0 is used for species not participating in the reaction.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
+
+<span style="color: #ff0000; font-weight: bold;">#    </span><span style="color: #ff0000; font-weight: bold;">[H2  H Br2 Br HBr]</span>
+M = [[-1,  0, -1,  0,  2],  <span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">H2 + Br2 == 2HBR</span>
+     [ 0,  0, -1,  2,  0],  <span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">Br2 == 2Br</span>
+     [-1,  1,  0, -1,  1],  <span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">Br + H2 == HBr + H</span>
+     [ 0, -1, -1,  1,  1],  <span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">H + Br2 == HBr + Br</span>
+     [ 1, -1,  0,  1,  -1], <span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">H + HBr == H2 + Br</span>
+     [ 0,  0,  1, -2,  0]]  <span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">2Br == Br2</span>
+
+U, s, V = np.linalg.svd(M)
+<span style="color: #8b0000;">print</span> s
+<span style="color: #8b0000;">print</span> np.sum(np.abs(s) &gt; 1e-15)
+
+<span style="color: #8b0000;">import</span> sympy 
+M = sympy.Matrix(M)
+reduced_form, inds = M.rref()
+
+<span style="color: #8b0000;">print</span> reduced_form
+
+labels = [<span style="color: #228b22;">'H2'</span>,  <span style="color: #228b22;">'H'</span>, <span style="color: #228b22;">'Br2'</span>, <span style="color: #228b22;">'Br'</span>, <span style="color: #228b22;">'HBr'</span>]
+<span style="color: #8b0000;">for</span> row <span style="color: #8b0000;">in</span> reduced_form.tolist():
+    s = <span style="color: #228b22;">'0 = '</span>
+    <span style="color: #8b0000;">for</span> nu,species <span style="color: #8b0000;">in</span> <span style="color: #8b0000;">zip</span>(row,labels):
+        <span style="color: #8b0000;">if</span> nu != 0:
+            
+            s += <span style="color: #228b22;">' {0:+d}{1}'</span>.format(<span style="color: #8b0000;">int</span>(nu), species)
+    <span style="color: #8b0000;">if</span> s != <span style="color: #228b22;">'0 = '</span>: <span style="color: #8b0000;">print</span> s
+</pre>
+</div>
+
+<pre class="example">
+[  3.84742803e+00   3.32555975e+00   1.46217301e+00   1.73313660e-16
+   8.57422679e-17]
+3
+[1, 0, 0,  2, -2]
+[0, 1, 0,  1, -1]
+[0, 0, 1, -2,  0]
+[0, 0, 0,  0,  0]
+[0, 0, 0,  0,  0]
+[0, 0, 0,  0,  0]
+0 =  +1H2 +2Br -2HBr
+0 =  +1H +1Br -1HBr
+0 =  +1Br2 -2Br
+</pre>
+
+<p>
+6 reactions are given, but the rank of the matrix is only 3. so there
+are only three independent reactions. You can see that reaction 6 is just
+the opposite of reaction 2, so it is clearly not independent. Also,
+reactions 3 and 5 are just the reverse of each other, so one of them can
+also be eliminated. finally, reaction 4 is equal to reaction 1 minus
+reaction 3.
+</p>
+
+<p>
+There are many possible independent reactions. In the code above, we use sympy to put the matrix into reduced row echelon form, which enables us to identify three independent reactions, and shows that three rows are all zero, i.e. they are not independent of the other three reactions. The choice of independent reactions is not unique.
+</p>
+</div>
+</div>
+<p>Copyright (C) 2013 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2013/03/01/Determining-linear-independence-of-a-set-of-vectors.org">org-mode source</a><p>]]></content>
+  </entry>
+  <entry>
+    <author>
+      <name></name>
+      <uri>http://jkitchin.github.io/blog</uri>
+    </author>
+    <title type="html"><![CDATA[Solving linear equations]]></title>
+    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2013/02/27/Solving-linear-equations" />
+    <id>http://jkitchin.github.io/blog/2013/02/27/Solving-linear-equations</id>
+    <updated>2013-02-27T13:13:06Z</updated>
+    <published>2013-02-27T13:13:06Z</published>
+    <category scheme="http://jkitchin.github.io/blog" term="linear algebra" />
+    <summary type="html"><![CDATA[Solving linear equations]]></summary>
+    <content type="html" xml:base="http://jkitchin.github.io/blog/2013/02/27/Solving-linear-equations"><![CDATA[
+
+
+<p>
+Given these equations, find [x1, x2, x3]
+</p>
+\begin{eqnarray}
+x_1 - x_2 + x_3 &=& 0 \\
+10 x_2 + 25 x_3 &=& 90 \\
+20 x_1 + 10 x_2 &=& 80
+\end{eqnarray}
+
+<p>
+reference: Kreysig, Advanced Engineering Mathematics, 9th ed. Sec. 7.3
+</p>
+
+<p>
+When solving linear equations, we can represent them in matrix form. The we simply use <code>numpy.linalg.solve</code> to get the solution.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
+A = np.array([[1, -1, 1],
+              [0, 10, 25],
+              [20, 10, 0]])
+
+b = np.array([0, 90, 80])
+
+x = np.linalg.solve(A, b)
+<span style="color: #8b0000;">print</span> x
+<span style="color: #8b0000;">print</span> np.dot(A,x)
+
+<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">Let us confirm the solution.</span>
+<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">this shows one element is not equal because of float tolerance</span>
+<span style="color: #8b0000;">print</span> np.dot(A,x) == b
+
+<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">here we use a tolerance comparison to show the differences is less</span>
+<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">than a defined tolerance.</span>
+TOLERANCE = 1e-12
+<span style="color: #8b0000;">print</span> np.abs((np.dot(A, x) - b)) &lt;= TOLERANCE
+</pre>
+</div>
+
+<pre class="example">
+[ 2.  4.  2.]
+[  2.66453526e-15   9.00000000e+01   8.00000000e+01]
+[False  True  True]
+[ True  True  True]
+</pre>
+
+<p>
+It can be useful to confirm there should be a solution, e.g. that the equations are all independent. The matrix rank will tell us that. Note that numpy:rank does not give you the matrix rank, but rather the number of dimensions of the array. We compute the rank by computing the number of singular values of the matrix that are greater than zero, within a prescribed tolerance. We use the <code>numpy.linalg.svd</code> function for that. In Matlab you would use the rref command to see if there are any rows that are all zero, but this command does not exist in numpy. That command does not have practical use in numerical linear algebra and has not been implemented.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
+A = np.array([[1, -1, 1],
+              [0, 10, 25],
+              [20, 10, 0]])
+
+b = np.array([0, 90, 80])
+
+<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">determine number of independent rows in A we get the singular values</span>
+<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">and count the number greater than 0.</span>
+TOLERANCE = 1e-12
+u, s, v = np.linalg.svd(A)
+<span style="color: #8b0000;">print</span> <span style="color: #228b22;">'Singular values: {0}'</span>.format(s)
+<span style="color: #8b0000;">print</span> <span style="color: #228b22;">'# of independent rows: {0}'</span>.format(np.sum(np.abs(s) &gt; TOLERANCE))
+
+<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">to illustrate a case where there are only 2 independent rows</span>
+<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">consider this case where row3 = 2*row2.</span>
+A = np.array([[1, -1, 1],
+              [0, 10, 25],
+              [0, 20, 50]])
+
+u, s, v = np.linalg.svd(A)
+
+<span style="color: #8b0000;">print</span> <span style="color: #228b22;">'Singular values: {0}'</span>.format(s)
+<span style="color: #8b0000;">print</span> <span style="color: #228b22;">'# of independent rows: {0}'</span>.format(np.sum(np.abs(s) &gt; TOLERANCE))
+</pre>
+</div>
+
+<pre class="example">
+Singular values: [ 27.63016717  21.49453733   1.5996022 ]
+# of independent rows: 3
+Singular values: [ 60.21055203   1.63994657  -0.        ]
+# of independent rows: 2
+</pre>
+
+<p>
+<a href="http://matlab.cheme.cmu.edu/2011/08/01/solving-linear-equations/" >Matlab comparison</a>
+</p>
+<p>Copyright (C) 2013 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2013/02/27/Solving-linear-equations.org">org-mode source</a><p>]]></content>
+  </entry>
+  <entry>
+    <author>
+      <name></name>
+      <uri>http://jkitchin.github.io/blog</uri>
+    </author>
+    <title type="html"><![CDATA[Rules for transposition]]></title>
+    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2013/02/27/Rules-for-transposition" />
+    <id>http://jkitchin.github.io/blog/2013/02/27/Rules-for-transposition</id>
+    <updated>2013-02-27T13:12:45Z</updated>
+    <published>2013-02-27T13:12:45Z</published>
+    <category scheme="http://jkitchin.github.io/blog" term="linear algebra" />
+    <summary type="html"><![CDATA[Rules for transposition]]></summary>
+    <content type="html" xml:base="http://jkitchin.github.io/blog/2013/02/27/Rules-for-transposition"><![CDATA[
+
+
+<p>
+
+<a href="http://matlab.cheme.cmu.edu/2011/08/01/illustrating-matrix-transpose-rules-in-matrix-multiplication/" >Matlab comparison</a>
+</p>
+
+<p>
+Here are the four rules for matrix multiplication and transposition
+</p>
+
+<ol>
+<li>\((\mathbf{A}^T)^T = \mathbf{A}\)
+</li>
+
+<li>\((\mathbf{A}+\mathbf{B})^T = \mathbf{A}^T+\mathbf{B}^T\)
+</li>
+
+<li>\((\mathit{c}\mathbf{A})^T = \mathit{c}\mathbf{A}^T\)
+</li>
+
+<li>\((\mathbf{AB})^T = \mathbf{B}^T\mathbf{A}^T\)
+</li>
+</ol>
+
+<p>
+reference: Chapter 7.2 in Advanced Engineering Mathematics, 9th edition.
+by E. Kreyszig.
+</p>
+
+<div id="outline-container-1" class="outline-2">
+<h2 id="sec-1"><span class="section-number-2">1</span> The transpose in Python</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+There are two ways to get the transpose of a matrix: with a notation, and
+with a function.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
+A = np.array([[5, -8, 1],
+              [4, 0, 0]])
+
+<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">function</span>
+<span style="color: #8b0000;">print</span> np.transpose(A)
+
+
+<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">notation</span>
+<span style="color: #8b0000;">print</span> A.T
+</pre>
+</div>
+
+<pre class="example">
+[[ 5  4]
+ [-8  0]
+ [ 1  0]]
+[[ 5  4]
+ [-8  0]
+ [ 1  0]]
+</pre>
+</div>
+</div>
+<div id="outline-container-2" class="outline-2">
+<h2 id="sec-2"><span class="section-number-2">2</span> Rule 1</h2>
+<div class="outline-text-2" id="text-2">
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
+
+A = np.array([[5, -8, 1],
+              [4, 0, 0]])
+
+<span style="color: #8b0000;">print</span> np.all(A == (A.T).T)
+</pre>
+</div>
+
+<pre class="example">
+True
+</pre>
+</div>
+</div>
+<div id="outline-container-3" class="outline-2">
+<h2 id="sec-3"><span class="section-number-2">3</span> Rule 2</h2>
+<div class="outline-text-2" id="text-3">
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
+A = np.array([[5, -8, 1],
+              [4, 0, 0]])
+
+B = np.array([[3, 4, 5], [1, 2,3]])
+
+<span style="color: #8b0000;">print</span> np.all( A.T + B.T == (A + B).T)
+</pre>
+</div>
+
+<pre class="example">
+True
+</pre>
+</div>
+</div>
+<div id="outline-container-4" class="outline-2">
+<h2 id="sec-4"><span class="section-number-2">4</span> Rule 3</h2>
+<div class="outline-text-2" id="text-4">
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
+A = np.array([[5, -8, 1],
+              [4, 0, 0]])
+
+c = 2.1
+
+<span style="color: #8b0000;">print</span> np.all( (c*A).T == c*A.T)
+</pre>
+</div>
+
+<pre class="example">
+True
+</pre>
+</div>
+</div>
+<div id="outline-container-5" class="outline-2">
+<h2 id="sec-5"><span class="section-number-2">5</span> Rule 4</h2>
+<div class="outline-text-2" id="text-5">
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
+A = np.array([[5, -8, 1],
+              [4, 0, 0]])
+
+B = np.array([[0, 2],
+              [1, 2],
+              [6, 7]])
+
+<span style="color: #8b0000;">print</span> np.all(np.dot(A, B).T == np.dot(B.T, A.T))
+</pre>
+</div>
+
+<pre class="example">
+True
+</pre>
+</div>
+</div>
+<div id="outline-container-6" class="outline-2">
+<h2 id="sec-6"><span class="section-number-2">6</span> Summary</h2>
+<div class="outline-text-2" id="text-6">
+<p>
+That wraps up showing numerically the transpose rules work for these examples.
+</p>
+</div>
+</div>
+<p>Copyright (C) 2013 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2013/02/27/Rules-for-transposition.org">org-mode source</a><p>]]></content>
+  </entry>
+  <entry>
+    <author>
+      <name></name>
+      <uri>http://jkitchin.github.io/blog</uri>
+    </author>
+    <title type="html"><![CDATA[Conservation of mass in chemical reactions]]></title>
+    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2013/02/27/Conservation-of-mass-in-chemical-reactions" />
+    <id>http://jkitchin.github.io/blog/2013/02/27/Conservation-of-mass-in-chemical-reactions</id>
+    <updated>2013-03-06T16:27:40Z</updated>
+    <published>2013-02-27T10:54:08Z</published>
+    <category scheme="http://jkitchin.github.io/blog" term="linear algebra" />
+    <summary type="html"><![CDATA[Conservation of mass in chemical reactions]]></summary>
+    <content type="html" xml:base="http://jkitchin.github.io/blog/2013/02/27/Conservation-of-mass-in-chemical-reactions"><![CDATA[
+
+
+<p>
+<a href="http://matlab.cheme.cmu.edu/2011/12/18/conservation-of-mass-in-chemical-reactions/" >Matlab post</a>
+</p>
+
+<p>
+Atoms cannot be destroyed in non-nuclear chemical reactions, hence it follows that the same number of atoms entering a reactor must also leave the reactor. The atoms may leave the reactor in a different molecular configuration due to the reaction, but the total mass leaving the reactor must be the same. Here we look at a few ways to show this.
+</p>
+
+<p>
+We consider the water gas shift reaction : \(CO + H_2O \rightleftharpoons H_2 + CO_2\). We can illustrate the conservation of mass with the following equation: \(\bf{\nu}\bf{M}=\bf{0}\). Where \(\bf{\nu}\) is the stoichiometric coefficient vector and \(\bf{M}\) is a column vector of molecular weights. For simplicity, we use pure isotope molecular weights, and not the isotope-weighted molecular weights. This equation simply examines the mass on the right side of the equation and the mass on left side of the equation. 
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
+nu = [-1, -1, 1, 1];
+M = [28, 18, 2, 44];
+<span style="color: #8b0000;">print</span> np.dot(nu, M)
+</pre>
+</div>
+
+<pre class="example">
+0
+</pre>
+
+<p>
+You can see that sum of the stoichiometric coefficients times molecular weights is zero. In other words a CO and H_2O have the same mass as H_2 and CO_2.
+</p>
+
+<p>
+For any balanced chemical equation, there are the same number of each kind of atom on each side of the equation. Since the mass of each atom is unchanged with reaction, that means the mass of all the species that are reactants must equal the mass of all the species that are products! Here we look at the number of C, O, and H on each side of the reaction. Now if we add the mass of atoms in the reactants and products, it should sum to zero (since we used the negative sign for stoichiometric coefficients of reactants).
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
+            <span style="color: #ff0000; font-weight: bold;"># C   O   H</span>
+reactants = [-1, -2, -2]
+products  = [ 1,  2,  2]
+
+atomic_masses = [12.011, 15.999, 1.0079]  <span style="color: #ff0000; font-weight: bold;"># atomic masses</span>
+
+<span style="color: #8b0000;">print</span> np.dot(reactants, atomic_masses) + np.dot(products, atomic_masses)
+</pre>
+</div>
+
+<pre class="example">
+&gt;&gt;&gt; ... &gt;&gt;&gt; &gt;&gt;&gt; &gt;&gt;&gt; &gt;&gt;&gt; &gt;&gt;&gt; 0.0
+</pre>
+
+<p>
+That is all there is to mass conservation with reactions. Nothing changes if there are lots of reactions, as long as each reaction is properly balanced, and none of them are nuclear reactions!
+</p>
+<p>Copyright (C) 2013 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2013/02/27/Conservation-of-mass-in-chemical-reactions.org">org-mode source</a><p>]]></content>
+  </entry>
+  <entry>
+    <author>
+      <name></name>
+      <uri>http://jkitchin.github.io/blog</uri>
+    </author>
+    <title type="html"><![CDATA[Sums products and linear algebra notation - avoiding loops where possible]]></title>
+    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2013/02/26/Sums-products-and-linear-algebra-notation-avoiding-loops-where-possible" />
+    <id>http://jkitchin.github.io/blog/2013/02/26/Sums-products-and-linear-algebra-notation-avoiding-loops-where-possible</id>
+    <updated>2013-02-27T13:12:15Z</updated>
+    <published>2013-02-26T09:00:00Z</published>
+    <category scheme="http://jkitchin.github.io/blog" term="linear algebra" />
+    <summary type="html"><![CDATA[Sums products and linear algebra notation - avoiding loops where possible]]></summary>
+    <content type="html" xml:base="http://jkitchin.github.io/blog/2013/02/26/Sums-products-and-linear-algebra-notation-avoiding-loops-where-possible"><![CDATA[
+
+
+
+<p>
+<a href="http://matlab.cheme.cmu.edu/2012/01/03/sums-products-and-linear-algebra-notation-avoiding-loops-where-possible/" >Matlab comparison</a>
+</p>
+
+<p>
+Today we examine some methods of linear algebra that allow us to
+avoid writing explicit loops in Matlab for some kinds of
+mathematical operations. 
+</p>
+
+
+<p>
+Consider the operation on two vectors \(\bf{a}\)
+and \(\bf{b}\).
+</p>
+
+
+<p>
+$$y=\sum\limits_{i=1}^n a_ib_i$$
+</p>
+
+<p>
+a = [1 2 3 4 5]
+</p>
+
+<p>
+b = [3 6 8 9 10]
+</p>
+
+<div id="outline-container-1" class="outline-2">
+<h2 id="sec-1"><span class="section-number-2">1</span> Old-fashioned way with a loop</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+We can compute this with a loop, where you initialize y, and then
+ add the product of the ith elements of a and b to y in each
+iteration of the loop. This is known to be slow for large vectors
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python">a = [1, 2, 3, 4, 5]
+b = [3, 6, 8, 9, 10]
+
+<span style="color: #8b0000;">sum</span> = 0
+<span style="color: #8b0000;">for</span> i <span style="color: #8b0000;">in</span> <span style="color: #8b0000;">range</span>(len(a)):
+    <span style="color: #8b0000;">sum</span> = <span style="color: #8b0000;">sum</span> + a[i] * b[i]
+<span style="color: #8b0000;">print</span> sum
+</pre>
+</div>
+
+<pre class="example">
+125
+</pre>
+
+<p>
+This is an old fashioned style of coding. A more modern, pythonic approach is:
+</p>
+<div class="org-src-container">
+
+<pre class="src src-python">a = [1, 2, 3, 4, 5]
+b = [3, 6, 8, 9, 10]
+
+<span style="color: #8b0000;">sum</span> = 0
+<span style="color: #8b0000;">for</span> x,y <span style="color: #8b0000;">in</span> <span style="color: #8b0000;">zip</span>(a,b):
+    <span style="color: #8b0000;">sum</span> += x * y
+<span style="color: #8b0000;">print</span> sum
+</pre>
+</div>
+
+<pre class="example">
+125
+</pre>
+</div>
+</div>
+<div id="outline-container-2" class="outline-2">
+<h2 id="sec-2"><span class="section-number-2">2</span> The numpy approach</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+The most compact method is to use the  methods in numpy.
+</p>
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
+
+a = np.array([1, 2, 3, 4, 5])
+b = np.array([3, 6, 8, 9, 10])
+
+<span style="color: #8b0000;">print</span> np.sum(a * b)
+</pre>
+</div>
+
+<pre class="example">
+125
+</pre>
+</div>
+</div>
+<div id="outline-container-3" class="outline-2">
+<h2 id="sec-3"><span class="section-number-2">3</span> Matrix algebra approach.</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+The operation defined above is actually a dot product. We an directly compute the dot product in numpy. Note that with 1d arrays, python knows what to do and does not require any transpose operations.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
+
+a = np.array([1, 2, 3, 4, 5])
+b = np.array([3, 6, 8, 9, 10])
+
+<span style="color: #8b0000;">print</span> np.dot(a, b)
+</pre>
+</div>
+
+<pre class="example">
+125
+</pre>
+</div>
+</div>
+<div id="outline-container-4" class="outline-2">
+<h2 id="sec-4"><span class="section-number-2">4</span> Another example</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+Consider \(y = \sum\limits_{i=1}^n w_i x_i^2\). This operation is like a weighted sum of squares.
+The old-fashioned way to do this is with a loop.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python">w = [0.1, 0.25, 0.12, 0.45, 0.98];
+x = [9, 7, 11, 12, 8];
+y = 0
+<span style="color: #8b0000;">for</span> wi, xi <span style="color: #8b0000;">in</span> <span style="color: #8b0000;">zip</span>(w,x):
+   y += wi * xi**2
+<span style="color: #8b0000;">print</span> y
+</pre>
+</div>
+
+<pre class="example">
+162.39
+</pre>
+
+<p>
+Compare this to the more modern numpy approach.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
+w = np.array([0.1, 0.25, 0.12, 0.45, 0.98])
+x = np.array([9, 7, 11, 12, 8])
+y = np.sum(w * x**2)
+<span style="color: #8b0000;">print</span> y
+</pre>
+</div>
+
+<pre class="example">
+162.39
+</pre>
+
+<p>
+We can also express this in matrix algebra form. The operation is equivalent to \(y = \vec{x} \cdot D_w \cdot \vec{x}^T\) where \(D_w\) is a diagonal matrix with the weights on the diagonal.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
+w = np.array([0.1, 0.25, 0.12, 0.45, 0.98])
+x = np.array([9, 7, 11, 12, 8])
+y = np.dot(x, np.dot(np.diag(w), x))
+<span style="color: #8b0000;">print</span> y
+</pre>
+</div>
+
+<pre class="example">
+162.39
+</pre>
+
+<p>
+This last form avoids explicit loops and sums, and relies on fast linear algebra routines.
+</p>
+</div>
+</div>
+<div id="outline-container-5" class="outline-2">
+<h2 id="sec-5"><span class="section-number-2">5</span> Last example</h2>
+<div class="outline-text-2" id="text-5">
+<p>
+Consider the sum of the product of three vectors. Let \(y = \sum\limits_{i=1}^n w_i x_i y_i\). This is like a weighted sum of products. 
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
+
+w = np.array([0.1, 0.25, 0.12, 0.45, 0.98])
+x = np.array([9, 7, 11, 12, 8])
+y = np.array([2, 5, 3, 8, 0])
+
+<span style="color: #8b0000;">print</span> np.sum(w * x * y)
+<span style="color: #8b0000;">print</span> np.dot(w, np.dot(np.diag(x), y))
+</pre>
+</div>
+
+<pre class="example">
+57.71
+57.71
+</pre>
+</div>
+</div>
+
+<div id="outline-container-6" class="outline-2">
+<h2 id="sec-6"><span class="section-number-2">6</span> Summary</h2>
+<div class="outline-text-2" id="text-6">
+<p>
+We showed examples of the following equalities between traditional
+sum notations and linear algebra
+</p>
+
+
+<p>
+$$\bf{a}\bf{b}=\sum\limits_{i=1}^n a_ib_i$$
+</p>
+
+<p>
+$$\bf{x}\bf{D_w}\bf{x^T}=\sum\limits_{i=1}^n w_ix_i^2$$
+</p>
+
+
+<p>
+$$\bf{x}\bf{D_w}\bf{y^T}=\sum\limits_{i=1}^n w_i x_i y_i$$
+</p>
+
+<p>
+These relationships enable one to write the sums as a single line of
+python code, which utilizes fast linear algebra subroutines, avoids
+the construction of slow loops, and reduces the opportunity for
+errors in the code. Admittedly, it introduces the opportunity for
+new types of errors, like using the wrong relationship, or linear
+algebra errors due to matrix size mismatches.
+</p>
+</div>
+</div>
+<p>Copyright (C) 2013 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2013/02/26/Sums-products-and-linear-algebra-notation---avoiding-loops-where-possible.org">org-mode source</a><p>]]></content>
+  </entry>
+  <entry>
+    <author>
+      <name></name>
+      <uri>http://jkitchin.github.io/blog</uri>
+    </author>
+    <title type="html"><![CDATA[Linear least squares fitting with linear algebra]]></title>
+    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2013/02/18/Linear-least-squares-fitting-with-linear-algebra" />
+    <id>http://jkitchin.github.io/blog/2013/02/18/Linear-least-squares-fitting-with-linear-algebra</id>
+    <updated>2013-02-27T14:38:52Z</updated>
+    <published>2013-02-18T09:00:00Z</published>
+    <category scheme="http://jkitchin.github.io/blog" term="linear algebra" />
+    <category scheme="http://jkitchin.github.io/blog" term="data analysis" />
+    <summary type="html"><![CDATA[Linear least squares fitting with linear algebra]]></summary>
+    <content type="html" xml:base="http://jkitchin.github.io/blog/2013/02/18/Linear-least-squares-fitting-with-linear-algebra"><![CDATA[
+
+
+<p>
+<a href="http://matlab.cheme.cmu.edu/2011/09/24/linear-least-squares-fitting-with-linear-algebra/" >Matlab post</a>
+</p>
+
+<p>
+The idea here is to formulate a set of linear equations that is easy to solve. We  can express the equations in terms of our unknown fitting parameters \(p_i\) as:
+</p>
+
+<pre class="example">
+x1^0*p0 + x1*p1 = y1
+x2^0*p0 + x2*p1 = y2
+x3^0*p0 + x3*p1 = y3
+etc...
+</pre>
+
+<p>
+Which we write in matrix form as \(A p = y\) where \(A\) is a matrix of column vectors, e.g. [1, x_i]. \(A\) is not a square matrix, so we cannot solve it as written. Instead, we form \(A^T A p = A^T y\) and solve that set of equations.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
+x = np.array([0, 0.5, 1, 1.5, 2.0, 3.0, 4.0, 6.0, 10])
+y = np.array([0, -0.157, -0.315, -0.472, -0.629, -0.942, -1.255, -1.884, -3.147])
+
+A = np.column_stack([x**0, x])
+
+M = np.dot(A.T, A)
+b = np.dot(A.T, y)
+
+i1, slope1 = np.dot(np.linalg.inv(M), b)
+i2, slope2 = np.linalg.solve(M, b) <span style="color: #ff0000; font-weight: bold;"># an alternative approach.</span>
+
+<span style="color: #8b0000;">print</span> i1, slope1
+<span style="color: #8b0000;">print</span> i2, slope2
+
+<span style="color: #ff0000; font-weight: bold;"># plot data and fit</span>
+<span style="color: #8b0000;">import</span> matplotlib.pyplot <span style="color: #8b0000;">as</span> plt
+
+plt.plot(x, y, <span style="color: #228b22;">'bo'</span>)
+plt.plot(x, np.dot(A, [i1, slope1]), <span style="color: #228b22;">'r--'</span>)
+plt.xlabel(<span style="color: #228b22;">'x'</span>)
+plt.ylabel(<span style="color: #228b22;">'y'</span>)
+plt.savefig(<span style="color: #228b22;">'images/la-line-fit.png'</span>)
+</pre>
+</div>
+
+<pre class="example">
+0.00062457337884 -0.3145221843
+0.00062457337884 -0.3145221843
+</pre>
+
+<p><img src="/img/./images/la-line-fit.png"><p>
+
+<p>
+This method can be readily extended to fitting any polynomial model, or other linear model that is fit in a least squares sense. This method does not provide confidence intervals.
+</p>
+<p>Copyright (C) 2013 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2013/02/18/Linear-least-squares-fitting-with-linear-algebra.org">org-mode source</a><p>]]></content>
+  </entry>
+</feed>
