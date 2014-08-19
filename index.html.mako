@@ -7,7 +7,7 @@ Welcome to the Kitchin Group Research
 
 Our group utilizes chemistry, catalysis and engineering to develop solutions to energy and environment related problems such as CO<sub>2</sub> capture and chemical energy storage. We use experimental and computational methods in electrochemistry, sorbent development and electrocatalyst design.
 
-<a href="http://127.0.0.1:8080/blog/category/news/">News</a>
+<a href="/blog/category/news/">News</a>
 ====
 <%
 nposts = len(bf.config.blog.posts)

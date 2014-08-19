@@ -2,51 +2,57 @@
 <article class="page_box">
 <%self:filter chain="markdown">
 
-Group meeting schedule - Spring 2013 All group meetings will be held in DH 1102 from 9am-11am unless otherwise noted.
+Group meeting schedule - Spring 2014 All group meetings will be held in DH 1102 from 9am-11am.
 
-DONE [2013-01-18 Fri] 
+[2014-01-15 Wed] 
 =====================
-+ Bin Liu
-+ Jacob Boes
++ John K. Semester kickoff
 
-DONE [2013-02-01 Fri] 
+[2014-01-29 Wed] 
 =========================
++ Jake (research update)
++ Alex (research update)
 
-+ Steve Illes
-+ Prateek Mehta
-
-DONE [2013-02-15 Fri] 
+[2014-02-12 Wed] 
 ========================
++ Victor (literature survey, 10 minutes)
++ Mehak  (literature survey, 10 minutes)
++ John M.(literature survey, 10 minutes)
++ Steve (research update)
 
-+ Alex Hallenbeck
-+ Matt Curnan
-
-DONE [2013-03-01 Fri] 
+[2014-02-26 Wed] 
 ==========================
-+ Zhongnan Xu
-+ Bin Liu
-+ Computing topic: John
++ Matt Curnan (research update)
++ Alex (research update)
 
-DONE [2013-03-14 Thu] 1pm - 3pm
+[2014-03-12 Wed] 
 ==============================
-+ Jacob Boes
-+ Steve Illes
-+ Computing topic: John
++ Zhongnan (research update)
++ Victor (research update, 15 minutes)
++ Mehak  (research update, 15 minutes)
++ John M.(research update, 15 minutes)
 
-[2013-03-29 Fri] 
+[2014-03-26 Wed] 
 ========================
-+ Alex Hallenbeck
-+ Prateek Mehta
++ Jake (research update)
++ Alex (research update)
++ Steve (research update)
 
-[2013-04-12 Fri] TBD
+[2014-04-09 Wed] 
 =======================
-+ Matt Curnan
-+ Bin Liu
++ Zhongnan (research update)
++ Matt Curnan (research update)
 
-[2013-04-26 Fri] 
+[2014-04-23 Wed] 
 =======================
-+ Albert Liang at 9am
-+ Anita Lee PhD Defense 10am-noon
++ Victor (research update, 15 minutes)
++ Mehak  (research update, 15 minutes)
++ John M.(research update, 15 minutes)
+
+[2014-05-07 Wed] 
+=======================
++ Alex (research update)
++ Jake (research update)
 
 </%self:filter>
 </article>

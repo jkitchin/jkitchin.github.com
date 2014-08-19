@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python
 from cStringIO import StringIO
 import os, sys
@@ -25,6 +26,7 @@ def Sandbox(code):
     out = redirected_output.getvalue()
     err = redirected_error.getvalue()
 
+    # reset outputs to the original values
     sys.stdout = old_stdout
     sys.stderr = old_stderr
 

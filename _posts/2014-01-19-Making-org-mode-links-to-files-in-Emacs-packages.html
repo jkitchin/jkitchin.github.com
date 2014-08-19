@@ -1,0 +1,368 @@
+---
+title: Making org-mode links to files in Emacs packages
+date: 2014/01/19 12:42:27
+updated: 2014/01/19 15:27:48
+categories: org-mode
+tags: 
+---
+
+
+<p>
+Today I will make a new org-mode link that lets me make links to files inside of Emacs packages. These files may be installed in different places on different systems (e.g. in the system directory, in ELPA directories, or in custom directories), so we need a way to construct paths to them. The application of this is eventually I hope to have some emacs packages of documentation, and I would like to have links between the packages that work no matter how they are installed.
+</p>
+
+<p>
+I want a syntax that looks like pkg:rainbow-mode==rainbow-mode-pkg.el. We will have a function that parses that to get the package, and the path to the file in the package. Emacs has a function to find the path to the file that defines a library. I chose == because it seems unlikely that would be a string in a package or path. 
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(locate-library <span style="color: #228b22;">"rainbow-mode"</span>)
+</pre>
+</div>
+
+<pre class="example">
+c:/Users/jkitchin/Dropbox/kitchingroup/jmax/elpa/rainbow-mode-0.9/rainbow-mode.elc
+</pre>
+
+<p>
+We can use that to construct the path to where we want. Say we want the file named "rainbow-mode-pkg.el"
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(expand-file-name
+ <span style="color: #228b22;">"rainbow-mode-pkg.el"</span>
+ (file-name-directory (locate-library <span style="color: #228b22;">"rainbow-mode"</span>)))
+</pre>
+</div>
+
+<pre class="example">
+c:/Users/jkitchin/Dropbox/kitchingroup/jmax/elpa/rainbow-mode-0.9/rainbow-mode-pkg.el
+</pre>
+
+<p>
+In org-mode links, the link path gets passed to a function. We can split the string like this to get the package and relative path we are referring to.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(split-string <span style="color: #228b22;">"rainbow-mode==rainbow-mode-pkg.el"</span> <span style="color: #228b22;">"=="</span>)
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="left" />
+
+<col  class="left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="left">rainbow-mode</td>
+<td class="left">rainbow-mode-pkg.el</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+That is all of the pieces we need to construct the link function. Here it is.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(org-add-link-type 
+ <span style="color: #228b22;">"pkg"</span>
+ (<span style="color: #8b0000;">lambda</span> (path)
+   (<span style="color: #8b0000;">let</span> ((pkg) (relpath)
+         (splitpath (split-string path <span style="color: #228b22;">"=="</span>)))
+     (setq pkg (car splitpath))
+     (setq relpath (nth 1 splitpath))
+     (find-file (expand-file-name 
+                 relpath 
+                 (file-name-directory (locate-library pkg)))))))
+</pre>
+</div>
+
+<p>
+pkg:rainbow-mode==rainbow-mode-pkg.el  
+</p>
+
+<p>
+This works too, but you have to use auctex-pkg as the package name. 
+</p>
+
+<p>
+pkg:auctex-pkg==doc/intro.texi 
+</p>
+
+<p>
+I think that is because locate-library looks for the <i>file</i> a library is defined in. That is not quite the same as the root directory of a package. It turns out to be a little more complicated to find that. Below is some code I hacked up looking at the package.el code. First let us examine some pieces.
+</p>
+
+<p>
+This gives us information about an installed package. 
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(assq 'auctex package-alist)
+</pre>
+</div>
+
+<pre class="example">
+(auctex . [(11 87 2) nil Integrated environment for *TeX*])
+</pre>
+
+<p>
+We can get the version of the package like this
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(package-version-join (package-desc-vers (cdr (assq 'auctex package-alist))))
+</pre>
+</div>
+
+<pre class="example">
+11.87.2
+</pre>
+
+<p>
+Ok, finally, we get the directory where it is installed like this:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(package--dir <span style="color: #228b22;">"auctex"</span> <span style="color: #228b22;">"11.87.2"</span>)
+</pre>
+</div>
+
+<pre class="example">
+c:/Users/jkitchin/Dropbox/kitchingroup/jmax/elpa/auctex-11.87.2
+</pre>
+
+<p>
+Note that in some places we use a package symbol, and in other places a string name.Putting that together, we have this block to get the install-dir of a package. If we have a package symbol we can get the path like this.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">let*</span> ((pkg 'auctex)
+       (pkg-name (symbol-name pkg)) <span style="color: #ff0000; font-weight: bold;">; </span><span style="color: #ff0000; font-weight: bold;">convert symbol to string</span>
+       (desc (cdr (assq pkg package-alist)))
+       (version (package-version-join (package-desc-vers desc)))
+       (pkg-dir (package--dir pkg-name version)))
+  pkg-dir)
+</pre>
+</div>
+
+<pre class="example">
+c:/Users/jkitchin/Dropbox/kitchingroup/jmax/elpa/auctex-11.87.2
+</pre>
+
+<p>
+Usually, we will have a string though. We just have to make it a symbol with the <code>intern</code> function. 
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(setq pkg-name <span style="color: #228b22;">"auctex"</span>)
+(setq pkg (intern pkg-name))
+(setq desc (cdr (assq pkg package-alist)))
+</pre>
+</div>
+
+<pre class="example">
+[(11 87 2) nil "Integrated environment for *TeX*"]
+</pre>
+
+<p>
+Now, we have all the pieces to get the path from a package name in a string:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">let*</span> ((pkg-name <span style="color: #228b22;">"auctex"</span>)
+       (pkg (intern pkg-name))
+       (desc (cdr (assq pkg package-alist)))
+       (version (package-version-join (package-desc-vers desc)))
+       (pkg-dir (package--dir pkg-name version)))
+  pkg-dir)
+</pre>
+</div>
+
+<pre class="example">
+c:/Users/jkitchin/Dropbox/kitchingroup/jmax/elpa/auctex-11.87.2
+</pre>
+
+<p>
+Let us use that to rewrite the link, and address a few other limitations. We will  use <code>org-open-link-from-string</code> so we can use org-link syntax in the path part of the link, e.g. to open a file at a line, or headline. Here is our new link.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(org-add-link-type 
+ <span style="color: #228b22;">"pkg2"</span>
+ (<span style="color: #8b0000;">lambda</span> (path)
+   (<span style="color: #8b0000;">let</span> ((pkg) (relpath) (pkg-dir) (link-string)
+         (splitpath (split-string path <span style="color: #228b22;">"=="</span>)))
+     (setq pkg-name (car splitpath))
+     (setq relpath (nth 1 splitpath))
+     (setq pkg-dir (<span style="color: #8b0000;">let*</span> ((pkg-symbol (intern pkg-name)) <span style="color: #ff0000; font-weight: bold;">;</span><span style="color: #ff0000; font-weight: bold;">convert string to pkg                   </span>
+                          (desc (cdr (assq pkg-symbol package-alist)))
+                          (version (package-version-join (package-desc-vers desc)))
+                          (pkg-dir (package--dir pkg-name version)))
+                     pkg-dir))
+     (setq link-string (format <span style="color: #228b22;">"[[file:%s/%s]]"</span> pkg-dir relpath))
+     (message <span style="color: #228b22;">"link: %s"</span> link-string)
+     (org-open-link-from-string link-string))))
+</pre>
+</div>
+
+<p>
+Now, we can do all of these: 
+pkg2:auctex==doc/faq.texi   
+pkg2:auctex==doc/faq.texi::should 
+pkg2:auctex==doc/faq.texi::10 
+<pre>pkg2:auctex==doc/faq.texi::first place</pre> 
+</p>
+
+<p>
+Awesome!
+</p>
+
+<p>
+Just for fun, I made a toy package called <code>package1</code> in my elpa directory. That package has an org file in it. Now, I can test out the following links:
+</p>
+
+<p>
+pkg2:package1==intro.org 
+</p>
+
+<p>
+pkg2:package1==intro.org::*Miscellaneous
+</p>
+
+<p>
+<pre>pkg2:package1==intro.org::*subheading with words</pre> 
+</p>
+
+<p>
+pkg2:package1==intro.org::#install-section
+</p>
+
+<p>
+pkg2:package1==intro.org::intro-target
+</p>
+
+<p>
+They all work! That works for packages installed via the package manager. However, when I try this with my custom installed org-mode, it does not work. If I run (describe-package 'org) I see that org is a build in package, and that there is an alternate version available. It does not point to my org-installation.
+</p>
+
+<p>
+pkg2:org==doc/library-of-babel.org 
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(princ (locate-library <span style="color: #228b22;">"org"</span>))
+</pre>
+</div>
+
+<pre class="example">
+c:/Users/jkitchin/Dropbox/kitchingroup/jmax/org-mode/lisp/org.elc
+</pre>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(princ (package-installed-p <span style="color: #228b22;">"org"</span>))
+</pre>
+</div>
+
+<pre class="example">
+nil
+</pre>
+
+<p>
+Obviously, we need to check if the package is installed via package.el, or if we should look somewhere else. Let us take a final stab at this. Let us review the challenge. 
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(print (locate-library <span style="color: #228b22;">"auctex"</span>))
+(print (locate-library <span style="color: #228b22;">"auctex-autoloads"</span>))
+</pre>
+</div>
+
+<pre class="example">
+nil
+
+"c:/Users/jkitchin/Dropbox/kitchingroup/jmax/elpa/auctex-11.87.2/auctex-autoloads.el"
+</pre>
+
+<p>
+We may have to check for a package-autoloads. Ww can wrap that in an <code>or</code> macro, which will return the first non-nil result.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">let</span> ((pkg-name <span style="color: #228b22;">"auctex"</span>))
+   (file-name-directory 
+    (or (locate-library pkg-name)
+        (locate-library (format <span style="color: #228b22;">"%s-autoloads"</span> pkg-name)))))
+</pre>
+</div>
+
+<pre class="example">
+c:/Users/jkitchin/Dropbox/kitchingroup/jmax/elpa/auctex-11.87.2/
+</pre>
+
+<p>
+Doing this on the org package shows that this points to a lisp directory. 
+</p>
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">let</span> ((pkg-name <span style="color: #228b22;">"org"</span>))
+   (file-name-directory 
+    (or (locate-library pkg-name)
+        (locate-library (format <span style="color: #228b22;">"%s-autoloads"</span> pkg-name)))))
+</pre>
+</div>
+
+<pre class="example">
+c:/Users/jkitchin/Dropbox/kitchingroup/jmax/org-mode/lisp/
+</pre>
+
+<p>
+So, let's try a final link function.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(org-add-link-type 
+ <span style="color: #228b22;">"pkg3"</span>
+ (<span style="color: #8b0000;">lambda</span> (path)
+   (<span style="color: #8b0000;">let</span> ((pkg-name) (relpath)(pkg-dir) (link-string)
+         (splitpath (split-string path <span style="color: #228b22;">"=="</span>)))
+     (setq pkg-name (car splitpath))
+     (setq relpath (nth 1 splitpath))
+     (setq pkg-dir (file-name-directory 
+                    (or (locate-library pkg-name)
+                        (locate-library (format <span style="color: #228b22;">"%s-autoloads"</span> pkg-name)))))
+(setq link-string (format <span style="color: #228b22;">"[[file:%s/%s]]"</span> pkg-dir relpath))
+     (message <span style="color: #228b22;">"link: %s"</span> link-string)
+     (org-open-link-from-string link-string))))
+</pre>
+</div>
+
+<p>
+Now, we just have to make sure to use the right relative path. This link opens up an org-file in my installed version of org-mode: <pre>pkg3:org==../doc/library-of-babel.org</pre> 
+</p>
+
+<p>
+I don't know if there is a more clever way to create these links. There are two parts to them: 1) the package, and 2) the relative path. The link syntax isn't that rich to do it without parsing the linkpath.
+</p>
+<p>Copyright (C) 2014 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2014/01/19/Making-org-mode-links-to-files-in-Emacs-packages.org">org-mode source</a><p><p>Org-mode version = 8.2.5f</p>

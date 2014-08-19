@@ -1,0 +1,169 @@
+* DONE Using org-mode outside of Emacs - sort of
+  CLOSED: [2014-08-11 Mon 20:22]
+  :PROPERTIES:
+  :categories: emacs,orgmode
+  :date:     2014/08/11 20:22:43
+  :updated:  2014/08/11 20:22:43
+  :END:
+I recently posted about using Emacs for scripts (http://kitchingroup.cheme.cmu.edu/blog/2014/08/06/Writing-scripts-in-Emacs-lisp/). Someone was probably wondering, why would you do that, when you could use shell, python or perl? A good reason is to write scripts that can access data or code inside an org-file! This would allow you to leverage the extensive support for org-mode in Emacs, without a user necessarily even needing to use Emacs. Let us consider some examples. 
+
+** Extracting tables from an org-file
+If tables are named in org-mode, it is possible to extract the contents. Here is a table:
+
+#+tblname: data-1
+| x | y |
+|---+---|
+| 1 | 1 |
+| 2 | 4 |
+| 3 | 9 |
+
+Another table might look like
+
+#+tblname: data-2
+| a |  b |
+| 1 |  1 |
+| 2 |  8 |
+| 3 | 27 |
+
+
+It would be convenient to have a command-line utility that could extract the data from that table with a syntax like:
+
+#+BEGIN_SRC sh
+extract-org-table tblname orgfile --format lisp|csv|tab
+#+END_SRC
+
+
+Here is one way to do it:
+
+#+BEGIN_SRC emacs-lisp :tangle extract-org-table :shebang #!/Applications/Emacs.app/Contents/MacOS/Emacs --script
+;; org-table tblname orgfile lisp|csv|tab
+
+(let ((tblname (pop command-line-args-left))
+      (org-file (pop command-line-args-left))
+      (format)
+      (table)
+      (content))
+  (when command-line-args-left
+    (setq format (pop command-line-args-left)))
+  (find-file org-file)
+  (setq table 
+	(org-element-map (org-element-parse-buffer) 'table 
+	  (lambda (element)
+	    (when (string= tblname (org-element-property :name element))
+	      element))
+	  nil ;info
+	  t )) ; first-match
+
+  (unless table
+    (error "no table found for %s" tblname))
+
+  (when table
+    (goto-char (org-element-property :contents-begin table))
+    (let ((contents (org-table-to-lisp)))
+      (if (string= format "lisp")
+	  (print contents)
+	;else      
+	(dolist (row contents)
+	  (unless (eq row 'hline)
+	    (cond
+	     ((string= format "csv")
+	      (princ (mapconcat 'identity row ",")))
+	     ((string= format "tab")
+	      (princ (mapconcat 'identity row "\t")))
+	     (t
+	      (error "unsupported format: %s" format)))
+	    (princ "\n")))))))
+#+END_SRC
+
+Let us try it out. elisp:org-babel-tangle
+
+#+BEGIN_SRC sh
+./extract-org-table data-2 org-outside-emacs.org lisp
+#+END_SRC
+
+#+RESULTS:
+: 
+: (("a" "b") ("1" "1") ("2" "8") ("3" "27"))
+
+#+BEGIN_SRC sh
+./extract-org-table data-1 org-outside-emacs.org csv
+#+END_SRC
+
+#+RESULTS:
+: x,y
+: 1,1
+: 2,4
+: 3,9
+
+#+BEGIN_SRC sh
+./extract-org-table data-2 org-outside-emacs.org tab
+#+END_SRC
+
+#+RESULTS:
+: a	b
+: 1	1
+: 2	8
+: 3	27
+
+That looks pretty reasonable, and you could even pipe the output to another classic unix command like cut to get a single column. Let us get the second column here.
+
+#+BEGIN_SRC sh
+./extract-org-table data-1 org-outside-emacs.org csv | cut -d , -f 2
+#+END_SRC
+
+#+RESULTS:
+: y
+: 1
+: 4
+: 9
+
+That is starting to look like using data from an org-file, but outside of org. Of course, we are using org-mode, via emacs, but the point is a user might not have to know that, as long as a fairly recent Emacs and org-mode was installed on their system.
+
+** Running code in an org-file
+It may be that there is code in an org-file that you might want to use, but for some reason choose not to cut and paste from the org-file to some script. Here is a simple code block:
+
+#+name: python-block
+#+BEGIN_SRC python
+import time
+with open('results.dat', 'w') as f:
+    f.write(time.asctime())
+#+END_SRC
+
+To call this externally we have to find the block and then run it.
+
+
+#+BEGIN_SRC emacs-lisp :tangle org-call.el :shebang #!/Applications/Emacs.app/Contents/MacOS/Emacs --script
+;; org-run blockname org-file
+;; run a code block in an org file
+(let ((blockname (pop command-line-args-left))
+      (org-file (pop command-line-args-left))
+      (src))
+  (find-file org-file)
+  (setq src
+	(org-element-map (org-element-parse-buffer) 'src-block
+	  (lambda (element)
+	    (when (string= blockname (org-element-property :name element))
+	      element))
+	  nil ;info
+	  t )) ; first-match
+  (when src
+     (goto-char (org-element-property :begin src))
+     ;; since we start with a fresh emacs, we have to configure some things.
+     (org-babel-do-load-languages
+      'org-babel-load-languages
+      '((python . t)))
+     (let ((org-confirm-babel-evaluate nil))
+       (org-babel-execute-src-block))))
+#+END_SRC
+
+elisp:org-babel-tangle
+
+#+BEGIN_SRC sh
+./org-call.el python-block org-outside-emacs.org
+cat results.dat
+#+END_SRC
+
+#+RESULTS:
+: Mon Aug 11 20:17:01 2014
+
+That demonstrates it is possible to call source blocks, but this is pretty limited in capability. You can only call a block; we did not capture any output from the block, only its side effects, e.g. it changed a file that we can examine. We have limited capability to set data into the block, other than through files. It might be possible to hack up something that runs org-babel-execute-src-block with constructed arguments that enables something like a var to be passed in. That is beyond today's post. When I get around to it, here is a reminder of how it might be possible to feed stdin to an emacs script: http://stackoverflow.com/questions/2879746/idomatic-batch-processing-of-text-in-emacs.

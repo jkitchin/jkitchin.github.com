@@ -3,7 +3,7 @@
 Search
 <form action="http://google.com/search" method="get">
   <fieldset role="search">
-    <input type="hidden" name="q" value="site:jkitchin.github.io" />
+    <input type="hidden" name="q" value="site:kitchingroup.cheme.cmu.edu" />
     <input class="search" type="text" name="q" results="0" placeholder="Search"/>
   </fieldset>
 </form>

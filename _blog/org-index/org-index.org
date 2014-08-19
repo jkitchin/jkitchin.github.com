@@ -1,0 +1,156 @@
+* Creating an index buffer in org-mode
+  :PROPERTIES:
+  :categories: orgmode
+  :END:
+
+I have a project with a set of org-files in it, and in strategic places I have marked some words as index entries, using an index link I created for that like this: index:zoo. The link itself does not do anything but make the link an org-element that I can extract later. In this post, I examine doing that, for the purpose of generating an index buffer that has a sorted list of the index words, and clickable links to each entry. Let us add some random index:animals entries for illustration later.
+
+We have three files in this project: this one, [[./file-1.org]] and [[./file-2.org]].
+
+We will loop through each one of these, and get the index links, and some properties. for the link we are interested in the :path property, which contains the keyword, and :begin and :end, which tell where the link starts and end, and the buffer name/file name. We will construct links to each place and save them in a list. index:aardvark
+
+Here is an example for this file:
+
+#+BEGIN_SRC emacs-lisp
+(let ((parsetree (org-element-parse-buffer)))
+  (org-element-map parsetree 'link
+    (lambda (link)       
+      (let ((type (nth 0 link))
+            (plist (nth 1 link))
+            (content (nth 2 link)))
+	(when (equal (plist-get plist :type) "index")
+	  (list (plist-get plist :path) (plist-get plist :begin) (buffer-file-name)))))))    
+#+END_SRC
+
+#+RESULTS:
+| zoo      | 206 | c:/Users/jkitchin/Dropbox/blogofile-jkitchin.github.com/_blog/org-index/org-index.org |
+| animals  | 496 | c:/Users/jkitchin/Dropbox/blogofile-jkitchin.github.com/_blog/org-index/org-index.org |
+| aardvark | 955 | c:/Users/jkitchin/Dropbox/blogofile-jkitchin.github.com/_blog/org-index/org-index.org |
+
+Now, let us loop through the three files, and accumulate our links. We will store the links as elisp links that switch buffer and goto char.
+
+#+BEGIN_SRC emacs-lisp :results output
+(setq *index-links* '())
+
+(dolist (f '("org-index.org" "file-1.org" "file-2.org"))
+  (find-file f)
+
+  (org-element-map (org-element-parse-buffer) 'link
+    (lambda (link)       
+      (let ((type (nth 0 link))
+	    (plist (nth 1 link)))
+(message "hi")
+	(when (equal (plist-get plist ':type) "index")
+	  (add-to-list '*index-links* 
+		       (cons (plist-get plist :path) (format "[[elisp:(progn (switch-to-buffer \"%s\")(goto-char %s))]]"
+			       
+			       (current-buffer)
+			       (plist-get plist :begin)))))))))
+
+(dolist (link (cl-sort *index-links* 'string-lessp :key 'car))
+  (princ (format "%s %s\n" (car link) (cdr link))))
+
+#+END_SRC
+
+#+RESULTS:
+: aardvark [[elisp:(progn (switch-to-buffer "org-index.org")(goto-char 955))]]
+: anaconda [[elisp:(progn (switch-to-buffer "file-2.org")(goto-char 90))]]
+: anaconda [[elisp:(progn (switch-to-buffer "file-1.org")(goto-char 33))]]
+: animals [[elisp:(progn (switch-to-buffer "org-index.org")(goto-char 496))]]
+: lions [[elisp:(progn (switch-to-buffer "file-2.org")(goto-char 24))]]
+: tigers [[elisp:(progn (switch-to-buffer "file-2.org")(goto-char 40))]]
+: zebras [[elisp:(progn (switch-to-buffer "file-1.org")(goto-char 76))]]
+: zoo [[elisp:(progn (switch-to-buffer "org-index.org")(goto-char 206))]]
+
+This is relatively ugly, and totally lacks context. Let us modify this to show some context. We will use thing-at-point to get the sentence around the link. Here is the code for that.
+
+
+#+BEGIN_SRC emacs-lisp :results output  org drawer
+(setq *index-links* '())
+
+(dolist (f '("org-index.org" "file-1.org" "file-2.org"))
+  (find-file f)
+
+  (org-element-map (org-element-parse-buffer) 'link
+    (lambda (link)       
+      (let ((type (nth 0 link))
+	    (plist (nth 1 link)))
+
+	(when (equal (plist-get plist ':type) "index")
+	  (add-to-list '*index-links* 
+		       (cons (plist-get plist :path) (format "[[elisp:(progn (switch-to-buffer \"%s\")(goto-char %s))][%s]] (%s)"
+			       
+			       (current-buffer)
+			       (plist-get plist :begin)
+			       (save-excursion
+				 (goto-char (plist-get plist :begin))
+				 (replace-regexp-in-string "\n" "" (thing-at-point 'sentence)))
+			       (file-name-nondirectory (buffer-file-name))))))))))				
+
+(dolist (link (cl-sort *index-links* 'string-lessp :key 'car))
+  (princ (format "%s %s\n\n" (car link) (cdr link))))
+#+END_SRC
+
+
+
+
+Next, I would like to create this in a buffer, with org sections for each letter, but only the letters that we have index entries for. We can get these letters easily enough like this.
+
+#+BEGIN_SRC emacs-lisp
+(setq initial-letters '())
+(dolist (link (cl-sort *index-links* 'string-lessp :key 'car))
+  (add-to-list 'initial-letters (substring (car link) 0 1) t))
+initial-letters
+#+END_SRC
+
+#+RESULTS:
+| a | l | t | z |
+
+And finally we create the new buffer with the keywords in it.
+
+#+BEGIN_SRC emacs-lisp
+;; first, get the list of sorted links
+(setq *index-links* '())
+
+(dolist (f '("org-index.org" "file-1.org" "file-2.org"))
+  (find-file f)
+
+  (org-element-map (org-element-parse-buffer) 'link
+    (lambda (link)       
+      (let ((type (nth 0 link))
+	    (plist (nth 1 link)))
+
+	(when (equal (plist-get plist ':type) "index")
+	  (add-to-list '*index-links* 
+		       (cons (plist-get plist :path) (format "[[elisp:(progn (switch-to-buffer \"%s\")(goto-char %s))][%s]] (%s)"
+			       
+			       (current-buffer)
+			       (plist-get plist :begin)
+			       (save-excursion
+				 (goto-char (plist-get plist :begin))
+				 (replace-regexp-in-string "\n" "" (thing-at-point 'sentence)))
+			       (file-name-nondirectory (buffer-file-name))))))))))				
+(setq *index-links*  (cl-sort *index-links* 'string-lessp :key 'car))
+
+;; now, get the first letters
+(setq initial-letters '())
+(dolist (link *index-links*)
+  (add-to-list 'initial-letters (substring (car link) 0 1) t))
+
+
+(switch-to-buffer (get-buffer-create "*index*"))
+(org-mode)
+(erase-buffer)
+(insert "#+TITLE: Index\n\n")
+(dolist (letter initial-letters)
+  (insert (format "* %s\n" (upcase letter)))
+  ;; now process the links
+  (while (and *index-links* (string= letter (substring (car (car *index-links*)) 0 1)))
+    (let ((link (pop *index-links*)))
+      (insert (format "%s %s\n\n" (car link) (cdr link))))))
+#+END_SRC
+
+#+RESULTS:
+
+
+There we have it, a clickable index that is autogenerated, and gives you convenient navigation back to the places where the index entries are! Pretty sweet.

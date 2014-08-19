@@ -1,0 +1,173 @@
+---
+title: Converting a doi to a bibtex entry
+date: 2014/05/22 16:22:31
+updated: 2014/05/22 16:22:31
+categories: bibtex
+tags: 
+---
+
+
+<p>
+Many citation management packages allow you to download a bibliography entry from a doi. I want to be able to do that in emacs. I found this <a href="http://homepages.see.leeds.ac.uk/~eeaol/notes/2013/02/doi-metadata/">page</a> that shows it is possible to get metadata about a doi with an http request, and from that data, we can create a bibtex entry. So, here is the basic code for getting metadata about a doi. We specify that we want json code, and then use <a href="http://edward.oconnor.cx/2006/03/json.el">json.el</a> to view the results.
+</p>
+
+<p>
+We temporarily set a few url-* variables with affect the url-retrieve results. And we rely on url-http-end-of-headers which tells us the end of the headers that get returned, so we can use the remaining text as the data.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(require 'json)
+
+(let ((url-request-method "GET") 
+      (url-mime-accept-string "application/citeproc+json")
+      (json-object-type 'plist)
+      (results))
+  (setq results 
+	(with-current-buffer (url-retrieve-synchronously "http://dx.doi.org/10.1016/S0022-0248(97)00279-0")
+	  (json-read-from-string (buffer-substring url-http-end-of-headers (point-max))))))
+</pre>
+</div>
+
+<p>
+(:volume 181 :indexed (:timestamp 1389218884442 :date-parts <i>2014 1 8</i>) :publisher Elsevier BV :source CrossRef :URL <a href="http://dx.doi.org/10.1016/S0022-0248(97)">http://dx.doi.org/10.1016/S0022-0248(97)</a> 00279-0 :ISSN [0022-0248] :DOI 10.1016/s0022-0248(97)00279-0 :type journal-article :title Effect of growth conditions on formation of TiO2-II thin films in atomic layer deposition process :issue 3 :deposited (:timestamp 1386028800000 :date-parts <i>2013 12 3</i>) :page 259-264 :reference-count nil :container-title Journal of Crystal Growth :author [(:given Jaan :family Aarik) (:given Aleks :family Aidla) (:given Väino :family Sammelselg) (:given Teet :family Uustare)] :prefix <a href="http://id.crossref.org/prefix/10.1016">http://id.crossref.org/prefix/10.1016</a> :score 1.0 :issued (:date-parts <i>1997 11</i>) :subject [Condensed Matter Physics Inorganic Chemistry Materials Chemistry] :subtitle [])
+</p>
+
+<p>
+That data is now sufficient for us to consider constructing a bibtex entry. For an article, a prototypical entry looks like:
+</p>
+
+<pre class="example">
+@Article{,
+  author = 	 {},
+  title = 	 {},
+  journal = 	 {},
+  year = 	 {},
+  OPTkey = 	 {},
+  OPTvolume = 	 {},
+  OPTnumber = 	 {},
+  OPTpages = 	 {},
+  OPTmonth = 	 {},
+  OPTnote = 	 {},
+  OPTannote = 	 {}
+}
+</pre>
+
+<p>
+Let us create a function that takes a doi and constructs a bibtex entry. I do not use all the metadata, so I just store the json data in the annote field. Maybe I should use another field for that, but annote seems ok since I do not use if for anything. I am going to use a template expansion function I developed earlier to make the bibtex entry template easier to write and read. Here is the code.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(require 'json)
+
+(defun expand-template (s)
+  "expand a template containing %{} with the eval of its contents"
+  (replace-regexp-in-string "%{\\([^}]+\\)}"
+                            (lambda (arg)
+                              (let ((sexp (substring arg 2 -1)))
+                                (format "%s" (eval (read sexp))))) s))
+
+(defun doi-to-bibtex-article (doi)
+ "insert a bibtex entry for doi at point"
+ (interactive "sDOI: ")
+ (let ((url-request-method "GET") 
+       (url-mime-accept-string "application/citeproc+json")
+       (json-object-type 'plist)
+       type
+       results
+       author
+       title
+       journal
+       year
+       volume
+       number
+       pages
+       month
+       url json-data)
+   
+   (setq results 
+	 (with-current-buffer
+	     (url-retrieve-synchronously
+	      (concat "http://dx.doi.org/" doi))
+	 (json-read-from-string (buffer-substring url-http-end-of-headers (point-max))))
+         type (plist-get results :type)
+	 author (mapconcat (lambda (x) (concat (plist-get x :given) " " (plist-get x :family)))
+		     (plist-get results :author) " and ")
+	 title (plist-get results :title)
+	 journal (plist-get results :container-title)
+	 volume (plist-get results :volume)
+	 issue (plist-get results :issue)
+	 year (elt (elt (plist-get (plist-get results :issued) :date-parts) 0) 0)
+	 month (elt (elt (plist-get (plist-get results :issued) :date-parts) 0) 1)
+	 pages (plist-get results :page)
+	 doi (plist-get results :DOI)
+	 url (plist-get results :URL)
+	 json-data (format "%s" results))
+
+   (when (string= type "journal-article")
+
+     (expand-template "@article{,
+  author = 	 {%{author}},
+  title = 	 {%{title}},
+  journal = 	 {%{journal}},
+  year = 	 {%{year}},
+  volume = 	 {%{volume}},
+  number = 	 {%{issue}},
+  pages = 	 {%{pages}},
+  doi =          {%{doi}},
+  url =          {%{url}},
+  month = 	 {%{month}},
+  json = 	 {%{json-data}}
+}"))))
+   
+(doi-to-bibtex-article "10.1016/s0022-0248(97)00279-0")
+</pre>
+</div>
+
+<pre class="example">
+@article{,
+  author = 	 {Jaan Aarik and Aleks Aidla and Väino Sammelselg and Teet Uustare},
+  title = 	 {Effect of growth conditions on formation of TiO2-II thin films in atomic layer deposition process},
+  journal = 	 {Journal of Crystal Growth},
+  year = 	 {1997},
+  volume = 	 {181},
+  number = 	 {3},
+  pages = 	 {259-264},
+  doi =          {10.1016/s0022-0248(97)00279-0},
+  url =          {http://dx.doi.org/10.1016/s0022-0248(97)00279-0},
+  month = 	 {11},
+  json = 	 {(:volume 181 :indexed (:timestamp 1389218884442 :date-parts [[2014 1 8]]) :publisher Elsevier BV :source CrossRef :URL http://dx.doi.org/10.1016/s0022-0248(97)00279-0 :ISSN [0022-0248] :DOI 10.1016/s0022-0248(97)00279-0 :type journal-article :title Effect of growth conditions on formation of TiO2-II thin films in atomic layer deposition process :issue 3 :deposited (:timestamp 1386028800000 :date-parts [[2013 12 3]]) :page 259-264 :reference-count nil :container-title Journal of Crystal Growth :author [(:given Jaan :family Aarik) (:given Aleks :family Aidla) (:given Väino :family Sammelselg) (:given Teet :family Uustare)] :prefix http://id.crossref.org/prefix/10.1016 :score 1.0 :issued (:date-parts [[1997 11]]) :subject [Condensed Matter Physics Inorganic Chemistry Materials Chemistry] :subtitle [])}
+}
+</pre>
+
+<p>
+That looks excellent. Note there are some non-ascii characters in it, which would have to be fixed. Let us try it on an ASAP article.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(doi-to-bibtex-article "10.1021/ie403744u")
+</pre>
+</div>
+
+<pre class="example">
+@article{,
+  author = 	 {José A. Delgado and V. I. Águeda and M. A. Uguina and J. L. Sotelo and P. Brea and Carlos A. Grande},
+  title = 	 { Adsorption and Diffusion of H 2 , CO, CH 4 , and CO 2 in BPL Activated Carbon and 13X Zeolite: Evaluation of Performance in Pressure Swing Adsorption Hydrogen Purification by Simulation },
+  journal = 	 {Industrial &amp; Engineering Chemistry Research},
+  year = 	 {2014},
+  volume = 	 {nil},
+  number = 	 {nil},
+  pages = 	 {140117091024005},
+  doi =          {10.1021/ie403744u},
+  url =          {http://dx.doi.org/10.1021/ie403744u},
+  month = 	 {1},
+  json = 	 {(:indexed (:timestamp 1392935578089 :date-parts [[2014 2 20]]) :publisher American Chemical Society (ACS) :source CrossRef :URL http://dx.doi.org/10.1021/ie403744u :ISSN [0888-5885 1520-5045] :DOI 10.1021/ie403744u :type journal-article :title  Adsorption and Diffusion of H 2 , CO, CH 4 , and CO 2 in BPL Activated Carbon and 13X Zeolite: Evaluation of Performance in Pressure Swing Adsorption Hydrogen Purification by Simulation  :deposited (:timestamp 1389916800000 :date-parts [[2014 1 17]]) :page 140117091024005 :reference-count nil :container-title Industrial &amp; Engineering Chemistry Research :author [(:given José A. :family Delgado) (:given V. I. :family Águeda) (:given M. A. :family Uguina) (:given J. L. :family Sotelo) (:given P. :family Brea) (:given Carlos A. :family Grande)] :prefix http://id.crossref.org/prefix/10.1021 :score 1.0 :issued (:date-parts [[2014 1 17]]) :subject [Chemistry(all) Industrial and Manufacturing Engineering Chemical Engineering(all)] :subtitle [])}
+}
+</pre>
+
+<p>
+You see that nil is put in for missing entries. That is probably ok. There is an &amp; in the journal that needs to be cleaned up, but that is easily done with org-ref-clean-bibtex-entry. In summary, this looks like a very convenient way to get bibtex entries inside emacs. I should probably have the function insert that string to a buffer at point, but that is not difficult to do.
+</p>
+<p>Copyright (C) 2014 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2014/05/22/Converting-a-doi-to-a-bibtex-entry.org">org-mode source</a><p><p>Org-mode version = 8.2.6</p>
