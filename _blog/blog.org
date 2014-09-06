@@ -1,3 +1,118 @@
+* Randomize a list in Emacs
+  :PROPERTIES:
+  :categories: emacs_lisp
+  :date:     2014/09/06 10:08:04
+  :updated:  2014/09/06 10:08:04
+  :END:
+
+I have an application where I have a list of userids, and I want to randomize the order of the list. Today, I explore some ways to do that. The first idea is to simply mimic the algorithm in Python's random.shuffle algorithm.
+
+#+BEGIN_SRC python
+    def shuffle(self, x, random=None):
+        """x, random=random.random -> shuffle list x in place; return None.
+
+        Optional arg random is a 0-argument function returning a random
+        float in [0.0, 1.0); by default, the standard random.random.
+
+        """
+
+        if random is None:
+            random = self.random
+        _int = int
+        for i in reversed(xrange(1, len(x))):
+            # pick an element in x[:i+1] with which to exchange x[i]
+            j = _int(random() * (i+1))
+            x[i], x[j] = x[j], x[i]
+#+END_SRC
+
+It looks like we loop through the elements, and swap them at random.
+
+We have a similar feature for xrange in emacs-lisp:
+
+#+BEGIN_SRC emacs-lisp
+(number-sequence 1 5)
+#+END_SRC
+
+#+RESULTS:
+| 1 | 2 | 3 | 4 | 5 |
+
+Note that number-sequence includes the last value, unlike xrange. And for reverse:
+
+#+BEGIN_SRC emacs-lisp
+(reverse (number-sequence 1 5))
+#+END_SRC
+
+#+RESULTS:
+| 5 | 4 | 3 | 2 | 1 |
+
+Of course, we can select random numbers:
+#+BEGIN_SRC emacs-lisp
+(random 5) ; random between 0 and 5
+#+END_SRC
+
+#+RESULTS:
+: 4
+
+Last, we need to work out how to swap to elements. It looks like this will swap elements 2 and 3. We store element 3 temporarily, set 3 to 2, and then set 2 to the temporarily stored value of 3.
+#+BEGIN_SRC emacs-lisp
+(let* ((L '(1 2 3 4))
+       (tmp (nth 3 L)))
+  (setf (nth 3 L) (nth 2 L))
+  (setf (nth 2 L) tmp)
+L)
+#+END_SRC
+
+#+RESULTS:
+| 1 | 2 | 4 | 3 |
+
+So, now we can shuffle our list.
+
+#+BEGIN_SRC emacs-lisp
+(setq userids '(user1 user2 user3 user4 user5 user6))
+
+(defun swap (LIST el1 el2)
+  "in LIST swap indices EL1 and EL2 in place"
+  (let ((tmp (nth el1 LIST)))
+    (setf (nth el1 LIST) (nth el2 LIST))
+    (setf (nth el2 LIST) tmp)))
+
+;; now run the loop
+(loop for i in (reverse (number-sequence 1 (1- (length userids))))
+      do (let ((j (random (+ i 1))))
+	   (swap userids i j)))
+
+userids
+#+END_SRC
+
+#+RESULTS:
+| user4 | user6 | user3 | user2 | user1 | user5 |
+
+The order has certainly changed. It is a little difficult to tell how randomized it actually is, but what is important for my application is that the order is different each time I use it. It looks like this will accomplish that objective. I think this basically implements the algorithm in the Python random.shuffle code. That code does something a little differently. It generates a random float between 0-1, multiplies it by i + 1, and converts the result to an integer. We directly get an integer in the range of 0 to i + 1. I think the result is practically the same.
+
+Finally, let us wrap the whole thing up in a nice neat function for future use.
+
+#+BEGIN_SRC emacs-lisp
+(defun swap (LIST el1 el2)
+  "in LIST swap indices EL1 and EL2 in place"
+  (let ((tmp (nth el1 LIST)))
+    (setf (nth el1 LIST) (nth el2 LIST))
+    (setf (nth el2 LIST) tmp)))
+
+
+(defun shuffle (LIST)
+  "Shuffle the elements in LIST.
+shuffling is done in place."
+  (loop for i in (reverse (number-sequence 1 (1- (length LIST))))
+	do (let ((j (random (+ i 1))))
+	     (swap LIST i j)))
+  LIST)
+
+(shuffle '(user1 user2 user3 user4 user5 user6))
+#+END_SRC
+
+#+RESULTS:
+| user5 | user3 | user2 | user4 | user6 | user1 |
+
 * DONE Using Mac gestures in Emacs
   CLOSED: [2014-08-31 Sun 10:20]
   :PROPERTIES:
@@ -68,16 +183,19 @@ Note I reversed the left/right order. It seems that swiping left triggers the tr
 * Showing that Emacs is working
 
 
-
+#+name: my-code
 #+BEGIN_SRC python
 import numpy
 print 5
 #+END_SRC
 
+#+RESULTS: my-code
+: 5
+
 #+RESULTS:
 : 5
 
-
+This does not work, because there is no way to update the reporter while the code block is running.
 #+BEGIN_SRC emacs-lisp
 (defadvice org-babel-execute-src-block (around progress nil activate)
   (let ((pr (make-progress-reporter "Running")))
@@ -86,10 +204,41 @@ print 5
 #+END_SRC
 
 
+Here we create a buffer that indicates what is running
+#+BEGIN_SRC emacs-lisp
+(defadvice org-babel-execute-src-block (around progress nil activate)
+  "create a buffer indicating what is running"
+  (let ((code-block (org-element-property :name (org-element-at-point)))
+        (LN (line-number-at-pos)))
+
+    (split-window-below)
+    (other-window 1)
+    (switch-to-buffer "*My Babel*")
+    (if code-block
+	(insert (format "Running %s\n" code-block))
+      (insert (format "Running block at line %s\n" LN)))
+    (insert "Started at: " (current-time-string) "\n")
+    (other-window 1)
+    ad-do-it
+    (kill-buffer "*My Babel*")
+    (delete-other-windows)))
+#+END_SRC
+
+#+BEGIN_SRC python
+import time
+time.sleep(5)
+print 5
+#+END_SRC
+
+#+RESULTS:
+: 5
+
+
+
+Here we change the color of the codeblocks when they are running.
 #+BEGIN_SRC emacs-lisp
 (defadvice org-babel-execute-src-block (around progress nil activate)
   (set-face-attribute 'org-block-background nil :background "LightSteelBlue")
-  (message "Running your code block")
   ad-do-it
   (set-face-attribute 'org-block-background nil :background "gray")
 (message "Done with code block"))
@@ -98,17 +247,22 @@ print 5
 #+RESULTS:
 : org-babel-execute-src-block
 
+Try using an overlay
+#+BEGIN_SRC emacs-lisp
+(defadvice org-babel-execute-src-block (around progress nil activate)
+  "create a buffer indicating what is running"
+  (let ((ol (make-overlay (org-element-property :begin (org-element-at-point))
+			  (org-element-property :end (org-element-at-point)))))
 
-#+RESULTS:
-: 5
+    (overlay-put ol 'face '(foreground-color . "blue"))
 
-#+BEGIN_SRC python
-import time
-time.sleep(5)
+    ad-do-it
+
+    (delete-overlay ol)))
 #+END_SRC
 
 #+RESULTS:
-
+: org-babel-execute-src-block
 
 * Checking if processes are done
 
