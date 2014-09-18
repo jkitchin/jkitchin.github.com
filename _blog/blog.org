@@ -1,3 +1,244 @@
+* A git modeline
+I am using git more and more in Emacs, and I would like a way to know the status of the git repo I am working in by looking at the modeline. I know about magit, and other git modes, but none of them provide something as easy as useful as say git-prompt in the bash shell.
+
+Here, I want to emulate that feature in the Emacs modeline where it will show you when you are in a git repo, and then some basic information like what branch you are on, the number of untracked, modified files, and the commit status with respect to a remote. First, we only want this when we are in a git repo. We can check for that like this. The command in this block returns a string that starts with fatal when not in a git repo.
+#+BEGIN_SRC emacs-lisp
+(string-match "^fatal" (shell-command-to-string "git rev-parse --git-dir"))
+#+END_SRC
+
+Let us wrap that in a nice function.
+#+BEGIN_SRC emacs-lisp
+(defun in-git-p ()
+  (not (string-match "^fatal" (shell-command-to-string "git rev-parse --git-dir"))))
+
+(in-git-p)
+#+END_SRC
+
+#+RESULTS:
+: t
+
+Next, we would like to know how many untracked files, and modified files we have. We can get this from git status:
+
+#+BEGIN_SRC emacs-lisp
+(defun git-parse-status ()
+  (interactive)
+  (let ((U 0) ; untracked
+	(M 0) ; modified
+	(O 0)); other
+    (dolist (line (split-string
+		   (shell-command-to-string "git status --porcelain")
+		   "\n"))
+      (cond
+       ((string-match "^\\?\\?" line)
+	(setq U (+ 1 U)))
+
+       ((string-match "^ M" line)
+	(setq M (+ 1 M)))
+
+       (t
+	(setq O (+ 1 O)))))
+    (format " | M:%d | U:%d | O:%d" U M O)))
+
+(git-parse-status)
+#+END_SRC
+
+#+RESULTS:
+:  | M:0 | U:1 | O:1
+
+Finally, let us get the commits with respect to a remote.
+
+#+BEGIN_SRC emacs-lisp
+(shell-command-to-string "git rev-list --count --left-right HEAD -- origin")
+#+END_SRC
+
+#+RESULTS:
+: 0	0
+
+
+
+#+BEGIN_SRC emacs-lisp
+(define-minor-mode git-mode
+  "minor mode to put git repo status in modeline"
+  nil
+  :global t
+  :lighter (:eval (if (string-match
+		       "^fatal"
+		       (shell-command-to-string "git rev-parse --git-dir"))
+		      ""
+		    " git:")))
+#+END_SRC
+
+* Scripting git
+I am running a project where I need to script git to "do the right thing" non-interactively. The project involves students creating assignments, and then turning them in. They create the assignments in Emacs+org-mode, and then "turn in" the assignment by running a menu command that commits their work to a git repository, and then pushes it to my server. Some emacs-lisp code does all this magic. Most of the time. 
+
+Occasionally, students have had trouble when it comes time to update their graded assignments. These assignments have been pulled from the server by me, graded, and pushed back. I did not anticipate that students would continue changing their local repos after turning the work in, and this causes issues when they try to pull the results back. 
+
+Here I document how to make this process a bit more robust. Basically, we need to make sure the local repo is clean before we pull, then we need to check if there were merge conflicts. Since the conflicts are probably notes the students took, we will be conservative and just accept the merge markers in the text so they do not lose their notes.
+
+What we need to do is check the output of "git status --porcelain" and do an appropriate action for each file. The output of this command is one line per file that requires some action. Basically we can have untracked files, which should just be added and committed. The reason for this is that if I create a file with the same name, it will be a conflict for git to overwrite their existing file. There could be added or modified files, renamed files, deleted files  updated but unmerged, and some other possibilities too.
+
+The "git status --porcelain" command gives a two letter status code for each file that is not "clean". The first letter is the status of the index, and the second letter is the status of the work-tree, unless there is a merge conflict, and then they are the status of the file on each side of the merge.
+
+#+BEGIN_EXAMPLE
+       o   ' ' = unmodified
+
+       o    M = modified
+
+       o    A = added
+
+       o    D = deleted
+
+       o    R = renamed
+
+       o    C = copied
+
+       o    U = updated but unmerged
+
+       Ignored files are not listed, unless --ignored option is in effect, in
+       which case XY are !!.
+
+           X          Y     Meaning
+           -------------------------------------------------
+                     [MD]   not updated
+           M        [ MD]   updated in index
+           A        [ MD]   added to index
+           D         [ M]   deleted from index
+           R        [ MD]   renamed in index
+           C        [ MD]   copied in index
+           [MARC]           index and work tree matches
+           [ MARC]     M    work tree changed since index
+           [ MARC]     D    deleted in work tree
+           -------------------------------------------------
+           D           D    unmerged, both deleted
+           A           U    unmerged, added by us
+           U           D    unmerged, deleted by them
+           U           A    unmerged, added by them
+           D           U    unmerged, deleted by us
+           A           A    unmerged, both added
+           U           U    unmerged, both modified
+           -------------------------------------------------
+           ?           ?    untracked
+           !           !    ignored
+           -------------------------------------------------
+#+END_EXAMPLE 
+
+The man page recommends we use the -z option for parsing which ends strings with a null character.
+#+BEGIN_SRC sh :dir ~/Desktop/A
+git status --porcelain
+#+END_SRC
+
+#+RESULTS:
+: R  f1 -> f1-rname
+:  D f2
+: ?? f2-rname
+
+
+It seems like we need to parse the porcelain command, get X, and Y, and depending on what those are, we have a set of cond statements to act appropriately.
+
+
+Here is a function to parse a line of porcelain output.
+#+BEGIN_SRC emacs-lisp :dir ~/Desktop/A :results raw
+(defun parse-line (line)
+  (let* ((X (substring line 0 1))
+	 (Y (substring line 1 2))
+	 (PATHS (split-string (substring line 3)))
+	 (PATH1 (nth 0 PATHS))
+         ; for a rename there will be PATH1 -> PATH2
+	 (PATH2 (if (= 3 (length PATHS)) (nth 2 PATHS) nil)))
+    (list X Y PATH1 PATH2 line)))
+
+(defun parse-git-status ()
+ (interactive)
+(loop for line in (split-string
+		  (shell-command-to-string "git status --porcelain") "\n")
+      when (not (string= "" line)) collect (parse-line line))) 
+#+END_SRC
+
+Now we check out the results.
+
+#+BEGIN_SRC emacs-lisp :dir ~/Desktop/A 
+(parse-git-status)
+#+END_SRC
+
+#+RESULTS:
+| R |   | f1       | f1-rname | R  f1 -> f1-rname |
+|   | D | f2       | nil      | D f2              |
+| ? | ? | f2-rname | nil      | ?? f2-rname       |
+
+That function gives us a list of X, Y, FROM, and TO, and the original string.
+
+Now, we can start building the logic to handle these. The goal of this block as after running, the repo is clean, and you can then pull into it.
+
+#+BEGIN_SRC emacs-lisp :dir ~/Desktop/A :results output
+(let ((merge-p nil))
+  (loop for (X Y FROM TO LINE) in (parse-git-status)
+	do
+	(cond
+	 ;; untracked files get added and committed.
+	 ((and (string= X "?")
+	       (string= Y "?"))
+	  (shell-command (format "git add %s" FROM))
+	  (shell-command
+	   (format "git commit %s \"adding %s.\""
+		   FROM FROM)))
+	 
+	 ;; user rename
+	 ((and (string= X "R")
+	       (string= Y " "))
+	  (shell-command (format "git commit %s -m \"rename %s to %s\"" FROM FROM TO)))
+	 
+	 ;; rename and modify
+	 ((and (string= X "R")
+	       (string= Y "M"))
+	  ;; commit the rename
+	  (shell-command (format "git commit %s -m \"rename %s to %s\"" FROM FROM TO))
+	  (shell-command (format "git commit %s -m \"changes in %s\"" TO TO)))
+	 
+	 ;; added file
+	 ((and (string= X "A")
+	       (string= Y " "))
+	  (shell-command (format "git commit %s -m  \"Adding %s\"" FROM FROM)))
+	 
+	 ;; deleted file
+	 ((and (string= X " ")
+	       (string= Y "D"))
+	  (shell-command (format "git commit %s -m \"Deleting %s\"" FROM FROM)))
+	 
+	 ;; modified file
+	 ((or (string= X "M")
+	      (string= Y "M"))
+          (shell-command (format "git add %s" FROM))
+	  (shell-command (format "git commit %s -m \"changes in %s\"" FROM FROM)))
+
+	 ;; merge conflict, we just add the file
+	 ;; we do not commit here because you cannot partially commit.
+	 ;; after the loop, we do the commit if merge-p is t
+	 ((or (string= X "U")
+	      (string= Y "U"))
+	  (setq merge-p t)
+	  (shell-command (format "git add %s" FROM)))
+      
+	 ;; catch everything else
+	 (t
+	  (shell-command (format "git add %s" FROM))
+	  (shell-command (format "git commit %s -m \"%s\"" FROM LINE))
+	  (message "%s not handled gracefully\n" LINE))))
+  ;;
+  (when merge-p    
+    (shell-command "git commit -m \"accepting merge\"")))
+#+END_SRC
+#+RESULTS:
+
+
+#+BEGIN_SRC emacs-lisp :dir ~/Desktop/A
+(parse-git-status)
+#+END_SRC
+
+#+RESULTS:
+| M |   | empty | nil | M  empty |
+
+
+
 * DONE Colorized text in Emacs
   CLOSED: [2014-09-14 Sun 14:23]
   :PROPERTIES:
