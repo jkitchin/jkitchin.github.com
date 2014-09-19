@@ -1,10 +1,16 @@
 * A git modeline
+  :PROPERTIES:
+  :categories: emacs,git
+  :END:
 I am using git more and more in Emacs, and I would like a way to know the status of the git repo I am working in by looking at the modeline. I know about magit, and other git modes, but none of them provide something as easy as useful as say git-prompt in the bash shell.
 
 Here, I want to emulate that feature in the Emacs modeline where it will show you when you are in a git repo, and then some basic information like what branch you are on, the number of untracked, modified files, and the commit status with respect to a remote. First, we only want this when we are in a git repo. We can check for that like this. The command in this block returns a string that starts with fatal when not in a git repo.
 #+BEGIN_SRC emacs-lisp
-(string-match "^fatal" (shell-command-to-string "git rev-parse --git-dir"))
+(not (string-match "^fatal" (shell-command-to-string "git rev-parse --git-dir")))
 #+END_SRC
+
+#+RESULTS:
+: t
 
 Let us wrap that in a nice function.
 #+BEGIN_SRC emacs-lisp
@@ -29,44 +35,120 @@ Next, we would like to know how many untracked files, and modified files we have
 		   (shell-command-to-string "git status --porcelain")
 		   "\n"))
       (cond
+
+       ;; ignore empty line at end
+       ((string= "" line) nil)
+
        ((string-match "^\\?\\?" line)
 	(setq U (+ 1 U)))
 
        ((string-match "^ M" line)
 	(setq M (+ 1 M)))
 
-       (t
-	(setq O (+ 1 O)))))
-    (format " | M:%d | U:%d | O:%d" U M O)))
 
+       (t
+        (message "detected other in %s" line)
+	(setq O (+ 1 O)))))
+    (concat
+     "("
+     (propertize 
+      (format "M:%d" M)
+      'font-lock-face
+      `(:foreground ,(if (> M 0)
+			"red"
+		      "forest green")))
+     "|"
+     (propertize 
+      (format "U:%d" U)
+      'font-lock-face
+      `(:foreground ,(if (> U 0)
+			"red"
+		      "forest green")))
+     "|"
+     (propertize 
+      (format "O:%d" O)
+      'face (list ':foreground (if (> O 0)
+				   "red"
+				 "forest green")
+		  ':help-echo "you need help?"))		    
+      ")")))
+    
 (git-parse-status)
 #+END_SRC
 
 #+RESULTS:
-:  | M:0 | U:1 | O:1
+: (M:1|U:2|O:1)
 
-Finally, let us get the commits with respect to a remote.
+Finally, let us get the commits with respect to a remote. We can do that like this. We use ^ to indicate you need to push commits up, and _ to indicate you need to pull them down.
 
 #+BEGIN_SRC emacs-lisp
-(shell-command-to-string "git rev-list --count --left-right HEAD -- origin")
+(defun git-remote-status ()
+  (interactive)
+  (apply 'format "(^%s|_%s)"
+	 (split-string
+	  (shell-command-to-string
+	   "git rev-list --count --left-right HEAD -- origin"))))
+
+(git-remote-status)
 #+END_SRC
 
 #+RESULTS:
-: 0	0
+: (^0|_0)
 
+Now, we can finally put this together:
 
+#+BEGIN_SRC emacs-lisp
+(setq mode-line-format '(:eval (if (not (in-git-p))
+				   ""
+				 (concat " git:"
+					 (git-remote-status)
+					 (git-parse-status)))))
+#+END_SRC
+
+#+RESULTS:
+| :eval | (if (not (in-git-p))  (concat  git: (git-remote-status) (git-parse-status))) |
+
+#+BEGIN_SRC emacs-lisp
+  (if (not (in-git-p))
+      ""
+    (concat " git:"
+	    (git-remote-status)
+	    (git-parse-status)))
+
+(git-mode-string)
+#+END_SRC
+
+#+RESULTS:
+:  git: (^0|_0)(M:1|U:1|O:1)
 
 #+BEGIN_SRC emacs-lisp
 (define-minor-mode git-mode
   "minor mode to put git repo status in modeline"
   nil
   :global t
-  :lighter (:eval (if (string-match
-		       "^fatal"
-		       (shell-command-to-string "git rev-parse --git-dir"))
-		      ""
-		    " git:")))
+  :lighter (:eval 
+	    (if (not (in-git-p))
+		""
+	      (concat " git:"
+		      (git-remote-status)
+		      (git-parse-status)))))
 #+END_SRC
+
+#+RESULTS:
+
+
+(add-to-list 'load-path "/Users/jkitchin/Dropbox/elisp-repos/git-emacs")
+(require 'git-emacs)
+
+
+
+
+(custom-set-faces
+   '(mode-line ((t (:box (:line-width 2 :color "red"))))))
+
+
+
+(setq git-state-modeline-decoration 'git-state-decoration-colored-letter)
 
 * Scripting git
 I am running a project where I need to script git to "do the right thing" non-interactively. The project involves students creating assignments, and then turning them in. They create the assignments in Emacs+org-mode, and then "turn in" the assignment by running a menu command that commits their work to a git repository, and then pushes it to my server. Some emacs-lisp code does all this magic. Most of the time. 
