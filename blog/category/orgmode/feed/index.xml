@@ -10,10 +10,231 @@
     <title>The Kitchin Research Group</title>
     <link>http://jkitchin.github.io/blog</link>
     <description>Chemical Engineering at Carnegie Mellon University</description>
-    <pubDate>Sun, 21 Sep 2014 18:35:04 GMT</pubDate>
+    <pubDate>Mon, 22 Sep 2014 16:34:08 GMT</pubDate>
     <generator>Blogofile</generator>
     <sy:updatePeriod>hourly</sy:updatePeriod>
     <sy:updateFrequency>1</sy:updateFrequency>
+    <item>
+      <title>Showing what data went into a code block on export</title>
+      <link>http://jkitchin.github.io/blog/2014/09/22/Showing-what-data-went-into-a-code-block-on-export</link>
+      <pubDate>Mon, 22 Sep 2014 12:25:29 EDT</pubDate>
+      <category><![CDATA[orgmode]]></category>
+      <guid isPermaLink="false">QJNbFFMdJFg33vNW_e6oJPsf03Y=</guid>
+      <description>Showing what data went into a code block on export</description>
+      <content:encoded><![CDATA[
+
+
+<p>
+Sometimes I define variables in the header of a code block and then use the code to analyze the data. In org-mode this is super, and you can read the file and easily see what is going on. 
+</p>
+
+<p>
+When you export the file, however, the information is lost, and in the exported result you cannot see what data went into a code block, or figure out where it is from. 
+</p>
+
+<p>
+Today we examine how to get that information into exported code. First, we setup a simple example that will do what need.
+</p>
+
+<table id="tbl-data" border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="right" />
+
+<col  class="right" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="right">x</th>
+<th scope="col" class="right">y</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="right">1</td>
+<td class="right">1</td>
+</tr>
+
+<tr>
+<td class="right">2</td>
+<td class="right">4</td>
+</tr>
+
+<tr>
+<td class="right">3</td>
+<td class="right">9</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Now a code block that has a defined variable in the header that uses data from the table defined above.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python" id="print-table"><span style="color: #8b0000;">return</span> data
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="right" />
+
+<col  class="right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="right">1</td>
+<td class="right">1</td>
+</tr>
+
+<tr>
+<td class="right">2</td>
+<td class="right">4</td>
+</tr>
+
+<tr>
+<td class="right">3</td>
+<td class="right">9</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+During export, org-mode does some interesting things to the document, including removing the headers from the code blocks, which makes it impossible to access them inside the export. The headers are apparently removed during org-babel-exp-process-buffer. It does not appear possible to advise this function because it processes the whole buffer at once, and we need to save data for each code block.  
+</p>
+
+<p>
+So, we will have to preprocess the buffer to get the parameters on each block, and then put the parameters in the export afterwards. For this, we can use a filter. We will preprocess the buffer to get names of tables, and parameters of src-blocks. (I suppose we could put this preprocessing in the advice function, but I tend to avoid advice when possible).
+</p>
+
+<p>
+Here is how we can get a list of the table-names indicating their name or that they are results (results are enclosed in ()).
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(org-element-map (org-element-parse-buffer) 'table
+  (<span style="color: #8b0000;">lambda</span> (element)     
+    (or (org-element-property <span style="color: #cd0000;">:name</span> element) (org-element-property <span style="color: #cd0000;">:results</span> element))))
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="left" />
+
+<col  class="left" />
+
+<col  class="left" />
+
+<col  class="left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="left">tbl-data</td>
+<td class="left">(print-table)</td>
+<td class="left">()</td>
+<td class="left">()</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Similarly, here is the list of parameters for each block.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(org-element-map (org-element-parse-buffer) 'src-block
+  (<span style="color: #8b0000;">lambda</span> (element)     
+    (org-element-property <span style="color: #cd0000;">:parameters</span> element)))
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="left">:var data=tbl-data :results value</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Now, we combine them with filters to modify the output. First, we preprocess to get each list, and then in the filter, we will pop off each value and insert the data. We will also get the language for each code block, and add that in the export. We use a filter because we are not modified the transcoded text, simply adding some new text in front of it.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">ox-mrkup-filter-table</span> (text back-end info)
+  (<span style="color: #8b0000;">let</span> ((tblname (pop tblnames)))
+    (message <span style="color: #228b22;">"tblname is \"%s\""</span> tblname)
+    ; <span style="color: #ff0000; font-weight: bold;">pop does not remove nil from the list, so we do it here.</span>
+    (<span style="color: #8b0000;">when</span> (null tblname) (setq tblnames (cdr tblnames)))
+    (<span style="color: #8b0000;">cond</span>
+     ((listp tblname)  ; <span style="color: #ff0000; font-weight: bold;">from results</span>
+      (concat (format <span style="color: #228b22;">"&lt;br&gt;Results: %s"</span> (car tblname)) text))
+     ((null tblname)   ; <span style="color: #ff0000; font-weight: bold;">no name</span>
+      text)
+     (t ; <span style="color: #ff0000; font-weight: bold;">everything else</span>
+      (concat (format <span style="color: #228b22;">"&lt;br&gt;Table name: %s"</span> tblname) text)))))
+
+(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">ox-mrkup-filter-src-block</span> (text back-end info)
+  (<span style="color: #8b0000;">let</span> ((params (pop src-params))
+        (lang (pop src-langs)))
+    (<span style="color: #8b0000;">when</span> (null params) (setq src-params (cdr src-params)))
+    (<span style="color: #8b0000;">if</span> params  
+        (concat (format <span style="color: #228b22;">"&lt;pre&gt;Language = %s\nParameters = %s&lt;/pre&gt;"</span> lang params) text)
+      text)))
+
+;; <span style="color: #ff0000; font-weight: bold;">preprocess to get table names, src parameters and languages.</span>
+(<span style="color: #8b0000;">let</span> ((tblnames (org-element-map (org-element-parse-buffer) 'table
+                  (<span style="color: #8b0000;">lambda</span> (element)     
+                    (or (org-element-property <span style="color: #cd0000;">:name</span> element)                    
+                        (org-element-property <span style="color: #cd0000;">:results</span> element)))))
+
+      (src-params (org-element-map (org-element-parse-buffer) 'src-block
+                    (<span style="color: #8b0000;">lambda</span> (element)     
+                      (org-element-property <span style="color: #cd0000;">:parameters</span> element))))
+
+      (src-langs (org-element-map (org-element-parse-buffer) 'src-block
+                    (<span style="color: #8b0000;">lambda</span> (element)     
+                      (org-element-property <span style="color: #cd0000;">:language</span> element))))
+
+      ;; <span style="color: #ff0000; font-weight: bold;">register the filters</span>
+      (org-export-filter-table-functions '(ox-mrkup-filter-table))
+      (org-export-filter-src-block-functions '(ox-mrkup-filter-src-block)))
+
+  ;; <span style="color: #ff0000; font-weight: bold;">and export the result</span>
+  (browse-url (org-export-to-file 'html <span style="color: #228b22;">"custom-src-table-export-3.html"</span>)))
+</pre>
+</div>
+
+<pre class="example">
+#&lt;process open custom-src-table-export-3.html&gt;
+</pre>
+
+
+<p>
+Here is the resulting html file: <a href="/media/2014-09-22-Showing-what-data-went-into-a-code-block-on-export/custom-src-table-export-3.html">custom-src-table-export-3.html</a> which shows the new export behavior. It might not be too difficult to make links between the parameters and the tables, but it would require parsing the :parameters string. For now, this makes it easy enough to read in HTML where the data is coming from (assuming fluency in org-mode header arguments!).
+</p>
+
+<p>
+Special thanks to Aaron Ecay, and Charles Berry on the org-mode mailing list for pointing me towards a solution. 
+</p>
+<p>Copyright (C) 2014 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2014/09/22/Showing-what-data-went-into-a-code-block-on-export.org">org-mode source</a><p><p>Org-mode version = 8.2.7c</p>]]></content:encoded>
+    </item>
     <item>
       <title>Getting information about named tables in exported org-files</title>
       <link>http://jkitchin.github.io/blog/2014/09/21/Getting-information-about-named-tables-in-exported-org-files</link>
