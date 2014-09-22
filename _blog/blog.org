@@ -1,9 +1,155 @@
-* Showing what data went into a code block on export
+* Bug report 2 for org-mode
+
+Here is a named table
+#+tblname: tbl-data
+| x | y |
+|---+---|
+| 1 | 1 |
+| 2 | 4 |
+| 3 | 9 |
+
+Here is a named src-block with a defined var
+#+name: print-table
+#+BEGIN_SRC python :var data=tbl-data :results value
+return data 
+#+END_SRC
+
+
+Now, we illustrate that the src-block does have :parameters.
+#+name: get-properties
+#+BEGIN_SRC emacs-lisp
+(save-excursion
+  (re-search-backward "#\\+name: print-table")
+  (buffer-substring
+   (org-element-property :begin (org-element-at-point))
+   (org-element-property :end (org-element-at-point))))
+#+END_SRC
+
+#+RESULTS: get-properties
+: #+name: print-table
+: #+BEGIN_SRC python :var data=tbl-data :results value
+: return data 
+: #+END_SRC
+: 
+: 
+
+In the export machinery, though it appears the src-block is not the same.
+
+#+BEGIN_SRC emacs-lisp :results output :exports none
+(defun my-src-block (src-block contents info)
+
+  (princ (buffer-substring
+	  (org-element-property :begin src-block)
+	  (org-element-property :end src-block)))
+  
+    (org-export-format-code-default src-block info))
+
+(org-export-define-derived-backend 'my-html 'html
+  :translate-alist '((src-block . my-src-block)))
+
+(org-export-to-file 'my-html "custom-src-table-export.html")
+#+END_SRC
+#+RESULTS:
+#+begin_example
+#+name: print-table
+#+BEGIN_SRC python
+return data 
+#+END_SRC
+
+
+#+name: get-properties
+#+BEGIN_SRC emacs-lisp
+(save-excursion
+  (re-search-backward "#\\+name: print-table")
+  (buffer-substring
+   (org-element-property :begin (org-element-at-point))
+   (org-element-property :end (org-element-at-point))))
+#+END_SRC
+
+#+end_example
+
+The parameters seem to be gone.
+* Bug report for org-mode
+
+Here is a named table
+#+tblname: tbl-data
+| x | y |
+|---+---|
+| 1 | 1 |
+| 2 | 4 |
+| 3 | 9 |
+
+Here is a named src-block with a defined var
+#+name: print-table
+#+BEGIN_SRC python :var data=tbl-data :results value
+return data 
+#+END_SRC
+
+
+
+
+#+RESULTS: print-table
+| 1 | 1 |
+| 2 | 4 |
+| 3 | 9 |
+
+Now, we illustrate that the src-block does have :parameters.
+#+name: get-properties
+#+BEGIN_SRC emacs-lisp
+(save-excursion
+(re-search-backward "#\\+name: print-table")
+(org-element-property :parameters (org-element-at-point)))
+#+END_SRC
+
+#+RESULTS: get-properties
+: :var data=tbl-data :results value
+
+In the export machinery, though it appears the src-block does not.
+
+
+#+BEGIN_SRC emacs-lisp :results output
+(defun my-src-block (src-block contents info)
+
+  (princ (concat
+	  (format "[language: %s]\n" (org-element-property :language src-block))
+	  (format "name: %s\n" (org-element-property :name src-block))
+	  (format "parameters: %s\n\n" (org-element-property :parameters src-block))))
+    (org-export-format-code-default src-block info))
+
+(org-export-define-derived-backend 'my-html 'html
+  :translate-alist '((src-block . my-src-block)))
+
+(org-export-to-file 'my-html "custom-src-table-export.html")
+#+END_SRC
+#+RESULTS:
+#+begin_example
+[language: python]
+name: print-table
+parameters: nil
+
+[language: emacs-lisp]
+name: get-properties
+parameters: nil
+
+[language: emacs-lisp]
+name: nil
+parameters: nil
+
+#+end_example
+
+The parameters are nil in each case, even though we know the print-table block should have parameters. I think that is a bug.
+* DONE Showing what data went into a code block on export
+  CLOSED: [2014-09-22 Mon 12:25]
+  :PROPERTIES:
+  :categories: orgmode
+  :date:     2014/09/22 12:25:29
+  :updated:  2014/09/22 12:33:51
+  :END:
 Sometimes I define variables in the header of a code block and then use the code to analyze the data. In org-mode this is super, and you can read the file and easily see what is going on. 
 
 When you export the file, however, the information is lost, and in the exported result you cannot see what data went into a code block, or figure out where it is from. 
 
-Today we design an export filter to remedy this. 
+Today we examine how to get that information into exported code. First, we setup a simple example that will do what need.
 
 #+tblname: tbl-data
 | x | y |
@@ -12,63 +158,100 @@ Today we design an export filter to remedy this.
 | 2 | 4 |
 | 3 | 9 |
 
-#+BEGIN_SRC python :var data=tbl-data 
-print data
+Now a code block that has a defined variable in the header that uses data from the table defined above.
+
+#+name: print-table
+#+BEGIN_SRC python :var data=tbl-data :results value
+return data 
 #+END_SRC
 
-#+RESULTS:
-: [[1, 1], [2, 4], [3, 9]]
+#+RESULTS: print-table
+| 1 | 1 |
+| 2 | 4 |
+| 3 | 9 |
 
-We are going to define a derived LaTeX backend to do this for us. This idea is based on the code shown in http://orgmode.org/manual/Advanced-configuration.html. 
+During export, org-mode does some interesting things to the document, including removing the headers from the code blocks, which makes it impossible to access them inside the export. The headers are apparently removed during org-babel-exp-process-buffer. It does not appear possible to advise this function because it processes the whole buffer at once, and we need to save data for each code block.  
+
+So, we will have to preprocess the buffer to get the parameters on each block, and then put the parameters in the export afterwards. For this, we can use a filter. We will preprocess the buffer to get names of tables, and parameters of src-blocks. (I suppose we could put this preprocessing in the advice function, but I tend to avoid advice when possible).
+
+Here is how we can get a list of the table-names indicating their name or that they are results (results are enclosed in ()).
 
 #+BEGIN_SRC emacs-lisp
-(defun my-src-block (src-block contents info)
-  (message "start-block\n\n%s\n\nend-block" info)
-  (concat "<pre>"
-   (format "[language: %s]" (org-element-property :language src-block))
-   (format "\nparameters: %s" (org-element-property :parameters src-block))
-   "</pre><br>"
-    (org-export-format-code-default src-block info)))
-
-(org-export-define-derived-backend 'my-html 'html
-  :translate-alist '((src-block . my-src-block)))
-
-(org-export-to-file 'my-html "custom-src-table-export.html")
-(browse-url "custom-src-table-export.html")
+(org-element-map (org-element-parse-buffer) 'table
+  (lambda (element)     
+    (or (org-element-property :name element) (org-element-property :results element))))
 #+END_SRC
-#+RESULTS:
-: #<process open custom-src-table-export.html>
 
-** filter							   :noexport:
+#+RESULTS:
+| tbl-data | (print-table) | () | () |
+
+Similarly, here is the list of parameters for each block.
+
+#+BEGIN_SRC emacs-lisp 
+(org-element-map (org-element-parse-buffer) 'src-block
+  (lambda (element)     
+    (org-element-property :parameters element)))
+#+END_SRC
+
+#+RESULTS:
+| :var data=tbl-data :results value |
+
+Now, we combine them with filters to modify the output. First, we preprocess to get each list, and then in the filter, we will pop off each value and insert the data. We will also get the language for each code block, and add that in the export. We use a filter because we are not modified the transcoded text, simply adding some new text in front of it.
 
 #+BEGIN_SRC emacs-lisp
 (defun ox-mrkup-filter-table (text back-end info)
-  (message "%s %s %s" text back-end info)
-  (concat "Filtered: \n" text)
-   )
+  (let ((tblname (pop tblnames)))
+    (message "tblname is \"%s\"" tblname)
+    ; pop does not remove nil from the list, so we do it here.
+    (when (null tblname) (setq tblnames (cdr tblnames)))
+    (cond
+     ((listp tblname)  ; from results
+      (concat (format "<br>Results: %s" (car tblname)) text))
+     ((null tblname)   ; no name
+      text)
+     (t ; everything else
+      (concat (format "<br>Table name: %s" tblname) text)))))
 
 (defun ox-mrkup-filter-src-block (text back-end info)
-  (message "%s %s %s" text back-end info)
-  (concat "Filtered: \n" text)
-   )
+  (let ((params (pop src-params))
+	(lang (pop src-langs)))
+    (when (null params) (setq src-params (cdr src-params)))
+    (if params	
+	(concat (format "<pre>Language = %s\nParameters = %s</pre>" lang params) text)
+      text)))
 
-(let ((org-export-filter-table-functions '(ox-mrkup-filter-table))
-      (org-export-filter-src-block-functions '(ox-mrkup-filter-src-block))
-      (async nil)
-      (subtreep nil)
-      (visible-only nil)
-      (body-only t)
-      (ext-plist '()))
-  (browse-url
-  (org-html-export-to-html async subtreep visible-only body-only ext-plist)))
+;; preprocess to get table names, src parameters and languages.
+(let ((tblnames (org-element-map (org-element-parse-buffer) 'table
+		  (lambda (element)     
+		    (or (org-element-property :name element)			
+			(org-element-property :results element)))))
 
+      (src-params (org-element-map (org-element-parse-buffer) 'src-block
+		    (lambda (element)     
+		      (org-element-property :parameters element))))
+
+      (src-langs (org-element-map (org-element-parse-buffer) 'src-block
+		    (lambda (element)     
+		      (org-element-property :language element))))
+
+      ;; register the filters
+      (org-export-filter-table-functions '(ox-mrkup-filter-table))
+      (org-export-filter-src-block-functions '(ox-mrkup-filter-src-block)))
+
+  ;; and export the result
+  (browse-url (org-export-to-file 'html "custom-src-table-export-3.html")))  
 #+END_SRC
+
 #+RESULTS:
-: #<process open ./blog.html>
+: #<process open custom-src-table-export-3.html>
 
 
+Here is the resulting html file: [[./custom-src-table-export-3.html]] which shows the new export behavior. It might not be too difficult to make links between the parameters and the tables, but it would require parsing the :parameters string. For now, this makes it easy enough to read in HTML where the data is coming from (assuming fluency in org-mode header arguments!).
 
-* Getting information about named tables in exported org-files
+Special thanks to Aaron Ecay, and Charles Berry on the org-mode mailing list for pointing me towards a solution. 
+
+* DONE Getting information about named tables in exported org-files
+  CLOSED: [2014-09-21 Sun 14:34]
   :PROPERTIES:
   :categories: orgmode
   :date:     2014/09/21 14:34:50
