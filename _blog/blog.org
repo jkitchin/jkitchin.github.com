@@ -1,3 +1,302 @@
+* DONE Improved debugging of Python code blocks in org-mode
+  CLOSED: [2014-09-27 Sat 15:27]
+  :PROPERTIES:
+  :categories: orgmode,python
+  :date:     2014/09/27 15:27:40
+  :updated:  2014/09/27 15:27:40
+  :END:
+Writing and running code blocks in org-mode is awesome, when it works. I find as the code blocks get past a certain size though, it can be tedious to debug, especially for new users. Since I am teaching 59 students to use Python in org-mode, I see this issue a lot! They lack experience to avoid many simple errors, and to find and fix them. Even in my hands, I do not always want to be switching to Python mode to run and debug blocks. 
+
+org-mode src-blocks offer a unique challenge for the usual tools like pylint and pychecker, because the code does not exist in a file. In this post, I will explore developing some functions that do syntax checking on a src block. We will use a simple method which will write the block to a temporary file, and to the checking on that block. Then, we will create temporary buffers with the output.
+
+Here is the first idea. We create a temp file in the working directory, write the code to it, and run pychecker, pyflakes and pep8 on the file. 
+
+#+BEGIN_SRC emacs-lisp
+(defun org-pychecker ()
+  "Run pychecker on a source block"
+  (interactive)
+  (let ((eop (org-element-at-point))
+	(temporary-file-directory ".")
+	(tempfile))
+    (when (and (eq 'src-block (car eop))
+	       (string= "python" (org-element-property :language eop)))
+      (setq tempfile (make-temp-file "pychecker" nil ".py"))
+      ;; create code file
+      (with-temp-file tempfile
+	(insert (org-element-property :value eop)))
+      (switch-to-buffer "*pychecker*")
+      (erase-buffer)
+      (insert "pychecker\n=================\n")
+      (insert
+       (shell-command-to-string (format "pychecker %s" (file-name-nondirectory tempfile))))
+      (insert "\npyflakes\n=================\n")
+      (insert
+       (shell-command-to-string (format "pyflakes %s" (file-name-nondirectory tempfile))))
+      (insert "\npep8\n=================\n")
+      (insert
+       (shell-command-to-string (format "pep8 %s" (file-name-nondirectory tempfile))))
+      (delete-file tempfile))))
+#+END_SRC
+
+Here is a sample code block with some errors in it.
+#+BEGIN_SRC python
+a = 5  # a variable we do not use
+
+
+def f(x, y):  # unused argument
+    return x - b # undefined variable
+
+print 6 * c
+#+END_SRC
+
+On the code block above, that function leads to this output.
+
+#+BEGIN_EXAMPLE
+pychecker
+=================
+Processing module pychecker63858xo0 (pychecker63858xo0.py)...
+  Caught exception importing module pychecker63858xo0:
+    File "/Users/jkitchin/Library/Enthought/Canopy_64bit/User/lib/python2.7/site-packages/pychecker/pcmodules.py", line 540, in setupMainCode()
+      module = imp.load_module(self.moduleName, handle, filename, smt)
+    File "pychecker63858xo0.py", line 7, in <module>()
+      print 6 * c
+  NameError: name 'c' is not defined
+
+Warnings...
+
+pychecker63858xo0:1: NOT PROCESSED UNABLE TO IMPORT
+
+pyflakes
+=================
+pychecker63858xo0.py:5: undefined name 'b'
+pychecker63858xo0.py:7: undefined name 'c'
+
+pep8
+=================
+pychecker63858xo0.py:5:17: E261 at least two spaces before inline comment
+
+#+END_EXAMPLE
+
+That is pretty helpful, but it gives us line numbers we cannot directly access in our code block. We can open the code block in Python mode, and then navigate to them, but that is likely to make the buffer with this information disappear. It would be better if we could just click on a link and go to the right place. Let us explore what we need for that. 
+
+We need to parse the output to get the line numbers, and then we can construct org-links to those places in the src block. pyflakes, pep8 and pylint look like the easiest to get. A way to get to the line would be a lisp function that moves to the beginning of the code block, and then moves forward n lines. We will use a regular expression on each line of the output of pyflakes and pep8 to get the line number. We will construct an org-link to go to the source block at the line. 
+
+In this long code block, we create a function that will run pyflakes, pep8 and pylint, and create a new buffer with links to the issues it finds. Finally, we apply this as advice on executing org-babel-execute:python so it only runs when we execute a python block in org-mode. This is a long block, because I have made it pretty feature complete. 
+
+#+BEGIN_SRC emacs-lisp
+(defun org-py-check ()
+  "Run python check programs on a source block.
+Opens a buffer with links to what is found."
+  (interactive)
+  (let ((eop (org-element-at-point))
+	(temporary-file-directory ".")
+        (cb (current-buffer))
+	(n) ; for line number
+	(content) ; error on line
+	(pb "*org pycheck*")
+	(pyflakes-status nil)
+	(link)
+	(tempfile))
+
+    (unless (executable-find "pyflakes")
+      (error "pyflakes is not installed."))
+    
+    (unless (executable-find "pep8")
+      (error "pep8 not installed"))
+
+    (unless (executable-find "pylint")
+      (error "pylint not installed"))
+
+    ;; rm buffer if it exists
+    (when (get-buffer pb) (kill-buffer pb))
+    
+    ;; only run if in a python code-block
+    (when (and (eq 'src-block (car eop))
+	       (string= "python" (org-element-property :language eop)))
+
+      ;; tempfile for the code
+      (setq tempfile (make-temp-file "pychecker" nil ".py"))
+      ;; create code file
+      (with-temp-file tempfile
+	(insert (org-element-property :value eop)))
+      
+      (let ((status (shell-command
+		     (format "pyflakes %s" (file-name-nondirectory tempfile))))
+	    (output (delete "" (split-string
+				(with-current-buffer "*Shell Command Output*"
+				  (buffer-string)) "\n"))))
+	(setq pyflakes-status status)
+	(kill-buffer "*Shell Command Output*")
+	(when output
+	  (set-buffer (get-buffer-create pb))
+	  (insert (format "\n* pyflakes output (status=%s)
+pyflakes checks your code for errors. You should probably fix all of these.
+
+" status))
+	  (dolist (line output)
+	    ;; get the line number
+	    (if 
+		(string-match (format "^%s:\\([0-9]*\\):\\(.*\\)"
+				      (file-name-nondirectory tempfile))
+			      line)
+		(progn
+		  (setq n (match-string 1 line))
+		  (setq content (match-string 2 line))
+		  (setq link (format "[[elisp:(progn (switch-to-buffer-other-window \"%s\")(goto-char %s)(forward-line %s))][%s]]\n"
+				     cb
+				     (org-element-property :begin eop)
+				     n
+				     (format "Line %s: %s" n content))))
+	      ;; no match, just insert line
+	      (setq link (concat line "\n")))
+	    (insert link))))
+
+      (let ((status (shell-command
+		     (format "pep8 %s" (file-name-nondirectory tempfile))))
+	    (output (delete "" (split-string
+				(with-current-buffer "*Shell Command Output*"
+				  (buffer-string)) "\n"))))
+	(kill-buffer "*Shell Command Output*")
+	(when output
+	  (set-buffer (get-buffer-create pb))
+	  (insert (format "\n\n* pep8 output (status = %s)\n" status))
+	  (insert "pep8 is the [[http://legacy.python.org/dev/peps/pep-0008][officially recommended style]] for writing Python code. Fixing these will usually make your code more readable and beautiful. Your code will probably run if you do not fix them, but, it will be ugly.
+
+")
+	  (dolist (line output)
+	    ;; get the line number
+	    (if 
+		(string-match (format "^%s:\\([0-9]*\\):\\(.*\\)"
+				      (file-name-nondirectory tempfile))
+			      line)
+		(progn
+		  (setq n (match-string 1 line))
+		  (setq content (match-string 2 line))
+		  (setq link (format "[[elisp:(progn (switch-to-buffer-other-window \"%s\")(goto-char %s)(forward-line %s))][%s]]\n"
+				     cb
+				     (org-element-property :begin eop)
+				     n
+				     (format "Line %s: %s" n content))))
+	      ;; no match, just insert line
+	      (setq link (concat line "\n")))
+	    (insert link))))
+
+      ;; pylint
+      (let ((status (shell-command
+		     (format "pylint -r no %s" (file-name-nondirectory tempfile))))
+	    (output (delete "" (split-string
+				(with-current-buffer "*Shell Command Output*"
+				  (buffer-string)) "\n"))))
+	(kill-buffer "*Shell Command Output*")
+	(when output
+	  (set-buffer (get-buffer-create pb))
+	  (insert (format "\n\n* pylint (status = %s)\n" status))
+	  (insert "pylint checks your code for errors, style and convention. It is complementary to pyflakes and pep8, and usually more detailed.
+
+")
+
+	  (dolist (line output)
+	    ;; pylint gives a line and column number
+	    (if 
+		(string-match "[A-Z]:\\s-+\\([0-9]*\\),\\s-*\\([0-9]*\\):\\(.*\\)"			      
+			      line)
+		(let ((line-number (match-string 1 line))
+		      (column-number (match-string 2 line))
+		      (content (match-string 3 line)))
+		     
+		  (setq link (format "[[elisp:(progn (switch-to-buffer-other-window \"%s\")(goto-char %s)(forward-line %s)(forward-line 0)(forward-char %s))][%s]]\n"
+				     cb
+				     (org-element-property :begin eop)
+				     line-number
+				     column-number
+				     line)))
+	      ;; no match, just insert line
+	      (setq link (concat line "\n")))
+	    (insert link))))
+    
+      (when (get-buffer pb)
+	(switch-to-buffer-other-window pb)
+	(goto-char (point-min))
+	(insert "Press q to close the window\n")
+	(org-mode)       
+	(org-cycle '(64))
+	;; make read-only and press q to quit
+	(setq buffer-read-only t)
+	(use-local-map (copy-keymap org-mode-map))
+	(local-set-key "q" #'(lambda () (interactive) (kill-buffer))))
+
+      (unless (= 0 pyflakes-status)
+	(forward-line 4)
+	(error "pyflakes exited non-zero. please fix errors"))
+      ;; final cleanup and delete file
+      (delete-file tempfile)
+      (switch-to-buffer-other-window cb))))
+
+
+(defadvice org-babel-execute:python (before pychecker)
+  (org-py-check))
+
+(ad-activate 'org-babel-execute:python)
+#+END_SRC
+
+#+RESULTS:
+: org-babel-execute:python
+
+Now, when I try to run this code block, which has some errors in it:
+
+#+BEGIN_SRC python
+a = 5  # a variable we do not use
+
+
+def f(x, y):  # unused argument
+    return x - b # undefined
+
+print 6 * c
+#+END_SRC
+
+#+RESULTS:
+
+I get a new buffer with approximately these contents:
+
+#+BEGIN_SRC org
+Press q to close the window
+
+,* pyflakes output (status=1)
+pyflakes checks your code for errors. You should probably fix all of these.
+
+[[elisp:(progn (switch-to-buffer-other-window "blog.org")(goto-char 9180)(forward-line 5))][Line 5:  undefined name 'b']]
+[[elisp:(progn (switch-to-buffer-other-window "blog.org")(goto-char 9180)(forward-line 7))][Line 7:  undefined name 'c']]
+
+
+,* pep8 output (status = 1)
+pep8 is the [[http://legacy.python.org/dev/peps/pep-0008][officially recommended style]] for writing Python code. Fixing these will usually make your code more readable and beautiful. Your code will probably run if you do not fix them, but, it will be ugly.
+
+[[elisp:(progn (switch-to-buffer-other-window "blog.org")(goto-char 9180)(forward-line 5))][Line 5: 17: E261 at least two spaces before inline comment]]
+
+
+,* pylint (status = 22)pylint checks your code for errors, style and convention. It is complementary to pyflakes and pep8, and usually more detailed.
+
+No config file found, using default configuration
+,************* Module pychecker68224dkX
+[[elisp:(progn (switch-to-buffer-other-window "blog.org")(goto-char 9180)(forward-line 1)(forward-line 0)(forward-char 0))][C:  1, 0: Invalid module name "pychecker68224dkX" (invalid-name)]]
+[[elisp:(progn (switch-to-buffer-other-window "blog.org")(goto-char 9180)(forward-line 1)(forward-line 0)(forward-char 0))][C:  1, 0: Missing module docstring (missing-docstring)]]
+[[elisp:(progn (switch-to-buffer-other-window "blog.org")(goto-char 9180)(forward-line 1)(forward-line 0)(forward-char 0))][C:  1, 0: Invalid constant name "a" (invalid-name)]]
+[[elisp:(progn (switch-to-buffer-other-window "blog.org")(goto-char 9180)(forward-line 4)(forward-line 0)(forward-char 0))][C:  4, 0: Invalid function name "f" (invalid-name)]]
+[[elisp:(progn (switch-to-buffer-other-window "blog.org")(goto-char 9180)(forward-line 4)(forward-line 0)(forward-char 0))][C:  4, 0: Invalid argument name "x" (invalid-name)]]
+[[elisp:(progn (switch-to-buffer-other-window "blog.org")(goto-char 9180)(forward-line 4)(forward-line 0)(forward-char 0))][C:  4, 0: Invalid argument name "y" (invalid-name)]]
+[[elisp:(progn (switch-to-buffer-other-window "blog.org")(goto-char 9180)(forward-line 4)(forward-line 0)(forward-char 0))][C:  4, 0: Missing function docstring (missing-docstring)]]
+[[elisp:(progn (switch-to-buffer-other-window "blog.org")(goto-char 9180)(forward-line 5)(forward-line 0)(forward-char 15))][E:  5,15: Undefined variable 'b' (undefined-variable)]]
+[[elisp:(progn (switch-to-buffer-other-window "blog.org")(goto-char 9180)(forward-line 4)(forward-line 0)(forward-char 9))][W:  4, 9: Unused argument 'y' (unused-argument)]]
+[[elisp:(progn (switch-to-buffer-other-window "blog.org")(goto-char 9180)(forward-line 7)(forward-line 0)(forward-char 10))][E:  7,10: Undefined variable 'c' (undefined-variable)]]
+
+#+END_SRC
+
+Each of those links takes me to either the line, or the position of the error (in the case of pylint)! I have not tested this on more than a handful of code blocks, but it has worked pretty nicely on them so far!
+
+Of course, you must have pyflakes, pep8 and pylint installed. But those are all easily installed with pip as far as I can tell.
+
+
+
 * DONE Generating an atomic stoichiometric matrix
   CLOSED: [2014-09-23 Tue 14:25]
   :PROPERTIES:
@@ -6,7 +305,7 @@
   :updated:  2014/09/23 14:25:36
   :END:
 
-In computing thermodynamic properties with species, it is sometimes required to get a matrix that specifies number of each type of atom in each species. For example, we can create this by hand as follows:
+In computing thermodynamic properties with specqies, it is sometimes required to get a matrix that specifies number of each type of atom in each species. For example, we can create this by hand as follows:
 
 |   | H2O | CO2 | H2 | CO |
 | H | 2   | 0   | 2  | 0  |
