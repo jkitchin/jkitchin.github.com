@@ -1,85 +1,87 @@
-% Created 2014-06-26 Thu 13:50
+% Created 2014-10-01 Wed 19:50
 \documentclass[aps,prb,citeautoscript,preprint,citeautoscript,showkeys]{revtex4-1}
-  \usepackage{minted}
-\usepackage{graphicx}
+  \usepackage{graphicx}
 \usepackage{subfigure}
 \date{\today}
 \title{blog}
 \begin{document}
 
-\section{Fancy parsing of links for citations with pre and post text.}
+\section{redefining how images are displayed}
 \label{sec-1}
-Some \LaTeX{} citations look like \cite[pretext][post text]{key}. Here I explore parsing a link like \cite[pre text][post text]{key}. Note you cannot use [] inside the link, as it breaks the link syntax. Also, these links must be wrapped in \texttt{[[]]} because of the parentheses and spaces in the parentheses. This is a very different approach than used \href{http://kitchingroup.cheme.cmu.edu/blog/2014/05/19/Exporting-citations-with-biblatex/}{here} which used the description of the link to define the pre and post text. The disadvantage of that approach is that the key is hidden, whereas in this approach it is not; you can see the key and pre/post text.
-
-The basic strategy will be to use a regexp to parse the link path. The regexp below is pretty hairy, but basically it looks for optional text in [] and uses numbered groups to store what is found. Then, we use what we found to construct the \LaTeX{} syntax. We redefine the function that gets the key for clicking, and we redefine the cite format function. The result is that we 
 
 \begin{minted}[frame=lines,fontsize=\scriptsize,linenos]{common-lisp}
-(defun org-ref-parse-key (s)
-  "return pretext, posttext and bibtex key from a string like \"(pre text)(post text)bibtexkey\""
-  (string-match "\\(?1:(\\(?2:[^)]*\\))\\)?\\(?3:(\\(?4:[^]]*\\))\\)?\\(?5:.*\\)" s)
-  ;; pretext postext key
-  (list (match-string 2 s) (match-string 4 s) (match-string 5 s)))
-
-(defun org-ref-get-bibtex-key-and-file (&optional key)
-  "returns the bibtex key and file that it is in. If no key is provided, get one under point"
- (interactive)
- (let ((org-ref-bibliography-files (org-ref-find-bibliography))
-       (file))
-   (unless key
-     ;; get the key
-     (setq key (nth 2 (org-ref-parse-key (org-ref-get-bibtex-key-under-cursor)))))
-   (setq file     (catch 'result
-		    (loop for file in org-ref-bibliography-files do
-			  (if (org-ref-key-in-file-p key (file-truename file)) 
-			      (throw 'result file)))))
-   (cons key file)))
-
-(defun org-ref-format-cite (keyword desc format)
-   (cond
-    ((eq format 'latex)
-     (let* ((results (org-ref-parse-key keyword))
-	    (pretext (nth 0 results))
-	    (posttext (nth 1 results))
-	    (key (nth 2 results)))
-       (concat "\\cite" 
-	       (when pretext (format "[%s]" pretext))
-	       (when posttext (format "[%s]" posttext))
-	       (format "{%s}" key))))))
+(defun org-display-inline-images (&optional include-linked refresh beg end)
+  "Display inline images.
+Normally only links without a description part are inlined, because this
+is how it will work for export.  When INCLUDE-LINKED is set, also links
+with a description part will be inlined.  This can be nice for a quick
+look at those images, but it does not reflect what exported files will look
+like.
+When REFRESH is set, refresh existing images between BEG and END.
+This will create new image displays only if necessary.
+BEG and END default to the buffer boundaries."
+  (interactive "P")
+  (when (display-graphic-p)
+    (unless refresh
+      (org-remove-inline-images)
+      (if (fboundp 'clear-image-cache) (clear-image-cache)))
+    (save-excursion
+      (save-restriction
+	(widen)
+	(setq beg (or beg (point-min)) end (or end (point-max)))
+	(goto-char beg)
+	(let ((re (concat "\\[\\[\\(\\(file:\\)\\|\\([./~]\\)\\)\\([^]\n]+?"
+			  (substring (org-image-file-name-regexp) 0 -2)
+			  "\\)\\]" (if include-linked "" "\\]")))
+	      (case-fold-search t)
+	      old file ov img type attrwidth width)
+	  (while (re-search-forward re end t)
+	    (setq old (get-char-property-and-overlay (match-beginning 1)
+						     'org-image-overlay)
+		  file (expand-file-name
+			(concat (or (match-string 3) "") (match-string 4))))
+	    (when (image-type-available-p 'imagemagick)
+	      (setq attrwidth (if (or (listp org-image-actual-width)
+				      (null org-image-actual-width))
+				  (save-excursion
+				    (save-match-data
+				      (when (re-search-backward
+;; I modified this regexp
+					     "#\\+attr.*:width[ \t]+\\([0-9]+\\)\\(in\\|px\\|cm\\)"
+					     (save-excursion
+					       (re-search-backward "^[ \t]*$\\|\\`" nil t)) t)
+;; and here, if we catch units, we fall back on org-image-actual-width
+;; by setting attrwidth to nil
+					(if (match-string 2) nil
+					  (string-to-number (match-string 1)))))))
+		    width (cond ((eq org-image-actual-width t) nil)
+				((null org-image-actual-width) attrwidth)
+				((numberp org-image-actual-width)
+				 org-image-actual-width)
+				((listp org-image-actual-width)
+				 (or attrwidth (car org-image-actual-width))))
+		    type (if width 'imagemagick)))
+	    (when (file-exists-p file)
+	      (if (and (car-safe old) refresh)
+		  (image-refresh (overlay-get (cdr old) 'display))
+		(setq img (save-match-data (create-image file type nil :width width)))
+		(when img
+		  (setq ov (make-overlay (match-beginning 0) (match-end 0)))
+		  (overlay-put ov 'display img)
+		  (overlay-put ov 'face 'default)
+		  (overlay-put ov 'org-image-overlay t)
+		  (overlay-put ov 'modification-hooks
+			       (list 'org-display-inline-remove-overlay))
+		  (push ov org-inline-image-overlays))))))))))
 \end{minted}
 
 \begin{verbatim}
-org-ref-format-cite
+org-display-inline-images
+
 \end{verbatim}
 
-\begin{minted}[frame=lines,fontsize=\scriptsize,linenos]{common-lisp}
-(org-ref-format-cite "(pre text)(post text)key" nil 'latex)
-\end{minted}
+\includegraphics[width=4in]{./images/batch-multiple.png}
 
-\begin{verbatim}
-\cite[pre text][post text]{key}
-\end{verbatim}
-
-\begin{minted}[frame=lines,fontsize=\scriptsize,linenos]{common-lisp}
-(org-ref-format-cite "(pre text)key" nil 'latex)
-\end{minted}
-
-\begin{verbatim}
-\cite[pre text]{key}
-\end{verbatim}
-
-\begin{minted}[frame=lines,fontsize=\scriptsize,linenos]{common-lisp}
-(org-ref-format-cite "key" nil 'latex)
-\end{minted}
-
-\begin{verbatim}
-\cite{key}
-\end{verbatim}
-
-It looks like they all work! Let us test the links: \cite{mehta-2014-ident-poten}, \cite[pre text]{mehta-2014-ident-poten} and \cite[pre text][post text]{biskup-2014-insul-ferrom-films}. a multiple citation \cite{mehta-2014-ident-poten,thompson-2014-co2-react,calle-vallejo-2013-number}.
-
-This seems to work from an export point of view. You can not mix multiple citations with this syntax.
-
-
-\bibliography{../../bibliography/references}
-% Emacs 24.3.1 (Org mode 8.2.6)
+\url{org-display-inline-images}
+% Emacs 24.4.50.1 (Org mode 8.2.7c)
 \end{document}
