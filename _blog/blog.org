@@ -1,4 +1,177 @@
-* Title casing bibtex entry journal titles
+* generate html documentation
+
+some hints to get started
+
+http://stackoverflow.com/questions/605785/how-do-i-get-a-list-of-emacs-lisp-non-interactive-functions
+
+related code that might allow us to find all functions defined in a file with some filtering, if we find where the functions are from.
+
+#+BEGIN_SRC emacs-lisp
+(find-lisp-object-file-name 'jmax-stringify-journal-name  'defun)
+#+END_SRC
+
+#+RESULTS:
+
+#+BEGIN_SRC emacs-lisp
+(flet ((first-line (text)
+         (if text
+             (substring text 0 (string-match "\n" text))
+           "")))
+  (mapatoms 
+   (lambda (x)
+     (and (fboundp x)                          ; does x name a function?
+          (not (commandp (symbol-function x))) ; is it non-interactive?
+          (subrp (symbol-function x))          ; is it built-in?
+          (insert (symbol-name x) " - " (first-line (documentation x)) "\n")))))
+#+END_SRC
+
+
+#+BEGIN_SRC emacs-lisp :results drawer
+(let ((r '()))
+      (mapatoms 
+       (lambda (x)
+	 (add-to-list 'r
+		      (find-lisp-object-file-name x 'defun)))))
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+nil
+:END:
+
+(documentation 'jmax-stringify-journal-name)
+
+(describe-key)
+(describe-function)
+
+
+
+#+BEGIN_SRC emacs-lisp
+(require 'bibtools)
+(let ((funclist ()))
+  (mapatoms
+   (lambda (x)
+     (when (and (fboundp x)                     ; does x name a function?
+                (let ((f (symbol-file x))) 
+                  (and f (string= (file-name-base f) "jmax-bibtex"))))
+       (push x funclist))))
+  funclist)
+#+END_SRC
+
+#+RESULTS:
+| jmax-replace-nonascii | jmax-stringify-journal-name | jmax-bibtex-next-entry | jmax-title-case-article | jmax-bibtex-generate-shorttitles | jmax-bibtex-mode-keys | jmax-bibtex-generate-longtitles | jmax-bibtex-previous-entry | jmax-sentence-case-article |
+
+* TODO Sentence casing your bibtex entry journal titles
+* Navigating your bibtex file
+  :PROPERTIES:
+  :categories: bibtex
+  :date:     2014/10/13 10:22:27
+  :updated:  2014/10/13 10:22:27
+  :END:
+
+You may be able to tell I am spending some time cleaning up bibtex files these days. One of the things I need to do is navigate around a bibtex file easily. There are some built-in navigation keys within an entry.
+
+| navigation         | key strokes |
+|--------------------+-------------|
+| next field         | C-j         |
+| end of field       | TAB         |
+| beginning of entry | C-M-a       |
+| end of entry       | C-M-e       |
+
+I am not aware of an easy way to navigate to the next or previous entry though. I would like something simple to do that. There is a regexp defined in bibtex "bibtex-entry-head", to search for the next or previous entry.
+
+#+BEGIN_SRC emacs-lisp
+bibtex-entry-head
+#+END_SRC
+
+#+RESULTS:
+: ^[ 	]*\(@[ 	]*\(?:\(?:Article\|Book\(?:let\)?\|In\(?:Book\|Collection\|Proceedings\)\|M\(?:a\(?:nual\|stersThesis\)\|isc\)\|P\(?:\(?:hdThesi\|roceeding\)s\)\|TechReport\|Unpublished\)\)\)[ 	]*[({][ 	
+: ]*\([][[:alnum:].:;?!`'/*@+|()<>&_^$-]+\)
+
+Here are two functions that do it. This was a little more subtle than I anticipated.  The subtlety comes about if you are at the beginning of the entry, we need to move the cursor by a character, and then search forward because of the way re-search-forward works. I also wrote in an option for a prefix argument, so you can go forward or backward several entries.
+
+#+BEGIN_SRC emacs-lisp
+(defun bibtex-next-entry (&optional n)
+  "Jump to the beginning of the next bibtex entry. N is a prefix
+argument. If it is numeric, jump that many entries
+forward. Negative numbers do nothing."
+  (interactive "P")
+  ;; Note if we start at the beginning of an entry, nothing
+  ;; happens. We need to move forward a char, and call again.
+  (when (= (point) (save-excursion
+		     (bibtex-beginning-of-entry)))
+    (forward-char)
+    (bibtex-next-entry))
+
+  ;; search forward for an entry 
+  (when 
+      (re-search-forward bibtex-entry-head nil t (and (numberp n) n))
+    ;; go to beginning of the entry
+    (bibtex-beginning-of-entry)))
+
+
+(defun bibtex-previous-entry (&optional n)
+  "Jump to beginning of the previous bibtex entry. N is a prefix
+argument. If it is numeric, jump that many entries back."
+  (interactive "P")
+  (bibtex-beginning-of-entry)
+ (when 
+     (re-search-backward bibtex-entry-head nil t (and (numberp n) n))
+   (bibtex-beginning-of-entry)))
+#+END_SRC
+
+#+RESULTS:
+: bibtex-previous-entry
+
+That is pretty simple. Let us go ahead and bind these to M-n, and M-p, but only in bibtex-mode. Thanks to [[http://ergoemacs.org/emacs/emacs_set_keys_for_major_mode.html][Xah Lee]] for this idea. 
+
+#+BEGIN_SRC emacs-lisp
+(defun jmax-bibtex-mode-keys ()
+  "Modify keymaps used by `bibtex-mode'."
+  (local-set-key (kbd "M-n") 'bibtex-next-entry)
+  (local-set-key (kbd "M-p") 'bibtex-previous-entry))
+
+;; add to bibtex-mode-hook
+(add-hook 'bibtex-mode-hook 'jmax-bibtex-mode-keys)
+#+END_SRC
+
+#+RESULTS:
+| jmax-bibtex-mode-keys |
+
+Now, C-n moves forward an entry, C-u 2 C-n moves you two entries, etc... and C-p moves you back an entry, while C-u 2 C-p moves you back two entries. 
+
+Finally, I sometimes want to jump to a field in an entry. Basically, I want a completion enabled function that lists the fields in the current entry, and then jumps to the selected field. Yes, you could simply do an incremental search forward or backward that is about as simple. But, then I would not get to remind myself how to do a completion command ;)
+
+#+BEGIN_SRC emacs-lisp
+(defun jmax-bibtex-get-fields ()
+  "Get a list of fields in a bibtex entry."
+  (bibtex-beginning-of-entry)
+  (remove "=type="
+	  (remove "=key="
+		  (mapcar 'car (bibtex-parse-entry)))))
+
+(defun jmax-bibtex-jump-to-field (field)
+  "Jump to FIELD in the current bibtex entry"
+  (interactive
+   (list
+    (ido-completing-read "Field: " (jmax-bibtex-get-fields))))
+  (save-restriction
+    (bibtex-narrow-to-entry)
+    (bibtex-beginning-of-entry)
+    (when
+	;; fields start with spaces, a field name, possibly more
+	;; spaces, then =
+	(re-search-forward (format "^\\s-*%s\\s-*=" field) nil t))))
+#+END_SRC
+
+#+RESULTS:
+: jmax-bibtex-jump-to-field
+
+These functions live in https://github.com/jkitchin/jmax/blob/master/jmax-bibtex.el, which is the version we use on a regular basis.
+
+
+* DONE Title casing bibtex entry journal titles
+  CLOSED: [2014-10-12 Sun 09:23]
   :PROPERTIES:
   :categories: bibtex
   :date:     2014/10/12 09:23:17
