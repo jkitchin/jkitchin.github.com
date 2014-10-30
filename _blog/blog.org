@@ -1,3 +1,378 @@
+
+
+* Capturing stderr and stdout in org-mode
+
+It looks like you have to send these to files, and then read them. 
+
+If we run this in org-mode, there is no message about stderr.
+#+BEGIN_SRC python :tangle peo.py
+import sys
+
+print >>sys.stdout, "on stdout"
+print >>sys.stderr, "on stderr"
+#+END_SRC
+
+#+RESULTS:
+: on stdout
+
+elisp:org-babel-tangle
+
+Interestingly, we get stderr here...
+#+BEGIN_SRC emacs-lisp
+(shell-command-to-string "python peo.py")
+#+END_SRC
+#+RESULTS:
+: on stderr
+: on stdout
+
+
+* Filtering subsets of a bibtex file
+
+I guess this is basically what bibtex-map-entries does. 
+#+BEGIN_SRC emacs-lisp :results output
+(defun filter-bibtex (bibfile &rest keys)
+  "keys are pairs of :field regexp"
+  (while keys
+    (let ((field (car keys))
+	  (regex (cadr keys)))
+      (setq keys (cddr keys))
+      (princ (format "%s %s\n" field regex)))))
+
+(filter-bibtex "test" :author "^\\(kitchin\\)" :year 2010)
+#+END_SRC
+
+#+RESULTS:
+: :author ^\(kitchin\)
+: :year 2010
+
+Remove the colon from the symbol.
+
+#+BEGIN_SRC emacs-lisp
+(replace-regexp-in-string "^:" "" (symbol-name :author))
+#+END_SRC
+
+#+RESULTS:
+: author
+
+#+BEGIN_SRC emacs-lisp
+(cddr '(a b c d e f))
+#+END_SRC
+
+#+RESULTS:
+| c | d | e | f |
+
+
+#+BEGIN_SRC emacs-lisp
+(cadr '(a b c d))
+#+END_SRC
+
+#+RESULTS:
+: b
+
+* Extracting a DOI from a pdf
+
+#+BEGIN_SRC emacs-lisp
+(with-temp-buffer
+#+END_SRC
+
+10.1002/(SICI)1522-2594(199911)42:5<952::AID-MRM16>3.0.CO;2-S
+
+<</URI(http://dx.doi.org/10.1080/095008396180911)/S/URI>>
+
+"\\(10[.][0-9]\\{4,\\}\\(?:[.][0-9]+\\)*/[0-9a-z]+\\)"
+
+b(10[.][0-9]{4,}(?:[.][0-9]+)*/(?:(?!["&\'])\S)+)\b
+
+(?:doi[\s.:]{0,2})?(10[.][^/]+/[^\s"]+).
+
+This sort of works
+"\\(10[.][0-9]\\{4,\\}\\(?:[.][0-9]+\\)*/\\s(?[^[:space:]]*\\)\\s)?\\b"
+
+I am not sure how to enforce balanced parens, or to close the paren in the second example. 
+
+http://www.emacswiki.org/RegularExpression
+* TODO Saving state data to a file in Emacs
+  :PROPERTIES:
+  :categories: emacs,lisp
+  :END:
+
+I want to be able to save state data to a file from Emacs, and read it in later, possible after Emacs has been closed and re-opened. Here we document how to save the results to a file, and then later read them in. First, say we have a list containing a string, and we want to write it to disk. We will use the print function [[elisp:(describe-function 'print)]] for this. The basic strategy is to print the variable to a buffer that is written to file. Later, we can read the data in.
+
+#+BEGIN_SRC emacs-lisp
+(setq assignments '("one"))
+(with-temp-file "state.el"
+  (print assignments (current-buffer)))
+#+END_SRC
+
+#+RESULTS:
+| one |
+
+Now, to read it back, we will load the file in a buffer, and then use the [[elisp:(describe-function 'read)]].
+
+#+BEGIN_SRC emacs-lisp
+(with-current-buffer (find-file "state.el")
+ (read (current-buffer)))
+#+END_SRC
+
+#+RESULTS:
+| two | one |
+
+We can add to the list, and update the file easy enough.
+ 
+#+BEGIN_SRC emacs-lisp
+(add-to-list 'assignments "two")
+
+(with-temp-file "state.el"
+  (print assignments (current-buffer)))
+#+END_SRC
+
+#+RESULTS:
+| two | one |
+
+And, checking the results:
+
+#+BEGIN_SRC emacs-lisp
+(with-current-buffer (find-file "state.el")
+  (read (current-buffer)))
+#+END_SRC
+
+#+RESULTS:
+| two | one |
+
+In the next sections, we consider saving more complex data structures. 
+
+** Saving an alist
+
+We can save an alist
+
+#+BEGIN_SRC emacs-lisp :results raw
+(with-temp-file "state-alist.el"
+  (print '(("title" . "the title")
+           ("author" . "John Kitchin")
+           ("email" . "jkitchin@cmu.edu")) 
+	 (current-buffer)))
+#+END_SRC
+
+#+RESULTS:
+((title . the title) (author . John Kitchin) (email . jkitchin@cmu.edu))
+
+And, then read it in and access data from it.
+
+#+BEGIN_SRC emacs-lisp
+(cdr (assoc "email"
+	 (with-temp-buffer (insert-file-contents "state-alist.el")
+	   (read (current-buffer)))))
+#+END_SRC
+
+#+RESULTS:
+: jkitchin@cmu.edu
+
+** Writing and reading a plist
+
+The print function can handle a plist.
+
+#+BEGIN_SRC emacs-lisp
+(with-temp-file "state-plist.el"
+  (print '(:title   "the title"
+		    :author  "John Kitchin"
+		    :email   "jkitchin@cmu.edu")
+	 (current-buffer)))
+#+END_SRC
+
+#+RESULTS:
+| :title | the title | :author | John Kitchin | :email | jkitchin@cmu.edu |
+
+#+BEGIN_SRC emacs-lisp
+(plist-get (with-temp-buffer
+	       (insert-file-contents "state-plist.el")
+	     (read (current-buffer))) :author)
+#+END_SRC
+
+#+RESULTS:
+: John Kitchin
+
+** Writing and reading a hash table
+We can save a hash table.
+
+#+BEGIN_SRC emacs-lisp
+(setq my-hash (make-hash-table :test 'equal))
+
+(puthash "title" "the title" my-hash)
+(puthash "author" "John Kitchin" my-hash)
+(puthash "email" "jkitchin@cmu.edu" my-hash)
+
+(with-temp-file "state-hash.el"
+  (print my-hash (current-buffer)))
+#+END_SRC
+
+#+RESULTS:
+: #s(hash-table size 65 test equal rehash-size 1.5 rehash-threshold 0.8 data ("title" "the title" "author" "John Kitchin" "email" "jkitchin@cmu.edu"))
+
+#+BEGIN_SRC emacs-lisp
+(gethash "email"
+	 (with-temp-buffer (insert-file-contents "state-hash.el")
+	   (read (current-buffer))))
+#+END_SRC
+
+#+RESULTS:
+: jkitchin@cmu.edu
+
+** Totally different approach using json
+I like the symmetry of code and data in Emacs-lisp. There might be some advantages to using a structured data format other than Emacs Lisp data/code. One of them is interoperability with other programs. If there are subprograms that need to analyze the data in Python, for example. Here we consider json as a data format. We can write the data like this.
+
+#+BEGIN_SRC emacs-lisp
+(require 'json)
+
+(with-temp-file "this.json"
+  (let ((data   '(:title   "the title"
+			   :author  "John Kitchin"
+			   :email   "jkitchin@cmu.edu")))
+    (insert (json-encode-plist data))))
+#+END_SRC
+
+#+RESULTS:
+
+It is simple enough to read the json data back in. Note, this reads in as an a-list by default.
+
+#+BEGIN_SRC emacs-lisp
+(require 'json)
+(cdr (assoc 'email (json-read-file "this.json")))
+#+END_SRC
+
+#+RESULTS:
+: jkitchin@cmu.edu
+
+To get the json read in another form, we have to temporarily define the json-object-type variable.
+
+#+BEGIN_SRC emacs-lisp
+(require 'json)
+(let ((json-object-type 'plist))
+  (plist-get (json-read-file "this.json") :email))
+#+END_SRC
+
+#+RESULTS:
+: jkitchin@cmu.edu
+
+** COMMENT Saving several things in a file
+I have some time to kill in an airport, so I am going to explore saving a few variable to file.
+
+#+BEGIN_SRC emacs-lisp
+(let ((x 1)
+      (y 2))
+  (with-temp-file "multi-values.el"
+    (print x (current-buffer))
+    (print y (current-buffer))))
+#+END_SRC
+
+#+RESULTS:
+: 2
+
+Now, I presume we have to do two reads to get those values back.
+
+#+BEGIN_SRC emacs-lisp
+(let (a b)
+  (with-temp-buffer
+    (insert-file-contents "multi-values.el")
+    (setq a (read (current-buffer)))
+    (setq b (read (current-buffer))))
+(list a b))
+#+END_SRC
+
+#+RESULTS:
+| 1 | 2 |
+
+Indeed. That is exactly what we do. The downside of this is you must know in advance the data structure, and read it in the same way. That is reminiscent of binary data structures from Fortran or C. That probably is not too flexible to changes in data structure. For example, you can only add data to the end of the structure if you need to maintain backward compatibility.
+
+** Summary
+There are a few options for saving and reading data in different structures and formats. I did not explore very complex data structures here, e.g. deeply nested data, or different types of data within one structure. I still have not completely internalized best practices in writing/reading data. There are several approaches that all involve getting the data into a buffer. That can be done with find-file, or find-file-noselect, or with temp-buffers and insert-file-contents. I do not know which of these approaches are the best. Apparently find-file affects other things such as recent-files, and the buffer list, which may be undesirable. Emacs treats this very differently than Python, where you can simply open a file, and read it to get a string (the closest Python has to a buffer concept are related to StringIO). Interestingly, the json-read-file function uses a temp-buffer, inserts the file contents, and then reads the data. The code resembles this block:
+
+#+BEGIN_SRC emacs-lisp
+(defun read-file (file)
+  "Read contents of a FILE into a string"
+  (with-temp-buffer
+    (insert-file-contents file)
+    (buffer-string)))
+
+(read-file "state-alist.el")
+#+END_SRC
+#+RESULTS:
+: 
+: (("title" . "the title") ("author" . "John Kitchin") ("email" . "jkitchin@cmu.edu"))
+
+
+
+* get scaled positions of an atom in ase
+
+#+BEGIN_SRC python
+from ase import Atom, Atoms
+
+atoms = Atoms([Atom('H', [1, 1, 1]), Atom('O', [2, 2, 2])], cell=(3, 3, 3))
+atoms[0].a = 0.5
+atoms[0].b = 0.5
+atoms[0].c = 0.5
+
+print atoms[0].a
+print atoms[0].x
+#print atoms[1].scaled_position
+#+END_SRC
+
+#+RESULTS:
+: 0.5
+: 1.5
+
+* "live" graphics in org-mode
+
+#+tblname: tbldata
+|   x |   y |
+|-----+-----|
+|   1 |   1 |
+|   1 |   0 |
+|   2 |   4 |
+|   3 |   5 |
+| 0.2 | 0.3 |
+
+
+#+RESULTS: make-table-graph
+#+BEGIN_SRC org
+[[1, 1], [1, 0], [2, 4], [3, 5], [0.2, 0.3]]
+[[./live-chart.png]]
+#+END_SRC
+
+** Code
+
+#+NAME: make-table-graph
+#+BEGIN_SRC python :var data=tbldata :results org
+import matplotlib.pyplot as plt
+plt.plot([x[0] for x in data], [x[1] for x in data])
+plt.savefig('live-chart.png')
+print data
+print '[[./live-chart.png]]'
+#+END_SRC
+
+Now, for the elisp part.
+
+#+BEGIN_SRC emacs-lisp
+(defun update-graph ()
+  (save-excursion
+    (goto-char (point-min))
+    (re-search-forward "#\\+NAME: make-table-graph")
+    (forward-line 2)
+    (org-babel-execute-src-block)))
+
+(defvar my-timer nil)
+
+(setq my-timer (run-with-idle-timer
+		5 ; idle for this many seconds
+		t ; repeat indefinitely
+		'update-graph))
+#+END_SRC
+
+#+RESULTS:
+: [nil 0 5 0 t update-graph nil idle 0]
+
+#+BEGIN_SRC emacs-lisp
+(cancel-timer my-timer)
+#+END_SRC
 * An experiment of integrating git with save
   :PROPERTIES:
   :categories: git
@@ -697,7 +1072,6 @@ The Cu is not lower-cased because it has a } attached to it after the title is s
 Still, the function can save a lot of keystrokes. You should still inspect the final results, to catch any unusual modifications. You do have your bibtex file under version control right?
 
 This function can also be found at https://github.com/jkitchin/jmax/blob/master/jmax-bibtex.el.
-
 
 
 * DONE Navigating your bibtex file
@@ -1409,106 +1783,6 @@ BEG and END default to the buffer boundaries."
 [[./images/batch-multiple.png]]
 
 elisp:org-display-inline-images
-* Odd behavior in python src-blocks in org-mode
-
-#+BEGIN_SRC emacs-lisp
-(org-babel-do-load-languages
- 'org-babel-load-languages
- '((emacs-lisp . t)
-   (python . t)))
-
-(setq org-confirm-babel-evaluate nil)
-#+END_SRC
-
-#+RESULTS:
-
-This block should raise an error (and does) because k is not defined.
-#+BEGIN_SRC python
-def f(y, x):
-    return k * y
-
-print(f(1, 0))
-#+END_SRC
-
-#+RESULTS:
-
-It raises this error.
-
-#+BEGIN_EXAMPLE
-Traceback (most recent call last):
-  File "<stdin>", line 4, in <module>
-  File "<stdin>", line 2, in f
-NameError: global name 'k' is not defined
-#+END_EXAMPLE
-
-However, this code block actually executes, and gives the wrong answer! If I open the source block in Python mode, it does not run without error.
-
-#+BEGIN_SRC python :results output
-from scipy.integrate import odeint
-
-def f(y, x):
-    return k * y
-
-print(odeint(f, 1, [0, 1]))
-#+END_SRC
-
-#+RESULTS:
-: [[ 1.]
-:  [ 1.]]
-
-Here is the correct answer.
-
-#+BEGIN_SRC python :results output
-from scipy.integrate import odeint
-
-k = -1
-def f(y, x):
-    return k * y
-
-print(odeint(f, 1, [0, 1]))
-#+END_SRC
-
-#+RESULTS:
-: [[ 1.        ]
-:  [ 0.36787947]]
-
-#+BEGIN_SRC python :results output
-def f(x):
-    return x == (not x)
-
-print f(None)
-print not None
-#+END_SRC
-
-#+RESULTS:
-: False
-: True
-
-#+BEGIN_SRC emacs-lisp
-(setq org-babel-python-command "python -m pycse.sandbox")
-#+END_SRC
-#+BEGIN_SRC python
-from scipy.integrate import odeint
-
-k = -1
-
-def f(y, x):
-    return -k * y
-
-print(odeint(f, 1, [0, 1]))
-#+END_SRC
-
-#+RESULTS:
-: [[ 1.        ]
-:  [ 2.71828193]]
-: 
-: 
-
-
-
-
-
-
 * DONE Editing org-mode python source blocks in an external editor (Canopy)
   CLOSED: [2014-09-28 Sun 14:41]
   :PROPERTIES:
@@ -2021,146 +2295,6 @@ return counts
 For this simple example it seems like a lot of code. If there were 200 species though, it would be the same code! Only the list of species would be longer. It might be possible to avoid the two sets of looping, if you could represent the stoichiometric matrix as a sparse matrix, i.e. only store non-zero elements. The final comment I have is related to the parsing of the chemical formulas. Here we can only parse simple formulas. To do better than this would require a pretty sophisticated parser, probably built on the grammar of chemical formulas. The example [[http://www.onlamp.com/pub/a/python/2006/01/26/pyparsing.html?page=3][here]] implements the code above using pyparsing, and could probably be extended to include more complex formulas such as (CH3)3CH.
 
 
-* Bug report 2 for org-mode
-
-Here is a named table
-#+tblname: tbl-data
-| x | y |
-|---+---|
-| 1 | 1 |
-| 2 | 4 |
-| 3 | 9 |
-
-Here is a named src-block with a defined var
-#+name: print-table
-#+BEGIN_SRC python :var data=tbl-data :results value
-return data 
-#+END_SRC
-
-
-Now, we illustrate that the src-block does have :parameters.
-#+name: get-properties
-#+BEGIN_SRC emacs-lisp
-(save-excursion
-  (re-search-backward "#\\+name: print-table")
-  (buffer-substring
-   (org-element-property :begin (org-element-at-point))
-   (org-element-property :end (org-element-at-point))))
-#+END_SRC
-
-#+RESULTS: get-properties
-: #+name: print-table
-: #+BEGIN_SRC python :var data=tbl-data :results value
-: return data 
-: #+END_SRC
-: 
-: 
-
-In the export machinery, though it appears the src-block is not the same.
-
-#+BEGIN_SRC emacs-lisp :results output :exports none
-(defun my-src-block (src-block contents info)
-
-  (princ (buffer-substring
-	  (org-element-property :begin src-block)
-	  (org-element-property :end src-block)))
-  
-    (org-export-format-code-default src-block info))
-
-(org-export-define-derived-backend 'my-html 'html
-  :translate-alist '((src-block . my-src-block)))
-
-(org-export-to-file 'my-html "custom-src-table-export.html")
-#+END_SRC
-#+RESULTS:
-#+begin_example
-#+name: print-table
-#+BEGIN_SRC python
-return data 
-#+END_SRC
-
-
-#+name: get-properties
-#+BEGIN_SRC emacs-lisp
-(save-excursion
-  (re-search-backward "#\\+name: print-table")
-  (buffer-substring
-   (org-element-property :begin (org-element-at-point))
-   (org-element-property :end (org-element-at-point))))
-#+END_SRC
-
-#+end_example
-
-The parameters seem to be gone.
-* Bug report for org-mode
-
-Here is a named table
-#+tblname: tbl-data
-| x | y |
-|---+---|
-| 1 | 1 |
-| 2 | 4 |
-| 3 | 9 |
-
-Here is a named src-block with a defined var
-#+name: print-table
-#+BEGIN_SRC python :var data=tbl-data :results value
-return data 
-#+END_SRC
-
-
-
-
-#+RESULTS: print-table
-| 1 | 1 |
-| 2 | 4 |
-| 3 | 9 |
-
-Now, we illustrate that the src-block does have :parameters.
-#+name: get-properties
-#+BEGIN_SRC emacs-lisp
-(save-excursion
-(re-search-backward "#\\+name: print-table")
-(org-element-property :parameters (org-element-at-point)))
-#+END_SRC
-
-#+RESULTS: get-properties
-: :var data=tbl-data :results value
-
-In the export machinery, though it appears the src-block does not.
-
-
-#+BEGIN_SRC emacs-lisp :results output
-(defun my-src-block (src-block contents info)
-
-  (princ (concat
-	  (format "[language: %s]\n" (org-element-property :language src-block))
-	  (format "name: %s\n" (org-element-property :name src-block))
-	  (format "parameters: %s\n\n" (org-element-property :parameters src-block))))
-    (org-export-format-code-default src-block info))
-
-(org-export-define-derived-backend 'my-html 'html
-  :translate-alist '((src-block . my-src-block)))
-
-(org-export-to-file 'my-html "custom-src-table-export.html")
-#+END_SRC
-#+RESULTS:
-#+begin_example
-[language: python]
-name: print-table
-parameters: nil
-
-[language: emacs-lisp]
-name: get-properties
-parameters: nil
-
-[language: emacs-lisp]
-name: nil
-parameters: nil
-
-#+end_example
-
-The parameters are nil in each case, even though we know the print-table block should have parameters. I think that is a bug.
 * DONE Showing what data went into a code block on export
   CLOSED: [2014-09-22 Mon 12:25]
   :PROPERTIES:
@@ -3998,7 +4132,7 @@ os.system('cat silly-plot.png')
 #+RESULTS:
 [[file:test.png]]
 
-It is not better.
+It is not better if you have add the code at the end to output the image.
 
 
 * org-rubric functions
@@ -4286,112 +4420,6 @@ And finally, running in emacs-lisp
 Finally, it appears I have a solution for this.
 
 
-
-* Saving state to a file in Emacs
-
-I want to be able to save state data to a file from emacs, and read it in later. The application is saving a list of strings that changes, and I want to have the list of strings later.
-
-#+BEGIN_SRC emacs-lisp
-(setq assignments '("one"))
-(with-temp-file "state.el"
-  (print assignments (current-buffer)))
-#+END_SRC
-
-#+RESULTS:
-| one |
-
-Now, to read it back,
-#+BEGIN_SRC emacs-lisp
-(with-current-buffer (find-file "state.el")
- (read (current-buffer)))
-#+END_SRC
-
-#+RESULTS:
-| one |
-
-#+BEGIN_SRC emacs-lisp
-(add-to-list 'assignments "two")
-
-(with-temp-file "state.el"
-  (print assignments (current-buffer)))
-#+END_SRC
-
-#+RESULTS:
-| two | one |
-
-#+BEGIN_SRC emacs-lisp
-(with-current-buffer (find-file "state.el")
-  (read (current-buffer)))
-#+END_SRC
-
-#+RESULTS:
-| two | one |
-
-** Saving an alist
-
-#+BEGIN_SRC emacs-lisp
-(with-temp-file "state-alist.el"
-  (prin1 '(("title" . "the title")
-           ("author" . "John Kitchin")
-           ("email" . "jkitchin@cmu.edu")) (current-buffer)))
-#+END_SRC
-
-#+RESULTS:
-| (title . the title) | (author . John Kitchin) | (email . jkitchin@cmu.edu) |
-
-#+BEGIN_SRC emacs-lisp
-(cdr (assoc "email"
-	 (with-temp-buffer (insert-file-contents "state-alist.el")
-	   (read (current-buffer)))))
-#+END_SRC
-
-#+RESULTS:
-: jkitchin@cmu.edu
-
-** A plist
-
-#+BEGIN_SRC emacs-lisp
-(with-temp-file "state-plist.el"
-  (prin1 '(:title   "the title"
-		 :author  "John Kitchin"
-		 :email   "jkitchin@cmu.edu") (current-buffer)))
-#+END_SRC
-
-#+RESULTS:
-| :title | the title | :author | John Kitchin | :email | jkitchin@cmu.edu |
-
-#+BEGIN_SRC emacs-lisp
-(plist-get (with-temp-buffer
-	       (insert-file-contents "state-plist.el")
-	     (read (current-buffer))) :author)
-#+END_SRC
-
-#+RESULTS:
-: John Kitchin
-
-** Saving a hash table
-#+BEGIN_SRC emacs-lisp
-(setq my-hash (make-hash-table :test 'equal))
-
-(puthash "title" "the title" my-hash)
-(puthash "author" "John Kitchin" my-hash)
-(puthash "email" "jkitchin@cmu.edu" my-hash)
-
-(with-temp-file "state-hash.el"
-  (prin1 my-hash (current-buffer)))
-#+END_SRC
-
-#+RESULTS:
-: #s(hash-table size 65 test equal rehash-size 1.5 rehash-threshold 0.8 data ("title" "the title" "author" "John Kitchin" "email" "jkitchin@cmu.edu"))
-
-#+BEGIN_SRC emacs-lisp
-(gethash "email"
-	 (with-temp-buffer (insert-file-contents "state-hash.el")
-	   (read (current-buffer))))
-#+END_SRC
-
-#+RESULTS:
-: jkitchin@cmu.edu
 
 
 
@@ -5048,21 +5076,23 @@ python has a great logging module. I would like this kind of capability.
 (log-info "something %s" variable)
 (log-debug "something %s" variable)
 
-you set a log level somewhere.
+you set a =*log-level*= somewhere in your code to determine which messages get logged. Each log function has a corresponding trigger level, and if your =*log-level*= is greater than or equal to the trigger it will log to Messages.
 
 #+BEGIN_SRC emacs-lisp
-(setq *log-level* 0
-      *log-info* 10)
+(setq *log-level* 10
+      ,*log-info* 10
+      ,*log-debug* 50)
 
 (defun log-info (message &rest args)
   "print message formatted with args"
-  (when (> *log-level* *log-info*) ; *log-level* greater than this level print
+  (when (>= *log-level* *log-info*) ; *log-level* greater than this level print
     (message "log-info: %s" (apply #'format message args))))
 
 (log-info "test %s %s" 5 "done")
 #+END_SRC
 
 #+RESULTS:
+: log-info: test 5 done
 
 this is not that sophisticated, it might be nice to have introspection, line numbers, functions, etc...
 
@@ -5378,7 +5408,6 @@ So that is the gist of automating pdf downloads. You do these steps:
 4. Download the pdf
 
 Each publisher does something a little bit different, so you have to work this out for each one. I have worked alot of them out at https://github.com/jkitchin/jmax/blob/master/user/doi-utils.el. That file is a work in progress, but it is a project I intend to use on a regular basis.
-
 
 * DONE Converting a doi to a bibtex entry
   CLOSED: [2014-05-22 Thu 16:22]
