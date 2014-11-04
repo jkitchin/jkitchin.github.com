@@ -1,85 +1,472 @@
-* A generalized org-link with an extendable menu of actions
+* Spelling and grammar checking in emacs with a web API
+
+After the deadline (http://www.afterthedeadline.com/api.slp) has an API for checking spelling, grammar, statistics and style. You post to their server, and they send back some xml. Here is a minimal example in emacs.
+
+#+BEGIN_SRC emacs-lisp
+(let ((url-request-method "POST")
+      (url-request-data (format
+			 "key=jkitchin&data=%s"
+			 (url-hexify-string
+			  "I want to be spel gud weather you know it or not"))))
+  (with-current-buffer
+      (url-retrieve-synchronously
+       "http://service.afterthedeadline.com/checkDocument")
+    (buffer-substring url-http-end-of-headers (point-max))))
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+
+<results>
+  <error>
+    <string>spel</string>
+    <description>Spelling</description>
+    <precontext>be</precontext>
+    <suggestions>
+        <option>spell</option>
+        <option>spelt</option>
+        <option>sped</option>
+        <option>spec</option>
+        <option>spew</option>
+    </suggestions>
+    <type>spelling</type>
+    
+  </error>
+  <error>
+    <string>gud</string>
+    <description>Spelling</description>
+    <precontext>spel</precontext>
+    <suggestions>
+        <option>gd</option>
+        <option>gu</option>
+        <option>gcd</option>
+        <option>gad</option>
+        <option>guid</option>
+    </suggestions>
+    <type>spelling</type>
+    
+  </error>
+  <error>
+    <string>weather</string>
+    <description>Did you mean...</description>
+    <precontext>gud</precontext>
+    <suggestions>
+        <option>whether</option>
+    </suggestions>
+    <type>spelling</type>
+    <url>http://service.afterthedeadline.com/info.slp?text=weather&amp;tags=NN&amp;engine=0</url>
+
+  </error>
+  <error>
+    <string>to be</string>
+    <description>Passive voice</description>
+    <precontext>want</precontext>
+
+    <type>grammar</type>
+    <url>http://service.afterthedeadline.com/info.slp?text=to+be&amp;tags=TO%2FVB&amp;engine=3</url>
+
+  </error>
+</results>
+#+end_example
+
+It finds two spelling errors, and a probable other kind of error (whether/weather), and a grammar issue. It would be nice to parse this into something more helpful. Emacs has come xml parsing [[http://www.emacswiki.org/emacs/XmlParserExamples][capabilities]], which we consider next.
+
+#+BEGIN_SRC emacs-lisp
+(describe-function 'xml-get-children)
+#+END_SRC
+
+#+RESULTS:
+: xml-get-children is a compiled Lisp function in `xml.el'.
+: 
+: (xml-get-children NODE CHILD-NAME)
+: 
+: Return the children of NODE whose tag is CHILD-NAME.
+: CHILD-NAME should match the value returned by `xml-node-name'.
+
+#+BEGIN_SRC emacs-lisp
+(describe-function 'xml-node-children)
+#+END_SRC
+
+#+RESULTS:
+: xml-node-children is a compiled Lisp function in `xml.el'.
+: 
+: (xml-node-children NODE)
+: 
+: Return the list of children of NODE.
+: This is a list of nodes, and it can be nil.
+
+#+BEGIN_SRC emacs-lisp :results drawer
+(let* ((url-request-method "POST")
+       (url-request-data (format
+ 			 "key=jkitchin&data=%s"
+ 			 (url-hexify-string
+ 			  "I want to be spel gud weather you know it or not")))
+       (xml  (with-current-buffer
+		 (url-retrieve-synchronously
+		  "http://service.afterthedeadline.com/checkDocument")
+	       (xml-parse-region url-http-end-of-headers (point-max)))))
+  xml)
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+((results nil 
+   (error nil 
+     (string nil spel) 
+     (description nil Spelling) 
+     (precontext nil be) 
+     (suggestions nil 
+         (option nil spell) 
+         (option nil spelt) 
+         (option nil sped) 
+         (option nil spec) 
+         (option nil spew) 
+    ) 
+     (type nil spelling) 
+    
+  ) 
+   (error nil 
+     (string nil gud) 
+     (description nil Spelling) 
+     (precontext nil spel) 
+     (suggestions nil 
+         (option nil gd) 
+         (option nil gu) 
+         (option nil gcd) 
+         (option nil gad) 
+         (option nil guid) 
+    ) 
+     (type nil spelling) 
+    
+  ) 
+   (error nil 
+     (string nil weather) 
+     (description nil Did you mean...) 
+     (precontext nil gud) 
+     (suggestions nil 
+         (option nil whether) 
+    ) 
+     (type nil spelling) 
+     (url nil http://service.afterthedeadline.com/info.slp?text=weather&tags=NN&engine=0) 
+
+  ) 
+   (error nil 
+     (string nil to be) 
+     (description nil Passive voice) 
+     (precontext nil want) 
+
+     (type nil grammar) 
+     (url nil http://service.afterthedeadline.com/info.slp?text=to+be&tags=TO%2FVB&engine=3) 
+
+  ) 
+))
+:END:
+
+Here, we have some code that parses that xml into some more readable text. It took a while to work this out, and it still doesn't seem very beautiful. 
+
+#+BEGIN_SRC emacs-lisp :results output 
+(let* ((url-request-method "POST")
+       (url-request-data (format
+ 			 "key=jkitchin&data=%s"
+ 			 (url-hexify-string
+ 			  "I want to be spel gud weather you know it or not")))
+       (xml  (with-current-buffer
+		 (url-retrieve-synchronously
+		  "http://service.afterthedeadline.com/checkDocument")
+	       (xml-parse-region url-http-end-of-headers (point-max))))
+       (results (car xml))
+       (errors (xml-get-children results 'error)))
+  (dolist (err errors)
+    (let* ((children (xml-node-children err))
+	   ;; for some reason I could not get the string out, and had to do this.
+	   (s (car (last (nth 1 children))))
+	   ;; the last/car stuff doesn't seem right. there is probably
+	   ;; a more idiomatic way to get this
+           (desc (last (car (xml-get-children children 'description))))
+	   (type (last (car (xml-get-children children 'type))))
+	   (suggestions (xml-get-children children 'suggestions))
+	   (options (xml-get-children (xml-node-name suggestions) 'option))
+	   (opt-string  (mapconcat
+		 (lambda (el)
+		   (when (listp el)
+		     (car (last el))))
+		 options
+		 " "))
+	  )
+      (princ (format "** %s ** %s
+Description: %s
+Suggestions: %s
+
+" s type desc opt-string)))))
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+** spel ** (spelling)
+Description: (Spelling)
+Suggestions: spell spelt sped spec spew
+
+** gud ** (spelling)
+Description: (Spelling)
+Suggestions: gd gu gcd gad guid
+
+** weather ** (spelling)
+Description: (Did you mean...)
+Suggestions: whether
+
+** to be ** (grammar)
+Description: (Passive voice)
+Suggestions: 
+
+#+end_example
+
+Still, from here we could make some org links to go to different places in the buffer for editing.
+
+** python approach
+
+Basically, you post a request to the website, and you get an xml response back. I adapted this code from https://bitbucket.org/miguelventura/after_the_deadline/wiki/Home to do a simple spell check. The idea is to build this up to an emacs lisp library that does this from a command. 
+
+#+BEGIN_SRC python
+import requests
+import urllib
+
+payload = urllib.urlencode({'key': None,
+                            'data': 'I spel gud'})
+
+url = "http://service.afterthedeadline.com/checkDocument"
+
+r = requests.post(url, data=payload)
+
+from xml.etree import ElementTree
+e = ElementTree.fromstring(r.text)
+
+errs = e.findall('message')
+if len(errs) > 0:
+    raise Exception('Server returned an error: %s' % errs[0].text)
+
+for err in e.findall('error'):
+    if err[1].text == 'Spelling':
+        print '\n**{}** mispelled\nSuggestions:'.format(err[0].text)
+        for opt in err.findall('suggestions/option'):
+            print '  {}'.format(opt.text)
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+
+**spel** mispelled
+Suggestions:
+  sped
+  spell
+  spelt
+  spec
+  spew
+
+**gud** mispelled
+Suggestions:
+  guy
+  god
+  gun
+  gum
+  gut
+#+end_example
+
+* DONE words - some interesting utilities for text in emacs
+  CLOSED: [2014-11-03 Mon 11:31]
   :PROPERTIES:
-  :categories: org
-  :date:     2014/11/02 19:33:14
-  :updated:  2014/11/02 19:33:14
+  :categories: emacs
+  :date:     2014/11/03 11:31:45
+  :updated:  2014/11/04 09:20:15
   :END:
-In org-ref the cite links are actually a menu of options. Here I want to explore generalizing the concept, and enable users to add new menu items. When you click on a cite link, it calls a function that constructs the menu as a string. Then, we read something from the minibuffer to say what should be done. We could store these things in variables, so that a user could add their own things. We need a list of characters, menu strings, and functions to run when to create the menu. Here we put together a little example code that shows the idea.
+Recently I [[http://kitchingroup.cheme.cmu.edu/blog/2014/11/02/A-generalized-org-link-with-an-extendable-menu-of-actions/][posted]] about an org-link with a menu. Here I extend the idea to a command that will do approximately the same thing. The idea is a command called words that will be run interactively. It will grab the word at point, or operate on a selected region, and then offer a menu to lookup the definition, find it in a thesaurus, google it, etc... We structure the code so you can add functions to it later, without directly modifying this code. The only limitation of this code is that the functions must have a signature with no arguments. That does not seem terribly limiting, as we can check for a region, and use it if we want (see the words-google function).
 
-#+BEGIN_SRC emacs-lisp :results silent
-(defun option-a (link)
-  (message "You picked option A for %s" link))
+#+BEGIN_SRC emacs-lisp
+(defun words-dictionary ()
+  (interactive)
+  (browse-url
+   (format
+    "http://dictionary.reference.com/browse/%s?s=t"
+    (thing-at-point 'word))))
 
-(defun option-b (link)
-  (message "You picked option B for %s" link))
+(defun words-thesaurus ()
+  (interactive)
+  (browse-url
+   (format
+    "http://www.thesaurus.com/browse/%s"
+    (thing-at-point 'word))))
 
-(defvar menu-funcs
- '(("a" "Option 1" option-a)
-   ("b" "Option 2" option-b)))
+(defun words-google ()
+  (interactive)  
+  (browse-url
+   (format
+    "http://www.google.com/search?q=%s"
+    (if (region-active-p)
+	(url-hexify-string (buffer-substring (region-beginning)
+					     (region-end)))
+      (thing-at-point 'word)))))
 
-(defun menu-click (path)
-  (message
+
+(defvar words-funcs '()
+ "functions to run in `words'. Each entry is a list of (key menu-name function).")
+
+(setq words-funcs
+  '(("d" "ictionary" words-dictionary)
+    ("t" "hesaurus" words-thesaurus)
+    ("g" "oogle" words-google)))
+ 
+
+(defun words ()
+  (interactive)
+   (message
    (concat
     (mapconcat
      (lambda (tup)
        (concat "[" (elt tup 0) "]"
 	       (elt tup 1) " "))
-     menu-funcs "") ": "))
-  (setq input (read-char-exclusive))
-  (funcall
-   (elt 
-    (assoc
-     (char-to-string input) menu-funcs)
-    2)
-   path))
-
-(org-add-link-type
- "menu"
- 'menu-click)
-#+END_SRC
-
-menu:element  Clicking on that link in Emacs gives me the desired menu!
-
-#+attr_html: :width 200
-[[./images/menu.png]]
-
-and 
-
-#+attr_html: :width 200
-[[./images/menu-response.png]]
-
-Now, we test adding a new function.
-
-#+BEGIN_SRC emacs-lisp
-(defun option-c (link)
-  (message "You picked option C for %s" link))
-
-(add-to-list 'menu-funcs
- '("c" "Option C" option-c))
+     words-funcs "") ": "))
+   (let ((input (read-char-exclusive)))
+     (funcall
+      (elt 
+       (assoc
+	(char-to-string input) words-funcs)
+       2))))
 #+END_SRC
 
 #+RESULTS:
-| c | Option C | option-c |
-| a | Option 1 | option-a |
-| b | Option 2 | option-b |
+: words
 
-Well, that worked fine! You might want to append to the list instead of put it at the beginning, but that is really your choice.  
+This works nicely. Now, let us add a new function that looks up the word or selection on twitter. We just define a new function, and add the menu selection to the words-func variable. 
 
 #+BEGIN_SRC emacs-lisp
-(defun option-4 (link)
-  (message "You picked option 4 for %s" link))
+(defun words-twitter ()
+  (interactive)
+  (browse-url
+   (format
+    "https://twitter.com/search?q=%s"
+    (if (region-active-p)
+	(url-hexify-string (buffer-substring (region-beginning)
+					     (region-end)))
+      (thing-at-point 'word)))))
 
-(add-to-list 'menu-funcs
- '("4" "Option 4" option-4) t)
+(add-to-list 'words-funcs
+  '("w" "twitter" words-twitter)
+  t) ; append
+  
 #+END_SRC
 
 #+RESULTS:
-| c | Option C | option-c |
-| a | Option 1 | option-a |
-| b | Option 2 | option-b |
-| 4 | Option 4 | option-4 |
+| d | ictionary | words-dictionary |
+| t | hesaurus  | words-thesaurus  |
+| g | oogle     | words-google     |
+| w | twitter   | words-twitter    |
 
-I think this example more or less shows the basic idea here. These external functions may do a variety of things, like look up something on google, or some other web service, search for something on your hard drive, etc... For example in org-ref, clicking on a cite link gives you options to open the bibtex file, a pdf, a url or notes. This would allow you to open other things too, if you felt like it. For better or worse, you can modify the behavior of the link after it is defined.
+Finally, the most complicated idea: spelling and grammar. I know there is flyspell, and such, but they are build on an ancient dictionary. Here, for fun, we explore a web api. This next function is not a trivial one, and I will not explain it here beyond saying it sends a selection of text to a url, gets an xml response back, and that response is parsed and printed to a buffer by this function. The main point is to illustrate we can do interesting things with a selection of text!
+
+#+BEGIN_SRC emacs-lisp
+(defun words-atd ()
+  "Send paragraph at point to After the deadline for spell and grammar checking."
+  (interactive)
+  
+  (let* ((url-request-method "POST")
+	 (url-request-data (format
+			    "key=some-random-text-&data=%s"
+			    (url-hexify-string
+			     (thing-at-point 'paragraph))))
+	 (xml  (with-current-buffer
+		   (url-retrieve-synchronously
+		    "http://service.afterthedeadline.com/checkDocument")
+		 (xml-parse-region url-http-end-of-headers (point-max))))
+	 (results (car xml))
+	 (errors (xml-get-children results 'error)))
+    
+    (switch-to-buffer-other-frame "*ATD*")
+    (erase-buffer)
+    (dolist (err errors)
+      (let* ((children (xml-node-children err))
+	     ;; for some reason I could not get the string out, and had to do this.
+	     (s (car (last (nth 1 children))))
+	     ;; the last/car stuff doesn't seem right. there is probably
+	     ;; a more idiomatic way to get this
+	     (desc (last (car (xml-get-children children 'description))))
+	     (type (last (car (xml-get-children children 'type))))
+	     (suggestions (xml-get-children children 'suggestions))
+	     (options (xml-get-children (xml-node-name suggestions) 'option))
+	     (opt-string  (mapconcat
+			   (lambda (el)
+			     (when (listp el)
+			       (car (last el))))
+			   options
+			   " ")))
+
+	(insert (format "** %s ** %s
+Description: %s
+Suggestions: %s
+
+" s type desc opt-string))))))
+
+(add-to-list 'words-funcs
+  '("s" "spell/grammar" words-atd)
+  t) ; append
+#+END_SRC
+
+#+RESULTS:
+: words-atd
+
+My final words menu looks like: 
+#+attr_html: :width 400
+[[./images/final-menu.png]]
+
+If I have the cursor in the previous paragraph, run the words command and select "s" I get a buffer with these contents:
+
+#+BEGIN_EXAMPLE
+** flyspell ** (spelling)
+Description: (Spelling)
+Suggestions: flywheel flyball
+
+** are build on ** (grammar)
+Description: (Auxiliary Verb Agreement)
+Suggestions: are built on
+
+** api ** (spelling)
+Description: (Spelling)
+Suggestions: app ape apt ai ami
+
+** url ** (spelling)
+Description: (Spelling)
+Suggestions: urn ure curl hurl burl
+
+** xml ** (spelling)
+Description: (Spelling)
+Suggestions: xl ml
+
+** selection ** (suggestion)
+Description: (Complex Expression)
+Suggestions: choice
+
+** an xml ** (grammar)
+Description: (Wrong article)
+Suggestions: a xml
+
+** a selection of ** (grammar)
+Description: (Hidden Verbs)
+Suggestions: 
+
+** is parsed ** (grammar)
+Description: (Passive voice)
+Suggestions: 
+
+** selection ** (suggestion)
+Description: (Complex Expression)
+Suggestions: choice
+
+** a selection of ** (grammar)
+Description: (Hidden Verbs)
+Suggestions: 
+#+END_EXAMPLE
+
+It might be nice to link back to those words, so you could click on them and fix them, but that is a beyond today's goal. In summary, today we looked at a framework to create a user-modifiable menu of commands that are launched from a single command. Here we called the command words, and then built up some different things we might want to do with the word or selection at point. While you can of course just remember the individual commands, remembering one command and then being prompted might have some advantages.
+
+
 
 * More doi utility functions
 
@@ -167,6 +554,90 @@ orcid:0000-0003-2625-9232
 #+END_SRC
 #+RESULTS:
 : 10.1016/j.catcom.2013.10.028
+* DONE A generalized org-link with an extendable menu of actions
+  CLOSED: [2014-11-02 Sun 19:33]
+  :PROPERTIES:
+  :categories: org
+  :date:     2014/11/02 19:33:14
+  :updated:  2014/11/02 19:33:14
+  :END:
+In org-ref the cite links are actually a menu of options. Here I want to explore generalizing the concept, and enable users to add new menu items. When you click on a cite link, it calls a function that constructs the menu as a string. Then, we read something from the minibuffer to say what should be done. We could store these things in variables, so that a user could add their own things. We need a list of characters, menu strings, and functions to run when to create the menu. Here we put together a little example code that shows the idea.
+
+#+BEGIN_SRC emacs-lisp :results silent
+(defun option-a (link)
+  (message "You picked option A for %s" link))
+
+(defun option-b (link)
+  (message "You picked option B for %s" link))
+
+(defvar menu-funcs
+ '(("a" "Option 1" option-a)
+   ("b" "Option 2" option-b)))
+
+(defun menu-click (path)
+  "display menu of actions for the link"
+  (message
+   (concat
+    (mapconcat
+     (lambda (tup)
+       (concat "[" (elt tup 0) "]"
+	       (elt tup 1) " "))
+     menu-funcs "") ": "))
+  (setq input (read-char-exclusive))
+  (funcall
+   (elt 
+    (assoc
+     (char-to-string input) menu-funcs)
+    2)
+   path))
+
+(org-add-link-type
+ "menu"
+ 'menu-click)
+#+END_SRC
+
+menu:element  Clicking on that link in Emacs gives me the desired menu!
+
+#+attr_html: :width 200
+[[./images/menu.png]]
+
+and 
+
+#+attr_html: :width 200
+[[./images/menu-response.png]]
+
+Now, we test adding a new function.
+
+#+BEGIN_SRC emacs-lisp
+(defun option-c (link)
+  (message "You picked option C for %s" link))
+
+(add-to-list 'menu-funcs
+ '("c" "Option C" option-c))
+#+END_SRC
+
+#+RESULTS:
+| c | Option C | option-c |
+| a | Option 1 | option-a |
+| b | Option 2 | option-b |
+
+Well, that worked fine! You might want to append to the list instead of put it at the beginning, but that is really your choice.  
+
+#+BEGIN_SRC emacs-lisp
+(defun option-4 (link)
+  (message "You picked option 4 for %s" link))
+
+(add-to-list 'menu-funcs
+ '("4" "Option 4" option-4) t)
+#+END_SRC
+
+#+RESULTS:
+| c | Option C | option-c |
+| a | Option 1 | option-a |
+| b | Option 2 | option-b |
+| 4 | Option 4 | option-4 |
+
+I think this example more or less shows the basic idea here. These external functions may do a variety of things, like look up something on google, or some other web service, search for something on your hard drive, etc... For example in org-ref, clicking on a cite link gives you options to open the bibtex file, a pdf, a url or notes. This would allow you to open other things too, if you felt like it. For better or worse, you can modify the behavior of the link after it is defined.
 
 
 * DONE Annotating matplotlib figures
