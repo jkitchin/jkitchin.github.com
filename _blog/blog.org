@@ -1,3 +1,154 @@
+* DONE Accessing web of science entry, citing and related articles from a doi in emacs
+  CLOSED: [2014-11-04 Tue 21:18]
+  :PROPERTIES:
+  :categories: emacs,orgmode,org-ref
+  :date:     2014/11/04 21:18:10
+  :updated:  2014/11/05 10:55:03
+  :END:
+
+I have been investigating how to more deeply integrate online resources, scientific bibliographies and writing in Emacs. One feature I have been wanting is integration with [[http://apps.webofknowledge.com/UA_GeneralSearch_input.do?product=UA&search_mode=GeneralSearch&SID=4DwqzHSXl8YdqGjGQ2z&preferencesSaved=][Web Of Science]], especially to find citing and related articles from a DOI. This service is not free, but is available at many places where science is done. I came across this API http://wokinfo.com/media/pdf/OpenURL-guide.pdf to make links to the things I am interested in here. Based on that document, here are three links based on a doi:10.1021/jp047349j that take you to different Web Of Science (WOS) pages.
+
+
+1. go to article in WOS: http://ws.isiknowledge.com/cps/openurl/service?url_ver=Z39.88-2004&rft_id=info:doi/10.1021/jp047349j
+2. citing articles: http://ws.isiknowledge.com/cps/openurl/service?url_ver=Z39.88-2004&rft_id=info%3Adoi%2F10.1021/jp047349j&svc_val_fmt=info%3Aofi%2Ffmt%3Akev%3Amtx%3Asch_svc&svc.citing=yes
+3. related articles: http://ws.isiknowledge.com/cps/openurl/service?url_ver=Z39.88-2004&rft_id=info%3Adoi%2F10.1021/jp047349j&svc_val_fmt=info%3Aofi%2Ffmt%3Akev%3Amtx%3Asch_svc&svc.related=yes
+
+These are pretty easy to construct, so we can write functions that will create them and open the url in our browser. There are some other options that could be considered, but since we usually have a doi, it seems like the best way to go for creating the links. Here are the functions.
+
+#+BEGIN_SRC emacs-lisp
+(defun doi-utils-wos (doi)
+  "Open Web of Science entry for DOI"
+  (interactive "sDOI: ")
+  (browse-url
+   (format
+    "http://ws.isiknowledge.com/cps/openurl/service?url_ver=Z39.88-2004&rft_id=info:doi/%s" doi)))
+
+(defun doi-utils-wos-citing (doi)
+  "Open Web of Science citing articles entry. May be empty if none are found"
+  (interactive "sDOI: ")
+  (browse-url
+   (concat
+    "http://ws.isiknowledge.com/cps/openurl/service?url_ver=Z39.88-2004&rft_id=info%3Adoi%2F"
+    doi
+    "&svc_val_fmt=info%3Aofi%2Ffmt%3Akev%3Amtx%3Asch_svc&svc.citing=yes")))
+
+(defun doi-utils-wos-related (doi)
+  "Open Web of Science related articles page."
+  (interactive "sDOI: ")
+  (browse-url
+   (concat "http://ws.isiknowledge.com/cps/openurl/service?url_ver=Z39.88-2004&rft_id=info%3Adoi%2F"
+	   doi
+	   "&svc_val_fmt=info%3Aofi%2Ffmt%3Akev%3Amtx%3Asch_svc&svc.related=yes")))
+#+END_SRC
+
+#+RESULTS:
+: doi-utils-wos-related
+
+These are exciting because they could be integrated into org-ref or doi-utils to make citations in an org-document even more functional! There are some other interesting things [[http://bibwild.wordpress.com/2009/04/13/cited-by-from-isi-and-scopus-in-the-link-resolver/][here]] about Scopus and issues with ISI that I note for reference to future me.
+
+Some of these are now included in [[https://github.com/jkitchin/jmax/blob/master/jmax-bibtex.el][jmax-bibtex.el]] and [[https://github.com/jkitchin/jmax/blob/master/org/doi-utils.org][doi-utils.org]].
+
+* retired wos python code
+
+Get this here: https://gist.github.com/domoritz/2012629
+#+BEGIN_SRC python :tangle wos.py
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+from suds.client import Client
+from suds.transport.http import HttpTransport
+import urllib2
+
+class HTTPSudsPreprocessor(urllib2.BaseHandler):
+    def __init__(self, SID):
+        self.SID = SID
+
+    def http_request(self, req):
+        req.add_header('cookie', 'SID="'+self.SID+'"')
+        return req
+
+    https_request = http_request
+
+
+class WokmwsSoapClient():
+    """
+    main steps you have to do:
+        soap = WokmwsSoapClient()
+        results = soap.search(...)
+    """
+    def __init__(self):
+        self.url = self.client = {}
+        self.SID = ''
+
+        self.url['auth'] = 'http://search.isiknowledge.com/esti/wokmws/ws/WOKMWSAuthenticate?wsdl'
+        self.url['search'] = 'http://search.isiknowledge.com/esti/wokmws/ws/WokSearchLite?wsdl'
+
+        self.prepare()
+
+    def __del__(self):
+        self.close()
+
+    def prepare(self):
+        """does all the initialization we need for a request"""
+        self.initAuthClient()
+        self.authenticate()
+        self.initSearchClient()
+
+    def initAuthClient(self):
+        self.client['auth'] = Client(self.url['auth'])
+
+    def initSearchClient(self):
+        http = HttpTransport()
+        opener = urllib2.build_opener(HTTPSudsPreprocessor(self.SID))
+        http.urlopener = opener
+        self.client['search'] = Client(self.url['search'], transport = http)
+
+    def authenticate(self):
+        self.SID = self.client['auth'].service.authenticate()
+
+    def close(self):
+        self.client['auth'].service.closeSession()
+
+    def search(self, query):
+        qparams = {
+            'databaseID' : 'WOS',
+            'userQuery' : query,
+            'queryLanguage' : 'en',
+            'editions' : [{
+                'collection' : 'WOS',
+                'edition' : 'SCI',
+            },{
+                'collection' : 'WOS',
+                'edition' : 'SSCI',
+            }]
+        }
+
+        rparams = {
+            'count' : 5, # 1-100
+            'firstRecord' : 1,
+            'fields' : [{
+                'name' : 'Relevance',
+                'sort' : 'D',
+            }],
+        }
+
+        return self.client['search'].service.search(qparams, rparams)
+#+END_SRC
+
+#+BEGIN_SRC sh
+pip install suds
+#+END_SRC
+
+#+BEGIN_SRC python
+from wos import *
+soap = WokmwsSoapClient()
+results = soap.search('AU=kitchin')
+print results
+#+END_SRC
+
+#+RESULTS:
+
+suds.WebFault: Server raised fault: 'The Web Service (version 2.0) has been retired permanently. Please contact Thomson Reuters IP and Science Technical Support http://ip-science.thomsonreuters.com/techsupport/ for information on how to obtain a new version of our Web Service.'
 * Spelling and grammar checking in emacs with a web API
 
 After the deadline (http://www.afterthedeadline.com/api.slp) has an API for checking spelling, grammar, statistics and style. You post to their server, and they send back some xml. Here is a minimal example in emacs.
@@ -271,6 +422,123 @@ Suggestions:
   gut
 #+end_example
 
+
+
+* More doi utility functions
+
+#+BEGIN_SRC emacs-lisp
+(defun doi-utils-google-scholar (doi)
+ "DOI can be any query."
+ (interactive "sDOI: ")
+ (browse-url (format "http://scholar.google.com/scholar?hl=en&q=%s" (url-hexify-string doi))))
+
+(doi-utils-google-scholar "10.1021/jp047349j")
+#+END_SRC
+
+#+RESULTS:
+: #<process open http://scholar.google.com/scholar?hl=en&q=10.1021%2Fjp047349j>
+
+#+BEGIN_SRC emacs-lisp
+(defun doi-utils-crossref (doi)
+ (interactive "sDOI: ")
+ (browse-url (format "http://search.crossref.org/?q=%s" (url-hexify-string doi))))
+
+(doi-utils-crossref "10.1021/jp047349j")
+#+END_SRC
+
+#+RESULTS:
+: #<process open http://search.crossref.org/?q=10.1021%2Fjp047349j>
+
+http://wokinfo.com/products_tools/products/related/webservices/
+
+I requested access for this ip address: 128.2.54.215
+[[google:my ip address]]
+
+soap
+http://search.isiknowledge.com/esti/wokmws/ws/
+
+
+#+BEGIN_SRC emacs-lisp
+(defun doi-utils-ads (query)
+ "run QUERY in the Harvard abstract simple search."
+ (interactive "sQuery: ")
+ (browse-url (format "http://adsabs.harvard.edu/cgi-bin/nph-basic_connect?qsearch=%s&version=1" (url-hexify-string doi))))
+
+(doi-utils-ads "kitchin and barteau")
+#+END_SRC
+
+#+RESULTS:
+: #<process open http://adsabs.harvard.edu/cgi-bin/nph-basic_connect?qsearch=kitchin%20and%20barteau&version=1>
+
+* New links for researcherID and orcid
+These are pretty trivial links, but they still might be useful if these get more common.
+
+#+BEGIN_SRC emacs-lisp :results silent
+(org-add-link-type
+ "orcid"
+ (lambda (link-string)
+   (browse-url
+    (format "http://orcid.org/%s" link-string))))
+
+(org-add-link-type
+ "ResearcherID"
+ (lambda (link-string)
+   (browse-url
+    (format "http://www.researcherid.com/rid/%s" link-string))))
+#+END_SRC
+
+ResearcherID:A-2363-2010 
+
+orcid:0000-0003-2625-9232 
+
+
+- open http://dx.doi.org/doi
+- find in your bibliography
+- add to your bibliography
+- find in crossref
+
+* crossref + doi
+
+[[http://www.crossref.org/][crossref.org]]
+
+#+BEGIN_SRC emacs-lisp
+(let ((url-request-method "GET") 
+      (json-object-type 'plist)
+      (json-data))
+  (with-current-buffer
+      (url-retrieve-synchronously
+       "http://search.crossref.org/dois?q=john+kitchin+catalysis&&rows=3")
+      (setq json-data (buffer-substring url-http-end-of-headers (point-max)))
+      (json-read-from-string json-data)))
+#+END_SRC
+#+RESULTS:
+: [(:year "2012" :coins "ctx_ver=Z39.88-2004&amp;rft_id=info%3Adoi%2Fhttp%3A%2F%2Fdx.doi.org%2F10.1007%2Fs11244-012-9808-0&amp;rfr_id=info%3Asid%2Fcrossref.org%3Asearch&amp;rft.atitle=Preface%3A+Trends+in+Computational+Catalysis&amp;rft.jtitle=Topics+in+Catalysis&amp;rft.date=2012&amp;rft.volume=55&amp;rft.issue=5-6&amp;rft.spage=227&amp;rft.epage=228&amp;rft.aufirst=John&amp;rft.aulast=Kitchin&amp;rft_val_fmt=info%3Aofi%2Ffmt%3Akev%3Amtx%3Ajournal&amp;rft.genre=article&amp;rft.au=John+Kitchin" :fullCitation "John Kitchin, 2012, 'Preface: Trends in Computational Catalysis', <i>Topics in Catalysis</i>, vol. 55, no. 5-6, pp. 227-228" :title "Preface: Trends in Computational Catalysis" :normalizedScore 100 :score 3.5252514 :doi "http://dx.doi.org/10.1007/s11244-012-9808-0") (:year "2012" :coins "ctx_ver=Z39.88-2004&amp;rft_id=info%3Adoi%2Fhttp%3A%2F%2Fdx.doi.org%2F10.1039%2F9781849734776-00083&amp;rfr_id=info%3Asid%2Fcrossref.org%3Asearch&amp;rft.atitle=Coverage+dependent+adsorption+properties+of+atomic+adsorbates+on+late+transition+metal+surfaces&amp;rft.jtitle=Catalysis&amp;rft.date=2012&amp;rft.spage=83&amp;rft.epage=115&amp;rft.aufirst=Spencer&amp;rft.aulast=Miller&amp;rft_val_fmt=info%3Aofi%2Ffmt%3Akev%3Amtx%3Abook&amp;rft.genre=bookitem&amp;rft.au=Spencer+Miller&amp;rft.au=+Carmeline+Dsilva&amp;rft.au=+John+R.+Kitchin" :fullCitation "Spencer Miller, Carmeline Dsilva, John R. Kitchin, 2012, 'Coverage dependent adsorption properties of atomic adsorbates on late transition metal surfaces', <i>Catalysis</i>, pp. 83-115" :title "Coverage dependent adsorption properties of atomic adsorbates on late transition metal surfaces" :normalizedScore 85 :score 3.021644 :doi "http://dx.doi.org/10.1039/9781849734776-00083") (:year "2014" :coins "ctx_ver=Z39.88-2004&amp;rft_id=info%3Adoi%2Fhttp%3A%2F%2Fdx.doi.org%2F10.1016%2Fj.catcom.2013.10.028&amp;rfr_id=info%3Asid%2Fcrossref.org%3Asearch&amp;rft.atitle=Relating+the+electronic+structure+and+reactivity+of+the+3d+transition+metal+monoxide+surfaces&amp;rft.jtitle=Catalysis+Communications&amp;rft.date=2014&amp;rft.volume=52&amp;rft.spage=60&amp;rft.epage=64&amp;rft.aufirst=Zhongnan&amp;rft.aulast=Xu&amp;rft_val_fmt=info%3Aofi%2Ffmt%3Akev%3Amtx%3Ajournal&amp;rft.genre=article&amp;rft.au=Zhongnan+Xu&amp;rft.au=+John+R.+Kitchin" :fullCitation "Zhongnan Xu, John R. Kitchin, 2014, 'Relating the electronic structure and reactivity of the 3d transition metal monoxide surfaces', <i>Catalysis Communications</i>, vol. 52, pp. 60-64" :title "Relating the electronic structure and reactivity of the 3d transition metal monoxide surfaces" :normalizedScore 85 :score 3.021644 :doi "http://dx.doi.org/10.1016/j.catcom.2013.10.028")]
+
+#+BEGIN_SRC emacs-lisp
+(url-hexify-string "10.1016/j.catcom.2013.10.028")
+#+END_SRC
+#+RESULTS:
+: 10.1016%2Fj.catcom.2013.10.028
+
+#+BEGIN_SRC emacs-lisp
+(url-unhex-string "10.1016%2Fj.catcom.2013.10.028")
+#+END_SRC
+#+RESULTS:
+: 10.1016/j.catcom.2013.10.028
+
+#+BEGIN_SRC emacs-lisp
+(defun cross-ref-search ()
+  (interactive)
+  (browse-url
+   (format
+    "http://search.crossref.org/?q=%s"
+    (if (use-region-p)
+	(url-hexify-string (buffer-substring
+			    (region-beginning)
+			    (region-end)))
+      (read-string "string: ")))))
+#+END_SRC
+
 * DONE words - some interesting utilities for text in emacs
   CLOSED: [2014-11-03 Mon 11:31]
   :PROPERTIES:
@@ -465,95 +733,6 @@ Suggestions:
 #+END_EXAMPLE
 
 It might be nice to link back to those words, so you could click on them and fix them, but that is a beyond today's goal. In summary, today we looked at a framework to create a user-modifiable menu of commands that are launched from a single command. Here we called the command words, and then built up some different things we might want to do with the word or selection at point. While you can of course just remember the individual commands, remembering one command and then being prompted might have some advantages.
-
-
-
-* More doi utility functions
-
-#+BEGIN_SRC emacs-lisp
-(defun doi-utils-google-scholar (doi)
- "DOI can be any query."
- (interactive "sDOI: ")
- (browse-url (format "http://scholar.google.com/scholar?hl=en&q=%s" (url-hexify-string doi))))
-#+END_SRC
-
-#+RESULTS:
-: doi-utils-google-scholar
-
-#+BEGIN_SRC emacs-lisp
-(defun doi-utils-crossref (doi)
- (interactive "sDOI: ")
- (browse-url (format "http://search.crossref.org/?q=%s" (url-hexify-string doi))))
-
-(doi-utils-crossref "10.1021/jp047349j")
-#+END_SRC
-
-#+RESULTS:
-: #<process open http://search.crossref.org/?q=10.1021%2Fjp047349j>
-
-http://wokinfo.com/products_tools/products/related/webservices/
-
-soap
-http://search.isiknowledge.com/esti/wokmws/ws/
-
-not sure if this would be helpful: http://adsabs.harvard.edu/abstract_service.html
-
-** New links for researcherID and orcid
-These are pretty trivial links, but they still might be useful if these get more common.
-
-#+BEGIN_SRC emacs-lisp :results silent
-(org-add-link-type
- "orcid"
- (lambda (link-string)
-   (browse-url
-    (format "http://orcid.org/%s" link-string))))
-
-(org-add-link-type
- "ResearcherID"
- (lambda (link-string)
-   (browse-url
-    (format "http://www.researcherid.com/rid/%s" link-string))))
-#+END_SRC
-
-ResearcherID:A-2363-2010 
-
-orcid:0000-0003-2625-9232 
-
-
-* a doi link menu
-- open http://dx.doi.org/doi
-- find in your bibliography
-- add to your bibliography
-- find in crossref
-
-* crossref + doi
-
-[[http://www.crossref.org/][crossref.org]]
-
-#+BEGIN_SRC emacs-lisp
-(let ((url-request-method "GET") 
-      (json-object-type 'plist)
-      (json-data))
-  (with-current-buffer
-      (url-retrieve-synchronously
-       "http://search.crossref.org/dois?q=john+kitchin+catalysis&&rows=3")
-      (setq json-data (buffer-substring url-http-end-of-headers (point-max)))
-      (json-read-from-string json-data)))
-#+END_SRC
-#+RESULTS:
-: [(:year "2012" :coins "ctx_ver=Z39.88-2004&amp;rft_id=info%3Adoi%2Fhttp%3A%2F%2Fdx.doi.org%2F10.1007%2Fs11244-012-9808-0&amp;rfr_id=info%3Asid%2Fcrossref.org%3Asearch&amp;rft.atitle=Preface%3A+Trends+in+Computational+Catalysis&amp;rft.jtitle=Topics+in+Catalysis&amp;rft.date=2012&amp;rft.volume=55&amp;rft.issue=5-6&amp;rft.spage=227&amp;rft.epage=228&amp;rft.aufirst=John&amp;rft.aulast=Kitchin&amp;rft_val_fmt=info%3Aofi%2Ffmt%3Akev%3Amtx%3Ajournal&amp;rft.genre=article&amp;rft.au=John+Kitchin" :fullCitation "John Kitchin, 2012, 'Preface: Trends in Computational Catalysis', <i>Topics in Catalysis</i>, vol. 55, no. 5-6, pp. 227-228" :title "Preface: Trends in Computational Catalysis" :normalizedScore 100 :score 3.5252514 :doi "http://dx.doi.org/10.1007/s11244-012-9808-0") (:year "2012" :coins "ctx_ver=Z39.88-2004&amp;rft_id=info%3Adoi%2Fhttp%3A%2F%2Fdx.doi.org%2F10.1039%2F9781849734776-00083&amp;rfr_id=info%3Asid%2Fcrossref.org%3Asearch&amp;rft.atitle=Coverage+dependent+adsorption+properties+of+atomic+adsorbates+on+late+transition+metal+surfaces&amp;rft.jtitle=Catalysis&amp;rft.date=2012&amp;rft.spage=83&amp;rft.epage=115&amp;rft.aufirst=Spencer&amp;rft.aulast=Miller&amp;rft_val_fmt=info%3Aofi%2Ffmt%3Akev%3Amtx%3Abook&amp;rft.genre=bookitem&amp;rft.au=Spencer+Miller&amp;rft.au=+Carmeline+Dsilva&amp;rft.au=+John+R.+Kitchin" :fullCitation "Spencer Miller, Carmeline Dsilva, John R. Kitchin, 2012, 'Coverage dependent adsorption properties of atomic adsorbates on late transition metal surfaces', <i>Catalysis</i>, pp. 83-115" :title "Coverage dependent adsorption properties of atomic adsorbates on late transition metal surfaces" :normalizedScore 85 :score 3.021644 :doi "http://dx.doi.org/10.1039/9781849734776-00083") (:year "2014" :coins "ctx_ver=Z39.88-2004&amp;rft_id=info%3Adoi%2Fhttp%3A%2F%2Fdx.doi.org%2F10.1016%2Fj.catcom.2013.10.028&amp;rfr_id=info%3Asid%2Fcrossref.org%3Asearch&amp;rft.atitle=Relating+the+electronic+structure+and+reactivity+of+the+3d+transition+metal+monoxide+surfaces&amp;rft.jtitle=Catalysis+Communications&amp;rft.date=2014&amp;rft.volume=52&amp;rft.spage=60&amp;rft.epage=64&amp;rft.aufirst=Zhongnan&amp;rft.aulast=Xu&amp;rft_val_fmt=info%3Aofi%2Ffmt%3Akev%3Amtx%3Ajournal&amp;rft.genre=article&amp;rft.au=Zhongnan+Xu&amp;rft.au=+John+R.+Kitchin" :fullCitation "Zhongnan Xu, John R. Kitchin, 2014, 'Relating the electronic structure and reactivity of the 3d transition metal monoxide surfaces', <i>Catalysis Communications</i>, vol. 52, pp. 60-64" :title "Relating the electronic structure and reactivity of the 3d transition metal monoxide surfaces" :normalizedScore 85 :score 3.021644 :doi "http://dx.doi.org/10.1016/j.catcom.2013.10.028")]
-
-#+BEGIN_SRC emacs-lisp
-(url-hexify-string "10.1016/j.catcom.2013.10.028")
-#+END_SRC
-#+RESULTS:
-: 10.1016%2Fj.catcom.2013.10.028
-
-#+BEGIN_SRC emacs-lisp
-(url-unhex-string "10.1016%2Fj.catcom.2013.10.028")
-#+END_SRC
-#+RESULTS:
-: 10.1016/j.catcom.2013.10.028
 * DONE A generalized org-link with an extendable menu of actions
   CLOSED: [2014-11-02 Sun 19:33]
   :PROPERTIES:
@@ -638,7 +817,6 @@ Well, that worked fine! You might want to append to the list instead of put it a
 | 4 | Option 4 | option-4 |
 
 I think this example more or less shows the basic idea here. These external functions may do a variety of things, like look up something on google, or some other web service, search for something on your hard drive, etc... For example in org-ref, clicking on a cite link gives you options to open the bibtex file, a pdf, a url or notes. This would allow you to open other things too, if you felt like it. For better or worse, you can modify the behavior of the link after it is defined.
-
 
 * DONE Annotating matplotlib figures
   CLOSED: [2014-11-01 Sat 10:35]
