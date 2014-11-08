@@ -1,3 +1,878 @@
+* A context-sensitive file link menu in org-mode
+  :PROPERTIES:
+  :categories: org
+  :date:     2014/11/08 10:24:14
+  :updated:  2014/11/08 10:26:22
+  :END:
+I am still interested in various ways to get more functionality of org-links. For example, we looked at: 
+1. [[http://kitchingroup.cheme.cmu.edu/blog/2013/10/21/Enabling-right-clicks-in-org-mode-links/][enabling right clicks]] on links
+2. [[http://kitchingroup.cheme.cmu.edu/blog/2014/11/02/A-generalized-org-link-with-an-extendable-menu-of-actions/][new links with menus]]
+
+When you click on a link, the function org-open-at-point runs, which is a /large/ function that does a lot of things. One of them is to check if the link is defined in org-link-protocols, and to run the function definition there if it is. Here is a list of links defined for me. I defined a lot of these in org-ref, and my own init files, so you may not see these on your system.
+
+#+BEGIN_SRC emacs-lisp
+(mapcar 'car org-link-protocols)
+#+END_SRC
+
+#+RESULTS:
+| google | ResearcherID | orcid | message | mac-outlook | skim | addressbook | x-together-item | rmail | mhe | irc | info | gnus | docview | bibtex | bbdb | ans | exercise | solution | assignment | doi | bibentry | Autocites | autocites | supercites | Textcites | textcites | Smartcites | smartcites | footcitetexts | footcites | Parencites | parencites | Cites | cites | fnotecite | Pnotecite | pnotecite | Notecite | notecite | footfullcite | fullcite | citeurl | citedate* | citedate | citetitle* | citetitle | Citeauthor* | Autocite* | autocite* | Autocite | autocite | supercite | parencite* | cite* | Smartcite | smartcite | Textcite | textcite | footcitetext | footcite | Parencite | parencite | Cite | Citeauthor | Citealp | Citealt | Citep | Citet | citeyear* | citeyear | citeauthor* | citeauthor | citetext | citenum | citealp* | citealp | citealt* | citealt | citep* | citep | citet* | citet | nocite | cite | eqref | nameref | pageref | ref | label | list-of-tables | list-of-figures | addbibresource | bibliographystyle | printbibliography | nobibliography | bibliography | pydoc | index | attachfile | msx | id | file+emacs | file+sys |
+
+Interestingly, file links are not defined in org-link-protocols, they are handled separately. I would like to change the behavior of file+emacs links. Instead of just opening the file, I want a menu to give me the option to create the file if it does not exist, and to open it in emacs, or with a system program if the file does exist. Let us see what this link does.
+
+#+BEGIN_SRC emacs-lisp
+(assoc "file+emacs" org-link-protocols)
+#+END_SRC
+
+#+RESULTS:
+| file+emacs | org-open-file-with-emacs | nil |
+
+When you click on the link, it runs org-open-file-with-emacs, and there is no formatting function defined.
+
+So, let us define a list of functions that could make a menu. A new variation we use in this post is that each element of the list will be a (key menu-name action-func visible-p) list. visible-p will be a function that determines if the function is listed in the menu. That way, our menu will be context specific.
+
+We want an option to create a file if it does not exist, and if it does exist, a choice to open in emacs, or a system program. So the idea here is to create the menu in a variable (so it easy to add to later), then when you click on the link it will run a menu function that  filters the functions to run, and then prompt you for a selection. 
+
+#+BEGIN_SRC emacs-lisp
+(defvar file+emacs-menu '()
+  "list of menu entries. (key name action visible).
+key is a character to select.
+name is what shows in the menu as [key]name
+action is a function that takes a path
+visible is a function that determines if the entry is in the menu.")
+
+(setq file+emacs-menu 
+      '(("c" "reate"
+	 find-file ; action function
+	 (lambda (x) (not (file-exists-p x)))) ; visible-p
+	("o" "pen"
+	 org-open-file-with-emacs
+	 (lambda (x) (file-exists-p x)))
+	("e" "xternal open"
+	 (lambda (x) (org-open-file path '(16)))
+	 (lambda (x) (file-exists-p x)))))
+
+
+(defun file+emacs-menu (path)
+  "menu command for file+emacs links"
+  (interactive)
+  (let* ((filtered-menu-list (-filter
+			      (lambda (x) (funcall (car (last x)) path))
+			      file+emacs-menu))
+	 (menu-string (concat
+		       (mapconcat
+			(lambda (tup)
+			  (concat "[" (elt tup 0) "]"
+				  (elt tup 1) " "))
+			filtered-menu-list
+			"") ": "))
+	 (input (read-char-exclusive menu-string nil 1))
+	 (selected-func (and
+			 input
+			 (elt 
+			  (assoc
+			   (char-to-string input) filtered-menu-list)
+			  2))))
+    (when selected-func
+      (funcall selected-func path))))
+#+END_SRC
+
+#+RESULTS:
+: file+emacs-menu
+
+Now we need to change the link definition in org-link-protocols. setf comes to the rescue. We just get the whole entry, and then setf the second position in it like this.
+
+#+BEGIN_SRC emacs-lisp
+(setf (elt (assoc "file+emacs" org-link-protocols) 1)
+  'file+emacs-menu)
+#+END_SRC
+
+#+RESULTS:
+: file+emacs-menu
+
+Here we just confirm we set it.
+
+#+BEGIN_SRC emacs-lisp
+(assoc "file+emacs" org-link-protocols)
+#+END_SRC
+
+#+RESULTS:
+| file+emacs | file+emacs-menu | nil |
+
+Now, when we click on these links, we get our context specific menu. When 
+
+This file exists: file+emacs:ase-db.org  so we see this menu:
+#+attr_html: :width 200
+[[./images/open-menu.png]]
+
+This file does not exist: file+emacs:test.noext 
+So we see:
+#+attr_html: :width 200
+[[./images/create-menu.png]]
+
+For these, we can select to open them in a pdf reader or MS Word from our new menu.
+file+emacs:attaching-code-blocks-to-a-pdf.pdf
+
+file+emacs:org-to-word.docx
+
+I admit this example was a little contrived. You can do most of these things with prefix commands, or more specific commands in emacs. But, I rarely remember those. I would have preferred to use the file link in this example, but it is not defined in org-link-protocols, so this style of modification would not work, and I did not want to add it to org-link-protocols just to show how to change it this way. 
+
+This general approach would be very useful for links where there may be multiple contexts or actions that make sense. For file links, you may want do different things if the file already exists, or if it does not exist. As another example, my [[https://github.com/jkitchin/jmax/blob/master/org/doi-utils.org#a-new-doi-link-for-org-mode][doi link]] gives me a menu to:
+1. open in http://dx.doi.org
+2. open the doi in Web of Science
+3. find citing articles in Web of Science
+4. search the doi in Google Scholar
+5. open the doi in CrossRef
+6. open the doi in Pubmed
+7. find the doi in my bibtex file
+8. get a bibtex entry for the doi
+
+I get all that from a click! org-ref offers similar functionality for cite links, where you might want to do different things from a click:
+1. See preview of the citation
+2. open the bibtex entry
+3. open the pdf if you have it
+4. open the url for the entry
+5. any of the things I listed for the doi example above.
+
+I am sure there are many other things that might be useful to do!
+
+
+* make any org link a menu link
+
+It seems like it should be possible to make org links have variable behavior. For example, if one action is defined, it should be done. If more than one action is defined, you should get a menu. One way to achieve this is to hijack the org-link functions, or in cases where lambda functions are used, we have to redefine them. The follow functions are defined in org-link-protocols.
+
+#+BEGIN_SRC emacs-lisp :results code
+org-link-protocols
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC emacs-lisp
+(("google"
+  (lambda
+    (link-string)
+    (browse-url
+     (format "http://www.google.com/search?q=%s"
+	     (url-hexify-string link-string))))
+  nil)
+ ("ResearcherID"
+  (lambda
+    (link-string)
+    (browse-url
+     (format "http://www.researcherid.com/rid/%s" link-string)))
+  nil)
+ ("orcid"
+  (lambda
+    (link-string)
+    (browse-url
+     (format "http://orcid.org/%s" link-string)))
+  nil)
+ ("message" org-mac-message-open nil)
+ ("mac-outlook" org-mac-outlook-message-open nil)
+ ("skim" org-mac-skim-open nil)
+ ("addressbook" org-mac-addressbook-item-open nil)
+ ("x-together-item" org-mac-together-item-open nil)
+ ("rmail" org-rmail-open nil)
+ ("mhe" org-mhe-open nil)
+ ("irc" org-irc-visit nil)
+ ("info" org-info-open nil)
+ ("gnus" org-gnus-open nil)
+ ("docview" org-docview-open org-docview-export)
+ ("bibtex" org-bibtex-open nil)
+ ("bbdb" org-bbdb-open org-bbdb-export)
+ ("ans"
+  (lambda
+    (path)
+    (let*
+	((fields
+	  (split-string path "::"))
+	 (label
+	  (nth 0 fields))
+	 (data
+	  (nth 1 fields))
+	 (data-file
+	  (format "%s-%s.dat" tq-userid label)))
+      (let
+	  ((temp-file data-file)
+	   (temp-buffer
+	    (get-buffer-create
+	     (generate-new-buffer-name " *temp file*"))))
+	(unwind-protect
+	    (prog1
+		(save-current-buffer
+		  (set-buffer temp-buffer)
+		  (insert data))
+	      (save-current-buffer
+		(set-buffer temp-buffer)
+		(write-region nil nil temp-file nil 0)))
+	  (and
+	   (buffer-name temp-buffer)
+	   (kill-buffer temp-buffer))))
+      (mygit
+       (format "git add %s" data-file))
+      (mygit
+       (format "git commit -m \"%s\"" data-file))
+      (mygit "git push origin master")))
+  nil)
+ ("exercise"
+  (lambda
+    (arg)
+    (tq-check-internet)
+    (tq-get-assignment arg))
+  nil)
+ ("solution"
+  (lambda
+    (label)
+    (tq-check-internet)
+    (let
+	((default-directory
+	   (file-name-as-directory
+	    (expand-file-name tq-root-directory))))
+      (if
+	  (file-exists-p "solutions")
+	  nil
+	(make-directory "solutions"))
+      (let
+	  ((default-directory
+	     (file-name-as-directory
+	      (expand-file-name "solutions"))))
+	(if
+	    (file-exists-p label)
+	    (progn
+	      (find-file
+	       (concat label "/" label ".org"))
+	      (tq-update))
+	  (mygit
+	   (format "git clone %s@%s:solutions/%s" tq-current-course tq-git-server label))
+	  (find-file
+	   (concat label "/" label ".org"))))))
+  nil)
+ ("assignment"
+  (lambda
+    (arg)
+    (tq-check-internet)
+    (tq-get-assignment arg))
+  nil)
+ ("doi" doi-link-menu nil)
+ ("bibentry" org-ref-cite-onclick-minibuffer-menu org-ref-format-bibentry)
+ ("Autocites" org-ref-cite-onclick-minibuffer-menu org-ref-format-Autocites)
+ ("autocites" org-ref-cite-onclick-minibuffer-menu org-ref-format-autocites)
+ ("supercites" org-ref-cite-onclick-minibuffer-menu org-ref-format-supercites)
+ ("Textcites" org-ref-cite-onclick-minibuffer-menu org-ref-format-Textcites)
+ ("textcites" org-ref-cite-onclick-minibuffer-menu org-ref-format-textcites)
+ ("Smartcites" org-ref-cite-onclick-minibuffer-menu org-ref-format-Smartcites)
+ ("smartcites" org-ref-cite-onclick-minibuffer-menu org-ref-format-smartcites)
+ ("footcitetexts" org-ref-cite-onclick-minibuffer-menu org-ref-format-footcitetexts)
+ ("footcites" org-ref-cite-onclick-minibuffer-menu org-ref-format-footcites)
+ ("Parencites" org-ref-cite-onclick-minibuffer-menu org-ref-format-Parencites)
+ ("parencites" org-ref-cite-onclick-minibuffer-menu org-ref-format-parencites)
+ ("Cites" org-ref-cite-onclick-minibuffer-menu org-ref-format-Cites)
+ ("cites" org-ref-cite-onclick-minibuffer-menu org-ref-format-cites)
+ ("fnotecite" org-ref-cite-onclick-minibuffer-menu org-ref-format-fnotecite)
+ ("Pnotecite" org-ref-cite-onclick-minibuffer-menu org-ref-format-Pnotecite)
+ ("pnotecite" org-ref-cite-onclick-minibuffer-menu org-ref-format-pnotecite)
+ ("Notecite" org-ref-cite-onclick-minibuffer-menu org-ref-format-Notecite)
+ ("notecite" org-ref-cite-onclick-minibuffer-menu org-ref-format-notecite)
+ ("footfullcite" org-ref-cite-onclick-minibuffer-menu org-ref-format-footfullcite)
+ ("fullcite" org-ref-cite-onclick-minibuffer-menu org-ref-format-fullcite)
+ ("citeurl" org-ref-cite-onclick-minibuffer-menu org-ref-format-citeurl)
+ ("citedate*" org-ref-cite-onclick-minibuffer-menu org-ref-format-citedate*)
+ ("citedate" org-ref-cite-onclick-minibuffer-menu org-ref-format-citedate)
+ ("citetitle*" org-ref-cite-onclick-minibuffer-menu org-ref-format-citetitle*)
+ ("citetitle" org-ref-cite-onclick-minibuffer-menu org-ref-format-citetitle)
+ ("Citeauthor*" org-ref-cite-onclick-minibuffer-menu org-ref-format-Citeauthor*)
+ ("Autocite*" org-ref-cite-onclick-minibuffer-menu org-ref-format-Autocite*)
+ ("autocite*" org-ref-cite-onclick-minibuffer-menu org-ref-format-autocite*)
+ ("Autocite" org-ref-cite-onclick-minibuffer-menu org-ref-format-Autocite)
+ ("autocite" org-ref-cite-onclick-minibuffer-menu org-ref-format-autocite)
+ ("supercite" org-ref-cite-onclick-minibuffer-menu org-ref-format-supercite)
+ ("parencite*" org-ref-cite-onclick-minibuffer-menu org-ref-format-parencite*)
+ ("cite*" org-ref-cite-onclick-minibuffer-menu org-ref-format-cite*)
+ ("Smartcite" org-ref-cite-onclick-minibuffer-menu org-ref-format-Smartcite)
+ ("smartcite" org-ref-cite-onclick-minibuffer-menu org-ref-format-smartcite)
+ ("Textcite" org-ref-cite-onclick-minibuffer-menu org-ref-format-Textcite)
+ ("textcite" org-ref-cite-onclick-minibuffer-menu org-ref-format-textcite)
+ ("footcitetext" org-ref-cite-onclick-minibuffer-menu org-ref-format-footcitetext)
+ ("footcite" org-ref-cite-onclick-minibuffer-menu org-ref-format-footcite)
+ ("Parencite" org-ref-cite-onclick-minibuffer-menu org-ref-format-Parencite)
+ ("parencite" org-ref-cite-onclick-minibuffer-menu org-ref-format-parencite)
+ ("Cite" org-ref-cite-onclick-minibuffer-menu org-ref-format-Cite)
+ ("Citeauthor" org-ref-cite-onclick-minibuffer-menu org-ref-format-Citeauthor)
+ ("Citealp" org-ref-cite-onclick-minibuffer-menu org-ref-format-Citealp)
+ ("Citealt" org-ref-cite-onclick-minibuffer-menu org-ref-format-Citealt)
+ ("Citep" org-ref-cite-onclick-minibuffer-menu org-ref-format-Citep)
+ ("Citet" org-ref-cite-onclick-minibuffer-menu org-ref-format-Citet)
+ ("citeyear*" org-ref-cite-onclick-minibuffer-menu org-ref-format-citeyear*)
+ ("citeyear" org-ref-cite-onclick-minibuffer-menu org-ref-format-citeyear)
+ ("citeauthor*" org-ref-cite-onclick-minibuffer-menu org-ref-format-citeauthor*)
+ ("citeauthor" org-ref-cite-onclick-minibuffer-menu org-ref-format-citeauthor)
+ ("citetext" org-ref-cite-onclick-minibuffer-menu org-ref-format-citetext)
+ ("citenum" org-ref-cite-onclick-minibuffer-menu org-ref-format-citenum)
+ ("citealp*" org-ref-cite-onclick-minibuffer-menu org-ref-format-citealp*)
+ ("citealp" org-ref-cite-onclick-minibuffer-menu org-ref-format-citealp)
+ ("citealt*" org-ref-cite-onclick-minibuffer-menu org-ref-format-citealt*)
+ ("citealt" org-ref-cite-onclick-minibuffer-menu org-ref-format-citealt)
+ ("citep*" org-ref-cite-onclick-minibuffer-menu org-ref-format-citep*)
+ ("citep" org-ref-cite-onclick-minibuffer-menu org-ref-format-citep)
+ ("citet*" org-ref-cite-onclick-minibuffer-menu org-ref-format-citet*)
+ ("citet" org-ref-cite-onclick-minibuffer-menu org-ref-format-citet)
+ ("nocite" org-ref-cite-onclick-minibuffer-menu org-ref-format-nocite)
+ ("cite" org-ref-cite-onclick-minibuffer-menu org-ref-format-cite)
+ ("eqref"
+  (lambda
+    (label)
+    "on clicking goto the label. Navigate back with C-c &"
+    (org-mark-ring-push)
+    (widen)
+    (goto-char
+     (point-min))
+    (if
+	(or
+	 (re-search-forward
+	  (format "label:%s" label)
+	  nil t)
+	 (re-search-forward
+	  (format "\\label{%s}" label)
+	  nil t)
+	 (re-search-forward
+	  (format "^#\\+label:\\s-*\\(%s\\)\\b" label)
+	  nil t))
+	nil
+      (org-mark-ring-goto)
+      (error "%s not found" label))
+    (message "go back with (org-mark-ring-goto) `C-c &`"))
+  (lambda
+    (keyword desc format)
+    (cond
+     ((eq format 'html)
+      (format "(<eqref>%s</eqref>)" path))
+     ((eq format 'latex)
+      (format "\\eqref{%s}" keyword)))))
+ ("nameref"
+  (lambda
+    (label)
+    "on clicking goto the label. Navigate back with C-c &"
+    (org-mark-ring-push)
+    (widen)
+    (if
+	(or
+	 (progn
+	   (goto-char
+	    (point-min))
+	   (re-search-forward
+	    (format "\\label{%s}" label)
+	    nil t)))
+	nil
+      (org-mark-ring-goto)
+      (error "%s not found" label))
+    (message "go back with (org-mark-ring-goto) `C-c &`"))
+  (lambda
+    (keyword desc format)
+    (cond
+     ((eq format 'html)
+      (format "(<nameref>%s</nameref>)" path))
+     ((eq format 'latex)
+      (format "\\nameref{%s}" keyword)))))
+ ("pageref"
+  (lambda
+    (label)
+    "on clicking goto the label. Navigate back with C-c &"
+    (org-mark-ring-push)
+    (widen)
+    (if
+	(or
+	 (progn
+	   (goto-char
+	    (point-min))
+	   (re-search-forward
+	    (format "label:%s\\b" label)
+	    nil t))
+	 (progn
+	   (goto-char
+	    (point-min))
+	   (re-search-forward
+	    (format "\\label{%s}" label)
+	    nil t))
+	 (progn
+	   (goto-char
+	    (point-min))
+	   (re-search-forward
+	    (format "^#\\+label:\\s-*\\(%s\\)\\b" label)
+	    nil t))
+	 (progn
+	   (goto-char
+	    (point-min))
+	   (re-search-forward
+	    (format "^#\\+tblname:\\s-*\\(%s\\)\\b" label)
+	    nil t)))
+	nil
+      (org-mark-ring-goto)
+      (error "%s not found" label))
+    (message "go back with (org-mark-ring-goto) `C-c &`"))
+  (lambda
+    (keyword desc format)
+    (cond
+     ((eq format 'html)
+      (format "(<pageref>%s</pageref>)" path))
+     ((eq format 'latex)
+      (format "\\pageref{%s}" keyword)))))
+ ("ref"
+  (lambda
+    (label)
+    "on clicking goto the label. Navigate back with C-c &"
+    (org-mark-ring-push)
+    (widen)
+    (if
+	(or
+	 (progn
+	   (goto-char
+	    (point-min))
+	   (re-search-forward
+	    (format "label:%s\\b" label)
+	    nil t))
+	 (progn
+	   (goto-char
+	    (point-min))
+	   (re-search-forward
+	    (format "\\label{%s}" label)
+	    nil t))
+	 (progn
+	   (goto-char
+	    (point-min))
+	   (re-search-forward
+	    (format "^#\\+label:\\s-*\\(%s\\)\\b" label)
+	    nil t))
+	 (progn
+	   (goto-char
+	    (point-min))
+	   (re-search-forward
+	    (format "^#\\+tblname:\\s-*\\(%s\\)\\b" label)
+	    nil t)))
+	nil
+      (org-mark-ring-goto)
+      (error "%s not found" label))
+    (org-show-entry)
+    (message "go back with (org-mark-ring-goto) `C-c &`"))
+  (lambda
+    (keyword desc format)
+    (cond
+     ((eq format 'html)
+      (format "(<ref>%s</ref>)" path))
+     ((eq format 'latex)
+      (format "\\ref{%s}" keyword)))))
+ ("label"
+  (lambda
+    (label)
+    "on clicking count the number of label tags used in the buffer. A number greater than one means multiple labels!"
+    (message
+     (format "%s occurences"
+	     (+
+	      (count-matches
+	       (format "label:%s\\b[^-:]" label)
+	       (point-min)
+	       (point-max)
+	       t)
+	      (count-matches
+	       (format "^#\\+tblname:\\s-*%s\\b[^-:]" label)
+	       (point-min)
+	       (point-max)
+	       t)
+	      (count-matches
+	       (format "\\label{%s}\\b" label)
+	       (point-min)
+	       (point-max)
+	       t)
+	      (count-matches
+	       (format "^#\\+label:\\s-*%s\\b[^-:]" label)
+	       (point-min)
+	       (point-max)
+	       t)))))
+  (lambda
+    (keyword desc format)
+    (cond
+     ((eq format 'html)
+      (format "(<label>%s</label>)" path))
+     ((eq format 'latex)
+      (format "\\label{%s}" keyword)))))
+ ("list-of-tables" org-ref-list-of-tables
+  (lambda
+    (keyword desc format)
+    (cond
+     ((eq format 'latex)
+      (format "\\listoftables")))))
+ ("list-of-figures" org-ref-list-of-figures
+  (lambda
+    (keyword desc format)
+    (cond
+     ((eq format 'latex)
+      (format "\\listoffigures")))))
+ ("addbibresource"
+  (lambda
+    (link-string)
+    (let*
+	((bibfile)
+	 (object
+	  (org-element-context))
+	 (link-string-beginning)
+	 (link-string-end))
+      (save-excursion
+	(goto-char
+	 (org-element-property :begin object))
+	(search-forward link-string nil nil 1)
+	(setq link-string-beginning
+	      (match-beginning 0))
+	(setq link-string-end
+	      (match-end 0)))
+      (set
+       (make-local-variable 'reftex-default-addbibresource)
+       (split-string
+	(org-element-property :path object)
+	","))
+      (save-excursion
+	(if
+	    (search-forward "," link-string-end 1 1)
+	    (setq key-end
+		  (-
+		   (match-end 0)
+		   1))
+	  (setq key-end
+		(point))))
+      (save-excursion
+	(if
+	    (search-backward "," link-string-beginning 1 1)
+	    (setq key-beginning
+		  (+
+		   (match-beginning 0)
+		   1))
+	  (setq key-beginning
+		(point))))
+      (setq bibfile
+	    (org-ref-strip-string
+	     (buffer-substring key-beginning key-end)))
+      (find-file bibfile)))
+  (lambda
+    (keyword desc format)
+    (cond
+     ((eq format 'html)
+      (format ""))
+     ((eq format 'latex)
+      (format "\\addbibresource{%s}" keyword)))))
+ ("bibliographystyle"
+  (lambda
+    (arg)
+    (message "Nothing implemented for clicking here."))
+  (lambda
+    (keyword desc format)
+    (cond
+     ((eq format 'latex)
+      (format "\\bibliographystyle{%s}" keyword)))))
+ ("printbibliography"
+  (lambda
+    (arg)
+    (message "Nothing implemented for clicking here."))
+  (lambda
+    (keyword desc format)
+    (cond
+     ((eq format 'org)
+      (org-ref-get-org-bibliography))
+     ((eq format 'html)
+      (org-ref-get-html-bibliography))
+     ((eq format 'latex)
+      "\\printbibliography"))))
+ ("nobibliography"
+  (lambda
+    (link-string)
+    (let*
+	((bibfile)
+	 (object
+	  (org-element-context))
+	 (link-string-beginning)
+	 (link-string-end))
+      (save-excursion
+	(goto-char
+	 (org-element-property :begin object))
+	(search-forward link-string nil nil 1)
+	(setq link-string-beginning
+	      (match-beginning 0))
+	(setq link-string-end
+	      (match-end 0)))
+      (set
+       (make-local-variable 'reftex-default-bibliography)
+       (split-string
+	(org-element-property :path object)
+	","))
+      (save-excursion
+	(if
+	    (search-forward "," link-string-end 1 1)
+	    (setq key-end
+		  (-
+		   (match-end 0)
+		   1))
+	  (setq key-end
+		(point))))
+      (save-excursion
+	(if
+	    (search-backward "," link-string-beginning 1 1)
+	    (setq key-beginning
+		  (+
+		   (match-beginning 0)
+		   1))
+	  (setq key-beginning
+		(point))))
+      (setq bibfile
+	    (org-ref-strip-string
+	     (buffer-substring key-beginning key-end)))
+      (find-file bibfile)))
+  (lambda
+    (keyword desc format)
+    (cond
+     ((eq format 'org)
+      (org-ref-get-org-bibliography))
+     ((eq format 'ascii)
+      (org-ref-get-ascii-bibliography))
+     ((eq format 'html)
+      (org-ref-get-html-bibliography))
+     ((eq format 'latex)
+      (format "\\nobibliography{%s}"
+	      (replace-regexp-in-string "\\.bib" ""
+					(mapconcat 'identity
+						   (mapcar 'expand-file-name
+							   (split-string keyword ","))
+						   ",")))))))
+ ("bibliography"
+  (lambda
+    (link-string)
+    (let*
+	((bibfile)
+	 (object
+	  (org-element-context))
+	 (link-string-beginning)
+	 (link-string-end))
+      (save-excursion
+	(goto-char
+	 (org-element-property :begin object))
+	(search-forward link-string nil nil 1)
+	(setq link-string-beginning
+	      (match-beginning 0))
+	(setq link-string-end
+	      (match-end 0)))
+      (set
+       (make-local-variable 'reftex-default-bibliography)
+       (split-string
+	(org-element-property :path object)
+	","))
+      (save-excursion
+	(if
+	    (search-forward "," link-string-end 1 1)
+	    (setq key-end
+		  (-
+		   (match-end 0)
+		   1))
+	  (setq key-end
+		(point))))
+      (save-excursion
+	(if
+	    (search-backward "," link-string-beginning 1 1)
+	    (setq key-beginning
+		  (+
+		   (match-beginning 0)
+		   1))
+	  (setq key-beginning
+		(point))))
+      (setq bibfile
+	    (org-ref-strip-string
+	     (buffer-substring key-beginning key-end)))
+      (find-file bibfile)))
+  (lambda
+    (keyword desc format)
+    (cond
+     ((eq format 'org)
+      (org-ref-get-org-bibliography))
+     ((eq format 'ascii)
+      (org-ref-get-ascii-bibliography))
+     ((eq format 'html)
+      (org-ref-get-html-bibliography))
+     ((eq format 'latex)
+      (format "\\bibliography{%s}"
+	      (replace-regexp-in-string "\\.bib" ""
+					(mapconcat 'identity
+						   (mapcar 'expand-file-name
+							   (split-string keyword ","))
+						   ",")))))))
+ ("pydoc"
+  (lambda
+    (link-string)
+    (shell-command
+     (format "python -m pydoc %s" link-string)))
+  nil)
+ ("index"
+  (lambda
+    (path)
+    (tq-index)
+    (occur path))
+  nil)
+ ("attachfile"
+  (lambda
+    (link-string)
+    (org-open-file link-string))
+  (lambda
+    (keyword desc format)
+    (cond
+     ((eq format 'html)
+      (format ""))
+     ((eq format 'latex)
+      (format "\\attachfile{%s}" keyword)))))
+ ("msx" org-msx-open nil)
+ ("id" org-id-open nil)
+ ("file+emacs" org-open-file-with-emacs nil)
+ ("file+sys" org-open-file-with-system nil))
+#+END_SRC
+
+
+#+BEGIN_SRC emacs-lisp :results code
+(car org-link-protocols)
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC emacs-lisp
+("google"
+ (lambda
+   (link-string)
+   (browse-url
+    (format "http://www.google.com/search?q=%s"
+	    (url-hexify-string link-string))))
+ nil)
+#+END_SRC
+
+#+BEGIN_SRC emacs-lisp
+(setf (cadr (assoc "google" org-link-protocols))
+  (lambda (x) (message "You googled %s good" x)))
+#+END_SRC
+
+#+RESULTS:
+| lambda | (x) | (message You googled %s good x) |
+
+#+BEGIN_SRC emacs-lisp :results code
+(car org-link-protocols)
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC emacs-lisp
+("google"
+ (lambda
+   (x)
+   (message "You googled %s good" x))
+ nil)
+#+END_SRC
+
+google:test
+
+This way you can make the function do what ever you want, without digging into the source code, advising functions etc...
+
+#+BEGIN_SRC emacs-lisp
+(assoc "file" org-link-protocols)
+#+END_SRC
+
+#+RESULTS:
+skim:ts
+* bug report
+[[https://mail.google.com/mail/u/0/#inbox/1498a1077371921f][Small bug in org-ref - johnrkitchin@gmail.com - Gmail]]
+
+Dear Dr. Kitchin,
+
+I found a small problem in org-ref in combination with org-mode #+label
+function.
+
+
+1.)
+#+CAPTION: Test caption
+#+LABEL: fig:test_label3
+#+ATTR_LATEX: :width 0.7\textwidth
+[[file:test_figure.pdf]]
+
+This way figure ref:fig:test_label3 will be referenced correctly in LaTeX
+output (\ref), but not found by org-ref-complete-link function, meaning
+there is no auto-completion.
+
+
+#+BEGIN_SRC emacs-lisp
+(org-ref-get-labels)
+#+END_SRC
+
+#+RESULTS:
+|   | fig:test_label | fig | \s- | test1 | test | code-example | \\ | code:ref-snippet | load-snippets | fig:test_label3 | fig:cos | fig:a | fig:b | fig12 | tbldata | my-table | tbl-data | tbl-1 | tbl-2 | python-table | first-table | tbl-with-caption | cos-data | users | gradebook | beginner |
+
+2.)
+#+CAPTION: Test caption
+#+LABEL: fig:test_label    ---- no space between label:fig!!
+#+ATTR_LATEX: :width 0.7\textwidth
+[[file:test_figure.pdf]]
+
+This way figure ref:fig:test_label will NOT be referenced in LaTeX
+output, but will be found by org-ref-complete-link function, because the
+missing empty space leads to misinterpretation of #+label: on export.
+
+Inserting a space behind label in the org-ref-get-labels function solves
+the problem for me.
+
+#+begin_src emacs-lisp
+(defun org-ref-get-labels ()
+  "returns a list of labels in the buffer that you can make a ref link
+to. this is used to auto-complete ref links."
+  (save-excursion
+    (save-restriction
+      (widen)
+      (goto-char (point-min))
+      (let ((matches '()))
+        (while (re-search-forward "label: \\([a-zA-z0-9:-]*\\)" (point-max) t)
+ ; inserted space behind label:
+          (add-to-list 'matches (match-string-no-properties 1) t))
+        (append matches (org-ref-get-latex-labels) (org-ref-get-tblnames)
+(org-ref-get-custom-ids))))))
+#+end_src
+
+
+#+begin_src emacs-lisp
+(defun org-ref-complete-link (&optional arg)
+  "Completion function for ref links"
+  (let ((label))
+    (setq label (completing-read "label: " (org-ref-get-labels)))
+    (format "ref:%s" label)))
+#+end_src
+
+I only know the org-ref reference function - or is there a proper
+org-ref-create label function.
+
+Greetings
+* Unlinkify an org link
+
+cnn
+
+a f test.regfdsa
+
+
+#+BEGIN_SRC emacs-lisp
+(defun unlinkify ()
+  "replace an org-link with the path, or description."
+  (interactive)
+  (let ((eop (org-element-context)))
+    (when (eq 'link (car eop))
+(message "%s" eop)
+      (let* ((start (org-element-property :begin eop))
+	     (end (org-element-property :end eop))
+	     (contents-begin (org-element-property :contents-begin eop))
+	     (contents-end (org-element-property :contents-end eop))
+	     (path (org-element-property :path eop))
+	     (desc (and contents-begin
+			contents-end
+			(buffer-substring contents-begin contents-end))))
+	(setf (buffer-substring start end) (or desc path))))))
+#+END_SRC
+
+#+RESULTS:
+: unlinkify
+
+
+
+
 * DONE Accessing web of science entry, citing and related articles from a doi in emacs
   CLOSED: [2014-11-04 Tue 21:18]
   :PROPERTIES:
