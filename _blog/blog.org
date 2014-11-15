@@ -1,4 +1,361 @@
-* A hint system for problems in org-mode
+
+* Using filters to get pdf images into html export
+
+#+BEGIN_SRC python
+import matplotlib.pyplot as plt
+
+plt.plot([1, 2, 4, 8])
+plt.savefig('im.pdf')
+#+END_SRC
+
+Here is our inline image as a pdf file. We would like it to be converted to a png, and rendered in an html export. This is most easily done with a derived backend.
+
+[[./im.pdf]]
+
+
+#+BEGIN_SRC emacs-lisp
+(defun my-link-format (link contents info)
+  (let ((type (org-element-property :type link))
+	(path (org-element-property :path link)))
+    (cond
+     ((and
+       (string= type "file")
+       (string-match "\.pdf" path))
+      (shell-command
+       (format
+	"convert %s %s"
+	path
+	(replace-regexp-in-string "\.pdf" ".png" path)))
+      (format "<img src=\"%s\">" (replace-regexp-in-string "\.pdf" ".png" path)))
+     ;; anything else, we just do the regular thing
+     (t
+      (org-html-link link contents info)))))
+
+(org-export-define-derived-backend 'my-html 'html
+  :translate-alist '((link . my-link-format)))
+
+
+(browse-url (org-export-to-file 'my-html "custom-link.html"))
+#+END_SRC
+
+#+RESULTS:
+: #<process open custom-link.html>
+
+
+
+
+* A helm interface to org-contacts
+
+#+BEGIN_SRC emacs-lisp
+(defun oc-email (_)
+ (interactive)
+ (message-box "%s"
+	      (mapconcat
+	       (lambda (x)
+		 (cdr (assoc "EMAIL" (elt x 1))))
+	       (helm-marked-candidates :with-wildcard t)
+	       ",")))
+
+
+(defun oc-open-entry (selection)
+ (let ((mark (car selection)))
+   (switch-to-buffer (marker-buffer mark))
+   (goto-char (marker-position mark))
+   (show-subtree)))
+
+
+(defun oc-open-url (selection)
+  (let ((url (cdr (assoc "URL" (elt selection 1)))))
+    (when url
+      (browse-url url))))
+
+
+(defvar helm-source-org-contacts
+  '((name                            . "Contacts")
+    (candidates                      . org-contacts-db)
+    (action . (("Email"              . oc-email)
+	       ("web"                . oc-open-url)
+               ("Show entry"         . oc-open-entry))))
+  "Source for searching in org-contacts.")
+
+(defun helm-org-contacts ()
+  "Search BibTeX entries."
+  (interactive)
+  (helm :sources '(helm-source-org-contacts)
+        :candidate-number-limit 500))
+#+END_SRC
+
+#+RESULTS:
+: helm-org-contacts
+
+* org-ref-helm
+Inspired by [[https://github.com/tmalsburg/helm-bibtex][helm-bibtex]], here I explore a way to insert citations using some helm-bibtex machinery. The gist of helm-bibtex is it scans your bib files, offers spectacular search and select capability, and then your choice of actions on those. The default action is to open the pdf, but I want the default action to be to insert a link.
+cite:kitchin-2008-chemic-model,han-2009-step
+#+BEGIN_SRC emacs-lisp
+(require 'helm-bibtex)
+
+(defun helm-bibtex-format-org-ref (keys)
+  "insert selected KEYS as cite link. Append KEYS if you are on a link."
+  (let ((el (org-element-context)))
+    (message "%s" el)
+    (if (eq 'link (car el))
+	(progn
+	  (goto-char (org-element-property :end el))
+	  (concat "," (s-join "," keys)))
+      (concat "cite:" (s-join "," keys)))))
+
+(setq helm-bibtex-format-citation-functions
+      '((org-mode . helm-bibtex-format-org-ref)))
+
+
+(defvar org-ref-helm-source-bibtex
+  '((name                                      . "BibTeX entries")
+    (init                                      . helm-bibtex-init)
+    (candidates                                . helm-bibtex-candidates)
+    (filtered-candidate-transformer            . helm-bibtex-candidates-formatter)
+    (action . (("Insert citation"              . helm-bibtex-insert-citation)
+	       ("Open PDF file (if present)"   . helm-bibtex-open-pdf)
+               ("Open URL or DOI in browser"   . helm-bibtex-open-url-or-doi)
+               ("Insert reference"             . helm-bibtex-insert-reference)
+               ("Insert BibTeX key"            . helm-bibtex-insert-key)
+               ("Insert BibTeX entry"          . helm-bibtex-insert-bibtex)
+               ("Attach PDF to email"          . helm-bibtex-add-PDF-attachment)
+               ("Edit notes"                   . helm-bibtex-edit-notes)
+               ("Show entry"                   . helm-bibtex-show-entry))))
+  "Source for searching in BibTeX files.")
+
+;;;###autoload
+(defun org-ref-helm-bibtex ()
+  "Search BibTeX entries."
+  (interactive)
+  (helm :sources '(org-ref-helm-source-bibtex helm-source-fallback-options)
+        :full-frame t
+        :candidate-number-limit 500))
+
+
+#+END_SRC
+
+#+RESULTS:
+: org-ref-helm-bibtex
+
+
+
+* A simple helm menu
+
+Helm is an interesting way to interactively select something, and perform an action on it.
+here is an example where I tried to get all the words in the buffer, select one from helm, and then search the word.
+
+The setup is not intuitive yet. You need to provide some sources that helm will use to create the matching buffer. This is usually done in a variable that is a list of cons cells. The source provides "candidates", and "actions". After that
+
+
+#+BEGIN_SRC emacs-lisp
+(defun helm-words-google (word)
+  "Google the WORD."
+  (interactive)
+  (browse-url
+   (format
+    "http://www.google.com/search?q=%s" word)))
+
+(defun helm-words-twitter (word)
+  "Search twitter for WORD."
+  (interactive)
+  (browse-url
+   (format
+    "https://twitter.com/search?q=%s" word)))
+
+
+(defvar helm-source-words
+ '()
+  "Source for helm-words")
+
+(setq helm-source-words
+      '((name . "Words entries")
+	(candidates . (lambda nil (with-current-buffer
+				    cb
+				    (split-string (buffer-string)))))
+	(action . (("google" . helm-words-google)
+		   ("twitter" . helm-words-twitter)))))
+
+(defun helm-words ()
+  "helm a word"
+  (interactive)
+  ;; we have to save the buffer we are in before we go to the helm buffer
+  ;; so that we can get the words there.
+  (let ((cb (current-buffer)))
+    (helm :sources '(helm-source-words)
+	  :buffer "*helm-words*")))
+	    
+#+END_SRC
+
+#+RESULTS:
+: helm-words
+
+#+BEGIN_SRC emacs-lisp :results code
+(helm-bibtex-candidates)
+#+END_SRC
+
+#+RESULTS:
+
+
+The candidates must be a list of items, and the car of the list is what gets listed in the helm selection buffer. The cdr of the list gets passed to the action functions. Here we hard code some candidates to make it more clear. We see the car in the helm buffer, and get the cdr passed to our action functions.
+
+#+BEGIN_SRC emacs-lisp
+(defun helm-words-google (word)
+  "Google the WORD."
+  (interactive)
+  (browse-url
+   (format
+    "http://www.google.com/search?q=%s"
+    (if (listp word)
+	(mapconcat 'identity word " and ")
+      word))))
+
+(defun helm-words-twitter (word)
+  "Search twitter for WORD."
+  (interactive)
+  (browse-url
+   (format
+    "https://twitter.com/search?q=%s"
+    (if (listp word)
+	(mapconcat 'identity word " and ")
+      word))))
+
+(defvar helm-source-words
+ '()
+  "Source for helm-words")
+
+(setq helm-source-words
+      '((name . "Words entries")
+	(candidates . (lambda nil '(("a" . ("apple" "apricot"))
+				    ("b" . "bear")
+				    ("c" . "cat"))))
+	(action . (("google" . helm-words-google)
+		   ("twitter" . helm-words-twitter)))))
+
+(defun helm-words ()
+  "helm a word"
+  (interactive)
+  
+  (let ((cb (current-buffer)))
+    (helm :sources '(helm-source-words)
+	  :buffer "*helm-words*")))
+	    
+#+END_SRC
+
+#+RESULTS:
+: helm-words
+
+* helm-bibtex
+
+C-z to get other actions
+C-spc for multiple selections
+
+ebib:dumesic-1999-analy-react, ebib:dumesic-2001-reply-findin, ebib:campbell-2001-findin-rate
+
+- Guerin, Hayden, Lee, Mormiche, Owen, Russell, Theobald, Thompsett
+  (2004). Combinatorial Electrochemical Screening of Fuel Cell
+  Electrocatalysts. J. Comb. Chem..
+  http://dx.doi.org/10.1021/cc030113p
+
+- Gurau, Viswanathan, Liu, Lafrenz, Ley, Smotkin, Reddington,
+  Sapienza, Chan, Mallouk, Sarangapani (1998). Structural and
+  Electrochemical Characterization of Binary, Ternary, and Quaternary
+  Platinum Alloy Catalysts for Methanol Electro-Oxidation
+  1. J. Phys. Chem. B.
+  http://dx.doi.org/10.1021/jp982887f
+
+guerin-2004-combin-elect, gurau-1998-struc-elect
+
+@article{guerin-2004-combin-elect,
+  author = {Samuel Guerin and Brian E. Hayden and Christopher
+                  E. Lee and Claire Mormiche and John R. Owen and
+                  Andrea E. Russell and Brian Theobald and David
+                  Thompsett},
+  title = {Combinatorial Electrochemical Screening of Fuel Cell
+                  Electrocatalysts},
+  journal = {J. Comb. Chem.},
+  volume = 6,
+  number = 1,
+  pages = {149-158},
+  year = 2004,
+  doi = {10.1021/cc030113p},
+  url = {http://dx.doi.org/10.1021/cc030113p},
+}
+
+@article{gurau-1998-struc-elect,
+  author = {Bogdan Gurau and Rameshkrishnan Viswanathan and
+                  Renxuan Liu and Todd J. Lafrenz and Kevin L. Ley and
+                  E. S. Smotkin and Erik Reddington and Anthony
+                  Sapienza and Benny C. Chan and Thomas E. Mallouk and
+                  S. Sarangapani},
+  title = {Structural and Electrochemical Characterization of
+                  Binary, Ternary, and Quaternary Platinum Alloy
+                  Catalysts for Methanol Electro-Oxidation 1},
+  journal = {J. Phys. Chem. B},
+  volume = 102,
+  number = 49,
+  pages = {9997-10003},
+  year = 1998,
+  doi = {10.1021/jp982887f},
+  url = {http://dx.doi.org/10.1021/jp982887f},
+}
+
+does some cool things. nice selection interface. not as full as org-ref.
+
+* Find org-files that mention a citation
+
+
+
+
+I want to find all my org-files that cite this paper cite:kitchin-2004-role.
+
+#+BEGIN_SRC emacs-lisp
+(rgrep "kitchin-2004-role\\(;\\|:\\|.\\|,\\| \\)" "*.org" "~/Dropbox/CMU/manuscripts")
+#+END_SRC
+
+#+RESULTS:
+
+kitchin-2004-role-strain
+
+
+
+
+This is not recursive
+#+BEGIN_SRC emacs-lisp
+(find-lisp-find-dired "~/Dropbox/CMU/manuscripts" ".*.org")
+#+END_SRC
+#+RESULTS:
+
+#+BEGIN_SRC emacs-lisp
+(switch-to-buffer (grep-find "find ~/Dropbox/CMU/manuscripts -type f -name \"*.org\" -exec grep -nH -e  \"kresse-1996-effic\\(;\\|:\\|.\\|,\\| \\)\" {} +"))
+#+END_SRC
+#+RESULTS:
+: #<buffer *grep*>
+
+cite:kresse-1996-effic
+
+
+#+BEGIN_SRC emacs-lisp
+(switch-to-buffer (grep-find "find ~/Dropbox/CMU/manuscripts -type f -name \"*.org\" -exec grep -nH -e  \"kitchin-\" {} +"))
+#+END_SRC
+#+RESULTS:
+: #<buffer *grep*>
+
+From techela
+#+BEGIN_SRC emacs-lisp
+(multi-occur (mapcar 'find-file-noselect
+		     (-filter
+		      'file-exists-p
+		      (files-in-below-directory
+		       "~/Dropbox/CMU/manuscripts")))
+	     "kitchin-2004-strain")
+#+END_SRC
+#+RESULTS:
+: t
+
+
+* DONE A hint system for problems in org-mode
+  CLOSED: [2014-11-09 Sun 09:55]
   :PROPERTIES:
   :categories: org
   :date:     2014/11/09 09:55:17
