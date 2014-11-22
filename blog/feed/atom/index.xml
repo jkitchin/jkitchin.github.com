@@ -7,12 +7,164 @@
   <title type="text">The Kitchin Research Group</title>
   <subtitle type="text">Chemical Engineering at Carnegie Mellon University</subtitle>
 
-  <updated>2014-11-20T15:37:19Z</updated>
+  <updated>2014-11-22T20:00:45Z</updated>
   <generator uri="http://blogofile.com/">Blogofile</generator>
 
   <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog" />
   <id>http://jkitchin.github.io/blog/feed/atom/</id>
   <link rel="self" type="application/atom+xml" href="http://jkitchin.github.io/blog/feed/atom/" />
+  <entry>
+    <author>
+      <name></name>
+      <uri>http://jkitchin.github.io/blog</uri>
+    </author>
+    <title type="html"><![CDATA[A helm interface to ps]]></title>
+    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2014/11/22/A-helm-interface-to-ps" />
+    <id>http://jkitchin.github.io/blog/2014/11/22/A-helm-interface-to-ps</id>
+    <updated>2014-11-22T15:00:25Z</updated>
+    <published>2014-11-22T12:57:42Z</published>
+    <category scheme="http://jkitchin.github.io/blog" term="helm emacs" />
+    <summary type="html"><![CDATA[A helm interface to ps]]></summary>
+    <content type="html" xml:base="http://jkitchin.github.io/blog/2014/11/22/A-helm-interface-to-ps"><![CDATA[
+
+
+<p>
+Occassionally, I need to find the PID of a process to kill it or do something else. Usually I do the old-school unix thing  of piping the output of one command (ps) to another command (grep) to filter out interesting lines. Then, I can do something with that output.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-sh">ps aux | grep emacs
+</pre>
+</div>
+
+<pre class="example">
+jkitchin         4781   3.1  0.8  2639316  70432 s002  S    12:45PM   0:06.68 /usr/local/Cellar/emacs/HEAD/Emacs.app/Contents/MacOS/Emacs
+jkitchin         4777   0.0  0.0  2433364    932 s002  S    12:45PM   0:00.00 /bin/bash /usr/local/bin/emacs
+jkitchin         4874   0.0  0.0  2432784    604   ??  S    12:46PM   0:00.00 grep emacs
+</pre>
+
+<p>
+Today, I will explore using helm in emacs to do something like that. The idea is to create a helm command that uses the output of ps as candidates, and then you select the process you want through the helm interface, and then select an action.
+</p>
+
+<p>
+It is easy enough to get the output of the ps command in emacs like this. Here, we just get the first three results, and specify the output we want.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">let</span> ((results (split-string
+                (shell-command-to-string
+                 <span style="color: #228b22;">"ps x -o ruser,pid,command"</span>) <span style="color: #228b22;">"\n"</span>)))
+  (loop for i from 1 to 3
+        collect (elt results i)))
+</pre>
+</div>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #228b22;">"jkitchin   139 /sbin/launchd"</span> <span style="color: #228b22;">"jkitchin   151 /usr/libexec/UserEventAgent (Aqua)"</span> <span style="color: #228b22;">"jkitchin   152 /usr/sbin/distnoted agent"</span>)
+</pre>
+</div>
+
+<p>
+These will be the candidates for the helm command. We will create a few actions. One will provide details about the pid, and one could in principle kill the pid or send some signal to it. We will just have these actions create message boxes for us to see helm in action. We will make the kill function interactive, so it allows an arbitrary signal to be sent. The other actions are placeholders for future actions, and so we can show off some shortcuts in helm later.
+</p>
+
+<p>
+For the candidates, we will construct a list of cons cells where the car is a line from ps, and that is what will show in the helm selection interface, and the cdr will be the pid which we get by parsing the line to get the second element. When you select an entry in helm, the cdr of that entry (if it exists) is passed to the action function selected.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">ps-candidates</span> ()
+  <span style="color: #228b22;">"return a list of cons cells (line . pid) for the output of ps"</span>
+  (loop for line in
+        ;; <span style="color: #ff0000; font-weight: bold;">skip the first line which is a header</span>
+        (cdr (split-string
+              (shell-command-to-string
+               <span style="color: #228b22;">"ps ax -o ruser,pid,command"</span>) <span style="color: #228b22;">"\n"</span>))
+        collect
+        (cons
+         line
+         (elt (split-string line) 1))))
+
+(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">ps-details</span> (pid)
+  <span style="color: #228b22;">"give details of PID."</span>
+  (message-box <span style="color: #228b22;">"%s"</span> (shell-command-to-string (format <span style="color: #228b22;">"ps ux %s"</span> pid))))
+
+(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">ps-kill</span> (pid)
+  <span style="color: #228b22;">"Message box instead of killing PID."</span>
+  (<span style="color: #8b0000;">let</span> ((SIG (read-string <span style="color: #228b22;">"Kill with signal: "</span>)))
+    (message-box <span style="color: #228b22;">"Killing pid %s with signal %s"</span> pid SIG)))
+
+(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">ps-hello</span> (pid)
+  (message-box <span style="color: #228b22;">"Silly 3rd action for %s"</span> pid))
+
+(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">ps-bye</span> (pid)
+  (message-box <span style="color: #228b22;">"Silly 4th action for %s"</span> pid))
+
+(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">ps-byebye</span> (pid)
+  (message-box <span style="color: #228b22;">"Silly 5th action for %s"</span> pid))
+
+;; <span style="color: #ff0000; font-weight: bold;">the source variable for helm</span>
+(setq helm-source-ps '((name . <span style="color: #228b22;">"ps output"</span>)
+                       ;; <span style="color: #ff0000; font-weight: bold;">these are the entries you can select</span>
+                       (candidates . ps-candidates)
+                       ;; <span style="color: #ff0000; font-weight: bold;">these are the actions available for the</span>
+                       ;; <span style="color: #ff0000; font-weight: bold;">selected entry. each function gets the cdr</span>
+                       ;; <span style="color: #ff0000; font-weight: bold;">of the entry selected.</span>
+                       (action . ((<span style="color: #228b22;">"details"</span> . ps-details)
+                                  (<span style="color: #228b22;">"kill"</span> . ps-kill)
+                                  (<span style="color: #228b22;">"hello"</span> . ps-hello)
+                                  (<span style="color: #228b22;">"bye"</span> . ps-bye)
+                                  (<span style="color: #228b22;">"byb-bye"</span> . ps-byebye)))))
+
+;; <span style="color: #ff0000; font-weight: bold;">now we run the helm command</span>
+(helm <span style="color: #cd0000;">:sources</span> '(helm-source-ps))
+</pre>
+</div>
+
+
+<p>
+You can navigate the helm interface with the arrows, or C-n (next/down) C-p (previous/up), or by typing in the pattern you want to match. There are only two actions here. The first one is the default action, which you can run by pressing tab or enter. The subtle difference between them is that tab leaves the helm window open, while enter runs the default action and closes the helm window. You can get it back with C-c h r (or M-x helm-resume). 
+</p>
+
+<p>
+To get the kill function, you can press C-z to get the action menu, and then press enter. Helm provides a shortcut for this. C-e selects the second action, so when you remember what the second action is and you want it, you can skip the C-z activity. You can access the third action with C-j. There is a command like helm-select-4th-action, but it is not bound to a key, so we have to make one like this.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(define-key helm-map (kbd <span style="color: #228b22;">"C-k"</span>) 'helm-select-4th-action)
+</pre>
+</div>
+
+<p>
+You can also define a 5th action like this. It does not seem possible to define an arbitrary nth action, because you cannot get an input for n while helm uses the minibuffer. 
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">5th-action</span> ()
+ (interactive)
+ (<span style="color: #8b0000;">let</span> ((n 5))
+   ;; <span style="color: #ff0000; font-weight: bold;">actions start at 0, so the 5th action is actually indexed at 4</span>
+   (helm-select-nth-action (- n 1))))
+
+(define-key helm-map (kbd <span style="color: #228b22;">"C-l"</span>) '5th-action)
+</pre>
+</div>
+
+<p>
+That is the proof of concept in using a helm interface to interact with unix commands. There are other actions you might choose, like renice, or maybe it is possible to suspend a job by pid. The real application for this I had in mind was interaction with the Torque queue system, where you might want to modify, kill jobs in the queue system this way. I could also see applications in user management, where you have some well defined functions to run, e.g. checking quotas, changing passwords, etc&#x2026; Clearly the utility of this approach rests heavily on there being a set of actions you do regularly enough to justify coding them into functions, and often enough you would remember to use your helm command! It is an interesting approach as an alternative to writing shell scripts to do this though.
+</p>
+
+<p>
+This post might make more sense if you watch this video of the helm interface in action: <a href="http://www.youtube.com/watch?v=3FImB6OwHI0">http://www.youtube.com/watch?v=3FImB6OwHI0</a> </p>
+<p>Copyright (C) 2014 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2014/11/22/A-helm-interface-to-ps.org">org-mode source</a><p><p>Org-mode version = 8.2.7c</p>]]></content>
+  </entry>
   <entry>
     <author>
       <name></name>
@@ -1990,226 +2142,5 @@ Copyright © 2014 American Chemical Society
 Congratulations Zhongnan!
 </p>
 <p>Copyright (C) 2014 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2014/10/21/New-publication-in-J.-Physical-Chemistry-C.org">org-mode source</a><p><p>Org-mode version = 8.2.7c</p>]]></content>
-  </entry>
-  <entry>
-    <author>
-      <name></name>
-      <uri>http://jkitchin.github.io/blog</uri>
-    </author>
-    <title type="html"><![CDATA[Using Pymacs to integrate Python into Emacs]]></title>
-    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2014/10/19/Using-Pymacs-to-integrate-Python-into-Emacs" />
-    <id>http://jkitchin.github.io/blog/2014/10/19/Using-Pymacs-to-integrate-Python-into-Emacs</id>
-    <updated>2014-10-19T09:33:08Z</updated>
-    <published>2014-10-19T09:33:08Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="python" />
-    <category scheme="http://jkitchin.github.io/blog" term="emacs" />
-    <summary type="html"><![CDATA[Using Pymacs to integrate Python into Emacs]]></summary>
-    <content type="html" xml:base="http://jkitchin.github.io/blog/2014/10/19/Using-Pymacs-to-integrate-Python-into-Emacs"><![CDATA[
-
-
-<p>
-<a href="https://github.com/pinard/Pymacs">Pymacs</a> is a project that aims to integrate Python into Emacs, and vice versa. In this post, I am going to examine the Python into Emacs integration. I cloned the git repository, ran make install, and setup my init.el file like this, as suggested in the manual.
-</p>
-
-<pre class="example">
-(add-to-list 'load-path (expand-file-name "Pymacs" starter-kit-dir))
-(require 'pymacs)
-(autoload 'pymacs-apply "pymacs")
-(autoload 'pymacs-call "pymacs")
-(autoload 'pymacs-eval "pymacs" nil t)
-(autoload 'pymacs-exec "pymacs" nil t)
-(autoload 'pymacs-load "pymacs" nil t)
-(autoload 'pymacs-autoload "pymacs")
-</pre>
-
-<p>
-Pymacs provides some mapping of Python modules to emacs-lisp functions. You load modules in emacs-lisp, and then a dash-mangled version of the Python functions are available, <i>in emacs lisp</i>. Here is an example. We will load numpy, and find the maximum element of an array. For comparison, here is the Python script.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
-<span style="color: #8b0000;">print</span> np.max(np.array([[<span style="color: #000000; background-color: #cccccc; font-weight: bold;">1</span>, <span style="color: #000000; background-color: #cccccc; font-weight: bold;">1</span>], [<span style="color: #000000; background-color: #cccccc; font-weight: bold;">2</span>, <span style="color: #000000; background-color: #cccccc; font-weight: bold;">4</span>]]))
-</pre>
-</div>
-
-<pre class="example">
-4
-</pre>
-
-<p>
-Now, the corresponding emacs version using Pymacs.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(pymacs-load <span style="color: #228b22;">"numpy"</span> <span style="color: #228b22;">"np-"</span>)
-(np-max (np-array '((1 1) (2 4))))
-</pre>
-</div>
-
-<pre class="example">
-4
-</pre>
-
-<p>
-Neat! The dot notation is basically replaced with dash notation, and we use a lisp list as the argument instead of an array. Otherwise, this looks almost identical. Now, let us consider something more complicated, and get the determinant of the array. We add a PREFIX to the load statement for numpy.linalg similar to what we would do in Python:
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
-<span style="color: #8b0000;">import</span> numpy.linalg <span style="color: #8b0000;">as</span> la
-<span style="color: #8b0000;">print</span> la.det(np.array([[<span style="color: #000000; background-color: #cccccc; font-weight: bold;">1</span>, <span style="color: #000000; background-color: #cccccc; font-weight: bold;">1</span>], [<span style="color: #000000; background-color: #cccccc; font-weight: bold;">2</span>, <span style="color: #000000; background-color: #cccccc; font-weight: bold;">4</span>]]))
-</pre>
-</div>
-
-<pre class="example">
-2.0
-</pre>
-
-<p>
-And in emacs-lisp:
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(pymacs-load <span style="color: #228b22;">"numpy"</span> <span style="color: #228b22;">"np-"</span>)
-(pymacs-load <span style="color: #228b22;">"numpy.linalg"</span> <span style="color: #228b22;">"la-"</span>)
-(la-det (np-array '((1 1) (2 4))))
-</pre>
-</div>
-
-<pre class="example">
-2.0
-</pre>
-
-<p>
-We can call functions from matplotlib to make a figure. For example:
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(pymacs-load <span style="color: #228b22;">"matplotlib.pyplot"</span> <span style="color: #228b22;">"plt-"</span>)
-(<span style="color: #8b0000;">let*</span> ((x  '(1 2 3 4))
-       (y  (mapcar (<span style="color: #8b0000;">lambda</span> (z) (* z z)) x)))
-  (plt-plot x y)
-  (plt-xlabel <span style="color: #228b22;">"x values"</span>)
-  (plt-ylabel <span style="color: #228b22;">"x$^2$"</span>)
-  (plt-savefig <span style="color: #228b22;">"plt-pymacs.png"</span>))
-</pre>
-</div>
-
-
-<div class="figure">
-<p><img src="/media/2014-10-19-Using-Pymacs-to-integrate-Python-into-Emacs/plt-pymacs.png"> 
-</p>
-</div>
-
-<p>
-This was a little subtle. It was necessary to save the lists as variables, and use the variables in the plot command.
-</p>
-
-<p>
-I am not sure what this offers over just having a Python block present in org-mode though. Maybe it is more useful in emacs-lisp libraries where you want to bring in some numerical analysis. Or if you have some custom library of Python you would like to use in elisp. Here is a highly contrived example. Suppose we have a Python module with this special function that converts an argument to "J":
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #8b0000;">def</span> <span style="color: #8b2323;">special_func</span>(x):
-    <span style="color: #8b0000;">return</span> <span style="color: #228b22;">"J"</span>
-</pre>
-</div>
-
-<p>
-In Python, we might use it like this:
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #8b0000;">import</span> my_python <span style="color: #8b0000;">as</span> mp
-<span style="color: #8b0000;">print</span> [mp.special_func(x) <span style="color: #8b0000;">for</span> x <span style="color: #8b0000;">in</span> [<span style="color: #000000; background-color: #cccccc; font-weight: bold;">1</span>, <span style="color: #000000; background-color: #cccccc; font-weight: bold;">2</span>, <span style="color: #000000; background-color: #cccccc; font-weight: bold;">3</span>]]
-</pre>
-</div>
-
-<pre class="example">
-['J', 'J', 'J']
-</pre>
-
-<p>
-We can import the module, and use the function in emacs-lisp too. The underscore in the function name is turned into a dash, which is a little confusing, but it works otherwise.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(pymacs-load <span style="color: #228b22;">"my_python"</span> <span style="color: #228b22;">"mp-"</span>)
-(mapcar 'mp-special-func '(1 2 3))
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="left" />
-
-<col  class="left" />
-
-<col  class="left" />
-</colgroup>
-<tbody>
-<tr>
-<td class="left">J</td>
-<td class="left">J</td>
-<td class="left">J</td>
-</tr>
-</tbody>
-</table>
-
-
-<p>
-It does not seem possible to do everything though. For example, It is not clear how to pass functions through either side. For example, this does not work for fsolve, although it seems like it should. 
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(pymacs-load <span style="color: #228b22;">"scipy.optimize"</span> <span style="color: #228b22;">"so-"</span>)
-
-(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">objective</span> (x)
-  (- x 5))
-
-(so-fsolve 'objective 3)
-</pre>
-</div>
-
-<p>
-I get an error like this:
-</p>
-<pre class="example">
-Pymacs loading scipy.optimize...done
-pymacs-report-error: Python: Emacs: "(wrong-type-argument number-or-marker-p (pymacs-python . 47))"
-</pre>
-
-<p>
-The Python equivalent is here:
-</p>
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #8b0000;">from</span> scipy.optimize <span style="color: #8b0000;">import</span> fsolve
-<span style="color: #8b0000;">def</span> <span style="color: #8b2323;">objective</span>(x):
-    <span style="color: #8b0000;">return</span> x - <span style="color: #000000; background-color: #cccccc; font-weight: bold;">5</span>
-
-<span style="color: #8b0000;">print</span> fsolve(objective, <span style="color: #000000; background-color: #cccccc; font-weight: bold;">3</span>)
-</pre>
-</div>
-
-<pre class="example">
-[ 5.]
-</pre>
-
-<p>
-There is an open question on StackOverflow <a href="http://stackoverflow.com/questions/25471580/can-you-use-a-function-as-an-argument-to-a-python-function-in-pymacs">here</a> on this issue. Overall, I find the project very interesting. It would be awesome if you could extend emacs more easily in other languages, especially scripting languages such as Python that have numerical and plotting capabilities. Right now, this is possible in limited ways. For example, Xah Lee describes an <a href="http://ergoemacs.org/emacs/elisp_perl_wrapper.html">approach</a> where an arbitrary script can take data on stdin, process it, and output the results to stdout. Emacs can capture this and use it to modify the buffer. This uses the <code>shell-command</code> features in Emacs. These scripts could be written in Python, Perl, Ruby, etc&#x2026; This seems like a simpler and more flexible approach, except that it requires creating the shell commands and putting them on the executable path (as opposed to having Python modules on a PYTHONPATH). These lack the deep integration of documentation you get with emacs-lisp and Python functions.
-</p>
-<p>Copyright (C) 2014 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2014/10/19/Using-Pymacs-to-integrate-Python-into-Emacs.org">org-mode source</a><p><p>Org-mode version = 8.2.7c</p>]]></content>
   </entry>
 </feed>
