@@ -42,14 +42,10 @@ Current PhD students
     Jacob Boes (expected graduation: May 2017)
     John Michael (expected graduation: May 2018)
     Mehak Chawla (expected graduation: May 2018)
-    Qingqi (Victor) Fan (expected graduation: May 2018)
+    
 
 Current Master's students
 -------------------------
-    Steve Illes (expected graduation: May 2014)
-    Nitish Govindarajan (expected graduation: Dec 2014)
-    Meiheng Lu (expected graduation: Dec 2014)
-    Wenqin You (expected graduation: Dec 2014)
 
 Current Undergraduates
 -----------------------
@@ -74,6 +70,10 @@ Former Group members
   - Anita Lee (PhD 2013)
   - [Bin Liu](http://www.che.ksu.edu/node/161) Postdoc 2013
   - Prateek Mehta (M.S. 2013)
+  - Steve Illes (M.S. 2014)
+  - Nitish Govindarajan (M.S. Dec 2014)
+  - Meiheng Lu (M.S. Dec 2014)
+  - Wenqin You (M.S. Dec 2014)
 
 </%self:filter>
 </article>

@@ -9,7 +9,6 @@ Search
 </form>
 </section>
 
-
   <section>
     <h1 class="post_header_gradient theme_font">Links</h1>
     <ul>
@@ -31,8 +30,8 @@ Search
 <section>
 <h1 class="post_header_gradient theme_font">Latest GitHub Repos</h1>
   <a href="https://github.com/jkitchin">@jkitchin</a> on GitHub.
-<ul id="my-github-projects">
-    <li class="loading">Status updating&#8230;</li>
+  <ul id="my-github-projects">
+        <li class="loading">Status updating&#8230;</li>
   </ul>
 
 </section>
