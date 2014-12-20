@@ -1,3 +1,278 @@
+* A new mode for Python documentation
+  :PROPERTIES:
+  :date:     2014/12/20 15:02:05
+  :updated:  2014/12/20 15:02:05
+  :END:
+
+The emacs-lisp documentation in Emacs is inspiring. It is interlinked, you can click on links to open source files, other commands, etc... Python documentation is not that nice. It should be.
+
+I wrote a little pydoc function:
+
+#+BEGIN_SRC emacs-lisp
+(defun pydoc (name)
+  "Display pydoc information for NAME in a buffer named *pydoc*."
+  (interactive "sName of function or module: ")
+  (switch-to-buffer-other-window "*pydoc*")
+  (erase-buffer)
+  (insert (shell-command-to-string (format "python -m pydoc %s" name)))
+  (goto-char (point-min)))
+#+END_SRC
+
+which at least accesses python documentation in emacs. It looks like this:
+
+[[./images/pydoc-jasp.png]]
+
+But, this lacks functionality. I want there to be useful links in this, so I can click on the filename to open the source, or click on the packages to get their documentation. Below, we walk through a few functions that will operate on the buffer and put text properties on different pieces.
+
+First, let us make the source file clickable so it opens the source.
+
+#+BEGIN_SRC emacs-lisp
+(defun pydoc-make-file-link ()
+  "Find FILE in a pydoc buffer and make it a clickable link"
+  (goto-char (point-min))
+  (when (re-search-forward "^FILE
+    \\(.*\\)$" nil t)
+
+    (let ((map (make-sparse-keymap))
+	  (start (match-beginning 1))
+	  (end (match-end 1))
+	  (source-file (match-string 1)))
+      
+      ;; set file to be clickable to open the source
+      (define-key map [mouse-1]
+	`(lambda ()
+	  (interactive)
+	  (find-file ,source-file)))
+      ;(remove-text-properties start end '(mouse-face nil))
+      (set-text-properties
+       start end
+       `(local-map, map
+		   font-lock-face (:foreground "blue"  :underline t)
+		   mouse-face highlight
+		   help-echo "mouse-1: click to open")))))
+#+END_SRC
+
+#+RESULTS:
+: pydoc-make-file-link
+
+Next, sometimes there are URLs in the python documentation. These should all open up in a browser when you click on them. Here we propertize anything we recognize as a URL to make it open when clicked on.
+
+#+BEGIN_SRC emacs-lisp
+(defun pydoc-make-url-links ()
+  (goto-char (point-min))
+  (while (re-search-forward "\\(http\\(s\\)?://.*$\\)" nil t)
+    (let ((map (make-sparse-keymap))
+	  (start (match-beginning 1))
+	  (end (match-end 1)))
+	
+      (define-key map [mouse-1]
+	`(lambda ()
+	  (interactive)
+	  (browse-url ,(buffer-substring start end))))
+	
+      (set-text-properties
+       start end
+       `(local-map ,map
+		   font-lock-face (:foreground "blue"  :underline t)
+		   mouse-face highlight
+		   help-echo (format "mouse-1: click to open"))))))
+#+END_SRC
+
+When we get documentation for a package, we should make each entry of the package clickable, so we can get to the documentation for that package easily. We store the name of the current package so we can construct the path to the subpackage.
+
+#+BEGIN_SRC emacs-lisp
+(defun pydoc-get-name ()
+  "get NAME and store locally"
+  (make-variable-buffer-local 'pydoc-name)
+  (goto-char (point-min))
+  (when (re-search-forward "^NAME
+\\s-*\\([^-][a-zA-Z]*\\)" nil t)
+    (setq pydoc-name (match-string 1))))
+
+
+(defun pydoc-make-package-links ()
+  "make links in PACKAGE CONTENTS"
+  (goto-char (point-min))
+  (when (re-search-forward "^PACKAGE CONTENTS" nil t)
+    (forward-line)
+
+    (while (string-match
+	    "^    \\([a-zA-Z0-9_]*\\)[ ]?\\((package)\\)?"
+	    (buffer-substring
+	     (line-beginning-position)
+	     (line-end-position)))
+		
+      (let ((map (make-sparse-keymap))
+	    (start (match-beginning 1))
+	    (end (match-end 1))
+	    (package (concat
+		      pydoc-name "."
+		      (match-string 1
+				    (buffer-substring
+				     (line-beginning-position)
+				     (line-end-position))))))
+	
+	(define-key map [mouse-1]
+	  `(lambda ()
+	    (interactive)
+	    (pydoc ,package)))
+	  
+	(set-text-properties
+	 (+ (line-beginning-position) start)
+	 (+ (line-beginning-position) end)
+	 `(local-map, map
+		      font-lock-face (:foreground "blue"  :underline t)
+		      mouse-face highlight
+		      help-echo (format "mouse-1: click to open %s" ,package))))
+      (forward-line))))
+#+END_SRC
+
+Next, we put some eye candy on function names and arguments. This won't do anything functionally, but it breaks up the monotony of all black text.
+
+#+BEGIN_SRC emacs-lisp
+(defun pydoc-colorize-functions ()
+  "Change color of function names and args."
+  (goto-char (point-min))
+  (when (re-search-forward "^Functions" nil t)  
+    (while (re-search-forward "    \\([a-zA-z0-9-]+\\)(\\([^)]*\\))" nil t)
+      (set-text-properties
+       (match-beginning 1)
+       (match-end 1)
+       '(font-lock-face (:foreground "brown")))
+
+      (set-text-properties
+       (match-beginning 2)
+       (match-end 2)
+       '(font-lock-face (:foreground "red"))))))
+#+END_SRC
+
+I have gotten used to the [back] link in emacs-lisp documentation, so we try to emulate it here.
+
+#+BEGIN_SRC emacs-lisp
+(defun pydoc-insert-back-link ()
+  "Insert link to previous buffer"
+  (goto-char (point-max)) 
+  (insert "
+[back]")
+  (let ((map (make-sparse-keymap)))
+    
+    ;; set file to be clickable to open the source
+    (define-key map [mouse-1]
+      (lambda ()
+	(interactive)
+        (pydoc *pydoc-last*)))
+
+      (set-text-properties
+       (line-beginning-position)
+       (line-end-position)
+       `(local-map, map
+		    font-lock-face (:foreground "blue"  :underline t)
+		    mouse-face highlight
+		    help-echo "mouse-1: click to return"))))
+#+END_SRC
+
+#+RESULTS:
+: pydoc-insert-back-link
+
+Ok, finally we remake the pydoc function. 
+#+BEGIN_SRC emacs-lisp       
+(defvar *pydoc-current* nil
+ "Stores current pydoc command")
+
+(defvar *pydoc-last* nil
+ "Stores the last pydoc command")
+
+(defun pydoc (name)
+  "Display pydoc information for NAME in a buffer named *pydoc*."
+  (interactive "sName of function or module: ")
+
+  (switch-to-buffer-other-window "*pydoc*")
+  (setq buffer-read-only nil)
+  (erase-buffer)
+  (insert (shell-command-to-string (format "python -m pydoc %s" name)))
+  (goto-char (point-min))
+
+  ;; save 
+  (when *pydoc-current*
+      (setq *pydoc-last* *pydoc-current*))
+  (setq *pydoc-current* name)
+
+
+  (save-excursion
+    (pydoc-get-name)
+    (pydoc-make-url-links)
+    (pydoc-make-file-link)
+    (pydoc-make-package-links)
+    (pydoc-colorize-functions)
+    (pydoc-insert-back-link))
+
+  ;; make read-only and press q to quit
+  (setq buffer-read-only t)
+  (use-local-map (copy-keymap org-mode-map))
+  (local-set-key "q" #'(lambda () (interactive) (kill-buffer)))
+
+  (font-lock-mode))
+#+END_SRC
+
+#+RESULTS:
+: pydoc
+
+Now, we get a much more functional pydoc:
+
+#+CAPTION: Annotated screenshot
+[[./images/pydoc-enhanced-jasp.png]]
+
+and with the colorized function names:
+
+[[./images/pydoc-potcar.png]]
+
+Admittedly, there seems to be a lot of boilerplate code for propertizing the strings, but it doesn't seem too bad. I will probably use this documentation tool this spring, so maybe I will think of new functionality to add to pydoc. Any ideas?
+
+
+* 2014 Kitchin Research Group in a nutshell
+  :PROPERTIES:
+  :EXPORT_FILE_NAME: my-pdf
+  :END:
+
+** Graduated students
+Steve Illes, Wenqin You, Meiheng Lu, and Nitish Govindarajan finished their MS degrees! Congratulations!
+
+** Publications
+It looks like six publications this year. We have 5 out for review right now, so next year looks like a good one!
+
+Matthew T. Curnan and John R. Kitchin, Effects of Concentration, Crystal Structure, Magnetism, and Electronic Structure Method on First-Principles Oxygen Vacancy Formation Energy Trends in Perovskites, J. Phys. Chem. C., http://dx.doi.org/10.1021/jp507957n. 
+
+Zhongnan Xu and John R. Kitchin, Probing the Coverage Dependence of Site and Adsorbate Configurational Correlations on (111) Surfaces of Late Transition Metals, J. Phys. Chem. C., http://dx.doi.org/10.1021/jp508805h. 
+
+Ethan L. Demeter , Shayna L. Hilburg , Newell R. Washburn , Terrence J. Collins , and John R. Kitchin, Electrocatalytic Oxygen Evolution with an Immobilized TAML Activator,  Journal of the American Chemical Society, 136(15) 5603-5606 (2014). http://dx.doi.org/10.1021/ja5015986
+
+Robert L. Thompson, Wei Shi, Erik Albenze, Victor A. Kusuma, David Hopkinson, Krishnan Damodaran,  Anita S. Lee, John R. Kitchin, David R. Luebke and Hunaid Nulwala, Probing the effect of electron donation on CO2 absorbing 1,2,3-triazolide ionic liquids, RSC Advances, 4 (25), 12748-12755 (2014). http://dx.doi.org/10.1039/C3RA47097K. 
+
+Mehta, Prateek; Salvador, Paul; Kitchin, John, Identifying Potential BO2 Oxide Polymorphs for Epitaxial Growth Candidates", ACS Applied Materials and Interfaces, 6(5), 3630-3639 (2014). http://pubs.acs.org/doi/full/10.1021/am4059149. 
+ 
+Zhongnan Xu and John R Kitchin, Relating the Electronic Structure and Reactivity of the 3d Transition Metal Monoxide Surfaces, Catalysis Communications, 52, 60-64 (2014),        http://dx.doi.org/10.1016/j.catcom.2013.10.028. 
+
+** Presentations
+John Kitchin, Jacob Boes, Gamze Gumuslu, James Miller, Andrew Gellman, “Bulk Composition Dependent H2 Dissociative Adsorption Energies on CuxPd1-x Alloy Surfaces”, U. Missouri, Department of Chemical Engineering, September 2014.
+
+John Kitchin, “The next evolution in water oxidation”, Department of Materials Science, Duke University, March 2014.
+
+John Kitchin, Jacob Boes, Gamze Gumuslu, James Miller, Andrew Gellman, “Bulk Composition Dependent H2 Dissociative Adsorption Energies on CuxPd1-x Alloy Surfaces” Department of Energy - Basic Energy Science – Catalysis Program meeting, July 2014.
+
+Jacob R. Boes and John R. Kitchin, Estimating Bulk Composition Dependent H2 Dissociative Adsorption Energies on CuxPd1-x Alloy (111) Surfaces, AICHE Atlanta, Nov 2014.
+
+Zhongnan Xu and John R. Kitchin, Coverage-Dependent Site and Adsorbate Configurational Correlations on (111) Surfaces of Late Transition Metals, AICHE Atlanta, Nov 2014.
+
+Matthew Curnan and John R. Kitchin, Prediction of Phase Stability and Transition Pressures in BO2 (B = Ti, V, Ru, Ir) Polymorphs Using DFT+U and Self-Consistent Linear Response Theory, AICHE Atlanta, Nov 2014.
+
+John Kitchin, A success story in using Python in a graduate chemical engineering course, SciPy 2014, June 2014.  https://www.youtube.com/watch?v=IsSMs-4GlT8 
+
+** Recognitions
+Professor Kitchin awarded the Philip L. Dowd Fellowship Award [[http://kitchingroup.cheme.cmu.edu/blog/2014/02/28/Professor-Kitchin-awarded-the-Philip-L-Dowd-Fellowship-Award/][(link)]].
+
+Mehak Chawla awarded a Prengle Fellowship ([[http://kitchingroup.cheme.cmu.edu/blog/2014/03/24/Mehak-Chawla-selected-as-the-H-William-and-Ruth-Hamilton-Prengle-Fellow-of-Chemical-Enginering-for-2013-2014/][link]]).
+
+
 * DONE org-mode + Python + git in a graduate engineering course
   CLOSED: [2014-12-18 Thu 21:10]
   :PROPERTIES:
