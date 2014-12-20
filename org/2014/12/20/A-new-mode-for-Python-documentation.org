@@ -1,0 +1,230 @@
+* A new mode for Python documentation
+  :PROPERTIES:
+  :date:     2014/12/20 15:02:05
+  :updated:  2014/12/20 15:02:05
+  :END:
+
+The emacs-lisp documentation in Emacs is inspiring. It is interlinked, you can click on links to open source files, other commands, etc... Python documentation is not that nice. It should be.
+
+I wrote a little pydoc function:
+
+#+BEGIN_SRC emacs-lisp
+(defun pydoc (name)
+  "Display pydoc information for NAME in a buffer named *pydoc*."
+  (interactive "sName of function or module: ")
+  (switch-to-buffer-other-window "*pydoc*")
+  (erase-buffer)
+  (insert (shell-command-to-string (format "python -m pydoc %s" name)))
+  (goto-char (point-min)))
+#+END_SRC
+
+which at least accesses python documentation in emacs. It looks like this:
+
+[[./images/pydoc-jasp.png]]
+
+But, this lacks functionality. I want there to be useful links in this, so I can click on the filename to open the source, or click on the packages to get their documentation. Below, we walk through a few functions that will operate on the buffer and put text properties on different pieces.
+
+First, let us make the source file clickable so it opens the source.
+
+#+BEGIN_SRC emacs-lisp
+(defun pydoc-make-file-link ()
+  "Find FILE in a pydoc buffer and make it a clickable link"
+  (goto-char (point-min))
+  (when (re-search-forward "^FILE
+    \\(.*\\)$" nil t)
+
+    (let ((map (make-sparse-keymap))
+	  (start (match-beginning 1))
+	  (end (match-end 1))
+	  (source-file (match-string 1)))
+      
+      ;; set file to be clickable to open the source
+      (define-key map [mouse-1]
+	`(lambda ()
+	  (interactive)
+	  (find-file ,source-file)))
+      ;(remove-text-properties start end '(mouse-face nil))
+      (set-text-properties
+       start end
+       `(local-map, map
+		   font-lock-face (:foreground "blue"  :underline t)
+		   mouse-face highlight
+		   help-echo "mouse-1: click to open")))))
+#+END_SRC
+
+#+RESULTS:
+: pydoc-make-file-link
+
+Next, sometimes there are URLs in the python documentation. These should all open up in a browser when you click on them. Here we propertize anything we recognize as a URL to make it open when clicked on.
+
+#+BEGIN_SRC emacs-lisp
+(defun pydoc-make-url-links ()
+  (goto-char (point-min))
+  (while (re-search-forward "\\(http\\(s\\)?://.*$\\)" nil t)
+    (let ((map (make-sparse-keymap))
+	  (start (match-beginning 1))
+	  (end (match-end 1)))
+	
+      (define-key map [mouse-1]
+	`(lambda ()
+	  (interactive)
+	  (browse-url ,(buffer-substring start end))))
+	
+      (set-text-properties
+       start end
+       `(local-map ,map
+		   font-lock-face (:foreground "blue"  :underline t)
+		   mouse-face highlight
+		   help-echo (format "mouse-1: click to open"))))))
+#+END_SRC
+
+When we get documentation for a package, we should make each entry of the package clickable, so we can get to the documentation for that package easily. We store the name of the current package so we can construct the path to the subpackage.
+
+#+BEGIN_SRC emacs-lisp
+(defun pydoc-get-name ()
+  "get NAME and store locally"
+  (make-variable-buffer-local 'pydoc-name)
+  (goto-char (point-min))
+  (when (re-search-forward "^NAME
+\\s-*\\([^-][a-zA-Z]*\\)" nil t)
+    (setq pydoc-name (match-string 1))))
+
+
+(defun pydoc-make-package-links ()
+  "make links in PACKAGE CONTENTS"
+  (goto-char (point-min))
+  (when (re-search-forward "^PACKAGE CONTENTS" nil t)
+    (forward-line)
+
+    (while (string-match
+	    "^    \\([a-zA-Z0-9_]*\\)[ ]?\\((package)\\)?"
+	    (buffer-substring
+	     (line-beginning-position)
+	     (line-end-position)))
+		
+      (let ((map (make-sparse-keymap))
+	    (start (match-beginning 1))
+	    (end (match-end 1))
+	    (package (concat
+		      pydoc-name "."
+		      (match-string 1
+				    (buffer-substring
+				     (line-beginning-position)
+				     (line-end-position))))))
+	
+	(define-key map [mouse-1]
+	  `(lambda ()
+	    (interactive)
+	    (pydoc ,package)))
+	  
+	(set-text-properties
+	 (+ (line-beginning-position) start)
+	 (+ (line-beginning-position) end)
+	 `(local-map, map
+		      font-lock-face (:foreground "blue"  :underline t)
+		      mouse-face highlight
+		      help-echo (format "mouse-1: click to open %s" ,package))))
+      (forward-line))))
+#+END_SRC
+
+Next, we put some eye candy on function names and arguments. This won't do anything functionally, but it breaks up the monotony of all black text.
+
+#+BEGIN_SRC emacs-lisp
+(defun pydoc-colorize-functions ()
+  "Change color of function names and args."
+  (goto-char (point-min))
+  (when (re-search-forward "^Functions" nil t)  
+    (while (re-search-forward "    \\([a-zA-z0-9-]+\\)(\\([^)]*\\))" nil t)
+      (set-text-properties
+       (match-beginning 1)
+       (match-end 1)
+       '(font-lock-face (:foreground "brown")))
+
+      (set-text-properties
+       (match-beginning 2)
+       (match-end 2)
+       '(font-lock-face (:foreground "red"))))))
+#+END_SRC
+
+I have gotten used to the [back] link in emacs-lisp documentation, so we try to emulate it here.
+
+#+BEGIN_SRC emacs-lisp
+(defun pydoc-insert-back-link ()
+  "Insert link to previous buffer"
+  (goto-char (point-max)) 
+  (insert "
+[back]")
+  (let ((map (make-sparse-keymap)))
+    
+    ;; set file to be clickable to open the source
+    (define-key map [mouse-1]
+      (lambda ()
+	(interactive)
+        (pydoc *pydoc-last*)))
+
+      (set-text-properties
+       (line-beginning-position)
+       (line-end-position)
+       `(local-map, map
+		    font-lock-face (:foreground "blue"  :underline t)
+		    mouse-face highlight
+		    help-echo "mouse-1: click to return"))))
+#+END_SRC
+
+#+RESULTS:
+: pydoc-insert-back-link
+
+Ok, finally we remake the pydoc function. 
+#+BEGIN_SRC emacs-lisp       
+(defvar *pydoc-current* nil
+ "Stores current pydoc command")
+
+(defvar *pydoc-last* nil
+ "Stores the last pydoc command")
+
+(defun pydoc (name)
+  "Display pydoc information for NAME in a buffer named *pydoc*."
+  (interactive "sName of function or module: ")
+
+  (switch-to-buffer-other-window "*pydoc*")
+  (setq buffer-read-only nil)
+  (erase-buffer)
+  (insert (shell-command-to-string (format "python -m pydoc %s" name)))
+  (goto-char (point-min))
+
+  ;; save 
+  (when *pydoc-current*
+      (setq *pydoc-last* *pydoc-current*))
+  (setq *pydoc-current* name)
+
+
+  (save-excursion
+    (pydoc-get-name)
+    (pydoc-make-url-links)
+    (pydoc-make-file-link)
+    (pydoc-make-package-links)
+    (pydoc-colorize-functions)
+    (pydoc-insert-back-link))
+
+  ;; make read-only and press q to quit
+  (setq buffer-read-only t)
+  (use-local-map (copy-keymap org-mode-map))
+  (local-set-key "q" #'(lambda () (interactive) (kill-buffer)))
+
+  (font-lock-mode))
+#+END_SRC
+
+#+RESULTS:
+: pydoc
+
+Now, we get a much more functional pydoc:
+
+#+CAPTION: Annotated screenshot
+[[./images/pydoc-enhanced-jasp.png]]
+
+and with the colorized function names:
+
+[[./images/pydoc-potcar.png]]
+
+Admittedly, there seems to be a lot of boilerplate code for propertizing the strings, but it doesn't seem too bad. I will probably use this documentation tool this spring, so maybe I will think of new functionality to add to pydoc. Any ideas?
+
