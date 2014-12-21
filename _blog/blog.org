@@ -1,7 +1,252 @@
-* A new mode for Python documentation
+* Capturing stderr from Python in org-mode - take 2
+  :PROPERTIES:
+  :categories: emacs,python,orgmode
+  :date:     2014/12/21 11:46:11
+  :updated:  2014/12/21 11:46:11
+  :END:
+In a previous [[http://kitchingroup.cheme.cmu.edu/blog/2013/09/27/Capturing-stderr-and-exceptions-from-python-in-org-mode/][post]] I wrote about a sandbox module to help capture stderr in Python code blocks in org-mode. That module worked, but ran as a script. 
+
+stderr is not captured in the output of a code block in org-mode. For example:
+
+#+BEGIN_SRC python
+import sys
+print >>sys.stdout, "message on stdout"
+print >>sys.stderr, "testing stderr"
+#+END_SRC
+
+#+RESULTS:
+: message on stdout
+
+The messages to stderr just disappears. Not good for code like this:
+
+#+BEGIN_SRC python
+from scipy.integrate import odeint
+
+def ode(y, x):
+    return -k * x
+
+xspan = [0, 1]
+y0 = 1
+
+sol = odeint(ode, y0, xspan)
+print sol
+#+END_SRC
+
+#+RESULTS:
+: [[ 1.]
+:  [ 1.]]
+
+There is an error in that code, k is not defined. If you run that as a script, you get this output:
+#+BEGIN_EXAMPLE
+>>> Traceback (most recent call last):
+  File "/var/folders/5q/lllv2yf95hg_n6h6kjttbmdw0000gn/T//python-69413hLF.py", line 4, in ode
+    return -k * x
+NameError: global name 'k' is not defined
+Traceback (most recent call last):
+  File "/var/folders/5q/lllv2yf95hg_n6h6kjttbmdw0000gn/T//python-69413hLF.py", line 4, in ode
+    return -k * x
+NameError: global name 'k' is not defined
+Traceback (most recent call last):
+  File "/var/folders/5q/lllv2yf95hg_n6h6kjttbmdw0000gn/T//python-69413hLF.py", line 4, in ode
+    return -k * x
+NameError: global name 'k' is not defined
+Traceback (most recent call last):
+  File "/var/folders/5q/lllv2yf95hg_n6h6kjttbmdw0000gn/T//python-69413hLF.py", line 4, in ode
+    return -k * x
+NameError: global name 'k' is not defined
+#+END_EXAMPLE
+
+But, that is evidently going to stderr, and not getting captured in org-mode. Boo. A silent error that returns a value! This behavior of odeint may be [[https://github.com/scipy/scipy/pull/4052][fixed]] in scipy 0.15, but it is a general deficiency of org-mode babel code blocks. So, today I am looking back into a way to fix it. We try something as mundane as just redefining stderr in Python at runtime.
+
+#+BEGIN_SRC python
+import sys
+sys.stderr = sys.stdout
+
+print >>sys.stdout, "message on stdout"
+print >>sys.stderr, "testing stderr"
+#+END_SRC
+
+#+RESULTS:
+: message on stdout
+: testing stderr
+
+That works fine. Let us test it with the other block.
+
+#+BEGIN_SRC python
+import sys
+sys.stderr = sys.stdout
+
+from scipy.integrate import odeint
+
+def ode(y, x):
+    return -k * x
+
+xspan = [0, 1]
+y0 = 1
+
+sol = odeint(ode, y0, xspan)
+print sol
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+Traceback (most recent call last):
+  File "<stdin>", line 6, in ode
+NameError: global name 'k' is not defined
+Traceback (most recent call last):
+  File "<stdin>", line 6, in ode
+NameError: global name 'k' is not defined
+Traceback (most recent call last):
+  File "<stdin>", line 6, in ode
+NameError: global name 'k' is not defined
+Traceback (most recent call last):
+  File "<stdin>", line 6, in ode
+NameError: global name 'k' is not defined
+[[ 1.]
+ [ 1.]]
+#+end_example
+
+Sweet, we get the errors. We still get the returned value, but it is immediately obvious something is wrong. I have wrapped that little tidbit into a Python module in [[https://github.com/jkitchin/pycse/blob/master/pycse/orgmode.py][pycse.orgmode]], which you can import to get the same effect.
+
+#+BEGIN_SRC python
+import pycse.orgmode
+
+from scipy.integrate import odeint
+
+def ode(y, x):
+    return -k * x
+
+xspan = [0, 1]
+y0 = 1
+
+sol = odeint(ode, y0, xspan)
+print sol
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+Traceback (most recent call last):
+  File "<stdin>", line 2, in ode
+NameError: global name 'k' is not defined
+Traceback (most recent call last):
+  File "<stdin>", line 2, in ode
+NameError: global name 'k' is not defined
+Traceback (most recent call last):
+  File "<stdin>", line 2, in ode
+NameError: global name 'k' is not defined
+Traceback (most recent call last):
+  File "<stdin>", line 2, in ode
+NameError: global name 'k' is not defined
+
+[[ 1.]
+ [ 1.]]
+
+#+end_example
+
+Finally, you can avoid the import by setting your org-babel Python command like this:
+
+#+BEGIN_SRC emacs-lisp
+(setq org-babel-python-command "python -i -c \"import pycse.orgmode\"")
+#+END_SRC
+
+#+RESULTS:
+: python -i -c "import pycse.orgmode"
+
+Now, we run our faulty block again:
+#+BEGIN_SRC python
+from scipy.integrate import odeint
+
+def ode(y, x):
+    return -k * x
+
+xspan = [0, 1]
+y0 = 1
+
+sol = odeint(ode, y0, xspan)
+print sol
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+Traceback (most recent call last):
+  File "<stdin>", line 2, in ode
+NameError: global name 'k' is not defined
+Traceback (most recent call last):
+  File "<stdin>", line 2, in ode
+NameError: global name 'k' is not defined
+Traceback (most recent call last):
+  File "<stdin>", line 2, in ode
+NameError: global name 'k' is not defined
+Traceback (most recent call last):
+  File "<stdin>", line 2, in ode
+NameError: global name 'k' is not defined
+
+[[ 1.]
+ [ 1.]]
+
+#+end_example
+
+Excellent. The stderr is captured.
+
+And we get basically the same output as before for regular code blocks. There is an extra line before and after the output for some reason. I can live with that!
+
+#+BEGIN_SRC python
+print 6 + 7
+#+END_SRC
+
+#+RESULTS:
+: 
+: 13
+: 
+
+* Possibilities for pydoc completion
+
+#+BEGIN_SRC python
+import rlcompleter as rl
+import sys
+C = rl.Completer(namespace=globals())
+matched = True
+i = 0
+matches = []
+while matched:
+    m = C.complete("sys.", i)
+    if m:
+        matches += [m]
+        i +=1
+    else:
+        matched = False
+
+print matches
+#+END_SRC
+
+#+RESULTS:
+: ['sys.__displayhook__(', 'sys.__doc__', 'sys.__egginsert', 'sys.__excepthook__(', 'sys.__name__', 'sys.__package__', 'sys.__plen', 'sys.__stderr__', 'sys.__stdin__', 'sys.__stdout__', 'sys._clear_type_cache(', 'sys._current_frames(', 'sys._executable', 'sys._getframe(', 'sys._home', 'sys._mercurial', 'sys.api_version', 'sys.argv', 'sys.base_exec_prefix', 'sys.base_prefix', 'sys.builtin_module_names', 'sys.byteorder', 'sys.call_tracing(', 'sys.callstats(', 'sys.copyright', 'sys.displayhook(', 'sys.dont_write_bytecode', 'sys.exc_clear(', 'sys.exc_info(', 'sys.exc_type', 'sys.excepthook(', 'sys.exec_prefix', 'sys.executable', 'sys.exit(', 'sys.flags', 'sys.float_info', 'sys.float_repr_style', 'sys.getcheckinterval(', 'sys.getdefaultencoding(', 'sys.getdlopenflags(', 'sys.getfilesystemencoding(', 'sys.getprofile(', 'sys.getrecursionlimit(', 'sys.getrefcount(', 'sys.getsizeof(', 'sys.gettrace(', 'sys.hexversion', 'sys.long_info', 'sys.maxint', 'sys.maxsize', 'sys.maxunicode', 'sys.meta_path', 'sys.modules', 'sys.path', 'sys.path_hooks', 'sys.path_importer_cache', 'sys.platform', 'sys.prefix', 'sys.py3kwarning', 'sys.setcheckinterval(', 'sys.setdlopenflags(', 'sys.setprofile(', 'sys.setrecursionlimit(', 'sys.settrace(', 'sys.stderr', 'sys.stdin', 'sys.stdout', 'sys.subversion', 'sys.version', 'sys.version_info', 'sys.warnoptions', 'sys.__class__(', 'sys.__class__(', 'sys.__delattr__(', 'sys.__dict__', 'sys.__doc__', 'sys.__format__(', 'sys.__getattribute__(', 'sys.__hash__(', 'sys.__init__(', 'sys.__new__(', 'sys.__reduce__(', 'sys.__reduce_ex__(', 'sys.__repr__(', 'sys.__setattr__(', 'sys.__sizeof__(', 'sys.__str__(', 'sys.__subclasshook__(', 'sys.__class__(', 'sys.__delattr__(', 'sys.__doc__', 'sys.__format__(', 'sys.__getattribute__(', 'sys.__hash__(', 'sys.__init__(', 'sys.__new__(', 'sys.__reduce__(', 'sys.__reduce_ex__(', 'sys.__repr__(', 'sys.__setattr__(', 'sys.__sizeof__(', 'sys.__str__(', 'sys.__subclasshook__(']
+
+* pydoc apropos
+
+see https://github.com/philippp/apropos.py
+
+This needs to be done asynchronously
+#+BEGIN_SRC emacs-lisp
+(defun pydoc-apropos (name)
+  (interactive)
+  (switch-to-buffer-other-window "*pydoc-apropos*")
+  (erase-buffer)
+  (insert (shell-command-to-string (format "python -c \"import pydoc; pydoc.apropos('%s')\"" "zip")))
+  (goto-char (point-min)))
+
+(pydoc-apropos "zip")
+#+END_SRC
+
+#+RESULTS:
+: 1
+
+* DONE A new mode for Python documentation
+  CLOSED: [2014-12-20 Sat 15:02]
   :PROPERTIES:
   :date:     2014/12/20 15:02:05
-  :updated:  2014/12/20 15:02:05
+  :updated:  2014/12/20 17:49:34
+  :categories: emacs,python
   :END:
 
 The emacs-lisp documentation in Emacs is inspiring. It is interlinked, you can click on links to open source files, other commands, etc... Python documentation is not that nice. It should be.
@@ -43,7 +288,7 @@ First, let us make the source file clickable so it opens the source.
 	`(lambda ()
 	  (interactive)
 	  (find-file ,source-file)))
-      ;(remove-text-properties start end '(mouse-face nil))
+
       (set-text-properties
        start end
        `(local-map, map
