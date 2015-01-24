@@ -1,3 +1,500 @@
+* DONE Anatomy of a helm source
+  CLOSED: [2015-01-24 Sat 11:15]
+  :PROPERTIES:
+  :categories: emacs,helm
+  :date:     2015/01/24 11:15:56
+  :updated:  2015/01/24 12:09:58
+  :POST_FILENAME: ~/blogofile-jkitchin.github.com/_posts/2015-01-24-Anatomy-of-a-helm-source.html
+  :PERMALINK: http://kitchingroup.cheme.cmu.edu/blog/2015/01/24/Anatomy-of-a-helm-source/index.html
+  :END:
+
+I have been integrating [[https://github.com/emacs-helm/helm][helm]] into my emacs work flows almost anywhere I need to make interactive selections and do something with them. In this post, I will go through the simplest helm examples I can think of that get you to writing your own example.
+
+To run a helm selection process you basically just call a function that calls this minimal function:
+
+#+BEGIN_SRC emacs-lisp
+(helm :sources '(some-helm-source))
+#+END_SRC
+
+In that code, the symbol some-helm-source will provide the input for the helm buffer. Let us look at the simplest example here. Each source should have a name, a list of candidates, and an action that works on the selected candidate. We construct a source as a list of cons cells. Here, we make a source with the name "HELM at the Emacs", a static list of candidates, which are simply a list of numbers, and a single action that will operate on the selected candidate.
+
+If you run this block, you will get a helm buffer, you can select an entry, press enter, and you should see a message box pop up telling you what entry you selected. I like to separate the source definition from the helm call like this, but only for readability.
+
+#+BEGIN_SRC emacs-lisp
+(setq some-helm-source
+      '((name . "HELM at the Emacs")
+	(candidates . (1 2 3 4))
+	(action . (lambda (candidate)
+		    (message-box "%s" candidate)))))
+
+(helm :sources '(some-helm-source))
+#+END_SRC
+
+#+RESULTS:
+: 3
+
+
+Not bad, but what if we want some dynamic candidates? The usual way we will do that is to define a function that calculates the candidates for us. Let us work out an example that just shows us random numbers between 0 and 10 to select from. In a real example, you would use this function to generate a list of candidates like bibtex keys, email-addresses, etc...
+
+#+BEGIN_SRC emacs-lisp
+(defun random-candidates ()
+  "Return a list of 4 random numbers from 0 to 10"
+  (loop for i below 4 collect (random 10)))
+
+(setq some-helm-source
+      '((name . "HELM at the Emacs")
+	(candidates . random-candidates)
+	(action . (lambda (candidate)
+		    (message "%s" candidate)))))
+
+(helm :sources '(some-helm-source))
+#+END_SRC
+
+
+So far, we have looked at the simplest list of candidates: a simple list. It may be that this is not the most convenient way to see the candidates. We might like to have one set of candidates that we use for searching, but another set of equivalent candidates used for the action. For example, we might want a list of names for selecting, but then have the action work on the corresponding email address. Let us consider a case where we have a list of cons cells of names and email addresses.
+
+We use the `, way to create the source variable to make sure our list of candidates is constructed. Then, in our function we take the selection and get the corresponding entry in the data a-list.
+
+#+BEGIN_SRC emacs-lisp
+(setq data '(("John" . "john@email.com")
+	     ("Jim" . "jim@email.com")
+	     ("Jane" . "jane@email.com")
+	     ("Jill" . "jill@email.com")))
+
+(setq some-helm-source
+      `((name . "HELM at the Emacs")
+	(candidates . ,(mapcar 'car data))
+	(action . (lambda (candidate)
+		    (message "%s" (cdr (assoc candidate data)))))))
+
+(helm :sources '(some-helm-source))
+#+END_SRC
+
+#+RESULTS:
+: jim@email.com
+
+That is not too bad, and might be a general way to get to the data you want. But, helm can integrate this directly by using the a-list /directly/ as the list of candidates. Helm will show you the car of each cell, but return the cdr of the selected entry.
+
+Let us try this to make a function that will give us a helm buffer to select some names from, and then insert a comma separated list of emails from our selection at the point. We make our action function just return the list of marked candidates. Then we create a function that calls helm, and inserts a concatenated string.
+
+#+BEGIN_SRC emacs-lisp
+(setq data '(("John" . "john@email.com")
+	     ("Jim" . "jim@email.com")
+	     ("Jane" . "jane@email.com")
+	     ("Jill" . "jill@email.com")))
+
+(setq some-helm-source
+      `((name . "HELM at the Emacs")
+	(candidates . ,data)
+	(action . (lambda (candidate)
+		    (helm-marked-candidates)))))
+
+(defun helm-select-and-insert-emails ()
+  (interactive)
+  (insert
+   (mapconcat 'identity
+	      (helm :sources '(some-helm-source))
+	      ",")))
+#+END_SRC
+#+RESULTS:
+: helm-select-and-insert-emails
+
+
+Here is what I get when I run the command, select John and Jill, and press enter: john@email.com,jill@email.com
+
+That is it for this post. We looked at:
+
+1. the simplest kind of helm interface with a fixed set of candidates
+2. A simple dynamic set of candidates
+3. A simple fixed set of candidates from a list of cons cells.
+
+This barely scratches the surface of helm, but is already enough to do some useful things.
+
+
+* More adventures in helm - more than one action
+We continue our exploration of helm and now consider how to have more than one action for a selection. When you press enter, helm runs the default action defined, but you can define more than one action, and choose which one to run. How do you know if there are multiple actions? Press C-z in helm and you will get a new helm buffer showing the actions. The first action is the default, and you can select the the actions with function keys, e.g. f1 is the first action, f2 is the second action, or you can select the action and press enter.
+
+The main difference in setting up multiple actions is that instead of a single function for action in the source definition, we provide a list of cons cells. Each action cons cell should have a descriptive string as the car that identifies the action. This will be shown in the helm buffer. The cdr should be the function to run on the candidate.
+
+Here is an example
+
+#+BEGIN_SRC emacs-lisp
+(setq data '(("John" . "john@email.com")
+	     ("Jim" . "jim@email.com")
+	     ("Jane" . "jane@email.com")
+	     ("Jill" . "jill@email.com")))
+
+(setq some-helm-source
+      `((name . "HELM at the Emacs")
+	(candidates . ,data)
+	(action . (("return" . (lambda (candidate)
+                                (message-box "f1: %s" (helm-marked-candidates))))
+		   ("message" . (lambda (candidate)
+				  (message-box "f2: %s" candidate)))))))
+
+(helm :sources '(some-helm-source))
+#+END_SRC
+
+#+RESULTS:
+: f2: jane@email.com
+
+
+* Handling multiple selections in helm
+The basic usage pattern of helm is you run a command which opens a buffer of choices. You enter some text in the minibuffer which eliminates choices that do not match what you type in. You can select multiple choices by using C-spc, or M-a to mark them all. When you press enter, the current selection is sent to the default action defined. The action is a function that does something. Here, we explore writing the action function to do what we want. The reason this is somewhat tricky is that when you mark an item in helm, the "cursor" moves to the next item, which means when you press enter it may be possible that the current highlighted item is not part of the items you have marked. If your action will perform a delete action, for example, you may have wanted to delete the marked items, and /not/ the current selection! So, what we need is a way to get what we want.
+
+An action function in helm should normally take one argument, which is going to be the currently selected item from helm. However, we can use two different functions to access either the selected item (helm-get-selection) or the marked items (helm-marked-candidates). So, we can write our function to do "do what we mean". Note, even if you do not mark any candidates,  (helm-marked-candidates) will return a list that has the current selection in it. So we can write our action function to act on this list so it works on what is marked or what is selected if nothing is marked. That is probably "what we mean".
+
+Here is one way to work on a selection or marked list of selections. We define an action function that takes an arg, but inside we operate on each element of the marked candidates.
+
+#+BEGIN_SRC emacs-lisp
+(defun some-action (candidate)
+  (loop for cand in (helm-marked-candidates)
+	do
+	(message-box "working on %s" cand)))
+
+(helm :sources '(((name . "HELM")
+		  (candidates . (1 2 3 4))
+		  (action . (("open" . some-action))))))
+#+END_SRC
+
+
+Here is an alternative approach. Here we define the action function to work on one candidate. That might be helpful for testing, for example. Then, we use mapc to apply the function to each marked candidate.
+
+#+BEGIN_SRC emacs-lisp
+(defun some-action (candidate)
+  (message-box "single working on %s" candidate))
+
+(helm :sources '(((name . "HELM")
+		  (candidates . (1 2 3 4))
+		  (action . (("open" . (lambda (candidate)
+					 (mapc
+					  'some-action
+					  (helm-marked-candidates)))))))))
+#+END_SRC
+
+A little more verbose method might be like this. Here we just pull out the lambda function to another function, to make the helm source definition a little shorter. I cannot tell if this is easier to follow, it is just another option.
+
+#+BEGIN_SRC emacs-lisp
+(defun some-action (candidate)
+  (message-box "single2 working on %s" candidate))
+
+(defun some-actions (&optional candidate)
+  (mapc 'some-action (helm-marked-candidates)))
+
+(helm :sources '(((name . "HELM")
+		  (candidates . (1 2 3 4))
+		  (action . some-actions))))
+#+END_SRC
+
+#+RESULTS:
+| 1 | 2 | 3 | 4 |
+
+* helm actions when there is no match
+
+
+#+BEGIN_SRC emacs-lisp
+(defun some-action (arg)
+  (message-box "%s\n%s"
+    (helm-get-selection)
+    (helm-marked-candidates)))
+
+
+(defun default-action ()
+  (message-box "%s" helm-pattern))
+
+
+(helm :sources '(((name . "HELM")
+		  (candidates . (1 2 3 4))
+		  (action . (("open" . some-action))))
+		 ((name . "fallback")
+		  (dummy)
+		  (action . default-action))
+		 ))
+#+END_SRC
+
+#+RESULTS:
+: some-action
+
+
+#+BEGIN_SRC emacs-lisp
+(defun some-action (arg)
+  (message-box "%s\n%s" arg (helm-marked-candidates)))
+
+
+(helm :sources '(((name . "HELM")
+		  (candidates . (("a" . 1)
+				 ("b" . 2)
+				 ("c" . 3)
+				 ("d" . 4)))
+		  (action . (("open" . some-action))))))
+#+END_SRC
+
+#+RESULTS:
+: some-action
+
+
+* Helm source for headings with TODO
+
+
+For a helm source we need a list of cons cells that have a car of a selection, and a cdr that corresponds to that selection.
+
+#+BEGIN_SRC emacs-lisp :results raw
+(defun helm-todo-candidates ()
+  (let ((results '()))
+    (org-map-entries
+     (lambda ()
+       (add-to-list 'results
+		    (cons
+		     (concat (make-string (nth 1 (org-heading-components)) ?*)
+			     " TODO "
+			     (nth 4 (org-heading-components)))
+		     (point-marker))))
+     "TODO=\"TODO\"")
+    results))
+
+(helm-todo-candidates)
+#+END_SRC
+
+#+RESULTS:
+((** post it . #<marker at 977 in blog.org>) (** work it out . #<marker at 941 in blog.org>))
+
+Now to run helm, there is a subtle point. We need to map the current buffer /before/ running helm, otherwise we will map an empty helm buffer.
+
+#+BEGIN_SRC emacs-lisp
+(defun helm-todo ()
+  "Helm interface to headlines with TODO status in current buffer."
+  (interactive)
+  (let ((candidates (helm-todo-candidates)))
+    (setq helm-todo-source '((name . "TODO headlines")
+			     (candidates . candidates)
+			     (action . (("open" . goto-char)))))
+    (helm :sources '(helm-todo-source))))
+
+(helm-todo)
+#+END_SRC
+
+#+RESULTS:
+
+Now, let us expand the idea to a helm-agenda. We want a function that prompts for a match criteria, then presents a helm buffer to select matching entries in your agenda files.
+
+#+BEGIN_SRC emacs-lisp
+(defun helm-agenda-candidates (query)
+  (let ((results '()))
+    (mapc (lambda (f)
+      (with-current-buffer (find-file-noselect f)
+	(org-map-entries
+	 (lambda ()
+	   (add-to-list 'results
+			(cons
+			 (concat
+			  (file-name-nondirectory f) " | "
+			  (make-string (nth 1 (org-heading-components)) ?*)
+			  " "
+			  (org-get-heading))
+			 (point-marker))))
+	 query))) (org-agenda-files))
+    results))
+
+
+(defun helm-query-agenda (query)
+  "Helm interface to headlines with TODO status in current buffer."
+  (interactive "sQuery: ")
+  (let ((candidates (helm-agenda-candidates query)))
+    (helm :sources '(((name . "TODO headlines")
+		      (candidates . candidates)
+		      (action . (("open" . (lambda (m)
+					     (switch-to-buffer (marker-buffer m))
+					     (goto-char m)
+					     (show-children))))))))))
+#+END_SRC
+
+#+RESULTS:
+
+** TODO work it out
+** DONE test it
+** TODO post it
+
+
+
+* Copy the bibtex entry for a link to a new file
+Sometimes I am reading a document with citations from org-ref in it, and I want to copy the bibtex entry for that link from the file it is in to a new file. Right now, I have to click on the link, open the entry, copy the file, open the new file, and paste it. Here we develop a function that does all that.
+
+Some functions will help us with this. First, org-ref-open-citation-at-point will open the bibtex file with the point in the entry. Second, bibtex-copy-entry-as-kill will copy the entry to the bibtex-entry-kill-ring. Finally bibtex-yank will put the entry in the new file we select. We should try not to add entries if there is already a key present in the file.
+
+A subtlety is the function should not take an argument, so it can work in our cite menu, but it needs an interactive file selection to say where the entry is copied to.
+
+#+BEGIN_SRC emacs-lisp
+(defun org-ref-copy-entry-at-point-to-file ()
+  "Copy the bibtex entry for the citation at point to NEW-FILE.
+Prompt for NEW-FILE includes bib files in org-ref-default-bibliography, and bib files in current working directory. You can also specify a new file."
+  (interactive)
+  (let ((new-file (ido-completing-read
+		   "Copy to bibfile: "
+		   (append org-ref-default-bibliography
+			   (f-entries "." (lambda (f) (f-ext? f "bib"))))))
+	(key (org-ref-get-bibtex-key-under-cursor)))
+    (save-window-excursion
+      (org-ref-open-citation-at-point)
+      (bibtex-copy-entry-as-kill))
+
+    (let ((bibtex-files (list (file-truename new-file))))
+      (if (assoc key (bibtex-global-key-alist))
+	  (message "That key already exists in %s" new-file)
+	;; add to file
+	(save-window-excursion
+	  (find-file new-file)
+	  (goto-char (point-max))
+          ;; make sure we are at the beginning of a line.
+	  (unless (looking-at "^") (insert "\n\n"))
+	  (bibtex-yank)
+	  (save-buffer))))))
+#+END_SRC
+
+#+RESULTS:
+: #<marker at 1038 in blog.org>
+
+#+BEGIN_SRC emacs-lisp
+(add-to-list
+'org-ref-user-cite-menu-funcs
+       '("y" "Copy entry to file" org-ref-copy-entry-at-point-to-file) t)
+#+END_SRC
+
+We might also want to copy a short summary to the clipboard, so we could readily paste it somewhere. Here is one way to do it. You might prefer (bibtex-copy-summary-as-kill) instead.
+
+#+BEGIN_SRC emacs-lisp
+(defun org-ref-copy-entry-as-summary ()
+  "Copy the bibtex entry for the citation at point as a summary."
+  (interactive)
+    (save-window-excursion
+      (org-ref-open-citation-at-point)
+      (kill-new (org-ref-bib-citation))))
+#+END_SRC
+#+RESULTS:
+: org-ref-copy-entry-as-summary
+
+#+BEGIN_SRC emacs-lisp
+(add-to-list
+'org-ref-user-cite-menu-funcs
+       '("s" "Copy summary" org-ref-copy-entry-as-summary) t)
+#+END_SRC
+
+Here is a citation to test these out on cite:mehta-2014-ident-poten.
+
+They seem to work! These are built in to org-ref now, so if you update to the latest version they should work for you too.
+
+* A voting system for org-mode headlines
+
+Over on [[http://stackoverflow.com/questions/27937446/how-to-vote-for-a-heading-in-org-mode][Stack Overflow]] someone wanted a system to "vote" for headlines. Basically they have a lot of headlines, and they want a +1 feature that will set a VOTES property on a headline. Then, they could filter the headlines by some voting criteria. Org-mode is made for that kind of thing, but we have to implement it ourselves. We just need to define a function that sets the property. The only subtle points in this are that properties are defined as strings, and we have to put a string in the property. That means we have to convert the string to a number, increment it, and convert it back to a string. We also add an org-mode speed command to + so when our cursor is at the beginning of the headline, we just press + to increment the VOTES property.
+
+#+BEGIN_SRC emacs-lisp
+(defun plusone ()
+  "Increase the VOTES property in an org-heading by one. Create
+the property if needed."
+  (interactive)
+  (org-entry-put
+   (point)
+   "VOTES"
+   (format "%s" (+ 1 (string-to-number
+		      (or
+		       (org-entry-get (point) "VOTES")
+		       "0"))))))
+
+(add-to-list 'org-speed-commands-user '("+" . (plusone)))
+#+END_SRC
+
+#+RESULTS:
+| + | quote | plusone |
+
+Now some test headlines. We can use the agenda to filter headlines. Here is the agenda command that is equivalent to the key sequence "C-c a < m". Type in VOTES>2, for example, to see headlines that have more than two votes.
+
+#+BEGIN_SRC emacs-lisp
+(org-agenda nil "m" "<")
+#+END_SRC
+
+** heading 1
+   :PROPERTIES:
+   :VOTES:    2
+   :END:
+** heading 2
+   :PROPERTIES:
+   :VOTES:    5
+   :END:
+** heading 3
+   :PROPERTIES:
+   :VOTES:    1
+   :END:
+
+
+* DONE Equation of a plane through three points
+  CLOSED: [2015-01-18 Sun 10:48]
+  :PROPERTIES:
+  :categories: python
+  :date:     2015/01/18 10:48:21
+  :updated:  2015/01/18 10:48:21
+  :END:
+
+We are given three points, and we seek the equation of the plane that goes through them. The method is straight forward. A plane is defined by the equation:
+
+\(a x + b y + c z = d\)
+
+and we just need the coefficients. The $a, b, c$ coefficients are obtained from a vector normal to the plane, and $d$ is calculated separately. We get the normal vector from the cross-product of two vectors connecting the points, and we get $d$ from the dot product of the normal vector with any one of the point position vectors.
+
+Finally, given the equation, we want to generate a mesh that samples the plane, and plot the mesh and original points to verify the plane goes through the points. Here is the implementation.
+
+#+BEGIN_SRC python
+import numpy as np
+
+p1 = np.array([1, 2, 3])
+p2 = np.array([4, 6, 9])
+p3 = np.array([12, 11, 9])
+
+# These two vectors are in the plane
+v1 = p3 - p1
+v2 = p2 - p1
+
+# the cross product is a vector normal to the plane
+cp = np.cross(v1, v2)
+a, b, c = cp
+
+# This evaluates a * x3 + b * y3 + c * z3 which equals d
+d = np.dot(cp, p3)
+
+print('The equation is {0}x + {1}y + {2}z = {3}'.format(a, b, c, d))
+
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+fig = plt.figure()
+ax = fig.add_subplot(111, projection='3d')
+
+x = np.linspace(-2, 14, 5)
+y = np.linspace(-2, 14, 5)
+X, Y = np.meshgrid(x, y)
+
+Z = (d - a * X - b * Y) / c
+
+# plot the mesh. Each array is 2D, so we flatten them to 1D arrays
+ax.plot(X.flatten(),
+        Y.flatten(),
+        Z.flatten(), 'bo ')
+
+# plot the original points. We use zip to get 1D lists of x, y and z
+# coordinates.
+ax.plot(*zip(p1, p2, p3), color='r', linestyle=' ', marker='o')
+
+# adjust the view so we can see the point/plane alignment
+ax.view_init(0, 22)
+plt.tight_layout()
+plt.savefig('images/plane.png')
+plt.show()
+#+END_SRC
+
+#+RESULTS:
+: The equation is 30x + -48y + 17z = -15
+
+#+caption: Original points are in red, and the mesh is in blue.
+[[./images/plane.png]]
+It looks like the blue points form a plane that contains the red points.
+
 
 * vtk
 
@@ -32,18 +529,7 @@ renderInteractor.Start()
 
 #+RESULTS:
 
-* Mail link
 
-
-#+BEGIN_SRC emacs-lisp
-(org-add-link-type
- "mail"
- (lambda (linkstring)
-   (compose-mail)
-   (message-goto-body)
-   (insert content))
-		   )
-#+END_SRC
 * bullet
 
 notes about this mail: [[mu4e:msgid:CANniJEwZu8UcvbB6G%2B0Q%2Be_ZYQNFUsw9DJxxVg9cfKvSnoSQOw@mail.gmail.com][{O} Getting beginning postiion of a description list]]
@@ -84,56 +570,6 @@ notes about this mail: [[mu4e:msgid:CANniJEwZu8UcvbB6G%2B0Q%2Be_ZYQNFUsw9DJxxVg9
 
 #+RESULTS:
 | eap |
-
-* numpy float64 comparisons
-
-#+BEGIN_SRC python
-from __future__ import division
-import numpy as np
-
-class Unit(np.ndarray):
-    __array_priority__ = 2
-    def __new__(cls, input_array, exponents=None, label=None):
-        obj = np.asarray(input_array).view(cls)
-        obj.exponents = np.array(exponents)
-        obj.label = label
-
-        return obj
-
-    def __eq__(self, other):
-        'implement a==b for units'
-        if not isinstance(other, Unit):
-            raise Exception(['you should not compare objects'
-                             ' with different units.'
-                             ' {0} == {1}'.format(self, other)])
-
-        return (np.all(self.exponents == other.exponents)
-                and np.all(np.array(self) == np.array(other)))
-
-
-
-# these all raise exceptions
-print 2 == Unit(2, [1, 0, 0, 0, 0, 0, 0])
-print Unit(2, [1, 0, 0, 0, 0, 0, 0]) == 2
-
-print np.float(2) == Unit(2, [1, 0, 0, 0, 0, 0, 0])
-print Unit(2, [1, 0, 0, 0, 0, 0, 0]) == np.float(2)
-
-print np.float32(2) == Unit(2, [1, 0, 0, 0, 0, 0, 0])
-print Unit(2, [1, 0, 0, 0, 0, 0, 0]) == np.float32(2)
-
-print Unit(2, [1, 0, 0, 0, 0, 0, 0]) == np.float64(2)
-
-
-# this should raise an exception, but it does not
-print np.float64(2) == Unit(2, [1, 0, 0, 0, 0, 0, 0])
-
-
-
-#+END_SRC
-
-#+RESULTS:
-
 
 * wok3
 from https://github.com/mstrupler/WOS3/blob/master/wok3.py
@@ -613,7 +1049,6 @@ date -g
 : date: illegal option -- g
 : usage: date [-jnu] [-d dst] [-r seconds] [-t west] [-v[+|-]val[ymwdHMS]] ...
 :             [-f fmt date | [[[mm]dd]HH]MM[[cc]yy][.ss]] [+format]
-
 
 * DONE 2014 Kitchin Research Group in a nutshell
   CLOSED: [2015-01-07 Wed 16:56]
@@ -1339,7 +1774,8 @@ Admittedly, there seems to be a lot of boilerplate code for propertizing the str
 
 <<<<<<< HEAD
 =======
-* 2014 Kitchin Research Group in a nutshell
+* DONE 2014 Kitchin Research Group in a nutshell
+  CLOSED: [2015-01-18 Sun 10:59]
   :PROPERTIES:
   :EXPORT_FILE_NAME: my-pdf
   :END:
@@ -1408,6 +1844,7 @@ Overall, the experience was just awesome. Techela has a few edges that need smoo
 
 
 * Convert word at point to internal link
+must have been some org-mode list question
 
 #+BEGIN_SRC emacs-lisp
 (defun word-to-link ()
@@ -1426,6 +1863,7 @@ Overall, the experience was just awesome. Techela has a few edges that need smoo
 #+RESULTS:
 : word-to-link
 
+Test [[some]] word
 
 
 * Quick access to your own cheat sheets
@@ -1717,57 +2155,6 @@ First, we try making a row invisible.
 see http://www.gnu.org/software/emacs/manual/html_node/elisp/Pixel-Specification.html#Pixel-Specification
 
 maybe we can make lines on pixel high
-
-* Making an index and glossary in org-mode
-#+LATEX_CLASS: cmu-article
-#+LATEX_HEADER: \usepackage{makeidx}
-#+LATEX_HEADER: \usepackage{glossaries}
-#+LATEX_HEADER: \usepackage{hyperref}
-#+LATEX_HEADER: \makeindex
-#+LATEX_HEADER: \makeglossaries
-
-
-
-index:keyword
-
-some text
-
-index:index!link
-
-more text
-index:hello
-index:hello!Peter
-[[index:hello!Sam@\textsl{Sam}]]
-[[index:Lin@\textbf{Lin}]]
-[[index:Joe|textit]]
-[[index:Lin@\textbf{Lin}]]
-[[index:Peter|see {hello}]]
-[[index:Jen|seealso{Jenny}]]
-
-index:encodings!input!cp850
-
-
-** A glossary
-
-
-
-[[newglossaryentry:computer][name=computer, description=is a programmable machine that receives input, stores and manipulates data, and provides output in a useful format.]]
-
-
-\newacronym[longplural=Frames per Second]{fpsLabel}{FPS}{Frame per Second}
-
-See  gls:computer
-
-
-\printglossary[title=List of Terms,toctitle=Terms and abbreviations]
-
-** index
-
-printindex:nopotions
-
-
-
-
 
 * Indirect buffer in another mode
 
@@ -2190,7 +2577,7 @@ Finally, the defstruct macro also defines a function to test if a variable is on
 This looks like a relatively handy way to encapsulate data in emacs-lisp, and accessing the data seems more readable than using any combination of car, cdr, elt and nth.
 
 
-* A custom type
+* A custom block in orgmode
 
 #+BEGIN_EXAMPLE
 Example text in a block to make sure it gets handled
@@ -4313,75 +4700,6 @@ This way you can make the function do what ever you want, without digging into t
 
 #+RESULTS:
 skim:ts
-* bug report
-[[https://mail.google.com/mail/u/0/#inbox/1498a1077371921f][Small bug in org-ref - johnrkitchin@gmail.com - Gmail]]
-
-Dear Dr. Kitchin,
-
-I found a small problem in org-ref in combination with org-mode #+label
-function.
-
-
-1.)
-#+CAPTION: Test caption
-#+LABEL: fig:test_label3
-#+ATTR_LATEX: :width 0.7\textwidth
-[[file:test_figure.pdf]]
-
-This way figure ref:fig:test_label3 will be referenced correctly in LaTeX
-output (\ref), but not found by org-ref-complete-link function, meaning
-there is no auto-completion.
-
-
-#+BEGIN_SRC emacs-lisp
-(org-ref-get-labels)
-#+END_SRC
-
-#+RESULTS:
-|   | fig:test_label | fig | \s- | test1 | test | code-example | \\ | code:ref-snippet | load-snippets | fig:test_label3 | fig:cos | fig:a | fig:b | fig12 | tbldata | my-table | tbl-data | tbl-1 | tbl-2 | python-table | first-table | tbl-with-caption | cos-data | users | gradebook | beginner |
-
-2.)
-#+CAPTION: Test caption
-#+LABEL: fig:test_label    ---- no space between label:fig!!
-#+ATTR_LATEX: :width 0.7\textwidth
-[[file:test_figure.pdf]]
-
-This way figure ref:fig:test_label will NOT be referenced in LaTeX
-output, but will be found by org-ref-complete-link function, because the
-missing empty space leads to misinterpretation of #+label: on export.
-
-Inserting a space behind label in the org-ref-get-labels function solves
-the problem for me.
-
-#+begin_src emacs-lisp
-(defun org-ref-get-labels ()
-  "returns a list of labels in the buffer that you can make a ref link
-to. this is used to auto-complete ref links."
-  (save-excursion
-    (save-restriction
-      (widen)
-      (goto-char (point-min))
-      (let ((matches '()))
-        (while (re-search-forward "label: \\([a-zA-z0-9:-]*\\)" (point-max) t)
- ; inserted space behind label:
-          (add-to-list 'matches (match-string-no-properties 1) t))
-        (append matches (org-ref-get-latex-labels) (org-ref-get-tblnames)
-(org-ref-get-custom-ids))))))
-#+end_src
-
-
-#+begin_src emacs-lisp
-(defun org-ref-complete-link (&optional arg)
-  "Completion function for ref links"
-  (let ((label))
-    (setq label (completing-read "label: " (org-ref-get-labels)))
-    (format "ref:%s" label)))
-#+end_src
-
-I only know the org-ref reference function - or is there a proper
-org-ref-create label function.
-
-Greetings
 * Unlinkify an org link
 
 cnn
@@ -4885,29 +5203,6 @@ http://search.isiknowledge.com/esti/wokmws/ws/
 #+RESULTS:
 : #<process open http://adsabs.harvard.edu/cgi-bin/nph-basic_connect?qsearch=kitchin%20and%20barteau&version=1>
 
-* New links for researcherID and orcid
-These are pretty trivial links, but they still might be useful if these get more common.
-
-#+BEGIN_SRC emacs-lisp :results silent
-(org-add-link-type
- "orcid"
- (lambda (link-string)
-   (browse-url
-    (format "http://orcid.org/%s" link-string))))
-
-(org-add-link-type
- "ResearcherID"
- (lambda (link-string)
-   (browse-url
-    (format "http://www.researcherid.com/rid/%s" link-string))))
-#+END_SRC
-
-ResearcherID:A-2363-2010
-
-orcid:0000-0003-2625-9232
-
-
-
 * crossref + doi
 
 [[http://www.crossref.org/][crossref.org]]
@@ -5352,28 +5647,6 @@ Remove the colon from the symbol.
 #+RESULTS:
 : b
 
-* Extracting a DOI from a pdf
-
-#+BEGIN_SRC emacs-lisp
-(with-temp-buffer
-#+END_SRC
-
-10.1002/(SICI)1522-2594(199911)42:5<952::AID-MRM16>3.0.CO;2-S
-
-<</URI(http://dx.doi.org/10.1080/095008396180911)/S/URI>>
-
-"\\(10[.][0-9]\\{4,\\}\\(?:[.][0-9]+\\)*/[0-9a-z]+\\)"
-
-b(10[.][0-9]{4,}(?:[.][0-9]+)*/(?:(?!["&\'])\S)+)\b
-
-(?:doi[\s.:]{0,2})?(10[.][^/]+/[^\s"]+).
-
-This sort of works
-"\\(10[.][0-9]\\{4,\\}\\(?:[.][0-9]+\\)*/\\s(?[^[:space:]]*\\)\\s)?\\b"
-
-I am not sure how to enforce balanced parens, or to close the paren in the second example.
-
-http://www.emacswiki.org/RegularExpression
 * TODO Saving state data to a file in Emacs
   :PROPERTIES:
   :categories: emacs,lisp
@@ -5584,25 +5857,6 @@ There are a few options for saving and reading data in different structures and 
 
 
 
-* get scaled positions of an atom in ase
-
-#+BEGIN_SRC python
-from ase import Atom, Atoms
-
-atoms = Atoms([Atom('H', [1, 1, 1]), Atom('O', [2, 2, 2])], cell=(3, 3, 3))
-atoms[0].a = 0.5
-atoms[0].b = 0.5
-atoms[0].c = 0.5
-
-print atoms[0].a
-print atoms[0].x
-#print atoms[1].scaled_position
-#+END_SRC
-
-#+RESULTS:
-: 0.5
-: 1.5
-
 * "live" graphics in org-mode
 
 #+tblname: tbldata
@@ -5689,22 +5943,6 @@ This is a little experiment to integrate saving a file with git. The idea is tha
 #+BEGIN_SRC sh
 git hist -n 10
 #+END_SRC
-
-#+RESULTS:
-#+begin_example
-* da128c3 Sun Oct 19 12:26:01 2014 | save (HEAD, source) [John Kitchin]
-* 7bc8207 Sun Oct 19 12:24:46 2014 | save [John Kitchin]
-* 4cec2c7 Sun Oct 19 12:21:27 2014 | save [John Kitchin]
-* 1245a78 Sun Oct 19 12:21:03 2014 | save [John Kitchin]
-* 4bf9f64 Sun Oct 19 12:20:55 2014 | save [John Kitchin]
-* 598596f Sun Oct 19 12:19:51 2014 | save [John Kitchin]
-* ed1a0ae Sun Oct 19 12:19:09 2014 | save [John Kitchin]
-* ee6069a Sun Oct 19 12:18:20 2014 | save [John Kitchin]
-* b637cdb Sun Oct 19 12:16:33 2014 | save [John Kitchin]
-* e0135d8 Sun Oct 19 12:15:07 2014 | tst [John Kitchin]
-#+end_example
-
-It seems to be working. I should consider something other than save for the message, e.g. to differentiate saves from autosaves, but this will allow me to run [[https://github.com/pidu/git-timemachine][git-timemachine]] on the file to see what changes were made. One day I will play with this enough to see if it is really a good idea.
 
 * jeldoc - a function to generate documentation from emacs-lisp files
 
@@ -6861,25 +7099,6 @@ echo hello
 
 ** another heading
 with test
-
-* Making your emacs buffer flash
-
-#+BEGIN_SRC emacs-lisp
-(let ((bg (face-attribute 'default :background)))
-  (dotimes (i 1)
-    (set-face-attribute 'default nil :background "lightgreen")
-    (sleep-for 0.1)
-    (set-face-attribute 'default nil :background bg)
-    (sleep-for 0.1)))
-#+END_SRC
-
-#+RESULTS:
-
-(setq visible-bell t)
-
-(message "brrp")
-(setq ring-bell-function nil)
-(ding)
 
 * Using filters to redefine output
 
@@ -9592,6 +9811,7 @@ I sometimes need to script shell commands into emacs functions. Recently, I need
 #+END_SRC
 
 #+RESULTS:
+: #<marker at 361206 in blog.org>
 
 #+BEGIN_SRC emacs-lisp
 (eshell)
@@ -17637,20 +17857,6 @@ What we want to create is a function we could use to create the manuscript. Ther
 #+BEGIN_SRC emacs-lisp
 
 #+END_SRC
-* TODO VASP in emacs
-#+BEGIN_EXAMPLE
-PREC = Normal              #  precision normal
-ENCUT = 300                #  cutoff used throughout all calculations
-LREAL = .FALSE.            #  real space projection yes / no
-ISMEAR = 0                 #  method to determine partial occupancies
-#+END_EXAMPLE
-
-[[./images/vanilla-incar.png]]
-
-Now with vasp-mode:
-
-[[./images/vasp-mode-incar.png]]
-
 * TODO textify html
 
 #+BEGIN_EXAMPLE
