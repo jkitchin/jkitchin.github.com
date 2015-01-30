@@ -1,3 +1,191 @@
+* org-element-explorer
+  :PROPERTIES:
+  :CATEGORY: emacs
+  :END:
+
+#+OPTIONS: toc:nil ^:{}
+
+#+TITLE: org-element-explorer
+
+#+caption: some table.
+| 2 | 4 |
+| e | r |
+| 5 | 6 |
+
+cite:shi-2007-first-au
+
+#+caption: image caption
+#+label: citations
+[[./images/2014-citations.png]]
+
+
+\( sin(x) = 5\)
+
+#+BEGIN_EXAMPLE
+example
+#+END_EXAMPLE
+
+#+BEGIN_SRC emacs-lisp
+(defvar org-ref-last-mouse-pos nil
+ "Stores last mouse position for use in `org-ref-mouse-message'.")
+
+(defun can-move-p ()
+  "See if a character is under the mouse. If so return the position for `goto-char'."
+  (let* ((line (cddr org-ref-last-mouse-pos))
+	 (col  (cadr org-ref-last-mouse-pos)))
+    (save-excursion
+      (goto-char (window-start))
+      (forward-line line)
+      (if
+	  (> (- (line-end-position) (line-beginning-position)) col)
+	  (progn  (forward-char col) (point))
+	nil))))
+
+(defun org-element-explorer ()
+  "Display buffer with org-element context under mouse cursor."
+  (interactive)
+
+        (let ((context (org-element-context))
+              (cb (current-buffer)))
+	  (switch-to-buffer "*org-element*")
+	  (erase-buffer)
+	  (emacs-lisp-mode)
+	  (insert (format "%s"  context))
+	  (goto-char (point-min))
+	  (while (re-search-forward ":" nil t)
+	    (backward-char)
+	    (insert "\n")
+	    (forward-char))
+	  (goto-char (point-min))
+	  (special-lispy-multiline)
+	  (switch-to-buffer cb)
+          ))
+
+(add-hook 'post-command-hook 'org-element-explorer nil t)
+;(remove-hook 'post-command-hook 'org-element-explorer)
+#+END_SRC
+
+#+RESULTS:
+| org-element-explorer | whitespace-post-command-hook | t | flyspell-post-command-hook |
+
+** TODO a subheading
+   SCHEDULED: <2015-01-28 Wed> DEADLINE: <2015-01-29 Thu>
+
+* Getting messages about the link under the mouse cursor
+Now that I have set up org-ref to give minibuffer messages when the cursor is on a link, I thought, why can't this happen when I mouse over a link. I am likely to just mouse over links while reading them, and not necessarily have the cursor moving. Well, here is the idea. We can get the mouse position, which is approximately the number of lines from the top of the frame, and a number of characters from the beginning of a line. A trick is that there may not be a character at that position, if the line is shorter than those characters. So, we will have to calculate from the mouse position whether there is a character where the mouse is.
+
+Another trick is we don't want to remessage our selves constantly, so we will store the last mouse position, and not do anything unless it changes.
+
+An idle timer does not do what we want here. Apparently, idle refers to the cursor, not the mouse. I use a regular timer here, and run it every 1/2 second. I don't notice any performance issues with this.
+
+#+BEGIN_SRC emacs-lisp
+(defvar org-ref-last-mouse-pos nil
+ "Stores last mouse position for use in `org-ref-mouse-message'.")
+
+(defun can-move-p ()
+  "See if a character is under the mouse. If so return the position for `goto-char'."
+  (let* ((line (cddr org-ref-last-mouse-pos))
+	 (col  (cadr org-ref-last-mouse-pos)))
+    (save-excursion
+      (goto-char (window-start))
+      (forward-line line)
+      (if
+	  (> (- (line-end-position) (line-beginning-position)) col)
+	  (progn  (forward-char col) (point))
+	nil))))
+
+(defun org-ref-mouse-message ()
+  "Display message for link under mouse cursor"
+  (interactive)
+  (when (not (equal (mouse-position) org-ref-last-mouse-pos))
+    (setq org-ref-last-mouse-pos (mouse-position))
+    (when (can-move-p)
+      (save-excursion
+	(goto-char (can-move-p))
+	(org-ref-link-message)))))
+
+
+(setq org-ref-message-timer-mouse
+       (run-at-time "0.5 sec" 0.5 'org-ref-mouse-message))
+
+;(cancel-timer org-ref-message-timer-mouse)
+#+END_SRC
+
+#+RESULTS:
+: [nil 21706 25351 779030 0.5 org-ref-mouse-message nil nil 0]
+
+Ok, that is the code. Here are some links to test it out.
+
+ref:icon
+
+
+label:icon
+
+
+cite:shi-2007-first-au
+
+cite:needs-1989-calcul,jarvi-2008-devel-reaxf
+
+It looks like it worked pretty well for me!
+* org to org
+
+
+http://google.com
+
+mailto:jkitchin@andrew.cmu.edu
+
+
+
+one citation cite:shi-2007-first-au
+
+
+multi-citation cite:shi-2007-first-au,jarvi-2008-devel-reaxf,kondratyuk-2013
+
+
+pre and post text  [[cite:grimme-2006-semiem-gga][See::page 34]]
+
+
+Just pre text [[cite:marjolin-2015-therm-descr][See also]]
+
+#+BEGIN_SRC emacs-lisp
+(defun pandoc-cite-format (link contents info)
+  (if (-contains? org-ref-cite-types  (org-element-property :type link))
+      (cond
+       ;; link with description
+       ((org-element-property :contents-begin link)
+	(let* ((contents (buffer-substring
+			  (org-element-property :contents-begin link)
+			  (org-element-property :contents-end link)))
+	       (split (split-string contents "::"))
+	       (pre-text (nth 0 split))
+	       (post-text (nth 1 split)))
+	  (concat
+	   "[@" (org-element-property :path link)
+	   (when pre-text (concat ", " pre-text))
+	   (when post-text (concat ", " post-text))
+	   "]"
+	   )
+	  ))
+       ;; plain citations
+       (t
+	(concat "["
+	      (mapconcat (lambda (key) (concat "@" key))
+			 (split-string (org-element-property :path link) ",")
+			 "; ")
+	      "]")))
+    ;; not a cite link. just return the original link
+    (org-org-identity link contents info)))
+
+(org-export-define-derived-backend 'pandoc-org 'org
+  :translate-alist '((link . pandoc-cite-format)))
+
+(find-file (org-export-to-file 'pandoc-org "org-to-org.org"))
+#+END_SRC
+
+#+RESULTS:
+
+
+
 * font-locking to make clickable links for pandoc citations
 
 
@@ -384,41 +572,61 @@ That is it for this post. We looked at:
 This barely scratches the surface of helm, but is already enough to do some useful things.
 
 
-* TODO More adventures in helm - more than one action
-We continue our exploration of helm and now consider how to have more than one action for a selection. When you press enter, helm runs the default action defined, but you can define more than one action, and choose which one to run. How do you know if there are multiple actions? Press C-z in helm and you will get a new helm buffer showing the actions. The first action is the default, and you can select the the actions with function keys, e.g. f1 is the first action, f2 is the second action, or you can select the action and press enter.
+* DONE More adventures in helm - more than one action
+  CLOSED: [2015-01-30 Fri 08:00]
+  :PROPERTIES:
+  :categories: emacs
+  :date:     2015/01/30 08:00:16
+  :updated:  2015/01/30 08:00:16
+  :END:
+We continue our [[http://kitchingroup.cheme.cmu.edu/blog/2015/01/24/Anatomy-of-a-helm-source/][exploration of helm]] and now consider how to have more than one action for a selection. When you press enter, helm runs the default action defined, but you can define more than one action, and choose which one to run. How do you know if there are multiple actions? Press C-z in helm and you will get a new helm buffer showing the actions. The first action is the default, and you can select the the actions with function keys, e.g. f1 is the first action, f2 is the second action, or you can select the action and press enter.
 
-The main difference in setting up multiple actions is that instead of a single function for action in the source definition, we provide a list of cons cells. Each action cons cell should have a descriptive string as the car that identifies the action. This will be shown in the helm buffer. The cdr should be the function to run on the candidate.
+The main difference in setting up multiple actions is that instead of a single function for action in the source definition, we provide a list of cons cells for the action element of the helm source. Each action cons cell should have a descriptive string as the car that identifies the action. This will be shown in the helm buffer. The cdr should be the function to run on the candidate. The function will be called with the selection, so the function must take one argument.
 
-Here is an example where we have two actions. The default action will just show us the email address of the selected candidates in a message box. The second action opens an email window and inserts the selected candidates in the To: field as a comma separated list.
+Here is an example where we have two actions. The default action will just show us the email address of the selected candidates in a message box. It will show as a list. The second action opens an email window and inserts the selected candidates in the To: field as a comma separated list. I use helm-selected-candidates in these functions instead of the just the current selected candidate so we can have multiple selections. I define the first function as a lambda function, and the second one as a defun to illustrate how to use both approaches. You can have as many actions as you want, so you could consider functions that open notes about the person, or open your contacts to look up a phone number, or functions with template emails you send often, etc...
 
+Now, you have these options to run those actions.
+
+1. Make a selection and press enter. That runs the first (and default) action to show you a message box.
+2. Make a selection and press C-z to see what actions are available. Select the action you want, and press enter.
+3. Make a selection and press F1 to run the default action, or F2 to run the second action.
+
+Here is our code.
 #+BEGIN_SRC emacs-lisp
 (setq data '(("John" . "john@email.com")
 	     ("Jim" . "jim@email.com")
 	     ("Jane" . "jane@email.com")
 	     ("Jill" . "jill@email.com")))
 
+
+(defun open-email (candidates)
+  "Compose an email to the candidates. Fill in the addresses and
+move point to the subject."
+  (compose-mail)
+  (message-goto-to)
+  (insert
+   (mapconcat
+    'identity
+    (helm-marked-candidates)
+    ","))
+  (message-goto-subject))
+
 (setq some-helm-source
       `((name . "HELM at the Emacs")
 	(candidates . ,data)
 	(action . (("show email address" . (lambda (candidate)
 					     (message-box
-					      "f1: %s"
+					      "selected: %s"
 					      (helm-marked-candidates))))
-		   ("send email" . (lambda (candidate)
-				     (compose-mail)
-				     (message-goto-to)
-				     (insert
-				      (mapconcat
-				       'identity
-				       (helm-marked-candidates)
-				       ","))))))))
+		   ("send email" . open-email)))))
 
 (helm :sources '(some-helm-source))
 #+END_SRC
 
 #+RESULTS:
-: f1: (john@email.com jane@email.com)
+: t
 
+Now, you can define multiple actions for your selection in helm!
 
 * TODO Handling multiple selections in helm
 The basic usage pattern of helm is you run a command which opens a buffer of choices. You enter some text in the minibuffer which eliminates choices that do not match what you type in. You can select multiple choices by using C-spc, or M-a to mark them all. When you press enter, the current selection is sent to the default action defined. The action is a function that does something. Here, we explore writing the action function to do what we want. The reason this is somewhat tricky is that when you mark an item in helm, the "cursor" moves to the next item, which means when you press enter it may be possible that the current highlighted item is not part of the items you have marked. If your action will perform a delete action, for example, you may have wanted to delete the marked items, and /not/ the current selection! So, what we need is a way to get what we want.
@@ -459,7 +667,7 @@ A little more verbose method might be like this. Here we just pull out the lambd
 (defun some-action (candidate)
   (message-box "single2 working on %s" candidate))
 
-(defun some-actions (&optional candidate)
+(defun some-actions (candidate)
   (mapc 'some-action (helm-marked-candidates)))
 
 (helm :sources '(((name . "HELM")
@@ -468,7 +676,7 @@ A little more verbose method might be like this. Here we just pull out the lambd
 #+END_SRC
 
 #+RESULTS:
-| 1 | 2 | 3 | 4 |
+| 1 | 2 | 3 |
 
 * TODO helm actions when there is no match
 
