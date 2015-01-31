@@ -1,3 +1,232 @@
+* DONE Turn an ISBN to a bibtex entry
+  CLOSED: [2015-01-31 Sat 15:48]
+  :PROPERTIES:
+  :categories: bibtex
+  :date:     2015/01/31 15:48:39
+  :updated:  2015/01/31 15:50:22
+  :END:
+Occasionally, I need a bibtex entry for a book. Books are often identified by an ISBN number. Similar to using Crossref to get metadata about a DOI, we can use a web service to get metadata about an ISBN. From that, we might be able to construct a bibtex entry.
+
+Here is an example of what we can get for ISBN 9780309095211. It does not seem to matter if there are dashes in the ISBN or not.
+
+#+BEGIN_SRC emacs-lisp
+(with-current-buffer
+	(url-retrieve-synchronously
+"http://xisbn.worldcat.org/webservices/xid/isbn/9780309095211?method=getMetadata&format=json&fl=*")
+      (buffer-substring url-http-end-of-headers (point-max)))
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+
+{
+ "stat":"ok",
+ "list":[{
+	"url":["http://www.worldcat.org/oclc/224969280?referer=xid"],
+	"publisher":"National Academies Press",
+	"form":["BC"],
+	"lccn":["2006016786"],
+	"lang":"eng",
+	"city":"Washington, D.C.",
+	"author":"Committee on the Guide to Recruiting and Advancing Women Scientists and Engineers in Academia, Committee on Women in Science and Engineering, Policy and Global Affairs, National Research Council of the National Academies.",
+	"ed":"[Online-Ausg.]",
+	"year":"2006",
+	"isbn":["9780309095211"],
+	"title":"To recruit and advance women students and faculty in science and engineering",
+	"oclcnum":["224969280",
+	 "70060944",
+	 "756709329",
+	 "804792476",
+	 "817950524",
+	 "833420290",
+	 "836338922",
+	 "704551455"]}]}
+#+end_example
+
+We get a nice json data string back. We can parst that to get an actual data structure.
+
+#+BEGIN_SRC emacs-lisp  :results value code
+(with-current-buffer
+	(url-retrieve-synchronously
+"http://xisbn.worldcat.org/webservices/xid/isbn/9780309095211?method=getMetadata&format=json&fl=*")
+      (json-read-from-string
+        (buffer-substring url-http-end-of-headers (point-max))))
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC emacs-lisp
+((list .
+       [((oclcnum .
+		  ["224969280" "70060944" "756709329" "804792476" "817950524" "833420290" "836338922" "704551455"])
+	 (title . "To recruit and advance women students and faculty in science and engineering")
+	 (isbn .
+	       ["9780309095211"])
+	 (year . "2006")
+	 (ed . "[Online-Ausg.]")
+	 (author . "Committee on the Guide to Recruiting and Advancing Women Scientists and Engineers in Academia, Committee on Women in Science and Engineering, Policy and Global Affairs, National Research Council of the National Academies.")
+	 (city . "Washington, D.C.")
+	 (lang . "eng")
+	 (lccn .
+	       ["2006016786"])
+	 (form .
+	       ["BC"])
+	 (publisher . "National Academies Press")
+	 (url .
+	      ["http://www.worldcat.org/oclc/224969280?referer=xid"]))])
+ (stat . "ok"))
+#+END_SRC
+
+Ok, so we should check that stat is ok, then build the bibtex entry. Accessing the metadata below seems pretty hacky; but it works, and I don't understand the deep nesting of results, and there seems to be a vector in there.
+
+#+BEGIN_SRC emacs-lisp
+(let* ((results  (with-current-buffer
+		    (url-retrieve-synchronously
+		     "http://xisbn.worldcat.org/webservices/xid/isbn/9780309095211?method=getMetadata&format=json&fl=*")
+		  (json-read-from-string
+		   (buffer-substring url-http-end-of-headers (point-max)))))
+       (status (cdr (nth 1 results)))
+       (metadata (aref (cdar results) 0)))
+
+  (unless (string= "ok" status)
+    (error "Status is %s" status))
+
+  (concat "@book{,\n"
+	  (mapconcat (lambda (x)
+		       (format "  %s={%s}," (car x) (cdr x)))
+		     metadata "\n")
+	  "}\n"))
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+@book{,
+  oclcnum={[224969280 70060944 756709329 804792476 817950524 833420290 836338922 704551455]},
+  title={To recruit and advance women students and faculty in science and engineering},
+  isbn={[9780309095211]},
+  year={2006},
+  ed={[Online-Ausg.]},
+  author={Committee on the Guide to Recruiting and Advancing Women Scientists and Engineers in Academia, Committee on Women in Science and Engineering, Policy and Global Affairs, National Research Council of the National Academies.},
+  city={Washington, D.C.},
+  lang={eng},
+  lccn={[2006016786]},
+  form={[BC]},
+  publisher={National Academies Press},
+  url={[http://www.worldcat.org/oclc/224969280?referer=xid]},}
+#+end_example
+
+That looks good to me. Let us finally wrap it into a function that will take an ISBN and bibtex file interactively, create a bibtex entry, and insert it if there is not an entry with a key like that already. If we have selected region, lI should note this code uses some functionality from my org-ref package (and when I am done here, I am adding it to the doi-utils package inside org-ref). This is a fancy function, built from the experience I have from writing doi-utils.
+
+#+BEGIN_SRC emacs-lisp
+(defun isbn-to-bibtex (isbn bibfile)
+  "Get bibtex entry for ISBN and insert it into BIBFILE unless an
+entry with the generated key already exists in the file."
+  (interactive
+   (list
+    (read-input
+     "ISBN: "
+     ;; now set initial input
+     (cond
+      ;; If region is active and it starts with a number, we use it
+      ((and  (region-active-p)
+	     (s-match "^[0-9]" (buffer-substring (region-beginning) (region-end))))
+       (buffer-substring (region-beginning) (region-end)))
+      ;; if first entry in kill ring starts with a number assume it is an isbn
+      ;; and use it as the guess
+      ((if (s-match "^[0-9]" (car kill-ring))
+	   (car kill-ring)))
+      ;; type or paste it in
+      (t
+       nil)))
+    (ido-completing-read
+     "Bibfile: "
+     (append (f-entries "." (lambda (f) (f-ext? f "bib")))
+	     org-ref-default-bibliography))))
+
+  (let* ((results (with-current-buffer
+		      (url-retrieve-synchronously
+		       (format
+			"http://xisbn.worldcat.org/webservices/xid/isbn/%s?method=getMetadata&format=json&fl=*"
+			isbn))
+		    (json-read-from-string
+		     (buffer-substring url-http-end-of-headers (point-max)))))
+	 (status (cdr (nth 1 results)))
+	 (metadata (aref (cdar results) 0))
+	 (new-entry)
+	 (new-key))
+
+    ;; check if we got something
+    (unless (string= "ok" status)
+      (error "Status is %s" status))
+
+    ;; construct an alphabetically sorted bibtex entry. I assume ISBN numbers go
+    ;; with book entries.
+    (setq new-entry
+	  (concat "\n@book{,\n"
+		  (mapconcat
+		   'identity
+		   (loop for field in (-sort 'string-lessp (mapcar 'car metadata))
+			 collect
+			 (format "  %s={%s}," field (cdr (assoc field metadata))))
+		   "\n")
+		  "\n}\n"))
+
+    ;; build entry in temp buffer to get the key so we can check for duplicates
+    (setq new-entry (with-temp-buffer
+		      (insert new-entry)
+		      (org-ref-clean-bibtex-entry)
+		      (setq new-key (bibtex-key-in-head))
+		      (buffer-string)))
+    (find-file bibfile)
+    (goto-char (point-min))
+    (when (search-forward new-key nil t)
+      (beep)
+      (setq new-key (read-input
+		     (format  "%s already exists. Enter new key (C-g to cancel): " new-key)
+		     new-key)))
+    (goto-char (point-max))
+    (insert new-entry)
+    ;; set key. It is simplest to just replace it, even if it is the same.
+    (bibtex-beginning-of-entry)
+    (re-search-forward bibtex-entry-maybe-empty-head)
+    (if (match-beginning bibtex-key-in-head)
+	(delete-region (match-beginning bibtex-key-in-head)
+		       (match-end bibtex-key-in-head)))
+    (insert new-key)
+    (bibtex-fill-entry)
+    (save-buffer)))
+#+END_SRC
+
+#+RESULTS:
+: isbn-to-bibtex
+
+That is it, for the one ISBN I have tested it on, I get a nicely sorted bibtex entry in the file I select! Hopefully that means no more tedious bibtex entry entering for books! If you use org-ref, just update to the latest version and you should be able to use this function.
+
+Now, back to that proposal I am writing that needs a lot of citations to books that are not in my bibtex file yet, but will be soon ;)
+
+
+
+* Count headlines in current level
+
+
+#+BEGIN_SRC emacs-lisp
+(save-restriction
+  (org-narrow-to-subtree)
+  (1- (length
+   (org-element-map
+       (org-element-parse-buffer)
+       'headline
+     (lambda (x) 1)))))
+#+END_SRC
+
+#+RESULTS:
+: 5
+
+** one
+** two
+*** three
+**** four
+** five
+
 * org-element-explorer
   :PROPERTIES:
   :CATEGORY: emacs
@@ -79,7 +308,7 @@ Another trick is we don't want to remessage our selves constantly, so we will st
 An idle timer does not do what we want here. Apparently, idle refers to the cursor, not the mouse. I use a regular timer here, and run it every 1/2 second. I don't notice any performance issues with this.
 
 #+BEGIN_SRC emacs-lisp
-(defvar org-ref-last-mouse-pos nil
+efvar org-ref-last-mouse-pos nil
  "Stores last mouse position for use in `org-ref-mouse-message'.")
 
 (defun can-move-p ()
@@ -127,6 +356,10 @@ cite:shi-2007-first-au
 cite:needs-1989-calcul,jarvi-2008-devel-reaxf
 
 It looks like it worked pretty well for me!
+
+
+
+
 * org to org
 
 
