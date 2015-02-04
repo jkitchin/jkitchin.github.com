@@ -1,3 +1,156 @@
+* DONE Helm at the Emacs
+  CLOSED: [2015-02-04 Wed 08:47]
+  :PROPERTIES:
+  :categories: emacs,helm
+  :date:     2015/02/04 08:47:40
+  :updated:  2015/02/04 08:47:40
+  :END:
+I have written several ([[http://kitchingroup.cheme.cmu.edu/blog/2015/01/24/Anatomy-of-a-helm-source/][intro]], [[http://kitchingroup.cheme.cmu.edu/blog/2015/02/01/Handling-multiple-selections-in-helm/][multiple args]], [[http://kitchingroup.cheme.cmu.edu/blog/2015/02/03/helm-and-prefix-functions/][prefix args)]] times about using Helm in Emacs so far. Today, I want to share a way I use helm to get me where I want to be in Emacs for my daily activities. This came out of a desire to have single command that would give me a lot of options to open exactly the buffer/file I wanted when I need it. I call the command hotspots, and it is bound to f9 for me, so when I press f9 I get a helm buffer to select what I want from.
+
+So, what kinds of things do I want. First, I want to be able to open my mail, calendar, News feed or agenda from this command. Second, I have a list of hotspots I developed using the code at http://ergoemacs.org/emacs/emacs_hotkey_open_file_fast.html, which I want easy access to. Third, I want to be able to open any org-file in my agenda list. Fourth, any bookmark I have, or to set a bookmark. Fifth, I want recent files as candidates. There is certainly some redundancy in their, but that is ok, it gets me where I want to be.
+
+Here is the code that does that for me. There are six helm sources that provide candidates and actions.
+
+#+BEGIN_SRC emacs-lisp
+(defun hotspots ()
+  "helm interface to my hotspots, which includes my locations,
+org-files and bookmarks"
+  (interactive)
+  (helm :sources `(((name . "Mail and News")
+		    (candidates . (("Mail" . (lambda ()
+					       (if (get-buffer "*mu4e-headers*")
+						   (progn
+						     (switch-to-buffer "*mu4e-headers*")
+						     (delete-other-windows))
+
+						 (mu4e))))
+				   ("Calendar" . (lambda ()  (browse-url "https://www.google.com/calendar/render")))
+				   ("RSS" . elfeed)
+				   ("Agenda" . (lambda () (org-agenda "" "w")))))
+		    (action . (("Open" . (lambda (x) (funcall x))))))
+		   ((name . "My Locations")
+		    (candidates . (("master" . "~/Dropbox/org-mode/master.org")
+				   (".emacs.d" . "~/Dropbox/kitchingroup/jmax" )
+				   ("blog" . "~/blogofile-jkitchin.github.com/_blog/blog.org")
+				   ("ese" . "~/Dropbox/books/ese-book/ese.org" )
+				   ("passwords" . "~/Dropbox/org-mode/passwords.org.gpg")
+				   ("Pycse" . "~/Dropbox/books/pycse/pycse.org")
+				   ("references" . "~/Dropbox/bibliography/references.bib")
+				   ("notes" . "~/Dropbox/bibliography/notes.org")
+				   ("journal" . "~/Dropbox/org-mode/journal.org")
+				   ("tasks" . "~/Dropbox/org-mode/tasks.org")))
+		    (action . (("Open" . (lambda (x) (find-file x))))))
+
+		   ((name . "My org files")
+		    (candidates . ,(f-entries "~/Dropbox/org-mode"))
+		    (action . (("Open" . (lambda (x) (find-file x))))))
+		   helm-source-recentf
+		   helm-source-bookmarks
+		   helm-source-bookmark-set)))
+#+END_SRC
+
+Interesting to me is that there are not a lot of actions in here. I mostly use this command for navigation to various places. For example, I press f9, type meet, and I can quickly get to the meetings file in my agenda list, or I can type the first few letters of a student's name and open the org-file associated with them. Or I press f9 and go down an entry to open my calendar, etc... I find this enormously helpful because it opens these files no matter where I am in Emacs, and it relieves my mind from remembering where they are, or the keystrokes/commands to get to them.
+* test Rasmus link code
+from [[mu4e:msgid:87bnlcdj7d.fsf@gmx.us][Re: {O} Citations, continued]]
+
+#+BEGIN_SRC emacs-lisp
+
+(with-eval-after-load 'org
+  (require 'reftex-cite)
+
+  (defmacro rasmus/org-bib-add-type (type)
+    ;; TODO: maybe this can be made more effective?
+    ;; Seems to work OK...
+    `(org-add-link-type
+      ,type
+      'rasmus/org-bib-follow
+      ,(lambda (path description backend)
+	 (funcall 'rasmus/org-bib-format path description backend
+                  ;; cite defaults to textcite
+		  (if (equal type "cite") "textcite" type)))))
+
+  (mapc (lambda (type) (funcall 'rasmus/org-bib-add-type type))
+        '("cite" "textcite" "parentcite" "citeyear" "citeauthor"))
+
+  (defun rasmus/org-bib-follow (path)
+    "Find the pdf version of citation."
+    (let* ((stream (read (format "(%s)" path))))
+      (rasmus/find-lit (car head))))
+
+  (defun rasmus/find-lit (key)
+    "Open pdf file associated with KEY from `reftex-default-bibliography'."
+    (let* ((bib (file-name-directory (car reftex-default-bibliography)))
+           (file (concat bib path (concat "/" key ".pdf"))))
+      (when (file-exists-p file) (find-file file))))
+
+  (defun rasmus/org-bib-format (path description backend &optional type*)
+    "Format a org-link citation.
+
+ Support links of the type
+
+ [[type*:key :pre PRE :post POST :type TYPE**]]
+
+ Or
+
+ [[Key*:key][POST;PRE]]
+
+Based on John K's great post here:
+    http://permalink.gmane.org/gmane.emacs.orgmode/94575"
+    (let* ((key
+            ;; key is a single symbol by assumption
+            (and (string-match "\\` *\\([^ ]+\\) *" path)
+                 (prog1 (match-string 1 path)
+                   (setq path (replace-match "" nil nil path)))))
+           ;; generate plist
+           (data (read (format "(%s)"
+                               (replace-regexp-in-string
+                                "\\(:\\w+\\) \\([^:]+\\) ?" "\\1 \"\\2\" "
+                                path))))
+           (type (or (plist-get data :type) type* "textcite"))
+           (pre  (org-trim (or (plist-get data :pre)
+			       ;; support my "old" syntax
+			       (and description
+				    (cadr (split-string description ";"))) "")))
+	   (post (org-trim
+		  (or (funcall (lambda (txt)
+				 (and txt
+				      (let ((res (string-to-number txt)))
+					(if (zerop res) txt
+					  (concat (if (> (length txt) 1)  "pp." "p.") " " txt)))))
+			       (plist-get data :post))
+		      (and description
+			   (car (split-string description ";")))
+		      "")))
+	   (entry (or (save-window-excursion
+                        (bibtex-search-entry key t 0)
+                        (bibtex-parse-entry))
+                      (error (format "unknown key: %s" key))))
+           (author (or (reftex-format-citation entry "%2a") ""))
+           (year (or  (reftex-format-citation entry "%y") "")))
+      (if (org-export-derived-backend-p backend 'latex)
+          (format "\\%s[%s][%s]{%s}" type pre post key)
+        ;; TODO: This should probably be wrapped in <cite>.</cite> with html...
+        (cl-case (intern type)
+          (parencite
+           (format "(%s %s %s %s)"
+                   pre author
+                   (or (and (org-string-nw-p year) (concat year ", ")) "")
+                   post))
+          (citeyear
+           (format "%s %s %s" pre year post))
+          (citeauthor
+           (format "%s %s %s" pre author post))
+          (fullcite
+           (reftex-format-citation entry reftex-cite-view-format))
+          (t ;; textcite
+           (format "%s (%s%s%s)"
+                   author
+                   (and (org-string-nw-p pre) (concat pre " "))
+                   year
+                   (and (org-string-nw-p post) (concat ", " post)))))))))
+
+
+#+END_SRC
 * Extending link syntax with attributes
 
 
