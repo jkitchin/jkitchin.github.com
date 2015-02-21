@@ -80,6 +80,396 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Making-org-mode-links-to-files-in-Emacs-packages"></div>
+      <h2 class="blog_post_title"><a href="/blog/2014/01/19/Making-org-mode-links-to-files-in-Emacs-packages/" rel="bookmark" title="Permanent Link to Making org-mode links to files in Emacs packages">Making org-mode links to files in Emacs packages</a></h2>
+      <p><small><span class="blog_post_date">Posted January 19, 2014 at 12:42 PM</span> | categories: 
+        <span class="blog_post_categories"><a href='/blog/category/org-mode/'>org-mode</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2014/01/19/Making-org-mode-links-to-files-in-Emacs-packages#disqus_thread">View Comments</a>
+      <p><small><span class="blog_post_date">Updated January 19, 2014 at 03:27 PM</span>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+Today I will make a new org-mode link that lets me make links to files inside of Emacs packages. These files may be installed in different places on different systems (e.g. in the system directory, in ELPA directories, or in custom directories), so we need a way to construct paths to them. The application of this is eventually I hope to have some emacs packages of documentation, and I would like to have links between the packages that work no matter how they are installed.
+</p>
+
+<p>
+I want a syntax that looks like pkg:rainbow-mode==rainbow-mode-pkg.el. We will have a function that parses that to get the package, and the path to the file in the package. Emacs has a function to find the path to the file that defines a library. I chose == because it seems unlikely that would be a string in a package or path. 
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(locate-library <span style="color: #228b22;">"rainbow-mode"</span>)
+</pre>
+</div>
+
+<pre class="example">
+c:/Users/jkitchin/Dropbox/kitchingroup/jmax/elpa/rainbow-mode-0.9/rainbow-mode.elc
+</pre>
+
+<p>
+We can use that to construct the path to where we want. Say we want the file named "rainbow-mode-pkg.el"
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(expand-file-name
+ <span style="color: #228b22;">"rainbow-mode-pkg.el"</span>
+ (file-name-directory (locate-library <span style="color: #228b22;">"rainbow-mode"</span>)))
+</pre>
+</div>
+
+<pre class="example">
+c:/Users/jkitchin/Dropbox/kitchingroup/jmax/elpa/rainbow-mode-0.9/rainbow-mode-pkg.el
+</pre>
+
+<p>
+In org-mode links, the link path gets passed to a function. We can split the string like this to get the package and relative path we are referring to.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(split-string <span style="color: #228b22;">"rainbow-mode==rainbow-mode-pkg.el"</span> <span style="color: #228b22;">"=="</span>)
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="left" />
+
+<col  class="left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="left">rainbow-mode</td>
+<td class="left">rainbow-mode-pkg.el</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+That is all of the pieces we need to construct the link function. Here it is.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(org-add-link-type 
+ <span style="color: #228b22;">"pkg"</span>
+ (<span style="color: #8b0000;">lambda</span> (path)
+   (<span style="color: #8b0000;">let</span> ((pkg) (relpath)
+         (splitpath (split-string path <span style="color: #228b22;">"=="</span>)))
+     (setq pkg (car splitpath))
+     (setq relpath (nth 1 splitpath))
+     (find-file (expand-file-name 
+                 relpath 
+                 (file-name-directory (locate-library pkg)))))))
+</pre>
+</div>
+
+<p>
+pkg:rainbow-mode==rainbow-mode-pkg.el  
+</p>
+
+<p>
+This works too, but you have to use auctex-pkg as the package name. 
+</p>
+
+<p>
+pkg:auctex-pkg==doc/intro.texi 
+</p>
+
+<p>
+I think that is because locate-library looks for the <i>file</i> a library is defined in. That is not quite the same as the root directory of a package. It turns out to be a little more complicated to find that. Below is some code I hacked up looking at the package.el code. First let us examine some pieces.
+</p>
+
+<p>
+This gives us information about an installed package. 
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(assq 'auctex package-alist)
+</pre>
+</div>
+
+<pre class="example">
+(auctex . [(11 87 2) nil Integrated environment for *TeX*])
+</pre>
+
+<p>
+We can get the version of the package like this
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(package-version-join (package-desc-vers (cdr (assq 'auctex package-alist))))
+</pre>
+</div>
+
+<pre class="example">
+11.87.2
+</pre>
+
+<p>
+Ok, finally, we get the directory where it is installed like this:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(package--dir <span style="color: #228b22;">"auctex"</span> <span style="color: #228b22;">"11.87.2"</span>)
+</pre>
+</div>
+
+<pre class="example">
+c:/Users/jkitchin/Dropbox/kitchingroup/jmax/elpa/auctex-11.87.2
+</pre>
+
+<p>
+Note that in some places we use a package symbol, and in other places a string name.Putting that together, we have this block to get the install-dir of a package. If we have a package symbol we can get the path like this.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">let*</span> ((pkg 'auctex)
+       (pkg-name (symbol-name pkg)) <span style="color: #ff0000; font-weight: bold;">; </span><span style="color: #ff0000; font-weight: bold;">convert symbol to string</span>
+       (desc (cdr (assq pkg package-alist)))
+       (version (package-version-join (package-desc-vers desc)))
+       (pkg-dir (package--dir pkg-name version)))
+  pkg-dir)
+</pre>
+</div>
+
+<pre class="example">
+c:/Users/jkitchin/Dropbox/kitchingroup/jmax/elpa/auctex-11.87.2
+</pre>
+
+<p>
+Usually, we will have a string though. We just have to make it a symbol with the <code>intern</code> function. 
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(setq pkg-name <span style="color: #228b22;">"auctex"</span>)
+(setq pkg (intern pkg-name))
+(setq desc (cdr (assq pkg package-alist)))
+</pre>
+</div>
+
+<pre class="example">
+[(11 87 2) nil "Integrated environment for *TeX*"]
+</pre>
+
+<p>
+Now, we have all the pieces to get the path from a package name in a string:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">let*</span> ((pkg-name <span style="color: #228b22;">"auctex"</span>)
+       (pkg (intern pkg-name))
+       (desc (cdr (assq pkg package-alist)))
+       (version (package-version-join (package-desc-vers desc)))
+       (pkg-dir (package--dir pkg-name version)))
+  pkg-dir)
+</pre>
+</div>
+
+<pre class="example">
+c:/Users/jkitchin/Dropbox/kitchingroup/jmax/elpa/auctex-11.87.2
+</pre>
+
+<p>
+Let us use that to rewrite the link, and address a few other limitations. We will  use <code>org-open-link-from-string</code> so we can use org-link syntax in the path part of the link, e.g. to open a file at a line, or headline. Here is our new link.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(org-add-link-type 
+ <span style="color: #228b22;">"pkg2"</span>
+ (<span style="color: #8b0000;">lambda</span> (path)
+   (<span style="color: #8b0000;">let</span> ((pkg) (relpath) (pkg-dir) (link-string)
+         (splitpath (split-string path <span style="color: #228b22;">"=="</span>)))
+     (setq pkg-name (car splitpath))
+     (setq relpath (nth 1 splitpath))
+     (setq pkg-dir (<span style="color: #8b0000;">let*</span> ((pkg-symbol (intern pkg-name)) <span style="color: #ff0000; font-weight: bold;">;</span><span style="color: #ff0000; font-weight: bold;">convert string to pkg                   </span>
+                          (desc (cdr (assq pkg-symbol package-alist)))
+                          (version (package-version-join (package-desc-vers desc)))
+                          (pkg-dir (package--dir pkg-name version)))
+                     pkg-dir))
+     (setq link-string (format <span style="color: #228b22;">"[[file:%s/%s]]"</span> pkg-dir relpath))
+     (message <span style="color: #228b22;">"link: %s"</span> link-string)
+     (org-open-link-from-string link-string))))
+</pre>
+</div>
+
+<p>
+Now, we can do all of these: 
+pkg2:auctex==doc/faq.texi   
+pkg2:auctex==doc/faq.texi::should 
+pkg2:auctex==doc/faq.texi::10 
+<pre>pkg2:auctex==doc/faq.texi::first place</pre> 
+</p>
+
+<p>
+Awesome!
+</p>
+
+<p>
+Just for fun, I made a toy package called <code>package1</code> in my elpa directory. That package has an org file in it. Now, I can test out the following links:
+</p>
+
+<p>
+pkg2:package1==intro.org 
+</p>
+
+<p>
+pkg2:package1==intro.org::*Miscellaneous
+</p>
+
+<p>
+<pre>pkg2:package1==intro.org::*subheading with words</pre> 
+</p>
+
+<p>
+pkg2:package1==intro.org::#install-section
+</p>
+
+<p>
+pkg2:package1==intro.org::intro-target
+</p>
+
+<p>
+They all work! That works for packages installed via the package manager. However, when I try this with my custom installed org-mode, it does not work. If I run (describe-package 'org) I see that org is a build in package, and that there is an alternate version available. It does not point to my org-installation.
+</p>
+
+<p>
+pkg2:org==doc/library-of-babel.org 
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(princ (locate-library <span style="color: #228b22;">"org"</span>))
+</pre>
+</div>
+
+<pre class="example">
+c:/Users/jkitchin/Dropbox/kitchingroup/jmax/org-mode/lisp/org.elc
+</pre>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(princ (package-installed-p <span style="color: #228b22;">"org"</span>))
+</pre>
+</div>
+
+<pre class="example">
+nil
+</pre>
+
+<p>
+Obviously, we need to check if the package is installed via package.el, or if we should look somewhere else. Let us take a final stab at this. Let us review the challenge. 
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(print (locate-library <span style="color: #228b22;">"auctex"</span>))
+(print (locate-library <span style="color: #228b22;">"auctex-autoloads"</span>))
+</pre>
+</div>
+
+<pre class="example">
+nil
+
+"c:/Users/jkitchin/Dropbox/kitchingroup/jmax/elpa/auctex-11.87.2/auctex-autoloads.el"
+</pre>
+
+<p>
+We may have to check for a package-autoloads. Ww can wrap that in an <code>or</code> macro, which will return the first non-nil result.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">let</span> ((pkg-name <span style="color: #228b22;">"auctex"</span>))
+   (file-name-directory 
+    (or (locate-library pkg-name)
+        (locate-library (format <span style="color: #228b22;">"%s-autoloads"</span> pkg-name)))))
+</pre>
+</div>
+
+<pre class="example">
+c:/Users/jkitchin/Dropbox/kitchingroup/jmax/elpa/auctex-11.87.2/
+</pre>
+
+<p>
+Doing this on the org package shows that this points to a lisp directory. 
+</p>
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">let</span> ((pkg-name <span style="color: #228b22;">"org"</span>))
+   (file-name-directory 
+    (or (locate-library pkg-name)
+        (locate-library (format <span style="color: #228b22;">"%s-autoloads"</span> pkg-name)))))
+</pre>
+</div>
+
+<pre class="example">
+c:/Users/jkitchin/Dropbox/kitchingroup/jmax/org-mode/lisp/
+</pre>
+
+<p>
+So, let's try a final link function.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(org-add-link-type 
+ <span style="color: #228b22;">"pkg3"</span>
+ (<span style="color: #8b0000;">lambda</span> (path)
+   (<span style="color: #8b0000;">let</span> ((pkg-name) (relpath)(pkg-dir) (link-string)
+         (splitpath (split-string path <span style="color: #228b22;">"=="</span>)))
+     (setq pkg-name (car splitpath))
+     (setq relpath (nth 1 splitpath))
+     (setq pkg-dir (file-name-directory 
+                    (or (locate-library pkg-name)
+                        (locate-library (format <span style="color: #228b22;">"%s-autoloads"</span> pkg-name)))))
+(setq link-string (format <span style="color: #228b22;">"[[file:%s/%s]]"</span> pkg-dir relpath))
+     (message <span style="color: #228b22;">"link: %s"</span> link-string)
+     (org-open-link-from-string link-string))))
+</pre>
+</div>
+
+<p>
+Now, we just have to make sure to use the right relative path. This link opens up an org-file in my installed version of org-mode: <pre>pkg3:org==../doc/library-of-babel.org</pre> 
+</p>
+
+<p>
+I don't know if there is a more clever way to create these links. There are two parts to them: 1) the package, and 2) the relative path. The link syntax isn't that rich to do it without parsing the linkpath.
+</p>
+<p>Copyright (C) 2014 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2014/01/19/Making-org-mode-links-to-files-in-Emacs-packages.org">org-mode source</a><p><p>Org-mode version = 8.2.5f</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2014/01/19/Making-org-mode-links-to-files-in-Emacs-packages#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Send-email-to-a-list-of-users"></div>
       <h2 class="blog_post_title"><a href="/blog/2014/01/13/Send-email-to-a-list-of-users/" rel="bookmark" title="Permanent Link to Send email to a list of users">Send email to a list of users</a></h2>
       <p><small><span class="blog_post_date">Posted January 13, 2014 at 06:41 PM</span> | categories: 
@@ -484,196 +874,6 @@ nil</div>
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2014/01/01/A-function-to-save-an-org-file-for-submitting-assignments-in-org-mode#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Interactive-quizzes-with-feedback-in-org-mode"></div>
-      <h2 class="blog_post_title"><a href="/blog/2014/01/01/Interactive-quizzes-with-feedback-in-org-mode/" rel="bookmark" title="Permanent Link to Interactive quizzes with feedback in org-mode">Interactive quizzes with feedback in org-mode</a></h2>
-      <p><small><span class="blog_post_date">Posted January 01, 2014 at 12:58 PM</span> | categories: 
-        <span class="blog_post_categories"><a href='/blog/category/org-mode/'>org-mode</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2014/01/01/Interactive-quizzes-with-feedback-in-org-mode#disqus_thread">View Comments</a>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<div id="table-of-contents">
-<h2>Table of Contents</h2>
-<div id="text-table-of-contents">
-<ul>
-<li><a href="#sec-1">1. What is 2 + 4?</a></li>
-<li><a href="#sec-2">2. Lets make a custom link for this</a></li>
-<li><a href="#sec-3">3. Storing quiz answers and number of attempts</a></li>
-<li><a href="#sec-4">4. Using inline tasks instead of headings</a></li>
-<li><a href="#sec-5">5. Concluding thoughts</a></li>
-</ul>
-</div>
-</div>
-
-<p>
-I have been exploring ways to facilitate learning and grading. One way I like is to provide quizzes inline with text
-Here are some examples of "interactive" quizzes with feedback to the user in org-mode. The principle idea is to use a headline for the question, and use properties to hold the answer. The answers are coded into links that run lisp code to check if the link text matches the correct answer. The properties are folded, so you have to willfully cheat to look at the answer. For getting instant feedback, this isn't such an issue. These aren't for formal assessment, but for knowledge checkpoints in active learning.
-</p>
-
-<p>
-Blog alert: The links may only work in the actual org-file in Emacs, they will not function in html.  
-</p>
-
-<p>
-Here is an example in a subheading. These links play an amusing sound (crowd cheers for correct answer, a buzzer for a wrong answer). The sounds are stored locally with the file. This gives students immediate feedback on their answer. These might be incorporated into reading assignments.
-</p>
-
-<div id="outline-container-sec-1" class="outline-2">
-<h2 id="sec-1"><span class="section-number-2">1</span> What is 2 + 4?</h2>
-<div class="outline-text-2" id="text-1">
-<p>
-a) <pre>elisp:(if (string= "4" (org-entry-get (point) "CORRECT-ANSWER"))  (play-sound-file "sounds/99636__tomlija__small-crowd-yelling-yeah.wav" 0.91 nil) (play-sound-file "sounds/fail-buzzer-01.wav" 0.91 nil))</pre> 
-</p>
-
-<p>
-b) <pre>elisp:(if (string= "6" (org-entry-get (point) "CORRECT-ANSWER"))  (play-sound-file "sounds/99636__tomlija__small-crowd-yelling-yeah.wav" 0.91 nil) (play-sound-file "sounds/fail-buzzer-01.wav" 0.91 nil))</pre> 
-</p>
-
-<p>
-c) <pre>elisp:(if (string= "-2" (org-entry-get (point) "CORRECT-ANSWER"))  (play-sound-file "sounds/99636__tomlija__small-crowd-yelling-yeah.wav" 0.91 nil) (play-sound-file "sounds/fail-buzzer-01.wav" 0.91 nil))</pre> 
-</p>
-</div>
-</div>
-<div id="outline-container-sec-2" class="outline-2">
-<h2 id="sec-2"><span class="section-number-2">2</span> Lets make a custom link for this</h2>
-<div class="outline-text-2" id="text-2">
-<p>
-Hand coding the links isn't very convenient. Let us write an org-link function that is more convenient. This new function will also record the number of correct and incorrect attempts. You could hard code some sound into them, but I did not do that here.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(org-add-link-type 
- <span style="color: #228b22;">"ans"</span> 
- (<span style="color: #8b0000;">lambda</span> (path) 
-   (<span style="color: #8b0000;">let*</span> ((correct-answer (org-entry-get (point) <span style="color: #228b22;">"CORRECT-ANSWER"</span>))
-          (ncorrect (org-entry-get (point) <span style="color: #228b22;">"NUM-CORRECT"</span>))
-          (num-correct (<span style="color: #8b0000;">if</span> ncorrect (string-to-number ncorrect) 0))
-          (nincorrect (org-entry-get (point) <span style="color: #228b22;">"NUM-INCORRECT"</span>))
-          (num-incorrect (<span style="color: #8b0000;">if</span> nincorrect (string-to-number nincorrect) 0)))
-     (<span style="color: #8b0000;">if</span> (string= path correct-answer) 
-         (<span style="color: #8b0000;">progn</span>
-          (org-entry-put (point) <span style="color: #228b22;">"NUM-CORRECT"</span> (number-to-string (+ num-correct 1)))
-          (message <span style="color: #228b22;">"correct"</span>))
-       (org-entry-put (point) <span style="color: #228b22;">"NUM-INCORRECT"</span> (number-to-string (+ num-incorrect 1)))
-       (message <span style="color: #228b22;">"incorrect"</span>)))))
-</pre>
-</div>
-
-<p>
-That function was a bit trickier than I thought it would be. First, I used let* because the first time you click on a link the correct answer counters may not exist, so getting the property would return nil. If it is nil, then we should initialize to 0. If it is not nil, we need to convert the string that is returned to an integer so we can add to it later. Then, we need to convert that integer back to a string to store it as a property, otherwise it is stored as some strange control character. 
-</p>
-
-<p>
-Now, we can put our question in.
-question: Is 3 greater than 2?
-</p>
-
-<p>
-Here are the new links:  <pre>ans:yes</pre> <pre>ans:no</pre> 
-</p>
-
-
-<p>
-That function goes along way to making it pretty easy to write the answers. One limitation here is that you can only put one question per section. We address that later. It is still easy to cheat if you want. We could do a few things to make that harder. One idea would be to encrypt the answers, and compare the hash of the answers. Another is to just record what was clicked on, and then grade it later. In the next section we try that out.
-</p>
-</div>
-</div>
-<div id="outline-container-sec-3" class="outline-2">
-<h2 id="sec-3"><a id="ID-fa6cc63f-e2da-47a7-9721-cb970dde335e" name="ID-fa6cc63f-e2da-47a7-9721-cb970dde335e"></a><span class="section-number-2">3</span> Storing quiz answers and number of attempts</h2>
-<div class="outline-text-2" id="text-3">
-
-<p>
-Here, we store the answer, and number of attempts. Students won't get feedback from this approach, but they cannot cheat either. They could just type answers in to the org-file, but this approach is like a Scantron multiple choice exam that could be automatically graded later. You could use something like this as an electronic clicker to quickly assess everyone's understanding of some concepts.
-</p>
-
-<p>
-Here is our new link function.
-</p>
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(org-add-link-type 
- <span style="color: #228b22;">"ans2"</span> 
- (<span style="color: #8b0000;">lambda</span> (path) 
-   (org-entry-put (point) <span style="color: #228b22;">"ANSWER"</span> path)
-   (<span style="color: #8b0000;">let*</span> ((nattempts (org-entry-get (point) <span style="color: #228b22;">"NUM-ATTEMPTS"</span>))
-          (num-attempts (<span style="color: #8b0000;">if</span> nattempts (string-to-number nattempts) 0)))
-     (org-entry-put (point) <span style="color: #228b22;">"NUM-ATTEMPTS"</span> (number-to-string (+ num-attempts 1))))
-   (message <span style="color: #228b22;">"You selected %s for your answer"</span> path)))
-</pre>
-</div>
-
-<p>
-And now a question: Is 3 greater than 2?
-<pre>ans2:yes</pre> <pre>ans2:no</pre> 
-</p>
-
-<p>
-This way works very well. It might also be a good idea to give each question a unique id (org-id-get-create) so you can collect specific results. 
-</p>
-</div>
-</div>
-<div id="outline-container-sec-4" class="outline-2">
-<h2 id="sec-4"><span class="section-number-2">4</span> Using inline tasks instead of headings</h2>
-<div class="outline-text-2" id="text-4">
-<p>
-If you were integrating these into a book, it would be inconvenient to use headings because they would mess up the outline. We can use inline tasks instead.
-</p>
-
-<div class="inlinetask">
-<b>Is 3 greater than 2?</b><br  />
-<p>
-<pre>ans2:yes</pre> <pre>ans2:no</pre> 
-</p>
-</div>
-
-<p>
-This adds some additional lines, but does not change the heading level. We can put multiple questions in then.
-</p>
-
-<div class="inlinetask">
-<b>What is 4*4?</b><br  />
-<p>
-<pre>ans2:16</pre> <pre>ans2:18</pre> <pre>ans2:8</pre> 
-</p>
-</div>
-
-<p>
-Interesing, I noticed in this last example that a link path must have at least two characters to be automatically recognized by org-mode. I had to put double square brackets to make it a link!
-</p>
-</div>
-</div>
-<div id="outline-container-sec-5" class="outline-2">
-<h2 id="sec-5"><span class="section-number-2">5</span> Concluding thoughts</h2>
-<div class="outline-text-2" id="text-5">
-<p>
-This seems like a pretty promising approach to getting structured input from students. You would have to invest some time training them to use emacs and org-mode, and not modify the file in ways they are not supposed to.  You would also have to invest some time in writing analysis code to collect all the answers and analyze them somehow. I do not think that would be too hard though, and the payoff could be large. By giving students quick feedback they could have a better understanding of what they know, and might ask better questions. This could be a useful approach to active learning activities that students work on while reading.
-</p>
-</div>
-</div>
-<p>Copyright (C) 2014 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2014/01/01/Interactive-quizzes-with-feedback-in-org-mode.org">org-mode source</a><p>
-
-    </div>
-  </div>
-</article>
-
-
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2014/01/01/Interactive-quizzes-with-feedback-in-org-mode#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="../25">« Previous Page</a>
   --  
  <a href="../27">Next Page »</a>
@@ -714,11 +914,11 @@ This seems like a pretty promising approach to getting structured input from stu
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2015/02/20/org-ref-meets-hydra/">org-ref meets hydra</a></li>
       <li><a href="/blog/2015/02/05/Extending-the-org-mode-link-syntax-with-attributes/">Extending the org-mode link syntax with attributes</a></li>
       <li><a href="/blog/2015/02/04/Helm-at-the-Emacs/">Helm at the Emacs</a></li>
       <li><a href="/blog/2015/02/03/helm-and-prefix-functions/">helm and prefix functions</a></li>
       <li><a href="/blog/2015/02/02/helm-actions-when-there-is-no-match/">helm actions when there is no match</a></li>
-      <li><a href="/blog/2015/02/01/Handling-multiple-selections-in-helm/">Handling multiple selections in helm</a></li>
     </ul>
   </section>
 
