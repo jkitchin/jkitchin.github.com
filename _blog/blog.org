@@ -1,3 +1,138 @@
+* DONE org-mode links meet hydra
+  CLOSED: [2015-02-22 Sun 19:06]
+  :PROPERTIES:
+  :categories: hydra,emacs,orgmode
+  :date:     2015/02/22 19:06:41
+  :updated:  2015/02/22 19:06:41
+  :END:
+I have played with a lot of options to give org-mode links extra functionality. Here are a few of the ideas I have looked at so far.
+
+1. [[http://kitchingroup.cheme.cmu.edu/blog/2013/10/21/Enabling-right-clicks-in-org-mode-links/][Enabling right clicks on links]]
+2. A home made minibuffer menu in org-ref
+3. A helm buffer in org-ref
+
+Here, I want to explore a hydra menu for a link. The idea is pretty simple, we need functions that do something with the link at point, and a hydra interface to call them. This turned out to be a little tricky. I could not get the path from the link in the link lambda function, and we need a way to pass the path to the function. I use a global variable for that. I wish there was another way to do that, but this does actually work. We illustrate it here with a more functional doi link.
+
+#+BEGIN_SRC emacs-lisp
+(defun doi-crossref ()
+  "Search DOI in CrossRef."
+  (interactive)
+  (browse-url
+   (format
+    "http://search.crossref.org/?q=%s" *doi-hydra-path*)))
+
+(defun doi-google-scholar ()
+  "Google scholar the doi."
+  (interactive)
+  (browse-url
+   (format
+    "http://scholar.google.com/scholar?q=%s" *doi-hydra-path*)))
+
+(defun doi-pubmed ()
+  "Pubmed the doi."
+  (interactive)
+  (browse-url
+   (format
+    "http://www.ncbi.nlm.nih.gov/pubmed/?term=%s"
+    (url-hexify-string *doi-hydra-path*))))
+
+ (defhydra doi-hydra ()
+   "org-ref"
+   ("c" doi-crossref "Crossref")
+   ("g" doi-google-scholar "Google Scholar")
+   ("p" doi-pubmed "Pubmed"))
+
+(org-add-link-type "doi"
+  (lambda (path) (setq *doi-hydra-path* path) (doi-hydra/body)))
+#+END_SRC
+
+#+RESULTS:
+| lambda | (path) | (setq *doi-hydra-path* path) | (doi-hydra/body) |
+
+Now for a test, doi:10.1021/jp047349j.
+
+It works fine, when you click on a link, you get a minibuffer menu with context hints, and pressing any other key than is defined simply cancels the command.
+
+
+* Writing emacs-lisp code with lentic
+  :PROPERTIES:
+  :categories: emacs
+  :END:
+org-mode provides a way to do literate programming where you can intermingle code and narrative text. The code can be "tangled" out to the real executable code file. I mostly love this capability, and have used it to write several packages in [[https://github.com/jkitchin/org-ref][jkitchin/org-ref]]. There are some things that are tricky though. I find I have to manage carefully which blocks get tangled explicitly because different setups might have different default tangle behavior. This does allow me to intermingle code, example usage, and even tests in one document.  After it has been tangled, all the narrative text is gone, and separated from what I consider to be the "source". Not everyone is fluent in using org to automatically load code from an org file. Finally, it is not currently possible to distribute org-ref through MELPA or to include it in org because the code is in org-format. I could have some kind of release tool, perhaps a Makefile that tangles the file to make an elisp file, and ideally run some tests on it. I want to avoid this redirection, and keep the source as close to what I use as possible, ideally the same as what I use.
+
+Here we consider [[https://github.com/phillord/lentic][phillord/lentic]], which is an alternative point of view to literate programming. In lentic, you have a source file that is in its native language, e.g. emacs-lisp, but you can create a view of the file as if it was an org-mode file. You can edit either view, and both views are automatically updated in the proper format, i.e. narrative text in org appears as comments in emacs-lisp, and code in emacs-lisp appears in a source block in org. There is only one permanent file, and the views exist temporarily.
+
+Is this useful? The code in the end is functionally equivalent, and a user would never know the difference. It is useful then, if it helps the author write better code, or a maintainer to maintain it. Being both of those for some packages, hopefully this will be useful!
+
+So, lentic works by having some minor markup in the emacs-lisp code that enables it to transform the elisp to an org-file. For example consider this example from the lentic package:
+#+BEGIN_SRC emacs-lisp
+;;; orgel-org.el --- A test file -*- lexical-binding: t -*-
+
+;; Author: Phillip Lord
+
+;;; Commentary:
+
+;; This is an "orgel" file. That is a valid emacs lisp file with comments in
+;; org-mode. The header comments are translated into header one in org mode.
+
+
+;; #+BEGIN_SRC emacs-lisp
+(defun orgel-function ())
+;; #+END_SRC
+
+;; And we finish off with the local variables declaration.
+
+;; # Local Variables:
+;; # lentic-init: lentic-orgel-org-init
+;; # End:
+#+END_SRC
+
+There is mostly the usual header section, but the code is wrapped in comments that resemble the org-mode code-block. There is also a local variable that is defined when the file is opened. There is a small amount of boiler-plate stuff here, namely the top line and the local variables. I should note that lentic provides a function to insert the local variables for you, and it is bound to "C-c , f", and it even has completion. It is important that the lentic-init variable be defined before you can create a lentic view. This makes for a minor dilemma in starting a new file you want to edit with lentic. When you first create the file you need to create the file and either manually set this variable, or open it and close it. You need this file because it might be possible you prefer a LaTeX file instead of an org-file, or in the future perhaps some other kind of markup like markdown, etc... Maybe the file wouldn't even be emacs-lisp, it could be clojure, or one might hope Python in the future.
+
+Anyway, this brings me to the point of this post, which is to write a little function that generates this boilerplate stuff and creates a lentic view for a new file, or that opens an existing file in my preferred view.
+
+#+BEGIN_SRC emacs-lisp
+(defun lentic-open-orgel (base-name)
+ "Create a new lentic el file if base-name.el does not exist, or open it if it does.
+Create a lentic view with org-file on the right."
+ (interactive "sBase name (no extension): ")
+ (delete-other-windows)
+ (unless (file-exists-p (concat base-name ".el"))
+   (with-temp-file (concat base-name ".el")
+     (insert
+      (format ";;; %s.el ---    -*- lexical-binding: t -*-
+;;; Header:
+
+;;; Commentary:
+
+;;; Reminders about lentic:
+;; Lentic key binding reminders
+;; C-c , h  Move here in other view
+;; C-c , s  Swap windows
+;; [[elisp:lentic-mode-split-window-right]]  C-c o to open this link and make the view
+
+;;; Code:
+
+;;; %s.el ends here
+
+;; # Local Variables:
+;; # lentic-init: lentic-orgel-org-init
+;; # End:" base-name base-name))))
+ (find-file (concat base-name ".el"))
+ (lentic-mode-split-window-right))
+#+END_SRC
+#+RESULTS:
+: lentic-open-orgel
+
+#+BEGIN_SRC emacs-lisp
+(lentic-open-orgel "test-orgel")
+#+END_SRC
+
+Time will tell if I use this often. Maybe there are other simpler ways to do this that bypass the local variables. The lentic source uses a directory variable, but that is nearly the same except that it might have less impact on the distributed code. In any case, I really like this idea.
+
+
+
+
 * DONE org-ref meets hydra
   CLOSED: [2015-02-20 Fri 21:17]
   :PROPERTIES:
