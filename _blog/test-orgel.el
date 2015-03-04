@@ -1,7 +1,7 @@
 ;;; test-orgel.el ---    -*- lexical-binding: t -*-
-(defun )
-;;; Header:
 
+;;; Header:
+;; Author: John Kitchin
 ;;; Commentary:
 
 ;; Reminders about lentic
@@ -11,8 +11,10 @@
 ;; [[elisp:lentic-mode-split-window-right]]  C-c o to open this link and make the view
 
 ;;; Code:
-
-;;; test-orgel.el ends here
+;; #+BEGIN_SRC emacs-lisp
+(def)
+;; #+END_SRC
+;; ;;; test-orgel.el ends here
 
 ;; # Local Variables:
 ;; # lentic-init: lentic-orgel-org-init
