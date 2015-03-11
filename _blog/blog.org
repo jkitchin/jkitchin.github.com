@@ -70,62 +70,73 @@ I do not use arxiv.org a lot, so this is not super well tested on many articles 
 
 
 
-* Multiple RESULTS
+* DONE Updating Multiple RESULTS blocks in org-mode
+  CLOSED: [2015-03-11 Wed 17:33]
+  :PROPERTIES:
+  :categories: orgmode
+  :date:     2015/03/11 17:33:51
+  :updated:  2015/03/11 17:33:51
+  :END:
 
-[[*Multiple%20RESULTS][Multiple RESULTS]]
+There was a recent question on the org-mode mailing list about getting multiple named block results to update when a named code block is run. I suppose you might want to do this if you need to see the results in more than one place. org-mode (at the moment) only updates the first named block that it finds from the beginning of the buffer. Challenge accepted ;)
 
+Here is a function that will update all the named RESULTS blocks. The idea is to make a hook function that runs after you run a block. The hook function will get the block name, and if there is one, find all the named results in the buffer and update them.
+
+#+BEGIN_SRC emacs-lisp
+(defun update-results ()
+  ;; get name of src block
+  (let ((name (org-element-property :name (org-element-at-point)))
+	(results)
+	(begin))
+    (when name
+      (setq results
+	    (save-excursion
+	      (goto-char (org-babel-find-named-result name))
+	      (forward-line)
+	      (buffer-substring
+	       (point) (org-element-property :end (org-element-at-point)))))
+      (save-excursion
+	(goto-char (point-min))
+	(while (setq begin (org-babel-find-named-result name (point)))
+	  (goto-char begin)
+	  (forward-line)
+	  (setf (buffer-substring
+		 (point)
+		 (org-element-property :end (org-element-at-point)))
+		results))))))
+
+(add-hook 'org-babel-after-execute-hook 'update-results)
+#+END_SRC
+
+#+RESULTS:
+| update-results | (lambda nil (org-refresh-images)) |
+
+Now let us test it out. Here is an unnamed block that should be ignored.
+#+BEGIN_SRC python
+print 4
+#+END_SRC
+
+#+RESULTS:
+: 4
+
+Here we have a named results block from a code block we will see later.
 #+RESULTS: testcode
-: 88
+: [0.0825119635983067, 0.12793443834890417, 0.5235765147357154]
 
+Here is our named code block that just prints three random numbers.
 
 #+name: testcode
 #+BEGIN_SRC python
-print 88
+import random
+
+print [random.random() for i in range(3)]
 #+END_SRC
-
-
-org-babel-after-execute-hook
-
-
-
 
 #+RESULTS: testcode
-: 88
+: [0.0825119635983067, 0.12793443834890417, 0.5235765147357154]
 
+Swell, everytime I run the block, the named results get updated everywhere! It isn't tested more than this post, so I would spend some time trying out your use cases before doing anything mission critical. Your mileage might vary. For example, if you have a named block outside a narrowed region it is not clear to me it would update. In other words, there might be other corners where this doesn't update like you thing.
 
-#+BEGIN_SRC emacs-lisp
-(defun eap () (interactive) (message "%S" (org-element-at-point)))
-#+END_SRC
-
-#+name: tree
-#+BEGIN_SRC emacs-lisp
-(defun update-results () (interactive)
-  ;; get name of src block
-  (let ((name (org-element-property :name (org-element-at-point)))
-	(results))
-    (when name
-      (org-element-map (org-element-parse-buffer) 'fixed-width
-	(lambda (object)
-	  (if results
-	      ;; replace value in block
-	      (setf
-	       (buffer-substring
-		(org-element-property :begin  object)
-		(org-element-property :end  object))
-	       results)
-	    ;; set results
-	    (setq results
-		  (buffer-substring
-		   (org-element-property :begin  object)
-		   (org-element-property :end  object)))))))))
-#+END_SRC
-
-
-#+BEGIN_SRC emacs-lisp
-(add-hook 'org-babel-after-execute-hook 'update-results)
-#+END_SRC
-#+RESULTS:
-| update-results | (lambda nil (org-refresh-images)) |
 
 
 * PDFsync for org files
@@ -498,11 +509,11 @@ org-table-get-field
 #+RESULTS:
 : jt
 
-* A helm-mu4e contact selector
+* TODO A helm-mu4e contact selector
   :PROPERTIES:
   :categories: emacs,email,helm
   :END:
-The email completion in mu4e is ok, but I am frequently surprised at what it does not find, and totally spoiled by how good Gmail is at this. The built in tool seems to get lost if you don't start the search with the first few letters. Not always, but too often for me. I don't always remember the first letters, and want to search by name, or company. I would love to search by tags in org-contacts This should be simple in helm. Here I explore a helm interface, which I think might be better than the built in mu4e support, and even be better than gmail.
+The email completion in mu4e is ok, but I am frequently surprised at what it does not find, and totally spoiled by how good Gmail is at this. The built in tool seems to get lost if you don't start the search with the first few letters. Not always, but too often for me. I don't always remember the first letters, and want to search by name, or company. I would love to search by tags in org-contacts. This should be simple in helm, where you can build up candidates with different bits of information. Here I explore a helm interface, which I think might be better than the built in mu4e support, and even be better than gmail.
 
 In my dream email completer, I want some easy way to define my own groups, I want to use org-contacts (and its tags), and I want every email address in the mails I have in my archive as completion candidates.  helm supports multiple sources, so I initially tried a separate source for each of these. Preliminary efforts suggested it is not possible to mark multiple selections from different sources and pass them all to one function. So, we combine all email candidates into one list of (searchable-string . email-address). To get an idea of how many contacts we are looking at:
 
@@ -516,14 +527,13 @@ Here is what I have in my org-contacts file:
 
 And here is what mu4e knows about. Interestingly, it takes a while for this to get populated because the request is asynchronous. After the first time though it sticks around. I think just opening mu4e will populate this variable.
 #+BEGIN_SRC emacs-lisp
-(mu4e~request-contacts)
 (length mu4e~contacts-for-completion)
 #+END_SRC
 
 #+RESULTS:
-: 12291
+: 12717
 
-So, I have about 12,500 potential emails to choose from. For my email groups, I will just use a list of cons cells like (group-name . "comma-separated emails"). Then, I will loop through the org-contacts-db and the mu4e completion list to make the helm candidates. Finally, we add some functions to open our org-contact, and to tag org-contacts so it is easier to make groups.
+So, I have close to 13,000 potential email addresses to choose from. For my email groups, I will just use a list of cons cells like (group-name . "comma-separated emails"). Then, I will loop through the org-contacts-db and the mu4e completion list to make the helm candidates. Finally, we add some functions to open our org-contact, and to tag org-contacts so it is easier to make groups.
 
 #+BEGIN_SRC emacs-lisp
 ;; here we set aliases for groups.
@@ -643,14 +653,7 @@ add an entry to the end of it."
 #+RESULTS:
 : j-insert-emails
 
-Now, I have a sweet helm interface with nearly 12,500 email candidates (there is a decent amount of duplication in this list, and some garbage, but helm is so fast, this does not bother me). I can pretty quickly narrow to any tagged set of emails from org-contacts with a search that looks like :phd: for example, or [^phd]:group: to get org-contacts tagged group, but not phd. I can narrow the selection on first name, lastname, parts of email addresses, tags in org-contacts, etc... I can open a contact, or tag contacts, even add new contacts to org-contacts. Now to see if it is helpful!
-
-
-
-
-
-
-
+Now, I have a sweet helm interface with nearly 13,000 email candidates (there is a decent amount of duplication in this list, and some garbage, but helm is so fast, this does not bother me). I can pretty quickly narrow to any tagged set of emails from org-contacts with a search that looks like :phd: for example, or [^phd]:group: to get org-contacts tagged group, but not phd. I can narrow the selection on first name, lastname, parts of email addresses, tags in org-contacts, etc... I can open a contact, or tag contacts, even add new contacts to org-contacts. Now to see if it is helpful!
 
 
 * test
@@ -1048,19 +1051,10 @@ How do you know what faces are available? M-x list-faces-display will give you a
 #+RESULTS:
 
 
- BROKEN fdsafdFIXME
+ BROKEN  fdsafdFIXME
 
 
 
-Wilfong, Walter Christopher and Chuang, Steven  S. C., Probing the adsorption/desorption of co2 on amine  sorbents by transient infrared studies of adsorbed  co2 and c6h6, Industrial \& Engineering Chemistry Research, 53(), 4224-4231, (2014). http://dx.doi.org/10.1021/ie404403q
-cite:wilfong-2014-probin-adsor
-
-citenum:wilfong-2014-probin-adsor
-
-
- (highlight-regexp "cite:\\([a-zA-Z0-9]*[-_:]*\\)*" 'dired-warning)
-
- (highlight-regexp "citenum:\\([a-zA-Z0-9]*[-_:]*\\)*" 'dired-marked)
 * DONE Turn an ISBN to a bibtex entry
   CLOSED: [2015-01-31 Sat 15:48]
   :PROPERTIES:
@@ -3713,7 +3707,7 @@ We don't even have to work very hard here, helm already has a slick function to 
 
 
 * Automating version control on org files
-I came across this [[http://erikclarke.net/2014/10/21/keeping-a-lab-notebook-with-org-mode-git-papers-and-pandoc-part-ii/][post]] on keeping a lab notebook in org-mode and git. One interesting feature in the post is a lab-notebook minor mode that automates version control by adding a function to the after-save-hook. I am testing it out here.
+  I came across this [[http://erikclarke.net/2014/10/21/keeping-a-lab-notebook-with-org-mode-git-papers-and-pandoc-part-ii/][post]] on keeping a lab notebook in org-mode and git. One interesting feature in the post is a lab-notebook minor mode that automates version control by adding a function to the after-save-hook. I am testing it out here.
 
 #+BEGIN_SRC emacs-lisp
 (defun ensure-in-vc-or-checkin ()
@@ -5541,62 +5535,6 @@ The candidates must be a list of items, and the car of the list is what gets lis
 #+RESULTS:
 : helm-words
 
-* helm-bibtex
-
-C-z to get other actions
-C-spc for multiple selections
-
-ebib:dumesic-1999-analy-react, ebib:dumesic-2001-reply-findin, ebib:campbell-2001-findin-rate
-
-- Guerin, Hayden, Lee, Mormiche, Owen, Russell, Theobald, Thompsett
-  (2004). Combinatorial Electrochemical Screening of Fuel Cell
-  Electrocatalysts. J. Comb. Chem..
-  http://dx.doi.org/10.1021/cc030113p
-
-- Gurau, Viswanathan, Liu, Lafrenz, Ley, Smotkin, Reddington,
-  Sapienza, Chan, Mallouk, Sarangapani (1998). Structural and
-  Electrochemical Characterization of Binary, Ternary, and Quaternary
-  Platinum Alloy Catalysts for Methanol Electro-Oxidation
-  1. J. Phys. Chem. B.
-  http://dx.doi.org/10.1021/jp982887f
-
-guerin-2004-combin-elect, gurau-1998-struc-elect
-
-@article{guerin-2004-combin-elect,
-  author = {Samuel Guerin and Brian E. Hayden and Christopher
-                  E. Lee and Claire Mormiche and John R. Owen and
-                  Andrea E. Russell and Brian Theobald and David
-                  Thompsett},
-  title = {Combinatorial Electrochemical Screening of Fuel Cell
-                  Electrocatalysts},
-  journal = {J. Comb. Chem.},
-  volume = 6,
-  number = 1,
-  pages = {149-158},
-  year = 2004,
-  doi = {10.1021/cc030113p},
-  url = {http://dx.doi.org/10.1021/cc030113p},
-}
-
-@article{gurau-1998-struc-elect,
-  author = {Bogdan Gurau and Rameshkrishnan Viswanathan and
-                  Renxuan Liu and Todd J. Lafrenz and Kevin L. Ley and
-                  E. S. Smotkin and Erik Reddington and Anthony
-                  Sapienza and Benny C. Chan and Thomas E. Mallouk and
-                  S. Sarangapani},
-  title = {Structural and Electrochemical Characterization of
-                  Binary, Ternary, and Quaternary Platinum Alloy
-                  Catalysts for Methanol Electro-Oxidation 1},
-  journal = {J. Phys. Chem. B},
-  volume = 102,
-  number = 49,
-  pages = {9997-10003},
-  year = 1998,
-  doi = {10.1021/jp982887f},
-  url = {http://dx.doi.org/10.1021/jp982887f},
-}
-
-does some cool things. nice selection interface. not as full as org-ref.
 
 * Find org-files that mention a citation
 
