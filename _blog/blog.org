@@ -1,4 +1,236 @@
-#+LATEX_CLASS: cmu-article
+* DONE Making org-mode Python sessions look better
+  CLOSED: [2015-03-12 Thu 10:45]
+  :PROPERTIES:
+  :categories: python,orgmode
+  :date:     2015/03/12 10:45:25
+  :updated:  2015/03/12 10:45:25
+  :END:
+Using sessions for python in org-mode has always bugged me a little bit. Mostly the appearance of >>> and ... in the output. For example:
+
+#+BEGIN_SRC python :session
+print 8
+#+END_SRC
+
+#+RESULTS:
+:
+: >>> >>> >>> 8
+
+Today on the org-mode mailing list someone suggested a [[http://thread.gmane.org/gmane.emacs.orgmode/95980/focus=96011][patch]] that might fix that up. Hopefully that patch makes it into org-mode, but if you run off of ELPA like I do it will be some time before it appears in your working version.
+
+In the meantime, inspired by my [[http://kitchingroup.cheme.cmu.edu/blog/2015/03/11/Updating-Multiple-RESULTS-blocks-in-org-mode/][recent post]] on updating multiple results, here we add a new hook function that removes these annoying characters from a Python session results section. Here is my version of this code.
+
+#+BEGIN_SRC emacs-lisp
+(defun org-babel-python-strip-session-chars ()
+  "Remove >>> and ... from a Python session output."
+  (when (and (string=
+	      "python"
+	      (org-element-property :language (org-element-at-point)))
+	     (string-match
+	      ":session"
+	      (org-element-property :parameters (org-element-at-point))))
+
+    (save-excursion
+      (goto-char (org-babel-where-is-src-block-result))
+      (end-of-line 1)
+      (while (looking-at "[\n\r\t\f ]") (forward-char 1))
+      (while (re-search-forward
+	      "\\(>>> \\|\\.\\.\\. \\)"
+	      (org-element-property :end (org-element-at-point))
+	      t)
+	(replace-match "")))))
+
+(add-hook 'org-babel-after-execute-hook 'org-babel-python-strip-session-chars)
+#+END_SRC
+
+#+RESULTS:
+| org-babel-python-strip-session-chars | (lambda nil (org-refresh-images)) |
+
+
+#+BEGIN_SRC python :session
+import matplotlib.pyplot as plt
+plt.plot([3, 4, 5])
+plt.show()
+
+def f(s):
+    x = 2 * s
+    # blank lines look like indentation errors
+    return x
+
+print f(4)
+#+END_SRC
+
+#+RESULTS:
+:
+: [<matplotlib.lines.Line2D object at 0x10955c290>]
+: 8
+
+#+BEGIN_SRC python :session
+print f(9)
+#+END_SRC
+
+#+RESULTS:
+: 18
+
+Here we can make an inline figure.
+#+BEGIN_SRC python :session :results value file
+plt.figure()
+plt.plot([3, 4.5, 5])
+plt.savefig('images/session-fig.png')
+'images/session-fig.png'
+#+END_SRC
+
+#+RESULTS:
+[[file:images/session-fig.png]]
+Not bad. It seems to work! Maybe this will make sessions more usable for me.
+
+
+
+
+* TODO A helm-mu4e contact selector
+  :PROPERTIES:
+  :categories: emacs,email,helm
+  :END:
+The email completion in mu4e is ok, but I am frequently surprised at what it does not find, and totally spoiled by how good Gmail is at this. The built in tool seems to get lost if you don't start the search with the first few letters. Not always, but too often for me. I don't always remember the first letters, and want to search by name, or company. I would love to search by tags in org-contacts. This should be simple in helm, where you can build up candidates with different bits of information. Here I explore a helm interface, which I think might be better than the built in mu4e support, and even be better than gmail.
+
+In my dream email completer, I want some easy way to define my own groups, I want to use org-contacts (and its tags), and I want every email address in the mails I have in my archive as completion candidates.  helm supports multiple sources, so I initially tried a separate source for each of these. Preliminary efforts suggested it is not possible to mark multiple selections from different sources and pass them all to one function. So, we combine all email candidates into one list of (searchable-string . email-address). To get an idea of how many contacts we are looking at:
+
+Here is what I have in my org-contacts file:
+#+BEGIN_SRC emacs-lisp
+(length (org-contacts-db))
+#+END_SRC
+
+#+RESULTS:
+: 173
+
+And here is what mu4e knows about. Interestingly, it takes a while for this to get populated because the request is asynchronous. After the first time though it sticks around. I think just opening mu4e will populate this variable.
+#+BEGIN_SRC emacs-lisp
+(length mu4e~contacts-for-completion)
+#+END_SRC
+
+#+RESULTS:
+: 12717
+
+So, I have close to 13,000 potential email addresses to choose from. For my email groups, I will just use a list of cons cells like (group-name . "comma-separated emails"). Then, I will loop through the org-contacts-db and the mu4e completion list to make the helm candidates. Finally, we add some functions to open our org-contact, and to tag org-contacts so it is easier to make groups.
+
+#+BEGIN_SRC emacs-lisp
+;; here we set aliases for groups.
+(defvar email-groups
+      '((group1 . "email1,email2")
+        (group2 . "email3,email4"))
+ "List of cons cells (alias . \"comma-separated-email-addresses\").")
+
+(defun org-contacts-open-from-email (email)
+  "Open org-contact with matching EMAIL. If no match, create new
+entry with prompts for first and last name."
+  (let ((contact (catch 'contact
+		   (loop for contact in  (org-contacts-db)
+			 do
+			 (when (string= email (cdr (assoc "EMAIL" (elt contact 2))))
+			   (throw 'contact contact))))))
+
+    (unless contact
+		(set-buffer (find-file-noselect (ido-completing-read
+						 "Select org-contact file: "
+						 org-contacts-files)))
+		(goto-char (point-max))
+		(insert (format  "\n* %s %s\n"
+				 (read-input "First name: ")
+				 (read-input "Last name: ")))
+		(org-entry-put (point) "EMAIL" email)
+		(save-buffer))
+
+    (when contact
+      (find-file  (cdr (assoc "FILE" (elt contact 2))))
+      (goto-char (elt contact 1))
+      (show-subtree))))
+
+(defun org-contacts-tag-selection (selection)
+  "Prompts you for a tag, and tags each entry in org-contacts
+that has a matching email in `helm-marked-candidates'. Ignore
+emails that are not in an org-contact file. I am not sure what
+the best thing to do there is. Probably prompt for a file, and
+add an entry to the end of it."
+  (save-excursion
+    (let ((tag (read-input "Tag: ")))
+      (loop for email in (helm-marked-candidates)
+	    do
+	    (let ((contact (catch 'contact
+			     (loop for contact in  (org-contacts-db)
+				   do
+				   (when (string=
+					  email
+					  (cdr (assoc
+						"EMAIL"
+						(elt contact 2))))
+				     (throw 'contact contact))))))
+	      ;; add new contact and tag it
+	      (unless contact
+		(set-buffer (find-file-noselect (ido-completing-read
+						 "Select org-contact file: "
+						 org-contacts-files)))
+		(goto-char (point-max))
+		(insert (format  "\n* %s %s\n"
+				 (read-input "First name: ")
+				 (read-input "Last name: ")))
+		(org-entry-put (point) "EMAIL" email)
+		(org-set-tags-to (list tag))
+		(save-buffer))
+	      ;; update tags on existing entry
+	      (when contact
+		(find-file-noselect  (cdr (assoc "FILE" (elt contact 2))))
+                (set-buffer (marker-buffer (elt contact 1)))
+		(goto-char (elt contact 1))
+		(org-set-tags-to (append (org-get-tags) (list tag)))))))))
+
+(setq helm-source-email-contacts
+      `((name . "Email address candidates")
+	(candidates . ,(append
+			;; my aliases
+			email-groups
+			;; org-contacts
+			(loop for contact in (org-contacts-db)
+			      collect
+			      (cons (format
+				     "%s %s %s <%s> org-contact"
+				     (cdr (assoc "FIRSTNAME" (elt contact 2)))
+				     (cdr (assoc "LASTNAME" (elt contact 2)))
+				     (cdr (assoc "TAGS" (elt contact 2)))
+				     (cdr (assoc "EMAIL" (elt contact 2))))
+				    (cdr (assoc "EMAIL" (elt contact 2)))))
+			;; mu contacts
+			(loop for contact in mu4e~contacts-for-completion
+			      collect (cons contact contact))))
+        ;; only action is to insert string at point.
+	(action . (("insert" . (lambda (x)
+		    (insert
+		     (mapconcat
+		      'identity
+		      (helm-marked-candidates)
+		      ","))))
+                  ("open" . org-contacts-open-from-email)
+                  ("tag"  . org-contacts-tag-selection)))))
+
+(defun j-insert-emails ()
+  "Helm interface to email addresses"
+  (interactive)
+
+  ;; This will update the variable mu4e~contacts-for-completion. I want all of
+  ;; them, at any time. I am not sure how important it is to do this every
+  ;; time. It is not noticeably slow so I leave it here.
+  (mu4e~proc-send-command
+   "cmd:contacts personal:%s after:%d"
+   "false" 0)
+
+  (helm :sources '(helm-source-email-contacts)))
+
+;; Finally, let us bind this to something probably convenient. I use c-c ] for
+;; citations. Lets try that in compose mode.
+(define-key mu4e-compose-mode-map "\C-c]" 'j-insert-emails)
+#+END_SRC
+#+RESULTS:
+: j-insert-emails
+
+Now, I have a sweet helm interface with nearly 13,000 email candidates (there is a decent amount of duplication in this list, and some garbage, but helm is so fast, this does not bother me). I can pretty quickly narrow to any tagged set of emails from org-contacts with a search that looks like :phd: for example, or [^phd]:group: to get org-contacts tagged group, but not phd. I can narrow the selection on first name, lastname, parts of email addresses, tags in org-contacts, etc... I can open a contact, or tag contacts, even add new contacts to org-contacts. I have been using this for a few weeks, and so far I like it.
 
 * DONE Bibtex Entries from Arxiv.org
   CLOSED: [2015-03-09 Mon 15:14]
@@ -67,7 +299,6 @@ Finally, arxiv.el wraps those to functions together into an interactive function
 If you use [[https://github.com/jkitchin/jmax/blob/master/words.el][words.el]] you will find a new function =words-arxiv= which allows you to search the selected text or word at point on arxiv.org.
 
 I do not use arxiv.org a lot, so this is not super well tested on many articles in arxiv.org, but it has worked on the few examples I have tested so far.
-
 
 
 * DONE Updating Multiple RESULTS blocks in org-mode
@@ -400,7 +631,6 @@ It works fine, when you click on a link, you get a minibuffer menu with context 
 
 
 
-
 * DONE org-ref meets hydra
   CLOSED: [2015-02-20 Fri 21:17]
   :PROPERTIES:
@@ -432,7 +662,6 @@ I am enjoying learning about [[https://github.com/abo-abo/hydra][abo-abo/hydra]]
 Pretty nice. Check out the nice hydra interface to [[https://github.com/jkitchin/jmax/blob/master/words.el][words.el]]. A simple press of "ww" gets you easy access to single key presses of all the nice words functions. What would you hydra for?
 
 
-
 * Exceptions on entering a context manager
 
 #+BEGIN_SRC python
@@ -458,7 +687,6 @@ with WithContext() as c:
 #+END_SRC
 
 #+RESULTS:
-
 
 * Find value in column 2 corresponding to maximum of column 4
 
@@ -508,153 +736,6 @@ org-table-get-field
 
 #+RESULTS:
 : jt
-
-* TODO A helm-mu4e contact selector
-  :PROPERTIES:
-  :categories: emacs,email,helm
-  :END:
-The email completion in mu4e is ok, but I am frequently surprised at what it does not find, and totally spoiled by how good Gmail is at this. The built in tool seems to get lost if you don't start the search with the first few letters. Not always, but too often for me. I don't always remember the first letters, and want to search by name, or company. I would love to search by tags in org-contacts. This should be simple in helm, where you can build up candidates with different bits of information. Here I explore a helm interface, which I think might be better than the built in mu4e support, and even be better than gmail.
-
-In my dream email completer, I want some easy way to define my own groups, I want to use org-contacts (and its tags), and I want every email address in the mails I have in my archive as completion candidates.  helm supports multiple sources, so I initially tried a separate source for each of these. Preliminary efforts suggested it is not possible to mark multiple selections from different sources and pass them all to one function. So, we combine all email candidates into one list of (searchable-string . email-address). To get an idea of how many contacts we are looking at:
-
-Here is what I have in my org-contacts file:
-#+BEGIN_SRC emacs-lisp
-(length (org-contacts-db))
-#+END_SRC
-
-#+RESULTS:
-: 173
-
-And here is what mu4e knows about. Interestingly, it takes a while for this to get populated because the request is asynchronous. After the first time though it sticks around. I think just opening mu4e will populate this variable.
-#+BEGIN_SRC emacs-lisp
-(length mu4e~contacts-for-completion)
-#+END_SRC
-
-#+RESULTS:
-: 12717
-
-So, I have close to 13,000 potential email addresses to choose from. For my email groups, I will just use a list of cons cells like (group-name . "comma-separated emails"). Then, I will loop through the org-contacts-db and the mu4e completion list to make the helm candidates. Finally, we add some functions to open our org-contact, and to tag org-contacts so it is easier to make groups.
-
-#+BEGIN_SRC emacs-lisp
-;; here we set aliases for groups.
-(defvar email-groups
-      '((group1 . "email1,email2")
-        (group2 . "email3,email4"))
- "List of cons cells (alias . \"comma-separated-email-addresses\").")
-
-(defun org-contacts-open-from-email (email)
-  "Open org-contact with matching EMAIL. If no match, create new
-entry with prompts for first and last name."
-  (let ((contact (catch 'contact
-		   (loop for contact in  (org-contacts-db)
-			 do
-			 (when (string= email (cdr (assoc "EMAIL" (elt contact 2))))
-			   (throw 'contact contact))))))
-
-    (unless contact
-		(set-buffer (find-file-noselect (ido-completing-read
-						 "Select org-contact file: "
-						 org-contacts-files)))
-		(goto-char (point-max))
-		(insert (format  "\n* %s %s\n"
-				 (read-input "First name: ")
-				 (read-input "Last name: ")))
-		(org-entry-put (point) "EMAIL" email)
-		(save-buffer))
-
-    (when contact
-      (find-file  (cdr (assoc "FILE" (elt contact 2))))
-      (goto-char (elt contact 1))
-      (show-subtree))))
-
-(defun org-contacts-tag-selection (selection)
-  "Prompts you for a tag, and tags each entry in org-contacts
-that has a matching email in `helm-marked-candidates'. Ignore
-emails that are not in an org-contact file. I am not sure what
-the best thing to do there is. Probably prompt for a file, and
-add an entry to the end of it."
-  (save-excursion
-    (let ((tag (read-input "Tag: ")))
-      (loop for email in (helm-marked-candidates)
-	    do
-	    (let ((contact (catch 'contact
-			     (loop for contact in  (org-contacts-db)
-				   do
-				   (when (string=
-					  email
-					  (cdr (assoc
-						"EMAIL"
-						(elt contact 2))))
-				     (throw 'contact contact))))))
-	      ;; add new contact and tag it
-	      (unless contact
-		(set-buffer (find-file-noselect (ido-completing-read
-						 "Select org-contact file: "
-						 org-contacts-files)))
-		(goto-char (point-max))
-		(insert (format  "\n* %s %s\n"
-				 (read-input "First name: ")
-				 (read-input "Last name: ")))
-		(org-entry-put (point) "EMAIL" email)
-		(org-set-tags-to (list tag))
-		(save-buffer))
-	      ;; update tags on existing entry
-	      (when contact
-		(find-file-noselect  (cdr (assoc "FILE" (elt contact 2))))
-                (set-buffer (marker-buffer (elt contact 1)))
-		(goto-char (elt contact 1))
-		(org-set-tags-to (append (org-get-tags) (list tag)))))))))
-
-(setq helm-source-email-contacts
-      `((name . "Email address candidates")
-	(candidates . ,(append
-			;; my aliases
-			email-groups
-			;; org-contacts
-			(loop for contact in (org-contacts-db)
-			      collect
-			      (cons (format
-				     "%s %s %s <%s> org-contact"
-				     (cdr (assoc "FIRSTNAME" (elt contact 2)))
-				     (cdr (assoc "LASTNAME" (elt contact 2)))
-				     (cdr (assoc "TAGS" (elt contact 2)))
-				     (cdr (assoc "EMAIL" (elt contact 2))))
-				    (cdr (assoc "EMAIL" (elt contact 2)))))
-			;; mu contacts
-			(loop for contact in mu4e~contacts-for-completion
-			      collect (cons contact contact))))
-        ;; only action is to insert string at point.
-	(action . (("insert" . (lambda (x)
-		    (insert
-		     (mapconcat
-		      'identity
-		      (helm-marked-candidates)
-		      ","))))
-                  ("open" . org-contacts-open-from-email)
-                  ("tag"  . org-contacts-tag-selection)))))
-
-(defun j-insert-emails ()
-  "Helm interface to email addresses"
-  (interactive)
-
-  ;; This will update the variable mu4e~contacts-for-completion. I want all of
-  ;; them, at any time. I am not sure how important it is to do this every
-  ;; time. It is not noticeably slow so I leave it here.
-  (mu4e~proc-send-command
-   "cmd:contacts personal:%s after:%d"
-   "false" 0)
-
-  (helm :sources '(helm-source-email-contacts)))
-
-;; Finally, let us bind this to something probably convenient. I use c-c ] for
-;; citations. Lets try ] in compose mode.
-(define-key mu4e-compose-mode-map "]" 'j-insert-emails)
-#+END_SRC
-#+RESULTS:
-: j-insert-emails
-
-Now, I have a sweet helm interface with nearly 13,000 email candidates (there is a decent amount of duplication in this list, and some garbage, but helm is so fast, this does not bother me). I can pretty quickly narrow to any tagged set of emails from org-contacts with a search that looks like :phd: for example, or [^phd]:group: to get org-contacts tagged group, but not phd. I can narrow the selection on first name, lastname, parts of email addresses, tags in org-contacts, etc... I can open a contact, or tag contacts, even add new contacts to org-contacts. Now to see if it is helpful!
-
 
 * test
 ** Wrap highlighted text in an org block
@@ -711,7 +792,6 @@ Now, I have a sweet helm interface with nearly 13,000 email candidates (there is
 #+BEGIN_QUOTE:
 TEstesat
 #+END_QUOTE
-
 
 * Command line export of a section in an org-file
 #+LATEX_CLASS: article
@@ -782,7 +862,6 @@ Some words and a table:
 :  of 2015-01-18 on vpn-128-237-146-193.library.vpn.cmu.edu"
 :
 : "I did it. you passed in (arg1 arg2 arg3)"
-
 
 * DONE Helm at the Emacs
   CLOSED: [2015-02-04 Wed 08:47]
@@ -1024,7 +1103,7 @@ Following and lightly adapting the example here [[info:emacs#Font%20Lock][info:e
 
 #+BEGIN_SRC emacs-lisp :results silent
 (font-lock-add-keywords
- 'org-mode  ;; mode, nil for current buffer
+ nil  ;; mode, nil for current buffer
  '(("FIXME"  ; regexp with group you want to match
     'font-lock-warning-face	; the face to use
 )))
@@ -1052,7 +1131,6 @@ How do you know what faces are available? M-x list-faces-display will give you a
 
 
  BROKEN  fdsafdFIXME
-
 
 
 * DONE Turn an ISBN to a bibtex entry
