@@ -35,17 +35,21 @@ Current postdocs
 
 Current PhD students
 --------------------
+-    Alex Hallenbeck (expected graduation: May 2016)
+-    Matt Curnan (expected graduation: Summer 2015)   <span id='badgeCont798143' style='width:26px'><script src='http://labs.researcherid.com/mashlets?el=badgeCont798143&mashlet=badge&showTitle=false&className=a&rid=C-7870-2015&size=small'></script></span>
+-    Zhongnan Xu (expected graduation: May 2016)
+-    Jacob Boes (expected graduation: May 2017)
+-    John Michael (expected graduation: May 2018)
+-    Mehak Chawla (expected graduation: May 2018)
 
-    Alex Hallenbeck (expected graduation: May 2016)
-    Matt Curnan (expected graduation: May 2016)
-    Zhongnan Xu (expected graduation: May 2016)
-    Jacob Boes (expected graduation: May 2017)
-    John Michael (expected graduation: May 2018)
-    Mehak Chawla (expected graduation: May 2018)
-    
 
 Current Master's students
 -------------------------
+
+-    Zhaofeng Chen (Dec. 2015)
+-    Venkatesh Naik (Dec. 2015)
+-    Hari Thirumalai (Dec. 2015)
+-    Siddharth Deshpande (Dec. 2015)
 
 Current Undergraduates
 -----------------------
@@ -58,19 +62,19 @@ Former Group members
   - Jing Chou (M.S. 2007)
   - Li Yuan  (Postdoc 2008)
   - Frank DeCarlo (M.S. 2010)
-  - Sneha Akhade (M.S. 2011)
-  - Spencer Miller (PhD 2011)
-  - James Landon (PhD 2011)
-  - Nilay Inoglu (PhD 2011)
-  - Rich Alesi (PhD 2012)
-  - Robin Chao (PhD 2012)
+  - Sneha Akhade (M.S. 2011, Penn State)
+  - Spencer Miller (PhD 2011, Combinatorics)
+  - James Landon (PhD 2011, CAER)
+  - Nilay Inoglu (PhD 2011, Exxon)
+  - Rich Alesi (PhD 2012, Intel)
+  - Robin Chao (PhD 2012, IBM)
   - Vivek Vinodan (M.S. 2013)
   - Zhizhong Ding (M.S. 2013)
-  - Ethan Demeter (PhD 2013)
-  - Anita Lee (PhD 2013)
+  - Ethan Demeter (PhD 2013, FuelCell)
+  - Anita Lee (PhD 2013, Exxon)
   - [Bin Liu](http://www.che.ksu.edu/node/161) Postdoc 2013
-  - Prateek Mehta (M.S. 2013)
-  - Steve Illes (M.S. 2014)
+  - Prateek Mehta (M.S. 2013, Notre Dame)
+  - Steve Illes (M.S. 2014, 3M)
   - Nitish Govindarajan (M.S. Dec 2014)
   - Meiheng Lu (M.S. Dec 2014)
   - Wenqin You (M.S. Dec 2014)
