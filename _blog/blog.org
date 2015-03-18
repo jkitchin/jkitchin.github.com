@@ -1,3 +1,202 @@
+* Restarting python sessions in org-mode more effectively
+
+In a previous [[http://kitchingroup.cheme.cmu.edu/blog/2015/03/12/Making-org-mode-Python-sessions-look-better/][post]] I eliminated one annoying problem with sessions, which was getting rid of extraneous Python interpreter characters in the output. Another thing that has bothered me is when you close Emacs, the session is, of course, lost. That means when you reopen the file, you have to run each block in order to continue your work.  So, in this post, we consider a simple approach to automate that. We want a function that will run all the session blocks that are above the current point.
+
+#+BEGIN_SRC python :session test  :var d=4
+def f(x):
+    y = 4 * x
+    return y
+
+print(f(d))
+#+END_SRC
+
+#+RESULTS:
+: 16
+
+
+
+
+
+Non-session block
+
+#+BEGIN_SRC python
+a = 5
+print(a)
+#+END_SRC
+
+The idea is we will go to the beginning of the buffer, find all blocks that are Python, and in the session, and execute them. We can tell if a block is in a session by looking at the :parameters property of the block. Interestingly, if a block is not in a session, then session will be "none", if it is in an unnamed session, session will be nil, and otherwise, session will be the session name. Here we have a function that
+
+| scenario        | :session value |
+|-----------------+----------------|
+| no session      | "none"         |
+| unnamed session | nil            |
+| named session   | "name"         |
+
+
+#+BEGIN_SRC emacs-lisp
+(defun src-block-in-session-p (&optional name)
+  "Return if src-block is in a session of NAME.
+NAME may be nil for unnamed sessions"
+  (interactive "sSession name: ")
+  (let* ((info (org-babel-get-src-block-info))
+         (lang (nth 0 info))
+         (body (nth 1 info))
+         (params (nth 2 info))
+         (session (cdr (assoc :session params))))
+
+    (cond
+     ;; unnamed session
+     ((and (null session)
+	   (null name))
+      t)
+     ;; Matching names
+     ((and
+       (stringp name)
+       (stringp session)
+       (string= name session))
+      t)
+     ;; no match
+     (t nil))))
+#+END_SRC
+#+RESULTS:
+: src-block-in-session-p
+
+Now, we need to get some information about the current point and block. We will want to run blocks that start before the current point, but not after. For a given code block, we can get the start of the block with:
+
+#+BEGIN_SRC emacs-lisp
+(car (last (org-babel-get-src-block-info)))
+#+END_SRC
+
+Finally, we are ready to work. We will use org-element-map to find code blocks, and when the language and session of a code block matches the current block, and the block starts at a point earlier than the current point, then we will go to that block, and run it.
+
+#+BEGIN_SRC emacs-lisp
+(defun org-babel-restart-session-to-point ()
+  "Restart session up to the src-block in the current point.
+Goes to beginning of buffer and executes each code block that has
+the same language and session as the current block."
+  (interactive)
+  (unless (org-in-src-block-p)
+    (error "You must be in a src-block to run this command"))
+  (let* ((current-point (point))
+	 (info (org-babel-get-src-block-info))
+         (lang (nth 0 info))
+         (body (nth 1 info))
+         (params (nth 2 info))
+         (session (cdr (assoc :session params))))
+    (save-excursion
+      (org-element-map
+	  (org-element-parse-buffer)
+	  'src-block
+	(lambda (block)
+	  (goto-char (org-element-property :begin block))
+
+	  (let* ((this-info (org-babel-get-src-block-info))
+		 (this-lang (nth 0 this-info))
+		 (this-body (nth 1 this-info))
+		 (this-params (nth 2 this-info))
+		 (this-session (cdr (assoc :session this-params))))
+	    (when
+		(and
+		 (< (point) current-point)
+		 (string= lang this-lang)
+		 (src-block-in-session-p session))
+	      (org-babel-execute-maybe))))))))
+#+END_SRC
+#+RESULTS:
+: org-babel-restart-session-to-point
+
+#+BEGIN_SRC python :session test
+print 'ok'
+#+END_SRC
+
+#+RESULTS:
+: ok
+
+
+#+BEGIN_SRC python :session test
+print 2
+#+END_SRC
+
+#+RESULTS:
+: 2
+
+
+
+#+BEGIN_SRC python :session
+print 886
+#+END_SRC
+
+#+RESULTS:
+: 886
+
+* DONE Clickable links for Twitter handles in Emacs
+  CLOSED: [2015-03-18 Wed 12:20]
+  :PROPERTIES:
+  :categories: emacs
+  :date:     2015/03/18 12:20:18
+  :updated:  2015/03/18 12:21:53
+  :END:
+
+Org-mode has clickable links, and they are awesome. You can make your own links, for example here is a link for twitter handles that opens a browser to the handle, and exports as an html link.
+
+#+BEGIN_SRC emacs-lisp
+(org-add-link-type "twitter"
+ (lambda (handle)
+   (browse-url (concat "http://twitter.com/" handle)))
+ (lambda (path desc backend)
+   (format "<a href=\"http://twitter.com/%s\">%s</a>" path path)))
+#+END_SRC
+
+Check it out here: twitter:johnkitchin.
+
+There is another alternative to make clickable text, and that is the button-lock package. You define a regular expression for the text you want to be clickable, and a function to run when it is clicked. Here is an example.
+
+#+BEGIN_SRC emacs-lisp :results silent
+(require 'button-lock)
+(global-button-lock-mode)
+
+(button-lock-set-button
+ "@\\([-a-zA-Z0-9_:]*\\)"
+ (lambda ()
+   (interactive)
+   (re-search-backward "@")
+   (re-search-forward  "@\\([a-zA-Z0-9_]*\\)")
+   (let* ((handle (match-string-no-properties 1)))
+     (browse-url (concat "http://twitter.com/" handle))))
+ :face (list 'org-link))
+#+END_SRC
+
+Check it out: @johnkitchin. Of course, you can make your clicking function more sophisticated, e.g. to give you a [[http://kitchingroup.cheme.cmu.edu/blog/2015/02/22/org-mode-links-meet-hydra/][menu of options]], e.g. to send a tweet to someone, or open the web page, or look them up in your org-contacts. The differences between this and an org-mode link are that this works in any mode, and it has no export in org-mode, so it will go as plain text. Since this is just a feature for Emacs though, that should be fine.
+
+
+* font-locking to make clickable links for pandoc citations
+
+Org-mode has clickable links, and they are awesome. There is a new citation syntax being discussed, and these too will be clickable. Here we just explore a little approach to make clickable text using the button-lock package. We will use it to make pandoc citations clickable in Emacs. A pandoc citation looks like [@dominik-2010-org-mode].
+
+This code makes pandoc citation links clickable, as you type them in.
+
+#+BEGIN_SRC emacs-lisp :results silent
+(require 'button-lock)
+(global-button-lock-mode)
+
+(button-lock-set-button
+ "@\\([-a-zA-Z0-9_:]*\\)"
+ (lambda ()
+   (interactive)
+   (re-search-backward "@")
+   (re-search-forward  "@\\([-a-zA-Z0-9_:]*\\)")
+   (let* ((key (match-string-no-properties 1))
+	  (bibfile (cdr (org-ref-get-bibtex-key-and-file key))))
+     (if bibfile
+	(save-excursion
+	  (with-temp-buffer
+	    (insert-file-contents bibfile)
+	    (bibtex-search-entry key)
+	    (message (org-ref-bib-citation))))
+       (message "No entry found"))))
+ :face (list 'org-link))
+#+END_SRC
+
 * DONE Update on org-ref - it is now all emacs-lisp
   CLOSED: [2015-03-16 Mon 08:51]
   :PROPERTIES:
@@ -788,34 +987,6 @@ Just pre text [[cite:marjolin-2015-therm-descr][See also]]
 
 
 
-* font-locking to make clickable links for pandoc citations
-
-
-[@dominik-2010-org-mode]
-
-This code makes pandoc citation links clickable, as you type them in.
-
-#+BEGIN_SRC emacs-lisp :results silent
-(require 'button-lock)
-(global-button-lock-mode)
-
-(button-lock-set-button
- "@\\([-a-zA-Z0-9_:]*\\)"
- (lambda ()
-   (interactive)
-   (re-search-backward "@")
-   (re-search-forward  "@\\([-a-zA-Z0-9_:]*\\)")
-   (let* ((key (match-string-no-properties 1))
-	  (bibfile (cdr (org-ref-get-bibtex-key-and-file key))))
-     (if bibfile
-	(save-excursion
-	  (with-temp-buffer
-	    (insert-file-contents bibfile)
-	    (bibtex-search-entry key)
-	    (message (org-ref-bib-citation))))
-       (message "No entry found"))))
- :face (list 'org-link))
-#+END_SRC
 
 
 * exploring Zotero sqlite
@@ -4446,215 +4617,6 @@ This is a little experiment to integrate saving a file with git. The idea is tha
 #+BEGIN_SRC sh
 git hist -n 10
 #+END_SRC
-
-* jeldoc - a function to generate documentation from emacs-lisp files
-
-
-#+BEGIN_SRC emacs-lisp :results output
-(defun jeldoc (library)
-  "Generate an org buffer containing the requires, variables and functions defined in LIBRARY.
-LIBRARY must be loaded before running this function."
-
-  (interactive
-   (list (completing-read "Library to generate org-doc for: "
-			  (-flatten
-			   (delq nil
-				 (mapcar
-				  (lambda (x)
-				    (delq nil
-					  (mapcar
-					   (lambda (y)
-					     (when (and (consp y)
-							(eq (car y) 'provide))
-					       (cdr y)))
-					   x)))
-				  load-history))))))
-
-  (let* ((lib-file (locate-library library))
-	 ;; these are the things defined in the library
-	 (elements (cdr
-		    (assoc
-		     (locate-library library)
-		     load-history)))
-	 ;; variables
-	 (vars (-filter 'symbolp elements))
-	 ;; things the library requires
-	 (requires
-	  (mapcar 'cdr
-		  (-filter (lambda (x)
-			     (and (consp x)
-				  (eq 'require (car x))))
-			   elements)))
-	 ;; functions defined in the library
-	 (funcs (mapcar
-		 'cdr
-		 (-filter (lambda (x)
-			    (and (consp x)
-				 (eq 'defun (car x))))
-			  elements))))
-
-    (switch-to-buffer "*org-doc*")
-    (erase-buffer)
-    (insert (format "#+TITLE: Documentation for %s
-,#+OPTIONS: toc:nil
-\\maketitle
-\\tableofcontents
-
-%s
-
-" library  (cond
-	    ;; regular lisp file
-	    ((string= "el" (file-name-extension lib-file))
-	     (format "Source code: [[file:%s][%s]]" lib-file library))
-	    ;; compiled file. these are not easy to read so we try plain el file
-	    ((and (string= "elc" (file-name-extension lib-file))
-		  (file-exists-p
-		   (concat (file-name-sans-extension lib-file) ".el")))
-	     (format "Source code: [[file:%s][%s]]"
-		     (concat (file-name-sans-extension lib-file) ".el")
-		     library))
-	    ;; catch anything we cannot figure out
-	    (t
-	     (format "Source code: file:%s" lib-file)))))
-
-
-    (insert "* Requires\n\n")
-    ;; insert link to generate a jeldoc buffer for each require
-    (dolist (req requires)
-      (insert (format "- [[elisp:(jeldoc \"%s\")][%s]]\n" req req)))
-
-    (insert "* Custom Variables\n\n")
-    (dolist (var (sort (-filter 'custom-variable-p vars) 'string-lessp))
-      (insert (format "** %s
-Documentation: %s
-
-Value:
-%S\n\n"
-		      var
-		      (documentation-property var 'variable-documentation)
-		      (symbol-value var)
-		      )))
-
-    (insert "* Regular Variables\n\n")
-    (dolist (var (sort (-filter (lambda (x) (not (custom-variable-p x)))
-				vars)
-		       'string-lessp))
-      (insert (format "** %s
-Documentation: %s
-
-Value:
-%S\n\n"
-		      var
-		      (documentation-property var 'variable-documentation)
-		      (symbol-value var)
-		      )))
-
-    (insert "* Interactive Functions\n\n")
-
-    (dolist (func (sort (-filter 'commandp funcs) 'string-lessp))
-      (insert (format "** %s %s
-Documentation: %s
-
-Code:
-,#+BEGIN_SRC emacs-lisp
-%s
-,#+END_SRC
-
-"
-		      func
-		      (or (help-function-arglist func) "")
-		      (documentation func)
-		      ;; code defining the function
-		      (save-window-excursion
-			;; we do not have c-source, so check if func
-			;; is defined in a c file here.
-			(if
-			    (string= "c"
-				     (file-name-extension
-				      (find-lisp-object-file-name
-				       func
-				       (symbol-function func))))
-			    (symbol-function func)
-			  ;;else
-			  (condition-case nil
-			      (let ((bp (find-function-noselect func t)))
-				(set-buffer (car bp))
-				(goto-char (cdr bp))
-				(when (sexp-at-point)
-				  (mark-sexp)
-				  (buffer-substring (point) (mark))))
-			    (error func))
-			  )))))
-
-    (insert "* Non-interactive Functions\n\n")
-
-    (dolist (func (sort (-filter (lambda (x) (not (commandp x)))
-				 funcs)
-			'string-lessp))
-      (insert (format "** %s %s
-Documentation: %s
-
-Code:
-,#+BEGIN_SRC emacs-lisp
-%s
-,#+END_SRC
-
-"
-		      func
-		      (or (help-function-arglist func) "")
-		      (documentation func)
-		      ;; code defining the function
-		      (save-window-excursion
-			;; we do not have c-source, so check if func
-			;; is defined in a c file here.
-			(if
-			    (string= "c"
-				     (file-name-extension
-				      (find-lisp-object-file-name
-				       func
-				       (symbol-function func))))
-			    (symbol-function func)
-			  ;;else
-			  (condition-case nil
-			      (let ((bp (find-function-noselect func t)))
-				(set-buffer (car bp))
-				(goto-char (cdr bp))
-				(when (sexp-at-point)
-				  (mark-sexp)
-				  (buffer-substring (point) (mark))))
-			    (error func))
-			    )))))
-    (org-mode)
-
-    ;; replace `' with links to describe function or variable, unless
-    ;; they are in a code block, then leave them alone.
-    (goto-char (point-min))
-    (while (re-search-forward "`\\([^' ]*\\)'" nil t)
-      (let ((result (match-string 1))
-	    (bg (match-beginning 1))
-	    (end (match-end 1)))
-	;; checking for code block changes match data, so
-	;; we save it here.
-	(unless (save-match-data
-		  (eq 'src-block (car (org-element-at-point))))
-	  (cond
-	   ;; known function
-	   ((fboundp (intern result))
-	    (setf (buffer-substring bg end)
-		  (format "[[elisp:(describe-function '%s)][%s]]"
-			  result result)))
-	   ;; known variable
-	   ((boundp (intern result))
-	    (setf (buffer-substring bg end)
-		  (format "[[elisp:(describe-variable '%s)][%s]]"
-			  result result)))
-	   ;; unknown quoted thing, just return it back
-	   (t
-	    result)))))
-    ;; finally jump to Requires section
-    (org-open-link-from-string "[[*Requires]]")))
-#+END_SRC
-
 
 * archived introspection work
 some hints to get started
