@@ -46,7 +46,7 @@ def get_journal_link(EID):
     results = get_abstract_info(EID)
     coredata = results.find('./{http://www.elsevier.com/xml/svapi/abstract/dtd}coredata')
 
-    journal = coredata.find('{http://prismstandard.org/namespaces/basic/2.0/}publicationName').text
+    journal = coredata.find('{http://prismstandard.org/namespaces/basic/2.0/}publicationName').text.encode('utf-8')
     sid = coredata.find('{http://www.elsevier.com/xml/svapi/abstract/dtd}source-id').text
     s = '<a href="http://www.scopus.com/source/sourceInfo.url?sourceId={sid}">{journal}</a>'
 
@@ -55,7 +55,8 @@ def get_journal_link(EID):
 def get_doi_link(EID):
     results = get_abstract_info(EID)
     coredata = results.find('./{http://www.elsevier.com/xml/svapi/abstract/dtd}coredata')
-    doi = coredata.find('{http://prismstandard.org/namespaces/basic/2.0/}doi').text
+    doi = coredata.find('{http://prismstandard.org/namespaces/basic/2.0/}doi')
+    if doi is not None: doi = doi.text
     s = '<a href="http://dx.doi.org/{doi}">doi:{doi}</a>'
     return s.format(doi=doi)
 
@@ -73,9 +74,11 @@ def get_abstract_link(EID):
 def get_cite_img_link(EID):
     results = get_abstract_info(EID)
     coredata = results.find('./{http://www.elsevier.com/xml/svapi/abstract/dtd}coredata')
-    doi = coredata.find('{http://prismstandard.org/namespaces/basic/2.0/}doi').text
+    doi = coredata.find('{http://prismstandard.org/namespaces/basic/2.0/}doi')
+    if doi is not None: doi = doi.text
     s = '<img src="http://api.elsevier.com/content/abstract/citation-count?doi={doi}&httpAccept=image/jpeg&apiKey={apikey}"></img>'
-    return s.format(doi=doi, apikey=MY_API_KEY)
+
+    return s.format(doi=doi, apikey=MY_API_KEY, cite_link=None)
 
 def get_html_citation(EID):
     results = get_abstract_info(EID)
