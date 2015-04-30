@@ -41,9 +41,8 @@ ${date}  ${excerpt}
 
 Department publications
 =======================
-<script src="http://syndic8.scopus.com/getMessage?registrationId=CJFCCKFDJLFLEJFHEJGHCNHLEJJGEQIFEMKCCLOHEF"></script>
 
-
+<script src="http://syndic8.scopus.com/getMessage?registrationId=HAGDHBGEOCGMJAGIJAHIHEJDHJGGLIMGIIIKOHGJKD"></script>
 
 
 
