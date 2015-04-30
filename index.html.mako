@@ -45,7 +45,5 @@ Department publications
 
 <script src="http://syndic8.scopus.com/getMessage?registrationId=HAGDHBGEOCGMJAGIJAHIHEJDHJGGLIMGIIIKOHGJKD"></script>
 
-
-
 </%self:filter>
 </article>
