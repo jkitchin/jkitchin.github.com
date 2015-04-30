@@ -37,11 +37,12 @@ excerpt = post.content[0:200] + " ... "
 <a href="${post.path}">${post.title}</a>
 ${date}  ${excerpt}
 <a href="${post.path}">click here for more</a>
-
+<br>
 
 
 Department publications
 ========================
+
 
 <script src="http://syndic8.scopus.com/getMessage?registrationId=HAGDHBGEOCGMJAGIJAHIHEJDHJGGLIMGIIIKOHGJKD"></script>
 
