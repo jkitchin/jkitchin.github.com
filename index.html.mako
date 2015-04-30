@@ -39,8 +39,9 @@ ${date}  ${excerpt}
 <a href="${post.path}">click here for more</a>
 
 
+
 Department publications
-=======================
+========================
 
 <script src="http://syndic8.scopus.com/getMessage?registrationId=HAGDHBGEOCGMJAGIJAHIHEJDHJGGLIMGIIIKOHGJKD"></script>
 
