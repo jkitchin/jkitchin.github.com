@@ -80,6 +80,210 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Uncertainty-in-polynomial-roots-Part-II"></div>
+      <h2 class="blog_post_title"><a href="/blog/2013/07/06/Uncertainty-in-polynomial-roots-Part-II/" rel="bookmark" title="Permanent Link to Uncertainty in polynomial roots - Part II">Uncertainty in polynomial roots - Part II</a></h2>
+      <p><small><span class="blog_post_date">Posted July 06, 2013 at 03:31 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/data-analysis/'>data analysis</a>, <a href='/blog/category/uncertainty/'>uncertainty</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2013/07/06/Uncertainty-in-polynomial-roots-Part-II#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+We previously looked at uncertainty in polynomial roots where we had an analytical formula for the roots of the polynomial, and we knew the uncertainties in the polynomial parameters. It would be inconvenient to try this for a cubic polynomial, although there may be formulas for the roots. I do not know of there are general formulas for the roots of a 4<sup>th</sup> order polynomial or higher. 
+</p>
+
+<p>
+Unfortunately, we cannot use the uncertainties package out of the box directly here.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">import</span> uncertainties <span style="color: #8b0000;">as</span> u
+<span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
+c, b, a = [-0.99526746, -0.011546,    1.00188999]
+sc, sb, sa = [ 0.0249142,   0.00860025,  0.00510128]
+
+A = u.ufloat((a, sa))
+B = u.ufloat((b, sb))
+C = u.ufloat((c, sc))
+
+<span style="color: #8b0000;">print</span> np.roots([A, B, C])
+</pre>
+</div>
+
+<pre class="example">
+&gt;&gt;&gt; &gt;&gt;&gt; &gt;&gt;&gt; &gt;&gt;&gt; &gt;&gt;&gt; &gt;&gt;&gt; &gt;&gt;&gt; &gt;&gt;&gt; Traceback (most recent call last):
+  File "&lt;stdin&gt;", line 1, in &lt;module&gt;
+  File "c:\Users\jkitchin\AppData\Local\Enthought\Canopy\User\lib\site-packages\numpy\lib\polynomial.py", line 218, in roots
+    p = p.astype(float)
+  File "c:\Users\jkitchin\AppData\Local\Enthought\Canopy\User\lib\site-packages\uncertainties\__init__.py", line 1257, in raise_error
+    % (self.__class__, coercion_type))
+TypeError: can't convert an affine function (&lt;class 'uncertainties.Variable'&gt;) to float; use x.nominal_value
+</pre>
+
+<p>
+To make some progress, we have to understand how the <a href="https://github.com/numpy/numpy/blob/v1.7.0/numpy/lib/polynomial.py#L149">numpy.roots</a> function works. It constructs a <a href="http://en.wikipedia.org/wiki/Companion_matrix">Companion matrix</a>, and the eigenvalues of that matrix are the same as the roots of the polynomial.  
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
+
+c0, c1, c2 = [-0.99526746, -0.011546,    1.00188999]
+
+p = np.array([c2, c1, c0])
+N = <span style="color: #8b0000;">len</span>(p)
+
+<span style="color: #ff0000; font-weight: bold;"># we construct the companion matrix like this</span>
+<span style="color: #ff0000; font-weight: bold;"># see https://github.com/numpy/numpy/blob/v1.7.0/numpy/lib/polynomial.py#L220</span>
+<span style="color: #ff0000; font-weight: bold;"># for this code.</span>
+<span style="color: #ff0000; font-weight: bold;"># build companion matrix and find its eigenvalues (the roots)</span>
+A = np.diag(np.ones((N-2,), p.dtype), -1)
+A[0, :] = -p[1:] / p[0]
+
+<span style="color: #8b0000;">print</span> A
+
+roots = np.linalg.eigvals(A)
+<span style="color: #8b0000;">print</span> roots
+</pre>
+</div>
+
+<pre class="example">
+[[ 0.01152422  0.99338996]
+ [ 1.          0.        ]]
+[ 1.00246827 -0.99094405]
+</pre>
+
+<p>
+This definition of the companion matrix is a little different than the one <a href="http://en.wikipedia.org/wiki/Companion_matrix">here</a>, but primarily in the scaling of the coefficients. That does not seem to change the eigenvalues, or the roots. 
+</p>
+
+<p>
+Now, we have a path to estimate the uncertainty in the roots. Since we know the polynomial coefficients and their uncertainties from the fit, we can use Monte Carlo sampling to estimate the uncertainty in the roots. 
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
+<span style="color: #8b0000;">import</span> uncertainties <span style="color: #8b0000;">as</span> u
+
+c, b, a = [-0.99526746, -0.011546,    1.00188999]
+sc, sb, sa = [ 0.0249142,   0.00860025,  0.00510128]
+
+NSAMPLES = 100000
+A = np.random.normal(a, sa, (NSAMPLES, ))
+B = np.random.normal(b, sb, (NSAMPLES, ))
+C = np.random.normal(c, sc, (NSAMPLES, ))
+
+roots = [[] <span style="color: #8b0000;">for</span> i <span style="color: #8b0000;">in</span> <span style="color: #8b0000;">range</span>(NSAMPLES)]
+
+<span style="color: #8b0000;">for</span> i <span style="color: #8b0000;">in</span> <span style="color: #8b0000;">range</span>(NSAMPLES):
+    p = np.array([A[i], B[i], C[i]])
+    N = <span style="color: #8b0000;">len</span>(p)
+    
+    M = np.diag(np.ones((N-2,), p.dtype), -1)
+    M[0, :] = -p[1:] / p[0]
+    r = np.linalg.eigvals(M)
+    r.sort()  <span style="color: #ff0000; font-weight: bold;"># there is no telling what order the values come out in</span>
+    roots[i] = r
+    
+avg = np.average(roots, axis=0)
+std = np.std(roots, axis=0)
+
+<span style="color: #8b0000;">for</span> r, s <span style="color: #8b0000;">in</span> <span style="color: #8b0000;">zip</span>(avg, std):
+    <span style="color: #8b0000;">print</span> <span style="color: #228b22;">'{0: f} +/- {1: f}'</span>.format(r, s)
+</pre>
+</div>
+
+<pre class="example">
+-0.990949 +/-  0.013435
+ 1.002443 +/-  0.013462
+</pre>
+
+<p>
+Compared to our previous approach with the uncertainties package where we got:
+</p>
+
+<pre class="example">
+: -0.990944048037+/-0.0134208013339
+:  1.00246826738 +/-0.0134477390832
+</pre>
+
+<p>
+the agreement is quite good! The advantage of this approach is that we do not have to know the formula for the roots of higher order polynomials to estimate the uncertainty in the roots. The downside is we have to evaluate the eigenvalues of a matrix a large number of times to get good estimates of the uncertainty. For high power polynomials this could be problematic. I do not currently see a way around this, unless it becomes possible to get the uncertainties package to propagate through the numpy.eigvals function. It is possible to <a href="http://pythonhosted.org/uncertainties/user_guide.html#making-custom-functions-accept-numbers-with-uncertainties">wrap</a> some functions with uncertainties, but so far only functions that return a single number.
+</p>
+
+<p>
+There are some other potential problems with this approach.  It is assumed that the accuracy of the eigenvalue solver is much better than the uncertainty in the polynomial parameters. You have to use some judgment in using these uncertainties. We are approximating the uncertainties of a nonlinear problem. In other words, the uncertainties of the roots are not linearly dependent on the uncertainties of the polynomial coefficients.  
+</p>
+
+<p>
+It is possible to <a href="http://pythonhosted.org/uncertainties/user_guide.html#making-custom-functions-accept-numbers-with-uncertainties">wrap</a> some functions with uncertainties, but so far only functions that return a single number. Here is an example of getting the n<sup>th</sup> root and its uncertainty.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">import</span> uncertainties <span style="color: #8b0000;">as</span> u
+<span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
+
+@u.wrap
+<span style="color: #8b0000;">def</span> <span style="color: #8b2323;">f</span>(n=0, *P):
+    <span style="color: #228b22;">''' compute the nth root of the polynomial P and the uncertainty of the root'''</span>
+    p =  np.array(P)
+    N = <span style="color: #8b0000;">len</span>(p)
+    
+    M = np.diag(np.ones((N-2,), p.dtype), -1)
+    M[0, :] = -p[1:] / p[0]
+    r = np.linalg.eigvals(M)
+    r.sort()  <span style="color: #ff0000; font-weight: bold;"># there is no telling what order the values come out in</span>
+    <span style="color: #8b0000;">return</span> r[n]
+
+<span style="color: #ff0000; font-weight: bold;"># our polynomial coefficients and standard errors</span>
+c, b, a = [-0.99526746, -0.011546,    1.00188999]
+sc, sb, sa = [ 0.0249142,   0.00860025,  0.00510128]
+
+A = u.ufloat((a, sa))
+B = u.ufloat((b, sb))
+C = u.ufloat((c, sc))
+
+<span style="color: #8b0000;">for</span> result <span style="color: #8b0000;">in</span> [f(n, A, B, C) <span style="color: #8b0000;">for</span> n <span style="color: #8b0000;">in</span> [0, 1]]:
+    <span style="color: #8b0000;">print</span> result
+</pre>
+</div>
+
+<pre class="example">
+-0.990944048037+/-0.013420800377
+1.00246826738+/-0.0134477388218
+</pre>
+
+<p>
+It is good to see this is the same result we got earlier, with <i>a lot less work</i> (although we do have to solve it for each root, which is a bit redundant)! It is a bit more abstract though, and requires a specific formulation of the function for the wrapper to work.
+</p>
+<p>Copyright (C) 2013 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2013/07/06/Uncertainty-in-polynomial-roots---Part-II.org">org-mode source</a><p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2013/07/06/Uncertainty-in-polynomial-roots-Part-II#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Uncertainty-in-polynomial-roots"></div>
       <h2 class="blog_post_title"><a href="/blog/2013/07/05/Uncertainty-in-polynomial-roots/" rel="bookmark" title="Permanent Link to Uncertainty in polynomial roots">Uncertainty in polynomial roots</a></h2>
       <p><small><span class="blog_post_date">Posted July 05, 2013 at 09:10 AM</span> | categories:
@@ -970,47 +1174,6 @@ It is debatable whether this is cleaner. One argument for this is that it does n
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2013/06/26/Memoizing-instance-methods-in-a-class#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="New-paper-accepted-on-CO-2-capture-simulation"></div>
-      <h2 class="blog_post_title"><a href="/blog/2013/06/25/New-paper-accepted-on-CO-2-capture-simulation/" rel="bookmark" title="Permanent Link to New paper accepted on CO_2 capture simulation">New paper accepted on CO_2 capture simulation</a></h2>
-      <p><small><span class="blog_post_date">Posted June 25, 2013 at 04:54 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/news/'>news</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2013/06/25/New-paper-accepted-on-CO-2-capture-simulation#disqus_thread">View Comments</a>
-      <p><small><span class="blog_post_date">Updated October 21, 2013 at 02:52 PM</span>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-Our manuscript titled "Comparisons of Amine Solvents for Post-combustion CO\(_2\) Capture: A Multi-objective Analysis Approach" by Anita Lee, John Eslick, David Miller, and John Kitchin was just accepted in International Journal of Greenhouse Gas Control. In this paper we used a genetic algorithm to find pareto-optimal operating conditions of amine solvent CO2 capture systems that minimize capital cost and parasitic power cost. We compared MEA, DEA and AMP, and found that there are operating conditions where both solvents could be better than MEA.
-</p>
-
-<p>
-Update: The article is online here:  <a href="http://www.sciencedirect.com/science/article/pii/S1750583613002703">http://www.sciencedirect.com/science/article/pii/S1750583613002703</a> 
-</p>
-<p>Copyright (C) 2013 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2013/06/25/New-paper-accepted-on-CO_2-capture-simulation.org">org-mode source</a><p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2013/06/25/New-paper-accepted-on-CO-2-capture-simulation#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="../38">« Previous Page</a>
   --  
  <a href="../40">Next Page »</a>
@@ -1052,11 +1215,11 @@ Update: The article is online here:  <a href="http://www.sciencedirect.com/scien
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2015/05/07/New-publication-in-J-Phys-Chem-C/">New publication in J. Phys. Chem. C</a></li>
       <li><a href="/blog/2015/04/24/New-publication-in-ACS-Catalysis-on-composition-dependent-alloy-electronic-structure/">New publication in ACS Catalysis on composition dependent alloy electronic structure</a></li>
       <li><a href="/blog/2015/04/24/Commenting-in-org-files/">Commenting in org-files</a></li>
       <li><a href="/blog/2015/04/08/New-publication-in-J-Chem-Physics-on-calculating-oxide-properties-with-DFT+U/">New publication in J. Chem. Physics on calculating oxide properties with DFT+U</a></li>
       <li><a href="/blog/2015/04/06/Using-the-Scopus-api-with-xml-output/">Using the Scopus api with xml output</a></li>
-      <li><a href="/blog/2015/04/04/Making-highly-linked-bibliographies-from-the-Scopus-API/">Making highly linked bibliographies from the Scopus API</a></li>
     </ul>
   </section>
 
