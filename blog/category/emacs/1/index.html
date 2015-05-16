@@ -80,6 +80,211 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Python-data-structures-to-lisp"></div>
+      <h2 class="blog_post_title"><a href="/blog/2015/05/16/Python-data-structures-to-lisp/" rel="bookmark" title="Permanent Link to Python data structures to lisp">Python data structures to lisp</a></h2>
+      <p><small><span class="blog_post_date">Posted May 16, 2015 at 10:47 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/python/'>python</a>, <a href='/blog/category/lisp/'>lisp</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2015/05/16/Python-data-structures-to-lisp#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+I have an idea in mind that would use the output of python scripts in lisp functions. Xah Lee posted an <a href="http://ergoemacs.org/emacs/elisp_perl_wrapper.html">idea for writing emacs commands in scripting languages</a> . In this post I want to explore an extension of the idea, where a Python script will return output that can be read in Lisp, e.g. we can convert a Python list to a lisp list, or a dictionary to an a-list or p-list. I can already see that simple data structures will be "simple", and arbitrary data structures will offer a lot of challenges, e.g. nested lists or dictionaries&#x2026;
+</p>
+
+<p>
+If I could add some custom functions to the basic builtin types in Python, then I could use another approach to format python objects as lisp data types. This isn't recommended by Pythonistas, but I guess they don't want to use lisp as much as I do ;) I found this approach to modifying builtins:
+</p>
+
+<p>
+<a href="http://stackoverflow.com/questions/2444680/how-do-i-add-my-own-custom-attributes-to-existing-built-in-python-types-like-a">http://stackoverflow.com/questions/2444680/how-do-i-add-my-own-custom-attributes-to-existing-built-in-python-types-like-a</a> 
+</p>
+
+<p>
+We use that almost verbatim here to get what I want. This is a super low level way to add functions to the builtins. I add some simple formatting to floats, ints and strings. I add a more complex recursive formatting function to lists, tuples and dictionaries. A dictionary can be represented as an alist or plist. Both examples are shown, but I leave the alist version commented out. Finally, we add a lispify function to numpy arrays.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #0000FF;">import</span> ctypes <span style="color: #0000FF;">as</span> c
+
+<span style="color: #0000FF;">class</span> <span style="color: #6434A3;">PyObject_HEAD</span>(c.Structure):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">_fields_</span> = [(<span style="color: #008000;">'HEAD'</span>, c.c_ubyte * (<span style="color: #006FE0;">object</span>.__basicsize__ -
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>     c.sizeof(c.c_void_p))),
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   (<span style="color: #008000;">'ob_type'</span>, c.c_void_p)]
+
+<span style="color: #BA36A5;">_get_dict</span> = c.pythonapi._PyObject_GetDictPtr
+<span style="color: #BA36A5;">_get_dict.restype</span> = c.POINTER(c.py_object)
+<span style="color: #BA36A5;">_get_dict.argtypes</span> = [c.py_object]
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">get_dict</span>(<span style="color: #006FE0;">object</span>):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> _get_dict(<span style="color: #006FE0;">object</span>).contents.value
+
+get_dict(<span style="color: #006FE0;">str</span>)[<span style="color: #008000;">'lisp'</span>] = <span style="color: #0000FF;">lambda</span> s:<span style="color: #008000;">'"{}"'</span>.<span style="color: #006FE0;">format</span>(<span style="color: #006FE0;">str</span>(s))
+get_dict(<span style="color: #006FE0;">float</span>)[<span style="color: #008000;">'lisp'</span>] = <span style="color: #0000FF;">lambda</span> f:<span style="color: #008000;">'{}'</span>.<span style="color: #006FE0;">format</span>(<span style="color: #006FE0;">str</span>(f))
+get_dict(<span style="color: #006FE0;">int</span>)[<span style="color: #008000;">'lisp'</span>] = <span style="color: #0000FF;">lambda</span> f:<span style="color: #008000;">'{}'</span>.<span style="color: #006FE0;">format</span>(<span style="color: #006FE0;">str</span>(f))
+
+<span style="color: #0000FF;">import</span> collections
+<span style="color: #0000FF;">import</span> numpy <span style="color: #0000FF;">as</span> np
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">lispify</span>(L):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #008000;">"Convert a Python object L to a lisp representation."</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">if</span> (<span style="color: #006FE0;">isinstance</span>(L, <span style="color: #006FE0;">str</span>)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">or</span> <span style="color: #006FE0;">isinstance</span>(L, <span style="color: #006FE0;">float</span>)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">or</span> <span style="color: #006FE0;">isinstance</span>(L, <span style="color: #006FE0;">int</span>)):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> L.lisp()
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">elif</span> (<span style="color: #006FE0;">isinstance</span>(L, <span style="color: #006FE0;">list</span>)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>     <span style="color: #0000FF;">or</span> <span style="color: #006FE0;">isinstance</span>(L, <span style="color: #006FE0;">tuple</span>)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>     <span style="color: #0000FF;">or</span> <span style="color: #006FE0;">isinstance</span>(L, np.ndarray)):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">s</span> = []
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">for</span> element <span style="color: #0000FF;">in</span> L:
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">s</span> += [element.lisp()]
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> <span style="color: #008000;">'('</span> + <span style="color: #008000;">' '</span>.join(s) + <span style="color: #008000;">')'</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">elif</span> <span style="color: #006FE0;">isinstance</span>(L, <span style="color: #006FE0;">dict</span>):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">s</span> = []
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">for</span> key <span style="color: #0000FF;">in</span> L:
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">alist format</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">s += ["({0} . {1})".format(key, L[key].lisp())]</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">plist</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">s</span> += [<span style="color: #008000;">":{0} {1}"</span>.<span style="color: #006FE0;">format</span>(key, L[key].lisp())]
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> <span style="color: #008000;">'('</span> + <span style="color: #008000;">' '</span>.join(s) + <span style="color: #008000;">')'</span>
+
+get_dict(<span style="color: #006FE0;">list</span>)[<span style="color: #008000;">'lisp'</span>] = lispify
+get_dict(<span style="color: #006FE0;">tuple</span>)[<span style="color: #008000;">'lisp'</span>] = lispify
+get_dict(<span style="color: #006FE0;">dict</span>)[<span style="color: #008000;">'lisp'</span>] = lispify
+get_dict(np.ndarray)[<span style="color: #008000;">'lisp'</span>] = lispify
+</pre>
+</div>
+
+<p>
+Let us test these out.
+</p>
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #0000FF;">from</span> pylisp <span style="color: #0000FF;">import</span> *
+<span style="color: #BA36A5;">a</span> = 4.5
+<span style="color: #0000FF;">print</span> <span style="color: #006FE0;">int</span>(a).lisp()
+<span style="color: #0000FF;">print</span> a.lisp()
+<span style="color: #0000FF;">print</span> <span style="color: #008000;">"test"</span>.lisp()
+
+<span style="color: #0000FF;">print</span> [1, 2, 3].lisp()
+<span style="color: #0000FF;">print</span> (1, 2, 3).lisp()
+
+<span style="color: #0000FF;">print</span> [[1, 3], (5, 6)].lisp()
+
+<span style="color: #0000FF;">print</span> {<span style="color: #008000;">"a"</span>: 5}.lisp()
+<span style="color: #0000FF;">print</span> [[1, 3], (5, 6), {<span style="color: #008000;">"a"</span>: 5, <span style="color: #008000;">"b"</span>: <span style="color: #008000;">"test"</span>}].lisp()
+
+
+<span style="color: #BA36A5;">A</span> = np.array([1, 3, 4])
+<span style="color: #0000FF;">print</span> A.lisp()
+<span style="color: #0000FF;">print</span> ({<span style="color: #008000;">"tree"</span>: [5, 6]}, [<span style="color: #008000;">"a"</span>, 4, <span style="color: #008000;">"list"</span>], 5, 2.0 / 3.0).lisp()
+</pre>
+</div>
+
+<pre class="example">
+4
+4.5
+"test"
+(1 2 3)
+(1 2 3)
+((1 3) (5 6))
+(:a 5)
+((1 3) (5 6) (:a 5 :b "test"))
+(1 3 4)
+((:tree (5 6)) ("a" 4 "list") 5 0.666666666667)
+</pre>
+
+
+<p>
+Now, is that better than a single lisp function with a lot of conditionals to handle each type? I am not sure. This seems to work pretty well.
+</p>
+
+
+<p>
+Here is how I imagine using this idea. We would have some emacs-lisp variables and use them to dynamically generate a python script. We run the python script, capturing the output, and read it back in as a lisp data structure. Here is a simple kind of example that generates a dictionary.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let*</span> ((elisp-var 6)
+       (result)
+      (script (format <span style="color: #008000;">"</span>
+<span style="color: #008000;">from pylisp import *</span>
+<span style="color: #008000;">print {x: [2*y for y in range(x)] for x in range(1, %s)}.lisp()</span>
+<span style="color: #008000;">"</span> elisp-var)))
+
+  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">start a python process</span>
+  (run-python)
+  (<span style="color: #0000FF;">setq</span> result (read (python-shell-send-string-no-output
+   script)))
+  (plist-get result <span style="color: #006FE0;">:5</span>))
+</pre>
+</div>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(0 2 4 6 8)
+</pre>
+</div>
+
+<p>
+That seems to work pretty well. One alternative idea to this is <a href="https://github.com/pinard/Pymacs">Pymacs</a> , which I have written about <a href="http://kitchingroup.cheme.cmu.edu/blog/2014/10/19/Using-Pymacs-to-integrate-Python-into-Emacs/">before</a> . This project isn't currently under active development, and I ran into some difficulties with it before.
+</p>
+
+<p>
+Here we can solve the problem I previously posed and get the result back as an elisp float, and then reuse the result
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let*</span> ((myvar 3)
+       (script (format <span style="color: #008000;">"from pylisp import *</span>
+<span style="color: #008000;">from scipy.optimize import fsolve</span>
+<span style="color: #008000;">def objective(x):</span>
+<span style="color: #008000;">    return x - 5</span>
+
+<span style="color: #008000;">ans, = fsolve(objective, %s)</span>
+<span style="color: #008000;">print ans.lisp()"</span> myvar)))
+  (run-python)
+  (<span style="color: #0000FF;">setq</span> result (read (python-shell-send-string-no-output
+                       script)))
+  (- 5 result))
+</pre>
+</div>
+
+<pre class="example">
+0.0
+</pre>
+
+<p>
+Bottom line: we can write python code in lisp functions that are dynamically updated, execute them, and get lisp data structures back for simple data types. I think that could be useful in some applications, where it is easier to do parsing/analysis in Python, but you want to do something else that is easier in Lisp.
+</p>
+<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/05/16/Python-data-structures-to-lisp.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/05/16/Python-data-structures-to-lisp#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Clickable-links-for-Twitter-handles-in-Emacs"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/03/18/Clickable-links-for-Twitter-handles-in-Emacs/" rel="bookmark" title="Permanent Link to Clickable links for Twitter handles in Emacs">Clickable links for Twitter handles in Emacs</a></h2>
       <p><small><span class="blog_post_date">Posted March 18, 2015 at 12:20 PM</span> | categories:
@@ -529,120 +734,6 @@ I do not use arxiv.org a lot, so this is not super well tested on many articles 
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/03/09/Bibtex-Entries-from-Arxiv-org#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="org-mode-links-meet-hydra"></div>
-      <h2 class="blog_post_title"><a href="/blog/2015/02/22/org-mode-links-meet-hydra/" rel="bookmark" title="Permanent Link to org-mode links meet hydra">org-mode links meet hydra</a></h2>
-      <p><small><span class="blog_post_date">Posted February 22, 2015 at 07:06 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/hydra/'>hydra</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2015/02/22/org-mode-links-meet-hydra#disqus_thread">View Comments</a>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-I have played with a lot of options to give org-mode links extra functionality. Here are a few of the ideas I have looked at so far.
-</p>
-
-<ol class="org-ol">
-<li><a href="http://kitchingroup.cheme.cmu.edu/blog/2013/10/21/Enabling-right-clicks-in-org-mode-links/">Enabling right clicks on links</a> 
-</li>
-<li>A home made minibuffer menu in org-ref
-</li>
-<li>A helm buffer in org-ref
-</li>
-</ol>
-
-<p>
-Here, I want to explore a hydra menu for a link. The idea is pretty simple, we need functions that do something with the link at point, and a hydra interface to call them. This turned out to be a little tricky. I could not get the path from the link in the link lambda function, and we need a way to pass the path to the function. I use a global variable for that. I wish there was another way to do that, but this does actually work. We illustrate it here with a more functional doi link.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">doi-crossref</span> ()
-  <span style="color: #036A07;">"Search DOI in CrossRef."</span>
-  (interactive)
-  (browse-url
-   (format
-    <span style="color: #008000;">"http://search.crossref.org/?q=%s"</span> *doi-hydra-path*)))
-
-(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">doi-google-scholar</span> ()
-  <span style="color: #036A07;">"Google scholar the doi."</span>
-  (interactive)
-  (browse-url
-   (format
-    <span style="color: #008000;">"http://scholar.google.com/scholar?q=%s"</span> *doi-hydra-path*)))
-
-(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">doi-pubmed</span> ()
-  <span style="color: #036A07;">"Pubmed the doi."</span>
-  (interactive)
-  (browse-url
-   (format
-    <span style="color: #008000;">"http://www.ncbi.nlm.nih.gov/pubmed/?term=%s"</span>
-    (url-hexify-string *doi-hydra-path*))))
-
- (defhydra doi-hydra ()
-   <span style="color: #008000;">"org-ref"</span>
-   (<span style="color: #008000;">"c"</span> doi-crossref <span style="color: #008000;">"Crossref"</span>)
-   (<span style="color: #008000;">"g"</span> doi-google-scholar <span style="color: #008000;">"Google Scholar"</span>)
-   (<span style="color: #008000;">"p"</span> doi-pubmed <span style="color: #008000;">"Pubmed"</span>))
-
-(org-add-link-type <span style="color: #008000;">"doi"</span>
-  (<span style="color: #0000FF;">lambda</span> (path) (setq *doi-hydra-path* path) (doi-hydra/body)))
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="left" />
-
-<col  class="left" />
-
-<col  class="left" />
-
-<col  class="left" />
-</colgroup>
-<tbody>
-<tr>
-<td class="left">lambda</td>
-<td class="left">(path)</td>
-<td class="left">(setq <b>doi-hydra-path</b> path)</td>
-<td class="left">(doi-hydra/body)</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-Now for a test, <a href="10.1021/jp047349j">10.1021/jp047349j</a>.
-</p>
-
-<p>
-It works fine, when you click on a link, you get a minibuffer menu with context hints, and pressing any other key than is defined simply cancels the command.
-</p>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/02/22/org-mode-links-meet-hydra.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/02/22/org-mode-links-meet-hydra#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="/blog/category/emacs/2">Next Page »</a>
 
           </div>
@@ -682,11 +773,11 @@ It works fine, when you click on a link, you get a minibuffer menu with context 
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2015/05/16/Python-data-structures-to-lisp/">Python data structures to lisp</a></li>
       <li><a href="/blog/2015/05/09/Another-approach-to-embedding-org-source-in-html/">Another approach to embedding org-source in html</a></li>
       <li><a href="/blog/2015/05/09/An-alternative-approach-to-including-org-source-in-blog-posts/">An alternative approach to including org-source in blog posts</a></li>
       <li><a href="/blog/2015/05/07/New-publication-in-J-Phys-Chem-C/">New publication in J. Phys. Chem. C</a></li>
       <li><a href="/blog/2015/04/24/New-publication-in-ACS-Catalysis-on-composition-dependent-alloy-electronic-structure/">New publication in ACS Catalysis on composition dependent alloy electronic structure</a></li>
-      <li><a href="/blog/2015/04/24/Commenting-in-org-files/">Commenting in org-files</a></li>
     </ul>
   </section>
 
