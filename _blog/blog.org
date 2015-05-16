@@ -1,3 +1,274 @@
+* DONE Python data structures to lisp
+  CLOSED: [2015-05-16 Sat 10:48]
+  :PROPERTIES:
+  :categories: python,emacs,lisp
+  :date:     2015/05/16 10:47:59
+  :updated:  2015/05/16 10:47:59
+  :END:
+I have an idea in mind that would use the output of python scripts in lisp functions. Xah Lee posted an [[http://ergoemacs.org/emacs/elisp_perl_wrapper.html][idea for writing emacs commands in scripting languages]]. In this post I want to explore an extension of the idea, where a Python script will return output that can be read in Lisp, e.g. we can convert a Python list to a lisp list, or a dictionary to an a-list or p-list. I can already see that simple data structures will be "simple", and arbitrary data structures will offer a lot of challenges, e.g. nested lists or dictionaries...
+
+If I could add some custom functions to the basic builtin types in Python, then I could use another approach to format python objects as lisp data types. This isn't recommended by Pythonistas, but I guess they don't want to use lisp as much as I do ;) I found this approach to modifying builtins:
+
+http://stackoverflow.com/questions/2444680/how-do-i-add-my-own-custom-attributes-to-existing-built-in-python-types-like-a
+
+We use that almost verbatim here to get what I want. This is a super low level way to add functions to the builtins. I add some simple formatting to floats, ints and strings. I add a more complex recursive formatting function to lists, tuples and dictionaries. A dictionary can be represented as an alist or plist. Both examples are shown, but I leave the alist version commented out. Finally, we add a lispify function to numpy arrays.
+
+#+BEGIN_SRC python :tangle pylisp.py
+import ctypes as c
+
+class PyObject_HEAD(c.Structure):
+    _fields_ = [('HEAD', c.c_ubyte * (object.__basicsize__ -
+                                      c.sizeof(c.c_void_p))),
+                ('ob_type', c.c_void_p)]
+
+_get_dict = c.pythonapi._PyObject_GetDictPtr
+_get_dict.restype = c.POINTER(c.py_object)
+_get_dict.argtypes = [c.py_object]
+
+def get_dict(object):
+    return _get_dict(object).contents.value
+
+get_dict(str)['lisp'] = lambda s:'"{}"'.format(str(s))
+get_dict(float)['lisp'] = lambda f:'{}'.format(str(f))
+get_dict(int)['lisp'] = lambda f:'{}'.format(str(f))
+
+import collections
+import numpy as np
+
+def lispify(L):
+    "Convert a Python object L to a lisp representation."
+    if (isinstance(L, str)
+        or isinstance(L, float)
+        or isinstance(L, int)):
+        return L.lisp()
+    elif (isinstance(L, list)
+          or isinstance(L, tuple)
+          or isinstance(L, np.ndarray)):
+        s = []
+        for element in L:
+            s += [element.lisp()]
+        return '(' + ' '.join(s) + ')'
+    elif isinstance(L, dict):
+        s = []
+        for key in L:
+            # alist format
+            # s += ["({0} . {1})".format(key, L[key].lisp())]
+            # plist
+            s += [":{0} {1}".format(key, L[key].lisp())]
+        return '(' + ' '.join(s) + ')'
+
+get_dict(list)['lisp'] = lispify
+get_dict(tuple)['lisp'] = lispify
+get_dict(dict)['lisp'] = lispify
+get_dict(np.ndarray)['lisp'] = lispify
+#+END_SRC
+
+Let us test these out.
+#+BEGIN_SRC python
+from pylisp import *
+a = 4.5
+print int(a).lisp()
+print a.lisp()
+print "test".lisp()
+
+print [1, 2, 3].lisp()
+print (1, 2, 3).lisp()
+
+print [[1, 3], (5, 6)].lisp()
+
+print {"a": 5}.lisp()
+print [[1, 3], (5, 6), {"a": 5, "b": "test"}].lisp()
+
+
+A = np.array([1, 3, 4])
+print A.lisp()
+print ({"tree": [5, 6]}, ["a", 4, "list"], 5, 2.0 / 3.0).lisp()
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+4
+4.5
+"test"
+(1 2 3)
+(1 2 3)
+((1 3) (5 6))
+(:a 5)
+((1 3) (5 6) (:a 5 :b "test"))
+(1 3 4)
+((:tree (5 6)) ("a" 4 "list") 5 0.666666666667)
+#+end_example
+
+
+Now, is that better than a single lisp function with a lot of conditionals to handle each type? I am not sure. This seems to work pretty well.
+
+
+Here is how I imagine using this idea. We would have some emacs-lisp variables and use them to dynamically generate a python script. We run the python script, capturing the output, and read it back in as a lisp data structure. Here is a simple kind of example that generates a dictionary.
+
+#+BEGIN_SRC emacs-lisp :results code
+(let* ((elisp-var 6)
+       (result)
+      (script (format "
+from pylisp import *
+print {x: [2*y for y in range(x)] for x in range(1, %s)}.lisp()
+" elisp-var)))
+
+  ;; start a python process
+  (run-python)
+  (setq result (read (python-shell-send-string-no-output
+   script)))
+  (plist-get result :5))
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC emacs-lisp
+(0 2 4 6 8)
+#+END_SRC
+
+That seems to work pretty well. One alternative idea to this is [[https://github.com/pinard/Pymacs][Pymacs]], which I have written about [[http://kitchingroup.cheme.cmu.edu/blog/2014/10/19/Using-Pymacs-to-integrate-Python-into-Emacs/][before]]. This project isn't currently under active development, and I ran into some difficulties with it before.
+
+Here we can solve the problem I previously posed and get the result back as an elisp float, and then reuse the result
+
+#+BEGIN_SRC emacs-lisp
+(let* ((myvar 3)
+       (script (format "from pylisp import *
+from scipy.optimize import fsolve
+def objective(x):
+    return x - 5
+
+ans, = fsolve(objective, %s)
+print ans.lisp()" myvar)))
+  (run-python)
+  (setq result (read (python-shell-send-string-no-output
+		       script)))
+  (- 5 result))
+#+END_SRC
+
+#+RESULTS:
+: 0.0
+
+Bottom line: we can write python code in lisp functions that are dynamically updated, execute them, and get lisp data structures back for simple data types. I think that could be useful in some applications, where it is easier to do parsing/analysis in Python, but you want to do something else that is easier in Lisp.
+
+* Getting VASP output from vasprun.xml
+
+
+#+BEGIN_SRC python :session
+import xml.etree.ElementTree as ET
+
+with open('../../gilgamesh-backup/research/cu-pd-au-atat-vasp/CuPd_fcc/10/vasprun.xml') as f:
+    vasprun_xml = f.read()
+
+
+def get_encoded_text(container, xpath):
+    '''Return utf-8 encoded text for element at xpath if it is there.'''
+    if container is None:
+        return None
+    result = container.find(xpath)
+    if hasattr(result, 'text') and result.text:
+        return result.text.encode('utf-8')
+    else:
+        return None
+
+xml = ET.fromstring(vasprun_xml)
+
+print get_encoded_text(xml, 'generator/i[@name="program"]')
+print get_encoded_text(xml, 'generator/i[@name="version"]')
+print get_encoded_text(xml, 'generator/i[@name="subversion"]')
+#+END_SRC
+#+RESULTS:
+: vasp
+: 5.2.12
+: 11Nov11 complex                                                      serial
+
+Next, we see about the incar file. Not all of these elements have a type, so we have to get that attribute.
+
+#+BEGIN_SRC python :session
+for el in xml.find('incar'):
+    print '{0} ({1}) = {2}'.format(el.attrib['name'], el.attrib.get('type'), el.text)
+#+END_SRC
+#+RESULTS:
+: PREC (string) = high
+: IBRION (int) =     -1
+: ISIF (int) =      2
+: ENCUT (None) =     350.00000000
+: NBANDS (int) =     34
+: ISMEAR (int) =     -5
+: SIGMA (None) =       0.10000000
+
+KPOINTS.
+
+#+BEGIN_SRC python :session
+for el in xml.find('kpoints/generation'):
+    print '{0} = {1}'.format(el.attrib['name'], el.text)
+#+END_SRC
+#+RESULTS:
+: divisions =        8        8        8
+: usershift =       0.00000000       0.00000000       0.00000000
+: genvec1 =       0.12500000       0.00000000       0.00000000
+: genvec2 =       0.00000000       0.12500000       0.00000000
+: genvec3 =       0.00000000       0.00000000       0.12500000
+: shift =       0.00000000       0.00000000       0.00000000
+
+#+BEGIN_SRC python :session
+print [float(v.text) for v in xml.findall('kpoints/varray[@name="weights"]/v')]
+#+END_SRC
+
+#+RESULTS:
+: [0.00195312, 0.01171875, 0.01171875, 0.01171875, 0.00585938, 0.01171875, 0.0234375, 0.0234375, 0.0234375, 0.0234375, 0.0234375, 0.01171875, 0.01171875, 0.0234375, 0.0234375, 0.0234375, 0.01171875, 0.01171875, 0.0234375, 0.01171875, 0.00585938, 0.00390625, 0.01171875, 0.01171875, 0.01171875, 0.01171875, 0.01171875, 0.01171875, 0.01171875, 0.0234375, 0.0234375, 0.0234375, 0.0234375, 0.0234375, 0.01171875, 0.0234375, 0.0234375, 0.0234375, 0.0234375, 0.01171875, 0.0234375, 0.0234375, 0.01171875, 0.01171875, 0.0234375, 0.01171875, 0.00390625, 0.01171875, 0.01171875, 0.01171875, 0.01171875, 0.01171875, 0.0234375, 0.0234375, 0.0234375, 0.01171875, 0.0234375, 0.01171875, 0.01171875, 0.00390625, 0.01171875, 0.01171875, 0.01171875, 0.01171875, 0.00195312]
+
+#+BEGIN_SRC python :session
+print xml.find('parameters/separator[@name="electronic"]/i[@name="NELECT"]').text
+print xml.find('parameters/separator[@name="electronic"]/separator[@name="electronic mixer"]/i[@name="AMIX"]').text
+#+END_SRC
+
+#+RESULTS:
+: 43.00000000
+: 0.40000000
+
+#+BEGIN_SRC python :session
+for el in xml.findall('structure'):  print el.attrib['name']
+#+END_SRC
+#+RESULTS:
+: initialpos
+: finalpos
+
+#+BEGIN_SRC python :session
+for el in xml.findall('calculation/scstep/energy/i[@name="e_0_energy"]'):
+    print float(el.text)
+#+END_SRC
+#+RESULTS:
+: -16.49261096
+: -16.50499056
+: -16.48925155
+: -16.48985986
+: -16.48973695
+: -16.48985835
+: -16.48981957
+
+Get final structure:
+#+BEGIN_SRC python :session
+positions = [[float(x) for x in el.text.split()]
+             for  el in xml.findall('structure[@name="finalpos"]/varray[@name="positions"]/v')]
+
+unit_cell = [[float(x) for x in el.text.split()]
+             for el in xml.findall('structure[@name="finalpos"]/crystal/varray[@name="basis"]/v')]
+
+symbols = [el.text for el in xml.findall('atominfo/array[@name="atoms"]/set/rc/c[1]')]
+
+for sym, pos in zip(symbols, positions):
+    print '{0}: {1}'.format(sym, pos)
+
+print 'UC = {0}'.format(unit_cell)
+#+END_SRC
+
+#+RESULTS:
+: Cu: [0.25334331, 0.25334331, 0.25334331]
+: Cu: [0.0, 0.0, 0.0]
+: Cu: [0.74665669, 0.74665669, 0.74665669]
+: Pd: [0.5, 0.5, 0.5]
+: UC = [[-5.46362047, 3.5654701, 5.46362047], [-3.5654701, 5.46362047, 5.46362047], [-5.46362047, 5.46362047, 3.5654701]]
+
+
 * DONE Another approach to embedding org-source in html
   CLOSED: [2015-05-09 Sat 19:19]
   :PROPERTIES:
