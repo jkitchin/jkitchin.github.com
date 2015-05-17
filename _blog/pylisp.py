@@ -13,10 +13,6 @@ _get_dict.argtypes = [c.py_object]
 def get_dict(object):
     return _get_dict(object).contents.value
 
-get_dict(str)['lisp'] = lambda s:'"{}"'.format(str(s))
-get_dict(float)['lisp'] = lambda f:'{}'.format(str(f))
-get_dict(int)['lisp'] = lambda f:'{}'.format(str(f))
-
 import collections
 import numpy as np
 
@@ -31,7 +27,7 @@ def lispify(L):
           or isinstance(L, np.ndarray)):
         s = []
         for element in L:
-            s += [element.lisp()]
+            s += [element.lisp]
         return '(' + ' '.join(s) + ')'
     elif isinstance(L, dict):
         s = []
@@ -39,10 +35,15 @@ def lispify(L):
             # alist format
             # s += ["({0} . {1})".format(key, L[key].lisp())]
             # plist
-            s += [":{0} {1}".format(key, L[key].lisp())]
+            s += [":{0} {1}".format(key, L[key].lisp)]
         return '(' + ' '.join(s) + ')'
 
-get_dict(list)['lisp'] = lispify
-get_dict(tuple)['lisp'] = lispify
-get_dict(dict)['lisp'] = lispify
-get_dict(np.ndarray)['lisp'] = lispify
+get_dict(str)['lisp'] = property(lambda s:'"{}"'.format(str(s)))
+get_dict(float)['lisp'] = property(lambda f:'{}'.format(str(f)))
+get_dict(int)['lisp'] = property(lambda f:'{}'.format(str(f)))
+
+
+get_dict(list)['lisp'] = property(lispify)
+get_dict(tuple)['lisp'] = property(lispify)
+get_dict(dict)['lisp'] = property(lispify)
+get_dict(np.ndarray)['lisp'] = property(lispify)
