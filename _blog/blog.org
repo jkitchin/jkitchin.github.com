@@ -1,3 +1,351 @@
+* DONE Getting a Scopus EID from a DOI
+  CLOSED: [2015-06-07 Sun 16:29]
+  :PROPERTIES:
+  :categories: orgmode,ref
+  :date:     2015/06/07 16:29:05
+  :updated:  2015/06/07 16:29:05
+  :END:
+[[http://www.scopus.com][Scopus]] is a scientific literature indexing and search engine service run by Elsevier. I have been integrating Scopus workflows into Emacs  and org-ref. Scopus seems to work with their own digital identifiers, known as an EID. I usually have a DOI to work with. Here, we develop a way to get an EID from a DOI using the Scopus API. You need to get your own Scopus API key here: http://dev.elsevier.com/myapikey.html and set *scopus-api-key* in Emacs to use this code.
+
+Once we have an EID, here are a few interesting things we can do with them. This is an EID: 2-s2.0-84881394200, for this reference:
+
+Hallenbeck, Alexander P. and Kitchin, John R., "Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a  primary-amine based polymeric \ce{CO_2} sorbent", Industrial & Engineering Chemistry Research, 52:10788-10794 (2013)
+
+With the EID, we can construct a URL to the Scopus document page:
+#+BEGIN_SRC emacs-lisp
+(let ((eid "2-s2.0-84881394200"))
+  (format "http://www.scopus.com/record/display.url?eid=%s&origin=resultslist" eid))
+#+END_SRC
+
+#+RESULTS:
+: http://www.scopus.com/record/display.url?eid=2-s2.0-84881394200&origin=resultslist
+
+We can construct a URL to citing documents:
+#+BEGIN_SRC emacs-lisp
+(let ((eid "2-s2.0-84881394200"))
+  (format "http://www.scopus.com/results/citedbyresults.url?sort=plf-f&cite=%s&src=s&imp=t&sot=cite&sdt=a&sl=0&origin=recordpage" eid))
+#+END_SRC
+
+#+RESULTS:
+: http://www.scopus.com/results/citedbyresults.url?sort=plf-f&cite=2-s2.0-84881394200&src=s&imp=t&sot=cite&sdt=a&sl=0&origin=recordpage
+
+And there are three types of related document urls we can create: by author, keyword or references.
+
+By authors:
+#+BEGIN_SRC emacs-lisp
+(let ((eid "2-s2.0-84881394200"))
+  (format "http://www.scopus.com/search/submit/mlt.url?eid=%s&src=s&all=true&origin=recordpage&method=aut&zone=relatedDocuments" eid))
+#+END_SRC
+
+#+RESULTS:
+: http://www.scopus.com/search/submit/mlt.url?eid=2-s2.0-84881394200&src=s&all=true&origin=recordpage&method=aut&zone=relatedDocuments
+
+By keywords:
+#+BEGIN_SRC emacs-lisp
+(let ((eid "2-s2.0-84881394200"))
+  (format "http://www.scopus.com/search/submit/mlt.url?eid=%s&src=s&all=true&origin=recordpage&method=key&zone=relatedDocuments" eid))
+#+END_SRC
+
+#+RESULTS:
+: http://www.scopus.com/search/submit/mlt.url?eid=2-s2.0-84881394200&src=s&all=true&origin=recordpage&method=key&zone=relatedDocuments
+
+And by references:
+#+BEGIN_SRC emacs-lisp
+(let ((eid "2-s2.0-84881394200"))
+  (format "http://www.scopus.com/search/submit/mlt.url?eid=%s&src=s&all=true&origin=recordpage&method=ref&zone=relatedDocuments" eid))
+#+END_SRC
+
+#+RESULTS:
+: http://www.scopus.com/search/submit/mlt.url?eid=2-s2.0-84881394200&src=s&all=true&origin=recordpage&method=ref&zone=relatedDocuments
+
+We can generate all those on the fly if we have an EID. The problem is that we usually have the DOI, /not/ the EID. So, here we use the Scopus API to retrieve that. Basically, we just do a search on the DOI, assume one and only one is found, and get the EID from the results. The DOI we have for the reference considered here is doi:10.1021/ie400582a.
+
+The gist of what we will do is send an http request to Scopus with our API key, and data specifying what to get. Scopus will return data to us in either json or xml, depending on what we ask for.
+
+I find json easiest to deal with, so we first work it out in json. We use the Scopus search API and query on the doi here. We get back json data which we read as an emacs-lisp plist, and extract the eid from it.
+
+#+BEGIN_SRC emacs-lisp
+(let* ((doi "10.1021/ie400582a")
+       (url-request-method "GET")
+       (url-mime-accept-string "application/json")
+       (url-request-extra-headers  (list (cons "X-ELS-APIKey" *scopus-api-key*)
+					 '("field" . "eid")))
+       (url (format  "http://api.elsevier.com/content/search/scopus?query=doi(%s)" doi))
+       (json-object-type 'plist)
+       (json-data (with-current-buffer  (url-retrieve-synchronously url)
+		    (json-read-from-string
+		     (buffer-substring url-http-end-of-headers (point-max))))))
+ (plist-get (elt (plist-get (plist-get json-data :search-results) :entry) 0) :eid))
+#+END_SRC
+
+#+RESULTS:
+: 2-s2.0-84881394200
+
+That is the EID we were looking for. Here, we just wrap that code in a function so it is easier to reuse.
+
+#+BEGIN_SRC emacs-lisp
+(defun scopus-doi-to-eid-json (doi)
+  "Return a parsed xml from the Scopus article retrieval api for DOI.
+This does not always seem to work for the most recent DOIs."
+  (let* ((url-request-method "GET")
+	 (url-mime-accept-string "application/json")
+	 (url-request-extra-headers  (list (cons "X-ELS-APIKey" *scopus-api-key*)
+					   '("field" . "eid")))
+	 (url (format  "http://api.elsevier.com/content/search/scopus?query=doi(%s)" doi))
+	 (json-object-type 'plist)
+	 (json-data (with-current-buffer  (url-retrieve-synchronously url)
+		      (json-read-from-string
+		       (buffer-substring url-http-end-of-headers (point-max))))))
+    (plist-get (elt (plist-get (plist-get json-data :search-results) :entry) 0) :eid)))
+
+(scopus-doi-to-eid "10.1021/ie400582a")
+#+END_SRC
+
+XML is the native format in the Scopus API. They say that json works most of the time, but some XML cannot be rendered as json. Here we use the XML returned to get the EID. It is less intuitive to me, but mostly because I have used it less. I don't think you can specify and XPATH like you can in Python.
+
+#+BEGIN_SRC emacs-lisp
+(let* ((doi "10.1021/ie400582a")
+       (url-request-method "GET")
+       (url-mime-accept-string "application/xml")
+       (url-request-extra-headers  (list (cons "X-ELS-APIKey" *scopus-api-key*)
+					 '("field" . "eid")))
+       (url (format  "http://api.elsevier.com/content/search/scopus?query=doi(%s)" doi))
+       (xml (with-current-buffer  (url-retrieve-synchronously url)
+	      (xml-parse-region url-http-end-of-headers (point-max))))
+       (results (car xml))
+       (entry (car (xml-get-children results 'entry))))
+  (car (xml-node-children (car (xml-get-children entry 'eid)))))
+#+END_SRC
+
+#+RESULTS:
+: 2-s2.0-84881394200
+
+Now we wrap this in a function for reusability.
+#+BEGIN_SRC emacs-lisp
+(defun scopus-doi-to-eid (doi)
+  "Get a Scopus eid from a DOI."
+  (let* ((url-request-method "GET")
+	 (url-mime-accept-string "application/xml")
+	 (url-request-extra-headers  (list (cons "X-ELS-APIKey" *scopus-api-key*)
+					   '("field" . "eid")))
+	 (url (format  "http://api.elsevier.com/content/search/scopus?query=doi(%s)" doi))
+	 (xml (with-current-buffer  (url-retrieve-synchronously url)
+		(xml-parse-region url-http-end-of-headers (point-max))))
+	 (results (car xml))
+	 (entry (car (xml-get-children results 'entry))))
+    (car (xml-node-children (car (xml-get-children entry 'eid))))))
+
+(scopus-doi-to-eid "10.1021/ie400582a")
+#+END_SRC
+
+#+RESULTS:
+: 2-s2.0-84881394200
+
+This code is wrapped up in [[https://github.com/jkitchin/org-ref/blob/master/scopus.el][org-ref/scopus.el]]. It provides a new org-mode eid link, e.g. eid:2-s2.0-84881394200 which is functional and provides access to the citing and related article Scopus pages for that eid.
+
+There are also new links and functions for a [[scopus-search:alloy Au segregation]] and [[scopus-advanced-search:auth(kitchin) and title(segregation)]].
+
+Let's not forget the scopusid:7004212771 link to Scopus Author pages.
+
+Now you can use org-mode for reproducible scientific literature searching in Scopus!
+
+
+
+
+
+
+* Is an external http(s) link valid?
+
+
+#+BEGIN_SRC emacs-lisp
+(condition-case err
+  (url-http-file-exists-p "http://bad.url")
+ (error nil))
+#+END_SRC
+
+#+RESULTS:
+
+#+BEGIN_SRC emacs-lisp
+(condition-case err
+  (url-http-file-exists-p "http://kitchingroup.cheme.cmu.edu")
+ (error nil))
+#+END_SRC
+
+#+RESULTS:
+: t
+
+* document similarity
+[[http://brandonrose.org/clustering][Document Clustering with Python]]
+
+#+BEGIN_SRC python
+import numpy as np
+import pandas as pd
+import nltk
+import re
+import os
+import codecs
+from sklearn import feature_extraction
+import mpld3
+
+stopwords = nltk.corpus.stopwords.words('english')
+print stopwords[:10]
+
+# load nltk's SnowballStemmer as variabled 'stemmer'
+from nltk.stem.snowball import SnowballStemmer
+stemmer = SnowballStemmer("english")
+
+# here I define a tokenizer and stemmer which returns the set of stems in the text that it is passed
+
+def tokenize_and_stem(text):
+    # first tokenize by sentence, then by word to ensure that punctuation is caught as it's own token
+    tokens = [word for sent in nltk.sent_tokenize(text) for word in nltk.word_tokenize(sent)]
+    filtered_tokens = []
+    # filter out any tokens not containing letters (e.g., numeric tokens, raw punctuation)
+    for token in tokens:
+        if re.search('[a-zA-Z]', token):
+            filtered_tokens.append(token)
+    stems = [stemmer.stem(t) for t in filtered_tokens]
+    return stems
+
+
+def tokenize_only(text):
+    # first tokenize by sentence, then by word to ensure that punctuation is caught as it's own token
+    tokens = [word.lower() for sent in nltk.sent_tokenize(text) for word in nltk.word_tokenize(sent)]
+    filtered_tokens = []
+    # filter out any tokens not containing letters (e.g., numeric tokens, raw punctuation)
+    for token in tokens:
+        if re.search('[a-zA-Z]', token):
+            filtered_tokens.append(token)
+    return filtered_tokens
+#+END_SRC
+
+#+RESULTS:
+: [u'i', u'me', u'my', u'myself', u'we', u'our', u'ours', u'ourselves', u'you', u'your']
+
+#+BEGIN_SRC python
+from sklearn.externals import joblib
+#+END_SRC
+
+#+RESULTS:
+
+* An experiment in navigation with a  hydra
+
+#+BEGIN_SRC emacs-lisp
+(defhydra nav (:color red)
+  "navigation"
+  ("f" forward-char "forward char")
+  ("j" backward-char "backward char")
+  ("d" forward-word  "forward word")
+  ("k" backward-word "backward word")
+  ("l" previous-line "previous line")
+  ("s" forward-line "next line")
+  (";" scroll-up  "scroll up")
+  ("a" scroll-down "scroll down"))
+
+#+END_SRC
+
+#+RESULTS:
+: nav/body
+
+
+
+#+BEGIN_SRC emacs-lisp
+(defhydra hydra-goto-line (goto-map ""
+                           :pre (linum-mode 1)
+                           :post (linum-mode -1))
+  "goto-line"
+  ("g" goto-line "go")
+  ("m" set-mark-command "mark" :bind nil)
+  ("q" nil "quit"))
+#+END_SRC
+
+#+RESULTS:
+: hydra-goto-line/body
+
+* enumerate and zip in emacs lisp using the loop
+here are hand-rolled functions.
+
+#+BEGIN_SRC emacs-lisp :results output
+(defun enumerate (lst)
+  (loop for i from 0
+	for el in lst
+	collect (cons i el)))
+
+(loop for (i . el) in (enumerate '(a b c d))
+      do (princ (format "%s: %s\n" i el)))
+#+END_SRC
+#+RESULTS:
+: 0: a
+: 1: b
+: 2: c
+: 3: d
+
+
+#+BEGIN_SRC emacs-lisp
+(-annotate
+#+END_SRC
+
+
+#+BEGIN_SRC emacs-lisp :results output
+(defun zip (&rest args)
+  (unless (memq 'nil args)
+    (cons (mapcar 'car args)
+	  (apply 'zip (mapcar 'cdr args)))))
+
+(loop for (i j k) in (zip '(a b c) '(1 2 3) '(5 6 7))
+  do (princ (format "-%s--%s--%s\n" i j k)))
+#+END_SRC
+#+RESULTS:
+: -a--1--5
+: -b--2--6
+: -c--3--7
+
+dash provides a zip function
+#+BEGIN_SRC emacs-lisp
+(require 'dash)
+(-zip '(a b c) '(1 2 3) '(5 6 7))
+#+END_SRC
+#+RESULTS:
+| a | 1 | 5 |
+| b | 2 | 6 |
+| c | 3 | 7 |
+
+
+* see link message under point
+
+#+BEGIN_SRC emacs-lisp
+(defun link-message ()
+  (let ((object (org-element-context)))
+    (when (eq (car object) 'link)
+      (message "%s"
+	       (org-element-property :raw-link object)))))
+
+(add-hook 'post-command-hook 'link-message)
+#+END_SRC
+
+#+RESULTS:
+| link-message | eldoc-schedule-timer |
+
+(org-activate-bracket-links (point-max))
+
+foobar
+
+#+BEGIN_SRC emacs-lisp
+; add a tooltip to every instance of foobar
+(save-excursion  ;return cursor to current-point
+  (goto-char 1)
+    (while (search-forward "foobar" (point-max) t)
+      (set-text-properties  (match-beginning 0) (match-end 0)
+                            `(help-echo "You know... a bar for foos!"
+					font-lock-face (:foreground "dark slate gray")
+					point-entered (lambda (old-point new-point) (message-box "point-entered %s" new-point))
+					point-left (lambda (old-point new-point) (message-box "point-left %s old-point")))
+)))
+
+#+END_SRC
+
+
+
 * DONE Python data structures to lisp
   CLOSED: [2015-05-16 Sat 10:48]
   :PROPERTIES:
@@ -1910,7 +2258,7 @@ http://api.elsevier.com/content/author/AUTHOR_ID:7202762180?start=0&count=200&vi
 #+END_SRC
 
 #+RESULTS:
-| 56 | 447 | 10009 |
+| 56 | 451 | 10188 |
 
 
 #+BEGIN_SRC python
