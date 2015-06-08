@@ -1,3 +1,85 @@
+* Converting a DOI to other scientific identifiers in Pubmed
+
+Sometimes it is useful to convert a DOI to another type of identifier. For example, in this [[http://kitchingroup.cheme.cmu.edu/blog/2015/06/07/Getting-a-Scopus-EID-from-a-DOI/][post]] we converted a DOI to a Scopus EID. Today, we consider how to get Pubmed identifiers. Pubmed provides an API for this purpose:
+
+http://www.ncbi.nlm.nih.gov/pmc/tools/id-converter-api/
+
+We will use the DOI tool. According to the documentation, we need to form a URL like this:
+
+DOI: http://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?tool=my_tool&email=my_email@example.com&ids=10.1093/nar/gks1195
+
+We will call our tool "org-ref" and use the value of user-mail-address. The URL above returns XML, so we can parse it, and directly get what we want. Here is what we get.
+
+#+BEGIN_SRC emacs-lisp :results value code
+(let* ((url-request-method "GET")
+       (doi"10.1093/nar/gks1195")
+       (my-tool "org-ref")
+       (url (format "http://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?tool=%s&email=%s&ids=%s"
+                    my-tool
+                    user-mail-address
+                    doi))
+       (xml (with-current-buffer  (url-retrieve-synchronously url)
+		(xml-parse-region url-http-end-of-headers (point-max)))))
+xml)
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC emacs-lisp
+((pmcids
+  ((status . "ok"))
+  "\n"
+  (request
+   ((idtype . "doi")
+    (dois . "")
+    (versions . "yes")
+    (showaiid . "no"))
+   "\n"
+   (echo nil "tool=org-ref;email=jkitchin%40andrew.cmu.edu;ids=10.1093%2Fnar%2Fgks1195")
+   "\n")
+  "\n"
+  (record
+   ((requested-id . "10.1093/NAR/GKS1195")
+    (pmcid . "PMC3531190")
+    (pmid . "23193287")
+    (doi . "10.1093/nar/gks1195"))
+   (versions nil
+	     (version
+	      ((pmcid . "PMC3531190.1")
+	       (current . "true")))))
+  "\n"))
+#+END_SRC
+
+Now, we just put these together to create a plist of the identifiers. For fun, we add the Scopus EID from the previous post too.
+
+#+BEGIN_SRC emacs-lisp :results value code
+(let* ((url-request-method "GET")
+       (doi"10.1093/nar/gks1195")
+       (my-tool "org-ref")
+       (url (format "http://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?tool=%s&email=%s&ids=%s"
+                    my-tool
+                    user-mail-address
+                    doi))
+       (xml (car (with-current-buffer  (url-retrieve-synchronously url)
+		   (xml-parse-region url-http-end-of-headers (point-max)))))
+       (record (first  (xml-get-children xml 'record)))
+       (doi (xml-get-attribute record 'doi))
+       (pmcid (xml-get-attribute record 'pmcid))
+       (pmid (xml-get-attribute record 'pmid)))
+  (list :doi doi :pmid pmid :pmcid pmcid :eid (scopus-doi-to-eid doi)))
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC emacs-lisp
+(:doi "10.1093/nar/gks1195" :pmid "23193287" :pmcid "PMC3531190" :eid "2-s2.0-80053651587")
+#+END_SRC
+
+
+(require 'wos)
+[[wos-search:DOI=10.1093/NAR/GKS1195]]
+
+[[http://gateway.webofknowledge.com/gateway/Gateway.cgi?DO=(10.1093/NAR/GKS1195)&GWVersion=2&SrcApp=WEB&SrcAuth=HSB&DestApp=UA&DestLinkType=GeneralSearchSummary]]
+
+
 * DONE Getting a Scopus EID from a DOI
   CLOSED: [2015-06-07 Sun 16:29]
   :PROPERTIES:
@@ -159,9 +241,57 @@ Let's not forget the scopusid:7004212771 link to Scopus Author pages.
 Now you can use org-mode for reproducible scientific literature searching in Scopus!
 
 
+* DONE Getting a WOS Accession number from a DOI
+  CLOSED: [2015-06-08 Mon 11:23]
+  :PROPERTIES:
+  :categories: orgmode,ref
+  :date:     2015/06/08 11:23:33
+  :updated:  2015/06/08 11:23:33
+  :END:
+I have been slowly working on getting alternative identifiers to the DOI for scientific literature. The DOI is great for getting a bibtex entry, and getting to the article page, but other identifiers, e.g. from Pubmed, Scopus or Web of Science provide links to additional information. Here, I examine an approach to get a Web of Science identifier from a DOI.
+
+In a previous [[http://kitchingroup.cheme.cmu.edu/blog/2014/11/04/Accessing-web-of-science-entry-citing-and-related-articles-from-a-doi-in-emacs/][post]] we showed how to use the Web of Science OpenURL services to derive links to articles from the DOI. It turns out that if you follow that link, you get redirected to a URL that has the WOS Accession number in it. For example, this link: http://ws.isiknowledge.com/cps/openurl/service?url_ver=Z39.88-2004&rft_id=info:doi/10.1021/jp047349j is redirected to
+http://gateway.webofknowledge.com/gateway/Gateway.cgi?GWVersion=2&SrcApp=PARTNER_APP&SrcAuth=LinksAMR&KeyUT=WOS:000225079300029&DestLinkType=FullRecord&DestApp=ALL_WOS&UsrCustomerID=8703b88d69db6b417a9c0dc510538f44. You can see the wos:000225079300029 in that URL, so all we need to do is extract it. We will do that with a regular expression.
+
+It is a tad tricky to get the redirected URL. We have to use the most basic url-retrieve, which works asynchronously, and we need a callback function to handle the response. I use a trick with global variables to note that the function is waiting, and to sleep briefly until it is ready. We want the last redirect (this seems to get redirected twice).
+
+#+BEGIN_SRC emacs-lisp
+(defvar *wos-redirect* nil)
+(defvar *wos-waiting* nil)
+
+(defun wos-get-wos-redirect (url)
+  "Return final redirect url for open-url"
+  (setq *wos-waiting* t)
+  (url-retrieve
+   url
+   (lambda (status)
+     (setq *wos-redirect* (car (last status)))
+     (setq *wos-waiting* nil)))
+  (while *wos-waiting* (sleep-for 0.1))
+  (url-unhex-string *wos-redirect*))
 
 
+(defun wos-doi-to-accession-number (doi)
+  "Return a WOS Accession number for a DOI."
+  (let* ((open-url (concat "http://ws.isiknowledge.com/cps/openurl/service?url_ver=Z39.88-2004&rft_id=info:doi/" doi))
+	 (redirect (wos-get-wos-redirect open-url)))
+(message redirect)
+    (string-match "&KeyUT=WOS:\\([^&]*\\)&" redirect)
+    (match-string 1 redirect)))
 
+(concat "wos:" (wos-doi-to-accession-number "10.1021/jp047349j"))
+#+END_SRC
+
+#+RESULTS:
+: wos:000225079300029
+
+I am not super crazy about this approach, but until I figure out the WOK API, this is surprisingly simple! And, now you can use the Accession number in a url like these examples:
+
+http://onlinelibrary.wiley.com/resolve/reference/ISI?id=000225079300029
+
+http://ws.isiknowledge.com/cps/openurl/service?url_ver=Z39.88-2004&rft_id=info:ut/000225079300029
+
+That might turn out to be handy at some point.
 
 * Is an external http(s) link valid?
 
