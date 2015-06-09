@@ -1,6 +1,232 @@
-* Converting a DOI to other scientific identifiers in Pubmed
+* A sexp version of a bibtex entry
+  :PROPERTIES:
+  :categories: bibtex,lisp
+  :END:
 
-Sometimes it is useful to convert a DOI to another type of identifier. For example, in this [[http://kitchingroup.cheme.cmu.edu/blog/2015/06/07/Getting-a-Scopus-EID-from-a-DOI/][post]] we converted a DOI to a Scopus EID. Today, we consider how to get Pubmed identifiers. Pubmed provides an API for this purpose:
+Here is a typical bibtex entry. Today we explore some alternate approaches to represent the data. Why? because it seems like an interesting exploration!
+
+#+BEGIN_SRC bibtex
+@article{hallenbeck-2013-effec-o2,
+  author =	 "Hallenbeck, Alexander P. and Kitchin, John R.",
+  title =	 {Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a
+                  primary-amine based polymeric \ce{CO_2} sorbent},
+  keywords =	 {RUA, orgmode},
+  journal =	 "Industrial \& Engineering Chemistry Research",
+  pages =	 "10788-10794",
+  year =	 2013,
+  volume =	 {52},
+  number =	 {31},
+  doi =		 "10.1021/ie400582a",
+  url =		 "http://pubs.acs.org/doi/abs/10.1021/ie400582a",
+  eprint =	 "http://pubs.acs.org/doi/pdf/10.1021/ie400582a",
+}
+#+END_SRC
+
+Here is what that same data structure might look like as a sexp-based lisp data structure.
+#+BEGIN_SRC emacs-lisp
+(article "hallenbeck-2013-effec-o2"
+	 (author "Hallenbeck, Alexander P. and Kitchin, John R.")
+	 (title "Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a primary-amine based polymeric \ce{CO_2} sorbent")
+	 (journal "Industrial \& Engineering Chemistry Research")
+	 (pages "10788-10794")
+         (year 2013)
+	 (number 31)
+	 (doi "10.1021/ie400582a")
+	 (url "http://pubs.acs.org/doi/abs/10.1021/ie400582a")
+	 (eprint "http://pubs.acs.org/doi/pdf/10.1021/ie400582a"))
+#+END_SRC
+
+We can retrieve data from the sexp form pretty easily. Here we get the authors.
+#+BEGIN_SRC emacs-lisp
+(let* ((art '(article "hallenbeck-2013-effec-o2"
+		      (author "Hallenbeck, Alexander P. and Kitchin, John R.")
+		      (title "Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a primary-amine based polymeric \ce{CO_2} sorbent")
+		      (journal "Industrial \& Engineering Chemistry Research")
+		      (pages "10788-10794")
+		      (year 2013)
+		      (number 31)
+		      (doi "10.1021/ie400582a")
+		      (url "http://pubs.acs.org/doi/abs/10.1021/ie400582a")
+		      (eprint "http://pubs.acs.org/doi/pdf/10.1021/ie400582a")))
+       (fields (cddr art)))
+  (cadr (assoc 'author fields)))
+#+END_SRC
+
+#+RESULTS:
+: Hallenbeck, Alexander P. and Kitchin, John R.
+
+You might be wondering, why is that even a little bit interesting? One reason is that it looks a little like what lisp returns after parsing an xml file. Another is, that looks kind of like data, but it is also some code, if article was defined as a function!  Let us consider what this might look like. I use a macro to define the field functions, and these simply return a string with the field-name and value in curly brackets. I define an article function that wraps the fields in @bibtex-key{fields}, which defines a bibtex entry.
+
+#+BEGIN_SRC emacs-lisp
+(defmacro make-field (field-name)
+  "define a field that returns a string"
+  `(defun ,(intern field-name) (content)
+     (format "  %s = {%s}" ,field-name content)))
+
+(loop for field in '("author" "title" "journal" "pages" "number" "doi" "url" "eprint" "year")
+  do (eval `(make-field ,field)))
+
+(defun article (bibtex-key &rest fields)
+  (concat
+   (format "@article{%s,\n" bibtex-key)
+   (mapconcat (lambda (field) (eval field)) fields ",\n")
+   "\n}\n"))
+
+(article "hallenbeck-2013-effec-o2"
+	 (author "Hallenbeck, Alexander P. and Kitchin, John R.")
+	 (title "Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a primary-amine based polymeric \ce{CO_2} sorbent")
+	 (journal "Industrial \& Engineering Chemistry Research")
+	 (pages "10788-10794")
+	 (number 31)
+         (year 2013)
+	 (doi "10.1021/ie400582a")
+	 (url "http://pubs.acs.org/doi/abs/10.1021/ie400582a")
+	 (eprint "http://pubs.acs.org/doi/pdf/10.1021/ie400582a"))
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+@article{hallenbeck-2013-effec-o2,
+  author = {Hallenbeck, Alexander P. and Kitchin, John R.},
+  title = {Effects of ce{O_2} and ce{SO_2} on the capture capacity of a primary-amine based polymeric ce{CO_2} sorbent},
+  journal = {Industrial & Engineering Chemistry Research},
+  pages = {10788-10794},
+  number = {31},
+  year = {2013},
+  doi = {10.1021/ie400582a},
+  url = {http://pubs.acs.org/doi/abs/10.1021/ie400582a},
+  eprint = {http://pubs.acs.org/doi/pdf/10.1021/ie400582a}
+}
+#+end_example
+
+That seems moderately interesting to me. Here is an example of taking the same data structure and rendering it as xml. This is some lispy wizardry, rather than use a macro to define functions, I temporarily define functions within a cl-flet macro, which I have to collect as a list of code. Then, I eval the list. This feels pretty odd, but seems like a lispy kind of thing to do.
+
+#+BEGIN_SRC emacs-lisp
+(eval
+ (list 'cl-flet
+       (append (loop for field in '("author" "title" "journal" "pages"
+				      "number" "doi" "url" "eprint" "year")
+		       collect (list (intern field)
+				     '(content)
+				     `(format "  <%s>%s</%s>" ,field content ,field)))
+	       '((article (bibtex-key &rest fields)
+			  (concat
+			   (format
+			    "<article bibtex-key=\"%s\">\n" bibtex-key)
+			   (mapconcat (lambda (field) (eval field)) fields "\n")
+			   "\n</article>")))
+	       )
+       ;; body of cl-flet
+       '(article "hallenbeck-2013-effec-o2"
+		(author "Hallenbeck, Alexander P. and Kitchin, John R.")
+		(title "Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a primary-amine based polymeric \ce{CO_2} sorbent")
+		(journal "Industrial \& Engineering Chemistry Research")
+		(pages "10788-10794")
+		(number 31)
+		(year 2013)
+		(doi "10.1021/ie400582a")
+		(url "http://pubs.acs.org/doi/abs/10.1021/ie400582a")
+		(eprint "http://pubs.acs.org/doi/pdf/10.1021/ie400582a"))))
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+<article bibtex-key="hallenbeck-2013-effec-o2">
+  <author>Hallenbeck, Alexander P. and Kitchin, John R.</author>
+  <title>Effects of ce{O_2} and ce{SO_2} on the capture capacity of a primary-amine based polymeric ce{CO_2} sorbent</title>
+  <journal>Industrial & Engineering Chemistry Research</journal>
+  <pages>10788-10794</pages>
+  <number>31</number>
+  <year>2013</year>
+  <doi>10.1021/ie400582a</doi>
+  <url>http://pubs.acs.org/doi/abs/10.1021/ie400582a</url>
+  <eprint>http://pubs.acs.org/doi/pdf/10.1021/ie400582a</eprint>
+</article>
+#+end_example
+
+Prefer json? No problem, just reformat the functions!
+
+#+BEGIN_SRC emacs-lisp
+(eval
+ (list 'cl-flet
+       (append (loop for field in '("author" "title" "journal" "pages"
+				      "number" "doi" "url" "eprint" "year")
+		       collect (list (intern field)
+				     '(content)
+				     `(format "   \"%s\": \"%s\"" ,field content)))
+	       '((article (bibtex-key &rest fields)
+			  (concat
+			   (format
+			    "{\"article\":\n  {\"bibtex-key\": \"%s\",\n" bibtex-key)
+			   (mapconcat (lambda (field) (eval field)) fields ",\n")
+			   "}\n}"))))
+       ;; body of cl-flet
+       '(article "hallenbeck-2013-effec-o2"
+		(author "Hallenbeck, Alexander P. and Kitchin, John R.")
+		(title "Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a primary-amine based polymeric \ce{CO_2} sorbent")
+		(journal "Industrial \& Engineering Chemistry Research")
+		(pages "10788-10794")
+		(number 31)
+		(year 2013)
+		(doi "10.1021/ie400582a")
+		(url "http://pubs.acs.org/doi/abs/10.1021/ie400582a")
+		(eprint "http://pubs.acs.org/doi/pdf/10.1021/ie400582a"))))
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+{"article":
+  {"bibtex-key": "hallenbeck-2013-effec-o2",
+   "author": "Hallenbeck, Alexander P. and Kitchin, John R.",
+   "title": "Effects of ce{O_2} and ce{SO_2} on the capture capacity of a primary-amine based polymeric ce{CO_2} sorbent",
+   "journal": "Industrial & Engineering Chemistry Research",
+   "pages": "10788-10794",
+   "number": "31",
+   "year": "2013",
+   "doi": "10.1021/ie400582a",
+   "url": "http://pubs.acs.org/doi/abs/10.1021/ie400582a",
+   "eprint": "http://pubs.acs.org/doi/pdf/10.1021/ie400582a"}
+}
+#+end_example
+
+Here is a variation on the theme, we can take an article as data, and format it in a new output.
+#+BEGIN_SRC emacs-lisp
+(defun format-article (article)
+  "Return a formatted string representing an article."
+  (let ((fields (cddr article)))
+    (format "%s, doi:%s (%s)."
+	    (cadr (assoc 'author fields))
+	    (cadr (assoc 'doi fields))
+	    (cadr (assoc 'year fields)))))
+
+(format-article '(article "hallenbeck-2013-effec-o2"
+			  (author "Hallenbeck, Alexander P. and Kitchin, John R.")
+			  (title "Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a primary-amine based polymeric \ce{CO_2} sorbent")
+			  (journal "Industrial \& Engineering Chemistry Research")
+			  (pages "10788-10794")
+			  (number 31)
+			  (year 2013)
+			  (doi "10.1021/ie400582a")
+			  (url "http://pubs.acs.org/doi/abs/10.1021/ie400582a")
+			  (eprint "http://pubs.acs.org/doi/pdf/10.1021/ie400582a")))
+#+END_SRC
+
+#+RESULTS:
+: Hallenbeck, Alexander P. and Kitchin, John R., doi:10.1021/ie400582a (2013).
+
+Is this useful? Great question. I don't plan to convert by bibtex files to sexp format anytime soon ;) The format I used above is just a simple one. It might be desirable to include individual authors instead of an author string, and maybe support attributes to establish an author order. An author structure might be more complex to include scientific ids like an orcid, alternative names, etc...
+
+I like the idea of data representation as code, and its conversion to some other kind of format. It is subtle here, but notice we /never/ had to write a parser for the sexp notation. That /already exists as the lisp interpreter/. We did write code to use the data, and convert the data. The sexp notation is pretty easy to write, in contrast to the xml or json representations. Some interesting issues might be what to do with fields that are not defined, perhaps a macro would be used on the fly, or in the cl-flet definition. It is hard to imagine doing these things in another language than lisp!
+
+* DONE Converting a DOI to other scientific identifiers in Pubmed
+  CLOSED: [2015-06-09 Tue 07:29]
+  :PROPERTIES:
+  :categories: orgmode,ref
+  :date:     2015/06/09 07:29:08
+  :updated:  2015/06/09 07:29:08
+  :END:
+
+Sometimes it is useful to convert a DOI to another type of identifier. For example, in this [[http://kitchingroup.cheme.cmu.edu/blog/2015/06/07/Getting-a-Scopus-EID-from-a-DOI/][post]] we converted a DOI to a Scopus EID, and in this [[http://kitchingroup.cheme.cmu.edu/blog/2015/06/08/Getting-a-WOS-Accession-number-from-a-DOI/][one]] we got the WOS accession number from a DOI. Today, we consider how to get Pubmed identifiers. Pubmed provides an API for this purpose:
 
 http://www.ncbi.nlm.nih.gov/pmc/tools/id-converter-api/
 
@@ -8,7 +234,7 @@ We will use the DOI tool. According to the documentation, we need to form a URL 
 
 DOI: http://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?tool=my_tool&email=my_email@example.com&ids=10.1093/nar/gks1195
 
-We will call our tool "org-ref" and use the value of user-mail-address. The URL above returns XML, so we can parse it, and directly get what we want. Here is what we get.
+We will call our tool "org-ref" and use the value of user-mail-address. The URL above returns XML, so we can parse it, and then extract the identifiers. This is a simple http GET request, which we can construct using url-retrieve-synchronously. Here is what we get.
 
 #+BEGIN_SRC emacs-lisp :results value code
 (let* ((url-request-method "GET")
@@ -49,7 +275,7 @@ xml)
   "\n"))
 #+END_SRC
 
-Now, we just put these together to create a plist of the identifiers. For fun, we add the Scopus EID from the previous post too.
+The parsed xml is now just an emacs-lisp data structure. We need to get the record, and then get the attributes of it to extract the identifiers. Next, we create a plist of the identifiers. For fun, we add the Scopus EID and WOS accession number from the previous posts too.
 
 #+BEGIN_SRC emacs-lisp :results value code
 (let* ((url-request-method "GET")
@@ -65,20 +291,90 @@ Now, we just put these together to create a plist of the identifiers. For fun, w
        (doi (xml-get-attribute record 'doi))
        (pmcid (xml-get-attribute record 'pmcid))
        (pmid (xml-get-attribute record 'pmid)))
-  (list :doi doi :pmid pmid :pmcid pmcid :eid (scopus-doi-to-eid doi)))
+  (list :doi doi :pmid pmid :pmcid pmcid :eid (scopus-doi-to-eid doi) :wos (wos-doi-to-accession-number doi)))
 #+END_SRC
 
 #+RESULTS:
 #+BEGIN_SRC emacs-lisp
-(:doi "10.1093/nar/gks1195" :pmid "23193287" :pmcid "PMC3531190" :eid "2-s2.0-80053651587")
+(:doi "10.1093/nar/gks1195" :pmid "23193287" :pmcid "PMC3531190" :eid "2-s2.0-80053651587" :wos "000312893300006")
 #+END_SRC
 
+Well, there you have it, four new scientific document ids from one DOI. /Of course/ we have defined org-mode links for each one of these:
 
-(require 'wos)
-[[wos-search:DOI=10.1093/NAR/GKS1195]]
+doi:10.1093/nar/gks1195
 
-[[http://gateway.webofknowledge.com/gateway/Gateway.cgi?DO=(10.1093/NAR/GKS1195)&GWVersion=2&SrcApp=WEB&SrcAuth=HSB&DestApp=UA&DestLinkType=GeneralSearchSummary]]
+pmid:23193287
 
+pmcid:PMC3531190
+
+eid:2-s2.0-80053651587
+
+wos:000312893300006
+
+I have not tested this on too many DOIs yet. Not all of them are indexed by Pubmed.
+
+* DONE Getting a WOS Accession number from a DOI
+  CLOSED: [2015-06-08 Mon 11:23]
+  :PROPERTIES:
+  :categories: orgmode,ref
+  :date:     2015/06/08 11:23:33
+  :updated:  2015/06/09 07:25:39
+  :END:
+I have been slowly working on getting alternative identifiers to the DOI for scientific literature. The DOI is great for getting a bibtex entry, and getting to the article page, but other identifiers, e.g. from Pubmed, Scopus or Web of Science provide links to additional information. Here, I examine an approach to get a Web of Science identifier from a DOI.
+
+In a previous [[http://kitchingroup.cheme.cmu.edu/blog/2014/11/04/Accessing-web-of-science-entry-citing-and-related-articles-from-a-doi-in-emacs/][post]] we showed how to use the Web of Science OpenURL services to derive links to articles from the DOI. It turns out that if you follow that link, you get redirected to a URL that has the WOS Accession number in it. For example, this link: http://ws.isiknowledge.com/cps/openurl/service?url_ver=Z39.88-2004&rft_id=info:doi/10.1021/jp047349j is redirected to
+http://gateway.webofknowledge.com/gateway/Gateway.cgi?GWVersion=2&SrcApp=PARTNER_APP&SrcAuth=LinksAMR&KeyUT=WOS:000225079300029&DestLinkType=FullRecord&DestApp=ALL_WOS&UsrCustomerID=8703b88d69db6b417a9c0dc510538f44. You can see the wos:000225079300029 in that URL, so all we need to do is extract it. We use some url functions in emacs lisp to to that. They are a little convoluted, but they work. Previously I used a regular expression to do this.
+
+#+BEGIN_SRC emacs-lisp
+(cdr (assoc "KeyUT" (url-parse-query-string (url-filename (url-generic-parse-url  "http://gateway.webofknowledge.com/gateway/Gateway.cgi?GWVersion=2&SrcApp=PARTNER_APP&SrcAuth=LinksAMR&KeyUT=WOS:000225079300029&DestLinkType=FullRecord&DestApp=ALL_WOS&UsrCustomerID=8703b88d69db6b417a9c0dc510538f44")))))
+#+END_SRC
+
+#+RESULTS:
+| WOS:000225079300029 |
+
+It is a tad tricky to get the redirected URL. We have to use the most basic url-retrieve, which works asynchronously, and we need a callback function to handle the response. I use a trick with global variables to note that the function is waiting, and to sleep briefly until it is ready. We want the last redirect (this seems to get redirected twice).
+
+#+BEGIN_SRC emacs-lisp
+(defvar *wos-redirect* nil)
+(defvar *wos-waiting* nil)
+
+(defun wos-get-wos-redirect (url)
+  "Return final redirect url for open-url"
+  (setq *wos-waiting* t)
+  (url-retrieve
+   url
+   (lambda (status)
+     (setq *wos-redirect* (car (last status)))
+     (setq *wos-waiting* nil)))
+  (while *wos-waiting* (sleep-for 0.1))
+  (url-unhex-string *wos-redirect*))
+
+
+(defun wos-doi-to-accession-number (doi)
+  "Return a WOS Accession number for a DOI."
+  (let* ((open-url (concat "http://ws.isiknowledge.com/cps/openurl/service?url_ver=Z39.88-2004&rft_id=info:doi/" doi))
+	 (redirect (wos-get-wos-redirect open-url)))
+    (substring  (cadr
+		 (assoc
+		  "KeyUT"
+		  (url-parse-query-string
+		   (url-filename
+		    (url-generic-parse-url redirect)))))
+    4)))
+
+(concat "wos:" (wos-doi-to-accession-number "10.1021/jp047349j"))
+#+END_SRC
+
+#+RESULTS:
+: wos:000225079300029
+
+I am not super crazy about this approach, but until I figure out the WOK API, this is surprisingly simple! And, now you can use the Accession number in a url like these examples:
+
+http://onlinelibrary.wiley.com/resolve/reference/ISI?id=000225079300029
+
+http://ws.isiknowledge.com/cps/openurl/service?url_ver=Z39.88-2004&rft_id=info:ut/000225079300029
+
+That might turn out to be handy at some point.
 
 * DONE Getting a Scopus EID from a DOI
   CLOSED: [2015-06-07 Sun 16:29]
@@ -239,59 +535,6 @@ There are also new links and functions for a [[scopus-search:alloy Au segregatio
 Let's not forget the scopusid:7004212771 link to Scopus Author pages.
 
 Now you can use org-mode for reproducible scientific literature searching in Scopus!
-
-
-* DONE Getting a WOS Accession number from a DOI
-  CLOSED: [2015-06-08 Mon 11:23]
-  :PROPERTIES:
-  :categories: orgmode,ref
-  :date:     2015/06/08 11:23:33
-  :updated:  2015/06/08 11:23:33
-  :END:
-I have been slowly working on getting alternative identifiers to the DOI for scientific literature. The DOI is great for getting a bibtex entry, and getting to the article page, but other identifiers, e.g. from Pubmed, Scopus or Web of Science provide links to additional information. Here, I examine an approach to get a Web of Science identifier from a DOI.
-
-In a previous [[http://kitchingroup.cheme.cmu.edu/blog/2014/11/04/Accessing-web-of-science-entry-citing-and-related-articles-from-a-doi-in-emacs/][post]] we showed how to use the Web of Science OpenURL services to derive links to articles from the DOI. It turns out that if you follow that link, you get redirected to a URL that has the WOS Accession number in it. For example, this link: http://ws.isiknowledge.com/cps/openurl/service?url_ver=Z39.88-2004&rft_id=info:doi/10.1021/jp047349j is redirected to
-http://gateway.webofknowledge.com/gateway/Gateway.cgi?GWVersion=2&SrcApp=PARTNER_APP&SrcAuth=LinksAMR&KeyUT=WOS:000225079300029&DestLinkType=FullRecord&DestApp=ALL_WOS&UsrCustomerID=8703b88d69db6b417a9c0dc510538f44. You can see the wos:000225079300029 in that URL, so all we need to do is extract it. We will do that with a regular expression.
-
-It is a tad tricky to get the redirected URL. We have to use the most basic url-retrieve, which works asynchronously, and we need a callback function to handle the response. I use a trick with global variables to note that the function is waiting, and to sleep briefly until it is ready. We want the last redirect (this seems to get redirected twice).
-
-#+BEGIN_SRC emacs-lisp
-(defvar *wos-redirect* nil)
-(defvar *wos-waiting* nil)
-
-(defun wos-get-wos-redirect (url)
-  "Return final redirect url for open-url"
-  (setq *wos-waiting* t)
-  (url-retrieve
-   url
-   (lambda (status)
-     (setq *wos-redirect* (car (last status)))
-     (setq *wos-waiting* nil)))
-  (while *wos-waiting* (sleep-for 0.1))
-  (url-unhex-string *wos-redirect*))
-
-
-(defun wos-doi-to-accession-number (doi)
-  "Return a WOS Accession number for a DOI."
-  (let* ((open-url (concat "http://ws.isiknowledge.com/cps/openurl/service?url_ver=Z39.88-2004&rft_id=info:doi/" doi))
-	 (redirect (wos-get-wos-redirect open-url)))
-(message redirect)
-    (string-match "&KeyUT=WOS:\\([^&]*\\)&" redirect)
-    (match-string 1 redirect)))
-
-(concat "wos:" (wos-doi-to-accession-number "10.1021/jp047349j"))
-#+END_SRC
-
-#+RESULTS:
-: wos:000225079300029
-
-I am not super crazy about this approach, but until I figure out the WOK API, this is surprisingly simple! And, now you can use the Accession number in a url like these examples:
-
-http://onlinelibrary.wiley.com/resolve/reference/ISI?id=000225079300029
-
-http://ws.isiknowledge.com/cps/openurl/service?url_ver=Z39.88-2004&rft_id=info:ut/000225079300029
-
-That might turn out to be handy at some point.
 
 * Is an external http(s) link valid?
 
