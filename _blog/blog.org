@@ -1,3 +1,310 @@
+* Using lisp to enable data reuse from a program
+
+#+name: code
+#+BEGIN_SRC emacs-lisp :tangle code.el
+(-max '(8 3 2 4 5))
+#+END_SRC
+
+#+RESULTS: code
+: 8
+
+Now, we reuse the data /from the code/.
+#+BEGIN_SRC emacs-lisp
+(-min (cadr (nth 1 (read (with-temp-buffer (insert-file-contents "code.el") (buffer-string))))))
+#+END_SRC
+
+#+RESULTS:
+: 2
+
+That is a little awkward but illustrates the idea.
+* python extract html
+libextract
+
+Wow...
+
+#+BEGIN_SRC python
+from requests import get
+from lxml import html
+
+req = get('http://onlinelibrary.wiley.com/doi/10.1002/ange.201002301/abstract')
+parsed_doc = html.fromstring(req.content)
+
+print parsed_doc.xpath('head/meta[@name="citation_pdf_url"]')[0].attrib['content']
+#+END_SRC
+
+#+RESULTS:
+: http://onlinelibrary.wiley.com/doi/10.1002/ange.201002301/pdf
+
+[[http://rodricios.github.io/posts/solving_the_data_extraction_problem.html][How to Solve Data Extraction]]
+
+
+#+BEGIN_SRC emacs-lisp
+(let* ((html (with-current-buffer (url-retrieve-synchronously "http://onlinelibrary.wiley.com/doi/10.1002/ange.201002301/abstract")
+	       (libxml-parse-html-region url-http-end-of-headers (point-max))))
+       (head (car (xml-get-children html 'head)))
+       (metas (xml-get-children head 'meta)))
+  (loop for meta in metas
+	if (eq 'citation_pdf_url  (xml-get-attribute meta 'name))
+	return meta
+	)
+  )
+#+END_SRC
+
+#+RESULTS:
+
+Double wow. In emacs-lisp.
+#+BEGIN_SRC emacs-lisp :results value code
+(let* ((html (with-current-buffer (url-retrieve-synchronously "http://onlinelibrary.wiley.com/doi/10.1002/ange.201002301/abstract")
+	       (libxml-parse-html-region url-http-end-of-headers (point-max))))
+       (head (car (xml-get-children html 'head)))
+       (metas (xml-get-children head 'meta)))
+  (loop for meta in metas
+	when (string= "citation_pdf_url" (xml-get-attribute meta 'name))
+        return (xml-get-attribute meta 'content)))
+#+END_SRC
+
+* Getting VASP output from vasprun.xml in Python and Emacs
+
+
+#+BEGIN_SRC python :session
+import xml.etree.ElementTree as ET
+
+with open('../../gilgamesh-backup/research/cu-pd-au-atat-vasp/CuPd_fcc/10/vasprun.xml') as f:
+    vasprun_xml = f.read()
+
+
+def get_encoded_text(container, xpath):
+    '''Return utf-8 encoded text for element at xpath if it is there.'''
+    if container is None:
+        return None
+    result = container.find(xpath)
+    if hasattr(result, 'text') and result.text:
+        return result.text.encode('utf-8')
+    else:
+        return None
+
+xml = ET.fromstring(vasprun_xml)
+
+print get_encoded_text(xml, 'generator/i[@name="program"]')
+print get_encoded_text(xml, 'generator/i[@name="version"]')
+print get_encoded_text(xml, 'generator/i[@name="subversion"]')
+#+END_SRC
+#+RESULTS:
+: vasp
+: 5.2.12
+: 11Nov11 complex                                                      serial
+
+Next, we see about the incar file. Not all of these elements have a type, so we have to get that attribute.
+
+#+BEGIN_SRC python :session
+for el in xml.find('incar'):
+    print '{0} ({1}) = {2}'.format(el.attrib['name'], el.attrib.get('type'), el.text)
+#+END_SRC
+#+RESULTS:
+: PREC (string) = high
+: IBRION (int) =     -1
+: ISIF (int) =      2
+: ENCUT (None) =     350.00000000
+: NBANDS (int) =     34
+: ISMEAR (int) =     -5
+: SIGMA (None) =       0.10000000
+
+KPOINTS.
+
+#+BEGIN_SRC python :session
+for el in xml.find('kpoints/generation'):
+    print '{0} = {1}'.format(el.attrib['name'], el.text)
+#+END_SRC
+#+RESULTS:
+: divisions =        8        8        8
+: usershift =       0.00000000       0.00000000       0.00000000
+: genvec1 =       0.12500000       0.00000000       0.00000000
+: genvec2 =       0.00000000       0.12500000       0.00000000
+: genvec3 =       0.00000000       0.00000000       0.12500000
+: shift =       0.00000000       0.00000000       0.00000000
+
+#+BEGIN_SRC python :session
+print [float(v.text) for v in xml.findall('kpoints/varray[@name="weights"]/v')]
+#+END_SRC
+
+#+RESULTS:
+: [0.00195312, 0.01171875, 0.01171875, 0.01171875, 0.00585938, 0.01171875, 0.0234375, 0.0234375, 0.0234375, 0.0234375, 0.0234375, 0.01171875, 0.01171875, 0.0234375, 0.0234375, 0.0234375, 0.01171875, 0.01171875, 0.0234375, 0.01171875, 0.00585938, 0.00390625, 0.01171875, 0.01171875, 0.01171875, 0.01171875, 0.01171875, 0.01171875, 0.01171875, 0.0234375, 0.0234375, 0.0234375, 0.0234375, 0.0234375, 0.01171875, 0.0234375, 0.0234375, 0.0234375, 0.0234375, 0.01171875, 0.0234375, 0.0234375, 0.01171875, 0.01171875, 0.0234375, 0.01171875, 0.00390625, 0.01171875, 0.01171875, 0.01171875, 0.01171875, 0.01171875, 0.0234375, 0.0234375, 0.0234375, 0.01171875, 0.0234375, 0.01171875, 0.01171875, 0.00390625, 0.01171875, 0.01171875, 0.01171875, 0.01171875, 0.00195312]
+
+#+BEGIN_SRC python :session
+print xml.find('parameters/separator[@name="electronic"]/i[@name="NELECT"]').text
+print xml.find('parameters/separator[@name="electronic"]/separator[@name="electronic mixer"]/i[@name="AMIX"]').text
+#+END_SRC
+
+#+RESULTS:
+: 43.00000000
+: 0.40000000
+
+#+BEGIN_SRC python :session
+for el in xml.findall('structure'):  print el.attrib['name']
+#+END_SRC
+#+RESULTS:
+: initialpos
+: finalpos
+
+#+BEGIN_SRC python :session
+for el in xml.findall('calculation/scstep/energy/i[@name="e_0_energy"]'):
+    print float(el.text)
+#+END_SRC
+#+RESULTS:
+: -16.49261096
+: -16.50499056
+: -16.48925155
+: -16.48985986
+: -16.48973695
+: -16.48985835
+: -16.48981957
+
+Get final structure:
+#+BEGIN_SRC python :session
+positions = [[float(x) for x in el.text.split()]
+             for  el in xml.findall('structure[@name="finalpos"]/varray[@name="positions"]/v')]
+
+unit_cell = [[float(x) for x in el.text.split()]
+             for el in xml.findall('structure[@name="finalpos"]/crystal/varray[@name="basis"]/v')]
+
+symbols = [el.text for el in xml.findall('atominfo/array[@name="atoms"]/set/rc/c[1]')]
+
+for sym, pos in zip(symbols, positions):
+    print '{0}: {1}'.format(sym, pos)
+
+print 'UC = {0}'.format(unit_cell)
+#+END_SRC
+
+#+RESULTS:
+: Cu: [0.25334331, 0.25334331, 0.25334331]
+: Cu: [0.0, 0.0, 0.0]
+: Cu: [0.74665669, 0.74665669, 0.74665669]
+: Pd: [0.5, 0.5, 0.5]
+: UC = [[-5.46362047, 3.5654701, 5.46362047], [-3.5654701, 5.46362047, 5.46362047], [-5.46362047, 5.46362047, 3.5654701]]
+
+** Lisp version
+
+#+BEGIN_SRC emacs-lisp
+(let* ((xml (car  (xml-parse-file "../../gilgamesh-backup/research/cu-pd-au-atat-vasp/CuPd_fcc/10/vasprun.xml")))
+       (generator (car (xml-get-children xml 'generator)))
+       (i-nodes (xml-get-children generator 'i)))
+  (list
+   (loop for i-node in i-nodes
+	 when (string= "program" (xml-get-attribute i-node 'name))
+	 return (car (xml-node-children i-node)))
+   (loop for i-node in i-nodes
+	 when (string= "version" (xml-get-attribute i-node 'name))
+	 return (car (xml-node-children i-node)))
+   (loop for i-node in i-nodes
+	 when (string= "subversion" (xml-get-attribute i-node 'name))
+	 return (car (xml-node-children i-node)))))
+#+END_SRC
+
+#+RESULTS:
+| vasp | 5.2.12 | 11Nov11 complex                                                      serial |
+
+That is definitely a bit more verbose than the Python code, but I suspect that is because it uses lower level functions. In terms of actual lines of code, it is about the same because of the get_encoded_text function. The main thing missing here is the use of xpath in emacs-lisp.
+
+* DONE A python version of the s-exp bibtex entry
+  CLOSED: [2015-06-11 Thu 10:02]
+  :PROPERTIES:
+  :categories: Python,ref,bibtex
+  :date:     2015/06/11 10:02:33
+  :updated:  2015/06/11 10:02:33
+  :END:
+
+In this [[http://kitchingroup.cheme.cmu.edu/blog/2015/06/10/A-sexp-version-of-a-bibtex-entry/][post]] we explored representing a bibtex entry in lisp s-exp notation, and showed interesting things that enables. Here, I explore something similar in Python. The s-exp notation in Python is really more like tuples. It looks almost identical, except we need a lot of commas for the Python syntax. One significant difference in Python is we need to define the functions in advance because otherwise the function symbols are undefined. Similar to lisp, we can define the field functions at run-time in a loop. We have to use an eval statement, which some Pythonistas find distasteful, but it is not that different to me than what we did in lisp.
+
+The syntax for "executing" the data structure is quite different than in lisp, because this data is /not/ code in Python. Instead, we have to deconstruct the data, knowing that the function is the first object, and it takes the remaining arguments in the tuple.
+
+Here is the proof of concept:
+
+#+BEGIN_SRC python
+def article(bibtex_key, *args):
+    "Return the bibtex formatted entry"
+    return ',\n'.join(['@article{{{0}}}'.format(bibtex_key)] +[arg[0](arg[1]) for arg in args[0]] + ['}'])
+
+fields = ("author", "title", "journal", "pages", "number", "doi", "url", "eprint", "year")
+
+for f in fields:
+    locals()[f] = eval ('lambda x: "  {0} = {{{1}}}".format("' + f + '", x)')
+
+entry = (article, "hallenbeck-2013-effec-o2",
+         (author, "Hallenbeck, Alexander P. and Kitchin, John R."),
+	 (title, "Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a primary-amine based polymeric \ce{CO_2} sorbent"),
+	 (journal, "Industrial \& Engineering Chemistry Research"),
+	 (pages, "10788-10794"),
+         (year, 2013),
+	 (number, 31),
+	 (doi, "10.1021/ie400582a"),
+	 (url, "http://pubs.acs.org/doi/abs/10.1021/ie400582a"),
+	 (eprint, "http://pubs.acs.org/doi/pdf/10.1021/ie400582a"))
+
+
+print entry[0](entry[1], entry[2:])
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+@article{hallenbeck-2013-effec-o2},
+  author = {Hallenbeck, Alexander P. and Kitchin, John R.},
+  title = {Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a primary-amine based polymeric \ce{CO_2} sorbent},
+  journal = {Industrial \& Engineering Chemistry Research},
+  pages = {10788-10794},
+  year = {2013},
+  number = {31},
+  doi = {10.1021/ie400582a},
+  url = {http://pubs.acs.org/doi/abs/10.1021/ie400582a},
+  eprint = {http://pubs.acs.org/doi/pdf/10.1021/ie400582a},
+}
+#+end_example
+
+We can still get specific fields out. Since we used a tuple here, it is not quite as nice as using a dictionary, but it is neither too bad, and it can be wrapped in a reasonably convenient function.
+
+#+BEGIN_SRC python
+def article(bibtex_key, *args):
+    "Return the bibtex formatted entry"
+    return ',\n'.join(['@article{{{0}}}'.format(bibtex_key)] +[arg[0](arg[1]) for arg in args[0]] + ['}'])
+
+fields = ("author", "title", "journal", "pages", "number", "doi", "url", "eprint", "year")
+
+for f in fields:
+    locals()[f] = eval ('lambda x: "  {0} = {{{1}}}".format("' + f + '", x)')
+
+entry = (article, "hallenbeck-2013-effec-o2",
+         (author, "Hallenbeck, Alexander P. and Kitchin, John R."),
+	 (title, "Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a primary-amine based polymeric \ce{CO_2} sorbent"),
+	 (journal, "Industrial \& Engineering Chemistry Research"),
+	 (pages, "10788-10794"),
+         (year, 2013),
+	 (number, 31),
+	 (doi, "10.1021/ie400582a"),
+	 (url, "http://pubs.acs.org/doi/abs/10.1021/ie400582a"),
+	 (eprint, "http://pubs.acs.org/doi/pdf/10.1021/ie400582a"))
+
+
+for field in entry[2:]:
+    if field[0] == author:
+        print field
+
+def get_field(entry, field):
+    for element in entry[2:]:
+        if element[0] == field:
+            return element[1]
+    else:
+        return None
+
+print get_field(entry, title)
+print get_field(entry, "bad")
+#+END_SRC
+
+#+RESULTS:
+: (<function <lambda> at 0x1005975f0>, 'Hallenbeck, Alexander P. and Kitchin, John R.')
+: Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a primary-amine based polymeric \ce{CO_2} sorbent
+: None
+
+So, it seems Python can do some things like lisp in treating functions like first-class objects that can be used as functions, or keys. I still like the lisp s-exp better, but this is an interesting idea for Python too.
+
 * DONE A sexp version of a bibtex entry
   CLOSED: [2015-06-10 Wed 08:54]
   :PROPERTIES:
@@ -887,124 +1194,6 @@ print ans.lisp()" myvar)))
 
 Bottom line: we can write python code in lisp functions that are dynamically updated, execute them, and get lisp data structures back for simple data types. I think that could be useful in some applications, where it is easier to do parsing/analysis in Python, but you want to do something else that is easier in Lisp.
 
-* Getting VASP output from vasprun.xml
-
-
-#+BEGIN_SRC python :session
-import xml.etree.ElementTree as ET
-
-with open('../../gilgamesh-backup/research/cu-pd-au-atat-vasp/CuPd_fcc/10/vasprun.xml') as f:
-    vasprun_xml = f.read()
-
-
-def get_encoded_text(container, xpath):
-    '''Return utf-8 encoded text for element at xpath if it is there.'''
-    if container is None:
-        return None
-    result = container.find(xpath)
-    if hasattr(result, 'text') and result.text:
-        return result.text.encode('utf-8')
-    else:
-        return None
-
-xml = ET.fromstring(vasprun_xml)
-
-print get_encoded_text(xml, 'generator/i[@name="program"]')
-print get_encoded_text(xml, 'generator/i[@name="version"]')
-print get_encoded_text(xml, 'generator/i[@name="subversion"]')
-#+END_SRC
-#+RESULTS:
-: vasp
-: 5.2.12
-: 11Nov11 complex                                                      serial
-
-Next, we see about the incar file. Not all of these elements have a type, so we have to get that attribute.
-
-#+BEGIN_SRC python :session
-for el in xml.find('incar'):
-    print '{0} ({1}) = {2}'.format(el.attrib['name'], el.attrib.get('type'), el.text)
-#+END_SRC
-#+RESULTS:
-: PREC (string) = high
-: IBRION (int) =     -1
-: ISIF (int) =      2
-: ENCUT (None) =     350.00000000
-: NBANDS (int) =     34
-: ISMEAR (int) =     -5
-: SIGMA (None) =       0.10000000
-
-KPOINTS.
-
-#+BEGIN_SRC python :session
-for el in xml.find('kpoints/generation'):
-    print '{0} = {1}'.format(el.attrib['name'], el.text)
-#+END_SRC
-#+RESULTS:
-: divisions =        8        8        8
-: usershift =       0.00000000       0.00000000       0.00000000
-: genvec1 =       0.12500000       0.00000000       0.00000000
-: genvec2 =       0.00000000       0.12500000       0.00000000
-: genvec3 =       0.00000000       0.00000000       0.12500000
-: shift =       0.00000000       0.00000000       0.00000000
-
-#+BEGIN_SRC python :session
-print [float(v.text) for v in xml.findall('kpoints/varray[@name="weights"]/v')]
-#+END_SRC
-
-#+RESULTS:
-: [0.00195312, 0.01171875, 0.01171875, 0.01171875, 0.00585938, 0.01171875, 0.0234375, 0.0234375, 0.0234375, 0.0234375, 0.0234375, 0.01171875, 0.01171875, 0.0234375, 0.0234375, 0.0234375, 0.01171875, 0.01171875, 0.0234375, 0.01171875, 0.00585938, 0.00390625, 0.01171875, 0.01171875, 0.01171875, 0.01171875, 0.01171875, 0.01171875, 0.01171875, 0.0234375, 0.0234375, 0.0234375, 0.0234375, 0.0234375, 0.01171875, 0.0234375, 0.0234375, 0.0234375, 0.0234375, 0.01171875, 0.0234375, 0.0234375, 0.01171875, 0.01171875, 0.0234375, 0.01171875, 0.00390625, 0.01171875, 0.01171875, 0.01171875, 0.01171875, 0.01171875, 0.0234375, 0.0234375, 0.0234375, 0.01171875, 0.0234375, 0.01171875, 0.01171875, 0.00390625, 0.01171875, 0.01171875, 0.01171875, 0.01171875, 0.00195312]
-
-#+BEGIN_SRC python :session
-print xml.find('parameters/separator[@name="electronic"]/i[@name="NELECT"]').text
-print xml.find('parameters/separator[@name="electronic"]/separator[@name="electronic mixer"]/i[@name="AMIX"]').text
-#+END_SRC
-
-#+RESULTS:
-: 43.00000000
-: 0.40000000
-
-#+BEGIN_SRC python :session
-for el in xml.findall('structure'):  print el.attrib['name']
-#+END_SRC
-#+RESULTS:
-: initialpos
-: finalpos
-
-#+BEGIN_SRC python :session
-for el in xml.findall('calculation/scstep/energy/i[@name="e_0_energy"]'):
-    print float(el.text)
-#+END_SRC
-#+RESULTS:
-: -16.49261096
-: -16.50499056
-: -16.48925155
-: -16.48985986
-: -16.48973695
-: -16.48985835
-: -16.48981957
-
-Get final structure:
-#+BEGIN_SRC python :session
-positions = [[float(x) for x in el.text.split()]
-             for  el in xml.findall('structure[@name="finalpos"]/varray[@name="positions"]/v')]
-
-unit_cell = [[float(x) for x in el.text.split()]
-             for el in xml.findall('structure[@name="finalpos"]/crystal/varray[@name="basis"]/v')]
-
-symbols = [el.text for el in xml.findall('atominfo/array[@name="atoms"]/set/rc/c[1]')]
-
-for sym, pos in zip(symbols, positions):
-    print '{0}: {1}'.format(sym, pos)
-
-print 'UC = {0}'.format(unit_cell)
-#+END_SRC
-
-#+RESULTS:
-: Cu: [0.25334331, 0.25334331, 0.25334331]
-: Cu: [0.0, 0.0, 0.0]
-: Cu: [0.74665669, 0.74665669, 0.74665669]
-: Pd: [0.5, 0.5, 0.5]
-: UC = [[-5.46362047, 3.5654701, 5.46362047], [-3.5654701, 5.46362047, 5.46362047], [-5.46362047, 5.46362047, 3.5654701]]
 
 
 * DONE Another approach to embedding org-source in html
