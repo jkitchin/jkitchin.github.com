@@ -64,52 +64,127 @@ Double wow. In emacs-lisp.
 #+END_SRC
 
 * Getting VASP output from vasprun.xml in Python and Emacs
+  :PROPERTIES:
+  :categories: python,vasp,lisp
+  :END:
 
+[[https://www.vasp.at][VASP]] outputs a lot of its data in XML. Here we examine that output in Python and emacs-lisp to see how easy it is to use it. Where feasible, this is probably better than trying to parse the text-based OUTCAR file.
+
+The XML is organized in "sections". Here, we look at the top level sections in the [[./vasprun.xml]] file. This particular file is from a CuPd alloy calculation I ran a long time ago.
 
 #+BEGIN_SRC python :session
 import xml.etree.ElementTree as ET
 
-with open('../../gilgamesh-backup/research/cu-pd-au-atat-vasp/CuPd_fcc/10/vasprun.xml') as f:
+with open('vasprun.xml') as f:
     vasprun_xml = f.read()
-
-
-def get_encoded_text(container, xpath):
-    '''Return utf-8 encoded text for element at xpath if it is there.'''
-    if container is None:
-        return None
-    result = container.find(xpath)
-    if hasattr(result, 'text') and result.text:
-        return result.text.encode('utf-8')
-    else:
-        return None
 
 xml = ET.fromstring(vasprun_xml)
 
-print get_encoded_text(xml, 'generator/i[@name="program"]')
-print get_encoded_text(xml, 'generator/i[@name="version"]')
-print get_encoded_text(xml, 'generator/i[@name="subversion"]')
+for el in xml:
+    print el
+
+#+END_SRC
+
+#+RESULTS:
+: <Element 'generator' at 0x102931050>
+: <Element 'incar' at 0x102931210>
+: <Element 'kpoints' at 0x102931410>
+: <Element 'parameters' at 0x10294d950>
+: <Element 'atominfo' at 0x10295f7d0>
+: <Element 'structure' at 0x102963210>
+: <Element 'calculation' at 0x102963610>
+: <Element 'structure' at 0x103c64510>
+
+Now, let us look at the elements in the generator element. We are just exploring for now.
+
+#+BEGIN_SRC python :session
+import xml.etree.ElementTree as ET
+
+with open('vasprun.xml') as f:
+    vasprun_xml = f.read()
+
+xml = ET.fromstring(vasprun_xml)
+
+def pr(el, indent=0):
+    print ' ' * indent, el.tag, el.attrib
+    for child in el:
+        pr(child, indent + 2)
+
+pr(xml.find('generator'))
+#+END_SRC
+
+#+RESULTS:
+:  generator {}
+:    i {'type': 'string', 'name': 'program'}
+:    i {'type': 'string', 'name': 'version'}
+:    i {'type': 'string', 'name': 'subversion'}
+:    i {'type': 'string', 'name': 'platform'}
+:    i {'type': 'string', 'name': 'date'}
+:    i {'type': 'string', 'name': 'time'}
+
+The generator element contains information about the VASP executable, version and computer platform the calculation was run on. We can extract this information in the next section. We "find" an element with an [[https://en.wikipedia.org/wiki/XPath][xpath]] which allows you to write something like a path to the node containing the information, including specifying the attributes of a node. Pretty sweet.
+
+#+BEGIN_SRC python :session
+import xml.etree.ElementTree as ET
+
+with open('vasprun.xml') as f:
+    vasprun_xml = f.read()
+
+xml = ET.fromstring(vasprun_xml)
+
+print xml.find('generator/i[@name="program"]').text
+print xml.find('generator/i[@name="version"]').text
+print xml.find('generator/i[@name="subversion"]').text
 #+END_SRC
 #+RESULTS:
 : vasp
 : 5.2.12
 : 11Nov11 complex                                                      serial
 
-Next, we see about the incar file. Not all of these elements have a type, so we have to get that attribute.
+Next, we see about the incar element. This contains the entries you used in the INCAR.
+#+BEGIN_SRC python :session
+import xml.etree.ElementTree as ET
+
+with open('vasprun.xml') as f:
+    vasprun_xml = f.read()
+
+xml = ET.fromstring(vasprun_xml)
+
+def pr(el, indent=0):
+    print ' ' * indent, el.tag, el.attrib
+    for child in el:
+        pr(child, indent + 2)
+
+pr(xml.find('incar'))
+#+END_SRC
+
+#+RESULTS:
+:  incar {}
+:    i {'type': 'string', 'name': 'PREC'}
+:    i {'type': 'int', 'name': 'IBRION'}
+:    i {'type': 'int', 'name': 'ISIF'}
+:    i {'name': 'ENCUT'}
+:    i {'type': 'int', 'name': 'NBANDS'}
+:    i {'type': 'int', 'name': 'ISMEAR'}
+:    i {'name': 'SIGMA'}
+
+Let us print them in the form that could be used as an INCAR file. Note we can iterate over the incar element here.
 
 #+BEGIN_SRC python :session
 for el in xml.find('incar'):
-    print '{0} ({1}) = {2}'.format(el.attrib['name'], el.attrib.get('type'), el.text)
+    print '{0} = {1}'.format(el.attrib['name'],
+                             el.text)
 #+END_SRC
 #+RESULTS:
-: PREC (string) = high
-: IBRION (int) =     -1
-: ISIF (int) =      2
-: ENCUT (None) =     350.00000000
-: NBANDS (int) =     34
-: ISMEAR (int) =     -5
-: SIGMA (None) =       0.10000000
+: PREC = high
+: IBRION =     -1
+: ISIF =      2
+: ENCUT =     350.00000000
+: NBANDS =     34
+: ISMEAR =     -5
+: SIGMA =       0.10000000
 
-KPOINTS.
+Here we look at the kpoints/generation element.
 
 #+BEGIN_SRC python :session
 for el in xml.find('kpoints/generation'):
@@ -123,13 +198,8 @@ for el in xml.find('kpoints/generation'):
 : genvec3 =       0.00000000       0.00000000       0.12500000
 : shift =       0.00000000       0.00000000       0.00000000
 
-#+BEGIN_SRC python :session
-print [float(v.text) for v in xml.findall('kpoints/varray[@name="weights"]/v')]
-#+END_SRC
 
-#+RESULTS:
-: [0.00195312, 0.01171875, 0.01171875, 0.01171875, 0.00585938, 0.01171875, 0.0234375, 0.0234375, 0.0234375, 0.0234375, 0.0234375, 0.01171875, 0.01171875, 0.0234375, 0.0234375, 0.0234375, 0.01171875, 0.01171875, 0.0234375, 0.01171875, 0.00585938, 0.00390625, 0.01171875, 0.01171875, 0.01171875, 0.01171875, 0.01171875, 0.01171875, 0.01171875, 0.0234375, 0.0234375, 0.0234375, 0.0234375, 0.0234375, 0.01171875, 0.0234375, 0.0234375, 0.0234375, 0.0234375, 0.01171875, 0.0234375, 0.0234375, 0.01171875, 0.01171875, 0.0234375, 0.01171875, 0.00390625, 0.01171875, 0.01171875, 0.01171875, 0.01171875, 0.01171875, 0.0234375, 0.0234375, 0.0234375, 0.01171875, 0.0234375, 0.01171875, 0.01171875, 0.00390625, 0.01171875, 0.01171875, 0.01171875, 0.01171875, 0.00195312]
-
+There are a whole bunch of things in the parameters element. Most of these are either default values or properties of the calculation. Here we look at the number of electrons, and the value of the [[http://cms.mpi.univie.ac.at/wiki/index.php/AMIX][AMIX]] parameter in the electronic mixer.
 #+BEGIN_SRC python :session
 print xml.find('parameters/separator[@name="electronic"]/i[@name="NELECT"]').text
 print xml.find('parameters/separator[@name="electronic"]/separator[@name="electronic mixer"]/i[@name="AMIX"]').text
@@ -139,25 +209,14 @@ print xml.find('parameters/separator[@name="electronic"]/separator[@name="electr
 : 43.00000000
 : 0.40000000
 
+The structure element contains two elements: the initialpos and the finalpos.
+
 #+BEGIN_SRC python :session
 for el in xml.findall('structure'):  print el.attrib['name']
 #+END_SRC
 #+RESULTS:
 : initialpos
 : finalpos
-
-#+BEGIN_SRC python :session
-for el in xml.findall('calculation/scstep/energy/i[@name="e_0_energy"]'):
-    print float(el.text)
-#+END_SRC
-#+RESULTS:
-: -16.49261096
-: -16.50499056
-: -16.48925155
-: -16.48985986
-: -16.48973695
-: -16.48985835
-: -16.48981957
 
 Get final structure:
 #+BEGIN_SRC python :session
@@ -182,10 +241,26 @@ print 'UC = {0}'.format(unit_cell)
 : Pd: [0.5, 0.5, 0.5]
 : UC = [[-5.46362047, 3.5654701, 5.46362047], [-3.5654701, 5.46362047, 5.46362047], [-5.46362047, 5.46362047, 3.5654701]]
 
+The calculation element contains the energies for the self-consistent iterations performed.
+#+BEGIN_SRC python :session
+for el in xml.findall('calculation/scstep/energy/i[@name="e_0_energy"]'):
+    print float(el.text)
+#+END_SRC
+#+RESULTS:
+: -16.49261096
+: -16.50499056
+: -16.48925155
+: -16.48985986
+: -16.48973695
+: -16.48985835
+: -16.48981957
+
+There is a lot more information in the vasprun.xml file. It takes some exploration to figure out what is there, and how to get it. I am not aware of any documentation on this file anywhere. But, it seems a lot easier to extract data from this than to parse the OUTCAR file.
+
 ** Lisp version
 
 #+BEGIN_SRC emacs-lisp
-(let* ((xml (car  (xml-parse-file "../../gilgamesh-backup/research/cu-pd-au-atat-vasp/CuPd_fcc/10/vasprun.xml")))
+(let* ((xml (car  (xml-parse-file "vasprun.xml")))
        (generator (car (xml-get-children xml 'generator)))
        (i-nodes (xml-get-children generator 'i)))
   (list
@@ -203,7 +278,201 @@ print 'UC = {0}'.format(unit_cell)
 #+RESULTS:
 | vasp | 5.2.12 | 11Nov11 complex                                                      serial |
 
-That is definitely a bit more verbose than the Python code, but I suspect that is because it uses lower level functions. In terms of actual lines of code, it is about the same because of the get_encoded_text function. The main thing missing here is the use of xpath in emacs-lisp.
+That is definitely a bit more verbose than the Python code, but I suspect that is because it uses lower level functions. The main thing missing here is the use of xpath in emacs-lisp.
+
+Let's see if we can get a little closer to the Python syntax. First, we break down the parsed xml a bit. The returned value of xml-parse-file is a list of elements, in this case, it is one element named modeling. That element contains everything else.
+
+#+BEGIN_SRC emacs-lisp :results code
+(loop for element in  (xml-parse-file "vasprun.xml")
+      collect (xml-node-name element))
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC emacs-lisp
+(modeling)
+#+END_SRC
+
+Now, lets see what is in modeling. The modeling element is nested in the output of xml-parse-file, and I guess it is conceivable there could be more than one of them. Let us be general and allow for that. We create a lambda function that takes a node, and then collects the name of any children nodes. It is possible the child node is a string, in which case it is the "text" of the element. We only want to collect container nodes here, which are lists. We use our lambda function to loop over each element in the output of xml-parse-file, and on that element, examine the child nodes.
+
+#+BEGIN_SRC emacs-lisp :results code
+(mapcar
+ (lambda (node)
+   (loop for element in  (xml-node-children node)
+	 when (listp element)
+	 collect (xml-node-name element)))
+ (xml-parse-file "vasprun.xml"))
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC emacs-lisp
+((generator incar kpoints parameters atominfo structure calculation structure))
+#+END_SRC
+
+
+
+#+BEGIN_SRC emacs-lisp :results value raw
+(defun collect-children-names (parent)
+  (loop for element in  (xml-node-children parent)
+	   when (listp element)
+	   collect (xml-node-name element)))
+
+(mapcar
+ 'collect-children-names
+ (xml-parse-file "vasprun.xml"))
+#+END_SRC
+
+#+RESULTS:
+((generator incar kpoints parameters atominfo structure calculation structure))
+
+Ok, that gives us an idea of the secondary structure.  The returned structure is a list containing a list of symbols. One more example. Let's now consider what is in the generator. Let us refresh our mental model of the data. We start with a list containing one modeling element, which is itself a list. The modeling element contains a generator element, which is a list containing other elements.
+
+((modeling (generator (node1) (node2))))
+
+So, when we work on the parent xml, we will get an outer list containing a list of a list of generators for each modeling element in the file. Sounds confusing! No worries, we will just flatten the list.
+
+#+BEGIN_SRC emacs-lisp :results code
+(defun collect-children-names (parent)
+  (loop for element in  (xml-node-children parent)
+	   when (listp element)
+	   collect (xml-node-name element)))
+
+ (-flatten  (mapcar
+					    (lambda (node)
+					      (xml-get-children node 'generator))
+					    (xml-parse-file "vasprun.xml")))
+#+END_SRC
+
+#+RESULTS:
+| generator | \n | i | (name . program) | (type . string) | vasp | \n | i | (name . version) | (type . string) | 5.2.12 | \n | i | (name . subversion) | (type . string) | 11Nov11 complex                                                      serial | \n | i | (name . platform) | (type . string) | LinuxIFC | \n | i | (name . date) | (type . string) | 2012 04 19 | \n | i | (name . time) | (type . string) | 03:40:00 | \n |
+
+
+
+#+BEGIN_SRC emacs-lisp
+(loop for element in
+      collect (xml-node-name element))
+#+END_SRC
+
+#+RESULTS:
+
+
+
+
+This returns a list containing the generator node.
+#+BEGIN_SRC emacs-lisp :results code
+(loop for element in (xml-node-children (car (xml-parse-file "vasprun.xml")))
+      when (and (listp element)
+		(eq 'generator (car element)))
+      collect element)
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC emacs-lisp
+((generator nil "\n  "
+	    (i
+	     ((name . "program")
+	      (type . "string"))
+	     "vasp ")
+	    "\n  "
+	    (i
+	     ((name . "version")
+	      (type . "string"))
+	     "5.2.12  ")
+	    "\n  "
+	    (i
+	     ((name . "subversion")
+	      (type . "string"))
+	     "11Nov11 complex                                                      serial ")
+	    "\n  "
+	    (i
+	     ((name . "platform")
+	      (type . "string"))
+	     "LinuxIFC ")
+	    "\n  "
+	    (i
+	     ((name . "date")
+	      (type . "string"))
+	     "2012 04 19 ")
+	    "\n  "
+	    (i
+	     ((name . "time")
+	      (type . "string"))
+	     "03:40:00 ")
+	    "\n "))
+#+END_SRC
+(defun find (xml node))
+
+To get all the i nodes we do something like this.
+
+#+BEGIN_SRC emacs-lisp :results code
+(let ((generators (loop for element in (xml-node-children (car (xml-parse-file "vasprun.xml")))
+			when (and (listp element)
+				  (eq 'generator (car element)))
+			collect element))
+      (collected '()))
+  (loop for generator in generators
+	do (loop for element in (xml-node-children generator)
+		 when (and (listp element)
+			   (eq 'i (car element)))
+		 do (add-to-list 'collected element)))
+  collected
+  )
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC emacs-lisp
+((i
+  ((name . "time")
+   (type . "string"))
+  "03:40:00 ")
+ (i
+  ((name . "date")
+   (type . "string"))
+  "2012 04 19 ")
+ (i
+  ((name . "platform")
+   (type . "string"))
+  "LinuxIFC ")
+ (i
+  ((name . "subversion")
+   (type . "string"))
+  "11Nov11 complex                                                      serial ")
+ (i
+  ((name . "version")
+   (type . "string"))
+  "5.2.12  ")
+ (i
+  ((name . "program")
+   (type . "string"))
+  "vasp "))
+#+END_SRC
+
+#+BEGIN_SRC emacs-lisp
+(car (mapcar
+ (lambda (generator)
+   (-filter (lambda (node) (when (listp node) (eq (car node) 'i)))
+	    (xml-node-children generator)))
+ (xml-get-children (car (xml-parse-file "vasprun.xml")) 'generator)))
+
+#+END_SRC
+
+#+RESULTS:
+| i | ((name . program) (type . string))    | vasp                                                                        |
+| i | ((name . version) (type . string))    | 5.2.12                                                                      |
+| i | ((name . subversion) (type . string)) | 11Nov11 complex                                                      serial |
+| i | ((name . platform) (type . string))   | LinuxIFC                                                                    |
+| i | ((name . date) (type . string))       | 2012 04 19                                                                  |
+| i | ((name . time) (type . string))       | 03:40:00                                                                    |
+
+
+I am working towards:
+
+#+BEGIN_SRC emacs-lisp
+(find xml '((generator) (i . '((name . "program")))))
+#+END_SRC
+
+
+#+RESULTS:
+
 
 * DONE A python version of the s-exp bibtex entry
   CLOSED: [2015-06-11 Thu 10:02]
