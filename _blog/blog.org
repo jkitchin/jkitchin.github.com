@@ -1,3 +1,45 @@
+* DONE Clickable email addresses in emacs
+  CLOSED: [2015-06-21 Sun 16:42]
+  :PROPERTIES:
+  :categories: emacs,email
+  :date:     2015/06/21 16:42:40
+  :updated:  2015/06/21 16:42:40
+  :END:
+
+There are clickable mailto:jkitchin@andrew.cmu.edu links in org-mode, but standalone email addresses like jkitchin@cmu.edu are just ordinary text. Here, I want to explore using clickable text instead. I will use the button-lock package for this. I borrowed an email regexp from [[http://www.emacswiki.org/emacs/RegularExpression][EmacsWiki: Regular Expression]] for this. The idea is to define a regular expression for an email address, and use it to make the emails clickable.
+
+I am still not sure what the canonical way to get the value of the text that was highlighted. Here we use the :additional-property feature to set a property to t, and then use that property to get the characters that have a non-nil "email-address" property. It seems clunky, but it works. The main action is to compose an email in mu4e (my preferred email program in emacs). You could also put a call to helm here, or to a hydra for other options.
+
+I make the email addresses stand out a little by giving them a gray background, and a tooltip so you can see why they are highlighted. I also bind RET so I don't have to use the mouse. Don't forget you can type C-h . to see the local help instead of mousing over it! Finally, we add a text-mode hook so this will get loaded when we open a text file (or one with a mode derived from text-mode like org-mode).
+
+#+BEGIN_SRC emacs-lisp
+(defun highlight-email-addresses ()
+  "Add button to email address. Clicking or RET will open a compose email window."
+  (button-lock-set-button
+   "\\w+\\(\\.\\w+\\)?@\\(\\w\\|\\.\\)+"
+   (lambda ()
+     (interactive)
+     (let ((start) (end) (email-address))
+       (while (get-text-property (point) 'email-address)
+	 (backward-char))
+       (forward-char)
+       (setq start (point))
+       (while (get-text-property (point) 'email-address)
+	 (forward-char))
+       (setq end (point))
+       (setq email-address (buffer-substring start end))
+       (mu4e~compose-mail email-address)))
+     :face '((:background "gray80") (:underline t))
+     :help-echo "click to send mu4e email"
+     :keyboard-binding (kbd "RET")
+     :additional-property 'email-address))
+
+(add-hook 'text-mode-hook 'highlight-email-addresses)
+#+END_SRC
+
+That doesn't look too bad. Now, anytime I open an org-mode file with an email address in it, the address is highlighted in light gray, and underlined. I can click on it or put the cursor on it and press return and I get a compose email window open, with the email address pre-filled in! I am sure this will have some other applications.
+
+
 * Using lisp to enable data reuse from a program
 
 #+name: code
@@ -258,7 +300,7 @@ for el in xml.findall('calculation/scstep/energy/i[@name="e_0_energy"]'):
 There is a lot more information in the vasprun.xml file. It takes some exploration to figure out what is there, and how to get it. I am not aware of any documentation on this file anywhere. But, it seems a lot easier to extract data from this than to parse the OUTCAR file.
 
 ** Lisp version
-
+Here is a lisp script that extracts some data.
 #+BEGIN_SRC emacs-lisp
 (let* ((xml (car  (xml-parse-file "vasprun.xml")))
        (generator (car (xml-get-children xml 'generator)))
@@ -308,7 +350,7 @@ Now, lets see what is in modeling. The modeling element is nested in the output 
 ((generator incar kpoints parameters atominfo structure calculation structure))
 #+END_SRC
 
-
+Here I just wrap a function to make it a little cleaner.
 
 #+BEGIN_SRC emacs-lisp :results value raw
 (defun collect-children-names (parent)
@@ -328,123 +370,26 @@ Ok, that gives us an idea of the secondary structure.  The returned structure is
 
 ((modeling (generator (node1) (node2))))
 
-So, when we work on the parent xml, we will get an outer list containing a list of a list of generators for each modeling element in the file. Sounds confusing! No worries, we will just flatten the list.
+So, when we work on the parent xml, we will get an outer list containing a list of a list of generators for each modeling element in the file. Sounds confusing! We can just flatten our list to level two!
 
-#+BEGIN_SRC emacs-lisp :results code
+#+BEGIN_SRC emacs-lisp
 (defun collect-children-names (parent)
   (loop for element in  (xml-node-children parent)
 	   when (listp element)
-	   collect (xml-node-name element)))
+	   collect (cons (xml-node-name element) (cdr element))))
 
- (-flatten  (mapcar
-					    (lambda (node)
-					      (xml-get-children node 'generator))
-					    (xml-parse-file "vasprun.xml")))
+(collect-children-names
+ (-flatten-n 2(loop for modeling in (xml-parse-file "vasprun.xml")
+		    collect (loop for generator in (xml-get-children modeling 'generator)
+				  collect (xml-node-children generator)))))
 #+END_SRC
 
 #+RESULTS:
-| generator | \n | i | (name . program) | (type . string) | vasp | \n | i | (name . version) | (type . string) | 5.2.12 | \n | i | (name . subversion) | (type . string) | 11Nov11 complex                                                      serial | \n | i | (name . platform) | (type . string) | LinuxIFC | \n | i | (name . date) | (type . string) | 2012 04 19 | \n | i | (name . time) | (type . string) | 03:40:00 | \n |
-
-
-
-#+BEGIN_SRC emacs-lisp
-(loop for element in
-      collect (xml-node-name element))
-#+END_SRC
-
-#+RESULTS:
-
-
-
-
-This returns a list containing the generator node.
-#+BEGIN_SRC emacs-lisp :results code
-(loop for element in (xml-node-children (car (xml-parse-file "vasprun.xml")))
-      when (and (listp element)
-		(eq 'generator (car element)))
-      collect element)
-#+END_SRC
-
-#+RESULTS:
-#+BEGIN_SRC emacs-lisp
-((generator nil "\n  "
-	    (i
-	     ((name . "program")
-	      (type . "string"))
-	     "vasp ")
-	    "\n  "
-	    (i
-	     ((name . "version")
-	      (type . "string"))
-	     "5.2.12  ")
-	    "\n  "
-	    (i
-	     ((name . "subversion")
-	      (type . "string"))
-	     "11Nov11 complex                                                      serial ")
-	    "\n  "
-	    (i
-	     ((name . "platform")
-	      (type . "string"))
-	     "LinuxIFC ")
-	    "\n  "
-	    (i
-	     ((name . "date")
-	      (type . "string"))
-	     "2012 04 19 ")
-	    "\n  "
-	    (i
-	     ((name . "time")
-	      (type . "string"))
-	     "03:40:00 ")
-	    "\n "))
-#+END_SRC
-(defun find (xml node))
-
-To get all the i nodes we do something like this.
-
-#+BEGIN_SRC emacs-lisp :results code
-(let ((generators (loop for element in (xml-node-children (car (xml-parse-file "vasprun.xml")))
-			when (and (listp element)
-				  (eq 'generator (car element)))
-			collect element))
-      (collected '()))
-  (loop for generator in generators
-	do (loop for element in (xml-node-children generator)
-		 when (and (listp element)
-			   (eq 'i (car element)))
-		 do (add-to-list 'collected element)))
-  collected
-  )
-#+END_SRC
-
-#+RESULTS:
-#+BEGIN_SRC emacs-lisp
-((i
-  ((name . "time")
-   (type . "string"))
-  "03:40:00 ")
- (i
-  ((name . "date")
-   (type . "string"))
-  "2012 04 19 ")
- (i
-  ((name . "platform")
-   (type . "string"))
-  "LinuxIFC ")
- (i
-  ((name . "subversion")
-   (type . "string"))
-  "11Nov11 complex                                                      serial ")
- (i
-  ((name . "version")
-   (type . "string"))
-  "5.2.12  ")
- (i
-  ((name . "program")
-   (type . "string"))
-  "vasp "))
-#+END_SRC
+| i | ((name . version) (type . string))    | 5.2.12                                                                      |
+| i | ((name . subversion) (type . string)) | 11Nov11 complex                                                      serial |
+| i | ((name . platform) (type . string))   | LinuxIFC                                                                    |
+| i | ((name . date) (type . string))       | 2012 04 19                                                                  |
+| i | ((name . time) (type . string))       | 03:40:00                                                                    |
 
 #+BEGIN_SRC emacs-lisp
 (car (mapcar
@@ -467,7 +412,7 @@ To get all the i nodes we do something like this.
 I am working towards:
 
 #+BEGIN_SRC emacs-lisp
-(find xml '((generator) (i . '((name . "program")))))
+(findall xml '((generator) (i . '((name . "program")))))
 #+END_SRC
 
 
@@ -527,6 +472,53 @@ print entry[0](entry[1], entry[2:])
   eprint = {http://pubs.acs.org/doi/pdf/10.1021/ie400582a},
 }
 #+end_example
+
+Here is an approach that avoids using eval, and instead uses a function to generate a function.
+
+#+BEGIN_SRC python
+def article(bibtex_key, *args):
+    "Return the bibtex formatted entry"
+    return ',\n'.join(['@article{{{0}}}'.format(bibtex_key)] +[arg[0](arg[1]) for arg in args[0]] + ['}'])
+
+fields = ("author", "title", "journal", "pages", "number", "doi", "url", "eprint", "year")
+
+def make_func(field):
+    return lambda x: '  {0} = {{{1}}}'.format(field, x)
+
+for f in fields:
+    locals()[f] = make_func(f)
+
+entry = (article, "hallenbeck-2013-effec-o2",
+         (author, "Hallenbeck, Alexander P. and Kitchin, John R."),
+         (title, "Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a primary-amine based polymeric \ce{CO_2} sorbent"),
+         (journal, "Industrial \& Engineering Chemistry Research"),
+         (pages, "10788-10794"),
+         (year, 2013),
+         (number, 31),
+         (doi, "10.1021/ie400582a"),
+         (url, "http://pubs.acs.org/doi/abs/10.1021/ie400582a"),
+         (eprint, "http://pubs.acs.org/doi/pdf/10.1021/ie400582a"))
+
+
+print entry[0](entry[1], entry[2:])
+
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+@article{hallenbeck-2013-effec-o2},
+  author = {Hallenbeck, Alexander P. and Kitchin, John R.},
+  title = {Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a primary-amine based polymeric \ce{CO_2} sorbent},
+  journal = {Industrial \& Engineering Chemistry Research},
+  pages = {10788-10794},
+  year = {2013},
+  number = {31},
+  doi = {10.1021/ie400582a},
+  url = {http://pubs.acs.org/doi/abs/10.1021/ie400582a},
+  eprint = {http://pubs.acs.org/doi/pdf/10.1021/ie400582a},
+}
+#+end_example
+
 
 We can still get specific fields out. Since we used a tuple here, it is not quite as nice as using a dictionary, but it is neither too bad, and it can be wrapped in a reasonably convenient function.
 
