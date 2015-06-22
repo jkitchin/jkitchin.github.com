@@ -1,0 +1,143 @@
+* Clickable org-contacts in text files
+  :PROPERTIES:
+  :categories: orgmode,contacts
+  :date:     2015/06/22 13:07:03
+  :updated:  2015/06/22 13:07:03
+  :END:
+
+Continuing my adventures with clickable text (See [[http://kitchingroup.cheme.cmu.edu/blog/2015/06/21/Clickable-email-addresses-in-emacs/][clickable email addresses]] and [[http://kitchingroup.cheme.cmu.edu/blog/2015/03/18/Clickable-links-for-Twitter-handles-in-Emacs/][clickable twitter handles]]), here we consider how to get clickable names that are also in my org-contacts database. The goal is to have these names highlighted and clickable so that when I click on them I get a hydra menu of actions, e.g. to open the contact, email them, etc... We will again use button-lock to do the action. We will construct a fairly large regexp to match all the names in the org-contacts database. This turns out to be very easy using the regexp-opt function.
+
+First, I formalize the code I used last time to get text around the point that has a text-property. We will use that to get the text that has been highlighted by button-lock.
+
+#+BEGIN_SRC emacs-lisp
+(defun get-surrounding-text-with-property (property)
+  "Return text surrounding point with the text-property PROPERTY."
+  (let ((start) (end))
+    (when (get-text-property (point) property)
+      (save-excursion
+	(while (get-text-property (point) property)
+	  (backward-char))
+	(forward-char)
+	(setq start (point))
+	(while (get-text-property (point) property)
+	  (forward-char))
+	(setq end (point)))
+      (buffer-substring start end))))
+#+END_SRC
+
+#+RESULTS:
+: get-surrounding-text-with-property
+
+I want to use nicknames that are defined in my org-contacts database. We first try to return an assoc lookup, then the slower approach of looping through the entries to find a matching nickname.
+
+#+BEGIN_SRC emacs-lisp
+(defun get-contact-from-name-or-nickname (name-or-nickname)
+  "Return a contact from the org-contacts database for NAME-OR-NICKNAME."
+  (or
+   (assoc name-or-nickname (org-contacts-db))
+   ;; no assoc, so now we have to find a nickname
+   (catch 'contact
+     (dolist (contact (org-contacts-db))
+       (when (-contains? (s-split "," (or (cdr (assoc "NICKNAMES" (caddr contact))) " ")) name-or-nickname)
+	 (throw 'contact contact))))))
+#+END_SRC
+
+#+RESULTS:
+: get-contact-from-name-or-nickname
+
+Now, let us write a hydra function that will be our menu of actions. For some reason, when you click on a highlighted text the mouse moves to the end of the text, so in our hydra function we move back a char, and then get the info. Basically, we get the name, then get the contact, and extract what we need from there. Here we provide functionality to open a contact, email a contact or open the url of the contact (if it exists). I also want a conditional hydra, which doesn't seem to be an option yet, so we we roll our own here. Basically, we construct the code for a hydra, and only add a menu option to open the url if we find one in the contact. We will have to eval the code returned from this function to get the hydra body, and then call the body function in the action function for the highlighted text.
+
+#+BEGIN_SRC emacs-lisp
+(defun conditional-hydra-actions ()
+  "Construct code to create a hydra with conditional options."
+  (let ((code  '(defhydra org-contacts (:color blue)
+		  "Org contacts")))
+    (setq code
+	  (append
+	   code
+	   '(("o" (progn
+		    (backward-char)
+		    (let* ((name (get-surrounding-text-with-property 'org-contact))
+			   (contact (get-contact-from-name-or-nickname name))
+			   (contact-marker (nth 1 contact)))
+		      (switch-to-buffer (marker-buffer contact-marker))
+		      (goto-char (marker-position contact-marker))
+		      (show-subtree)))
+	      "Open contact"))))
+
+    (setq code
+	  (append
+	   code '(("e" (progn
+			 (backward-char)
+			 (let* ((name (get-surrounding-text-with-property 'org-contact))
+				(contact (get-contact-from-name-or-nickname name))
+				(email (cdr (assoc "EMAIL" (caddr contact))))))
+			 (mu4e~compose-mail email))
+		   "Email contact"))))
+
+    ;; conditional menu for opening a URL
+    (let* ((name (get-surrounding-text-with-property 'org-contact))
+	   (contact (assoc name (org-contacts-db)))
+	   (url (cdr (assoc "URL" (caddr contact)))))
+      (when url
+	(setq code
+	      (append
+	       code '(("w" (progn
+			     (backward-char)
+			     (let* ((name (get-surrounding-text-with-property 'org-contact))
+				    (contact (get-contact-from-name-or-nickname name))
+				    (url (cdr (assoc "URL" (caddr contact)))))
+			       (if url
+				   (browse-url url)
+				 (message "No url found."))))
+		       "Open in browser"))))))
+    code))
+#+END_SRC
+
+#+RESULTS:
+: conditional-hydra-actions
+
+I also want to have nicknames in this list, because sometimes I don't use the full names in my contact database. These are stored in a comma-separated property called NICKNAMES in entries that have them. A subtle point here is that it complicates looking up the contact in the database. Normally, I can get this by a simple assoc lookup. For the nicknames, that will fail, so we need a back up method. Now, the highlighting code. You can make the regexp by passing a list of strings to match to regexp-opt. We get our list of strings from:
+
+#+BEGIN_SRC emacs-lisp
+(append
+ (mapcar 'car (org-contacts-db))
+ (let ((nicknames '()))
+   (dolist (contact (org-contacts-db))
+     (when (assoc "NICKNAMES" (caddr contact))
+       (setq nicknames
+	     (append nicknames (s-split "," (cdr (assoc "NICKNAMES" (caddr contact))))))))
+   nicknames))
+#+END_SRC
+
+I am not going to show them here to protect my contacts ;). Now, we create the function that highlights the contacts. and add it as a hook function to text-mode-hook.
+
+#+BEGIN_SRC emacs-lisp
+(defun highlight-org-contacts ()
+  (button-lock-set-button
+   (regexp-opt
+    (append
+     (mapcar 'car (org-contacts-db))
+     (let ((nicknames '()))
+       (dolist (contact (org-contacts-db))
+	 (when (assoc "NICKNAMES" (caddr contact))
+	   (setq nicknames
+		 (append
+		  nicknames
+		  (s-split "," (cdr (assoc "NICKNAMES" (caddr contact))))))))
+       nicknames)))
+   (lambda ()
+     (interactive)
+     (eval (conditional-hydra-actions))
+     (org-contacts/body))
+   :face '((:background "MistyRose1")
+	   (:underline t))
+   :help-echo (format "An org contact")
+   :keyboard-binding (kbd "RET")
+   :additional-property 'org-contact))
+
+(add-hook 'text-mode-hook 'highlight-org-contacts)
+#+END_SRC
+
+That does it. Now, whenever I open a text-based file, the names that are in my contacts are highlighted and actionable. This should be useful for meeting notes, etc...
+
