@@ -1,3 +1,239 @@
+* DONE Integrating swish-e and Emacs
+  CLOSED: [2015-06-25 Thu 10:37]
+  :PROPERTIES:
+  :categories: emacs,orgmode
+  :date:     2015/06/25 10:37:05
+  :updated:  2015/06/25 10:37:05
+  :END:
+
+[[http://swish-e.org][swish-e]] is a software package that indexes files on your computer, and then allows you to search the index. Spotlight on my Mac is not working too well (sometimes not at all), and I want some more flexibility so today we try getting swish-e up and running and integrated with Emacs. I don't know that swish-e is the best tool for this available, but it has been on my radar a /long/ time (probably since 2003 from this [[http://joshr.com/src/docs/HowToIndexAnything.pdf][article]]), and it was easy to setup and use.
+
+I use homebrew, so installation was this simple:
+
+#+BEGIN_SRC sh
+brew install swish-e
+#+END_SRC
+
+To test things out, I will only index org-files. I have these all over the place, and they are not all in my org-mode agenda. So, finding them quickly would be awesome.
+
+#+BEGIN_SRC text :tangle ~/.swish-e/swish.conf
+# Example configuration file
+
+# Tell Swish-e what to index (same as -i switch above)
+IndexDir /Users/jkitchin/Dropbox/org-mode
+
+# What to index
+IndexOnly .org
+
+# Tell Swish-e that .txt files are to use the text parser.
+IndexContents TXT* .org
+
+# Otherwise, use the HTML parser
+DefaultContents HTML*
+
+# Ask libxml2 to report any parsing errors and warnings or
+# any UTF-8 to 8859-1 conversion errors
+ParserWarnLevel 9
+#+END_SRC
+
+Now, we create our index.
+
+#+BEGIN_SRC sh
+swish-e -c ~/.swish-e/swish.conf
+#+END_SRC
+#+RESULTS:
+#+begin_example
+Indexing Data Source: "File-System"
+Indexing "/Users/jkitchin/Dropbox/org-mode"
+Removing very common words...
+no words removed.
+Writing main index...
+Sorting words ...
+Sorting 29,589 words alphabetically
+Writing header ...
+Writing index entries ...
+  Writing word text: ...  Writing word text:  10%  Writing word text:  20%  Writing word text:  30%  Writing word text:  40%  Writing word text:  50%  Writing word text:  60%  Writing word text:  70%  Writing word text:  80%  Writing word text:  90%  Writing word text: 100%  Writing word text: Complete
+  Writing word hash: ...  Writing word hash:  10%  Writing word hash:  20%  Writing word hash:  30%  Writing word hash:  40%  Writing word hash:  50%  Writing word hash:  60%  Writing word hash:  70%  Writing word hash:  80%  Writing word hash:  90%  Writing word hash: 100%  Writing word hash: Complete
+  Writing word data: ...  Writing word data:   9%  Writing word data:  19%  Writing word data:  29%  Writing word data:  39%  Writing word data:  49%  Writing word data:  59%  Writing word data:  69%  Writing word data:  79%  Writing word data:  89%  Writing word data:  99%  Writing word data: Complete
+29,589 unique words indexed.
+Sorting property: swishdocpath                            Sorting property: swishtitle                              Sorting property: swishdocsize                            Sorting property: swishlastmodified                       4 properties sorted.
+87 files indexed.  2,900,196 total bytes.  372,888 total words.
+Elapsed time: 00:00:00 CPU time: 00:00:00
+Indexing done!
+#+end_example
+
+Now an example search. I have been looking into the Energy frontier research centers, and I want to find my notes on it. Here is a little query. I use a special output format to keep things simple for the parsing later, just the rank and path, separated by a space.
+
+#+BEGIN_SRC sh
+swish-e -x '%r %p\n' -w EFRC
+#+END_SRC
+#+RESULTS:
+: # SWISH format: 2.4.7
+: # Search words: EFRC
+: # Removed stopwords:
+: # Number of hits: 2
+: # Search time: 0.000 seconds
+: # Run time: 0.009 seconds
+: 1000 /Users/jkitchin/Dropbox/org-mode/journal.org
+: 471 /Users/jkitchin/Dropbox/org-mode/proposals.org
+: .
+
+Now, for the integration with Emacs. We just get that output in a string, split it, and get the parts we want.  I think I will use helm to provide a selection buffer to these results. We need a list of cons cells (string . candidate). Then we write an interactive helm function. We provide two sources. One for the initial query, and another to start a new search, in case you don't find what you want.
+
+#+BEGIN_SRC emacs-lisp
+(defun helm-swish-e-candidates (query)
+  "Generate a list of cons cells (swish-e result . path)."
+  (let* ((result (shell-command-to-string
+		  (format "swish-e -x \"%%r %%p\n\" -w %s"
+			  (shell-quote-argument query))))
+	 (lines (s-split "\n" result t))
+	 (candidates '()))
+    (loop for line in lines
+	  unless (or  (s-starts-with? "#" line)
+		      (s-starts-with? "." line))
+	  collect (cons line (cdr (s-split " " line))))))
+
+
+(defun helm-swish-e (query)
+  "Run a swish-e query and provide helm selection buffer of the results."
+  (interactive "sQuery: ")
+  (helm :sources `(((name . ,(format "swish-e: %s" query))
+		    (candidates . ,(helm-swish-e-candidates query))
+		    (action . (("open" . (lambda (f)
+					   (find-file (car f)))))))
+		   ((name . "New search")
+		    (dummy)
+		    (action . (("search" . (lambda (f)
+					     (helm-swish-e helm-pattern)))))))))
+#+END_SRC
+
+#+RESULTS:
+: helm-swish-e
+
+Now I can run M-x helm-swish-e and enter "efrc AND computing infrastructure" to find org files containing those words, then press enter to find the file. Nice and easy. I have not tested the query syntax very fully, but so far it is working fine!
+
+
+* conditional hydra example
+
+(defhydra hydra-vi ()
+  "vi"
+  ("j" next-line "down")
+  ("k" previous-line "up"))
+(setq hydra-vi/hint
+      '(if (evenp (line-number-at-pos))
+        (eval (hydra--format nil nil
+               "even" hydra-vi/heads))
+        (eval (hydra--format nil nil
+               "odd" hydra-vi/heads))))
+
+
+(defhydra hydra-vi (:hint nil)
+  "vi"
+  ("j" next-line)
+  ("k" previous-line)
+  ("n" next-line)
+  ("p" previous-line))
+
+(setq hydra-vi/hint
+      '(if (evenp (line-number-at-pos))
+        (prog1 (eval
+                (hydra--format nil '(nil nil :hint nil)
+                               "\neven: _j_ _k_\n" hydra-vi/heads))
+          (define-key hydra-vi/keymap "n" nil)
+          (define-key hydra-vi/keymap "p" nil)
+          (define-key hydra-vi/keymap "j" 'hydra-vi/next-line)
+          (define-key hydra-vi/keymap "k" 'hydra-vi/previous-line))
+        (prog1 (eval
+                (hydra--format nil '(nil nil :hint nil)
+                               "\nodd: _n_ _p_\n" hydra-vi/heads))
+          (define-key hydra-vi/keymap "j" nil)
+          (define-key hydra-vi/keymap "k" nil)
+          (define-key hydra-vi/keymap "n" 'hydra-vi/next-line)
+          (define-key hydra-vi/keymap "p" 'hydra-vi/previous-line))))
+
+
+* Links to Acrobat pages
+
+#+BEGIN_SRC emacs-lisp
+(do-applescript "tell application \"Adobe Acrobat Pro\"
+open file \"Macintosh HD:Users:jkitchin:Desktop:ALL_EFRC_technical_summaries.pdf\" options \"nameddest=light\"
+end tell")
+#+END_SRC
+
+#+RESULTS:
+: 0
+
+#+BEGIN_SRC emacs-lisp
+(org-add-link-type "acrobat" 'org-mac-acrobat-open)
+
+(defun org-mac-acrobat-open (uri)
+  "Visit page of pdf in Acrobat"
+  (let* ((page (when (string-match "::\\(.+\\)\\'" uri)
+                 (match-string 1 uri)))
+         (document (substring uri 0 (match-beginning 0))))
+    (do-applescript
+     (concat
+      "tell application \"Adobe Acrobat Pro\"\n"
+      "  activate\n"
+      "  set theDoc to \"" document "\"\n"
+      "  set thePage to " page "\n"
+      "  open theDoc\n"
+      "  tell PDF Window 1\n"
+      "    goto page thePage\n"
+      "  end tell\n"
+      "end tell"))))
+
+;; The applescript returns link in the format
+;; path_to_pdf_file::document_title::page_number::page_label
+
+(defun as-get-acrobat-page-link ()
+  (do-applescript
+   (concat
+    "tell application \"Adobe Acrobat Pro\"\n"
+    "  set theDoc to active doc\n"
+    "  set theWindow to (PDF Window 1 of theDoc)\n"
+    "  set thePath to (file alias of theDoc)\n"
+    "  set theTitle to (name of theWindow)\n"
+    "  set thePage to (page number of theWindow)\n"
+    "  set theLabel to (label text of (page thePage of theWindow))\n"
+    "end tell\n"
+    "set theResult to thePath & \"::\" & theTitle & \"::\" & thePage & \"::\" & theLabel\n"
+    "return theResult as string\n")))
+
+(defun org-mac-acrobat-get-page ()
+  (interactive)
+  (message "Applescript: Getting Acrobat page link...")
+  (let* ((descriptor (as-get-acrobat-page-link))
+         (components (split-string descriptor "::"))
+         (path (car components))
+         (title (nth 1 components))
+         (page (nth 2 components))
+         (label (nth 3 components))
+         (link (concat "acrobat:" path "::" page))
+         (description (concat title ", p." label))
+         (org-link))
+    (when (not (string= link ""))
+      (setq org-link (org-make-link-string link description)))
+    (kill-new org-link)
+    org-link))
+
+(defun org-mac-acrobat-insert-page ()
+  (interactive)
+  (insert (org-mac-acrobat-get-page)))
+#+END_SRC
+
+#+RESULTS:
+: org-mac-acrobat-insert-page
+
+[[acrobat:Macintosh%20HD:Users:jkitchin:Dropbox:CMU:meetings:@planning:NAM-2015:NAM-final-program-pdf:v4.pdf::190][v4.pdf, p.190]]
+
+[[acrobat:Macintosh%20HD:Users:jkitchin:Dropbox:CMU:meetings:@planning:NAM-2015:NAM-final-program-pdf:v4.pdf::191][v4.pdf, p.191]] number 54
+
+[[acrobat:Macintosh%20HD:Users:jkitchin:Dropbox:CMU:meetings:@planning:NAM-2015:NAM-final-program-pdf:v4.pdf::190]]
+
+
+[[acrobat:
+
 * DONE Conditional hydra menus
   CLOSED: [2015-06-24 Wed 07:31]
   :PROPERTIES:
