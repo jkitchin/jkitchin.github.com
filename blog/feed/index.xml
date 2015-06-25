@@ -10,10 +10,154 @@
     <title>The Kitchin Research Group</title>
     <link>http://jkitchin.github.io/blog</link>
     <description>Chemical Engineering at Carnegie Mellon University</description>
-    <pubDate>Wed, 24 Jun 2015 11:32:03 GMT</pubDate>
+    <pubDate>Thu, 25 Jun 2015 14:37:35 GMT</pubDate>
     <generator>Blogofile</generator>
     <sy:updatePeriod>hourly</sy:updatePeriod>
     <sy:updateFrequency>1</sy:updateFrequency>
+    <item>
+      <title>Integrating swish-e and Emacs</title>
+      <link>http://jkitchin.github.io/blog/2015/06/25/Integrating-swish-e-and-Emacs</link>
+      <pubDate>Thu, 25 Jun 2015 10:37:05 EDT</pubDate>
+      <category><![CDATA[orgmode]]></category>
+      <category><![CDATA[emacs]]></category>
+      <guid isPermaLink="false">6niCJ0luIGwpPDINzVyYVCw0RB8=</guid>
+      <description>Integrating swish-e and Emacs</description>
+      <content:encoded><![CDATA[
+
+
+
+<p>
+<a href="http://swish-e.org">swish-e</a> is a software package that indexes files on your computer, and then allows you to search the index. Spotlight on my Mac is not working too well (sometimes not at all), and I want some more flexibility so today we try getting swish-e up and running and integrated with Emacs. I don't know that swish-e is the best tool for this available, but it has been on my radar a <i>long</i> time (probably since 2003 from this <a href="http://joshr.com/src/docs/HowToIndexAnything.pdf">article</a> ), and it was easy to setup and use.
+</p>
+
+<p>
+I use homebrew, so installation was this simple:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-sh">brew install swish-e
+</pre>
+</div>
+
+<p>
+To test things out, I will only index org-files. I have these all over the place, and they are not all in my org-mode agenda. So, finding them quickly would be awesome.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-text"># Example configuration file
+
+# Tell Swish-e what to index (same as -i switch above)
+IndexDir /Users/jkitchin/Dropbox/org-mode
+
+# What to index
+IndexOnly .org
+
+# Tell Swish-e that .txt files are to use the text parser.
+IndexContents TXT* .org
+
+# Otherwise, use the HTML parser
+DefaultContents HTML*
+
+# Ask libxml2 to report any parsing errors and warnings or
+# any UTF-8 to 8859-1 conversion errors
+ParserWarnLevel 9
+</pre>
+</div>
+
+<p>
+Now, we create our index.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-sh">swish-e -c ~/.swish-e/swish.conf
+</pre>
+</div>
+<pre class="example">
+Indexing Data Source: "File-System"
+Indexing "/Users/jkitchin/Dropbox/org-mode"
+Removing very common words...
+no words removed.
+Writing main index...
+Sorting words ...
+Sorting 29,589 words alphabetically
+Writing header ...
+Writing index entries ...
+  Writing word text: ...  Writing word text:  10%  Writing word text:  20%  Writing word text:  30%  Writing word text:  40%  Writing word text:  50%  Writing word text:  60%  Writing word text:  70%  Writing word text:  80%  Writing word text:  90%  Writing word text: 100%  Writing word text: Complete
+  Writing word hash: ...  Writing word hash:  10%  Writing word hash:  20%  Writing word hash:  30%  Writing word hash:  40%  Writing word hash:  50%  Writing word hash:  60%  Writing word hash:  70%  Writing word hash:  80%  Writing word hash:  90%  Writing word hash: 100%  Writing word hash: Complete
+  Writing word data: ...  Writing word data:   9%  Writing word data:  19%  Writing word data:  29%  Writing word data:  39%  Writing word data:  49%  Writing word data:  59%  Writing word data:  69%  Writing word data:  79%  Writing word data:  89%  Writing word data:  99%  Writing word data: Complete
+29,589 unique words indexed.
+Sorting property: swishdocpath                            Sorting property: swishtitle                              Sorting property: swishdocsize                            Sorting property: swishlastmodified                       4 properties sorted.
+87 files indexed.  2,900,196 total bytes.  372,888 total words.
+Elapsed time: 00:00:00 CPU time: 00:00:00
+Indexing done!
+</pre>
+
+<p>
+Now an example search. I have been looking into the Energy frontier research centers, and I want to find my notes on it. Here is a little query. I use a special output format to keep things simple for the parsing later, just the rank and path, separated by a space.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-sh">swish-e -x <span style="color: #008000;">'%r %p\n'</span> -w EFRC
+</pre>
+</div>
+<pre class="example">
+# SWISH format: 2.4.7
+# Search words: EFRC
+# Removed stopwords:
+# Number of hits: 2
+# Search time: 0.000 seconds
+# Run time: 0.009 seconds
+1000 /Users/jkitchin/Dropbox/org-mode/journal.org
+471 /Users/jkitchin/Dropbox/org-mode/proposals.org
+.
+</pre>
+
+<p>
+Now, for the integration with Emacs. We just get that output in a string, split it, and get the parts we want.  I think I will use helm to provide a selection buffer to these results. We need a list of cons cells (string . candidate). Then we write an interactive helm function. We provide two sources. One for the initial query, and another to start a new search, in case you don't find what you want.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">helm-swish-e-candidates</span> (query)
+  <span style="color: #036A07;">"Generate a list of cons cells (swish-e result . path)."</span>
+  (<span style="color: #0000FF;">let*</span> ((result (shell-command-to-string
+                  (format <span style="color: #008000;">"swish-e -x \"%%r %%p\n\" -w %s"</span>
+                          (shell-quote-argument query))))
+         (lines (s-split <span style="color: #008000;">"\n"</span> result t))
+         (candidates '()))
+    (<span style="color: #0000FF;">loop</span> for line in lines
+          unless (<span style="color: #0000FF;">or</span>  (s-starts-with? <span style="color: #008000;">"#"</span> line)
+                      (s-starts-with? <span style="color: #008000;">"."</span> line))
+          collect (cons line (cdr (s-split <span style="color: #008000;">" "</span> line))))))
+
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">helm-swish-e</span> (query)
+  <span style="color: #036A07;">"Run a swish-e query and provide helm selection buffer of the results."</span>
+  (<span style="color: #0000FF;">interactive</span> <span style="color: #008000;">"sQuery: "</span>)
+  (helm <span style="color: #006FE0;">:sources</span> `(((name . ,(format <span style="color: #008000;">"swish-e: %s"</span> query))
+                    (candidates . ,(helm-swish-e-candidates query))
+                    (action . ((<span style="color: #008000;">"open"</span> . (<span style="color: #0000FF;">lambda</span> (f)
+                                           (find-file (car f)))))))
+                   ((name . <span style="color: #008000;">"New search"</span>)
+                    (dummy)
+                    (action . ((<span style="color: #008000;">"search"</span> . (<span style="color: #0000FF;">lambda</span> (f)
+                                             (helm-swish-e helm-pattern)))))))))
+</pre>
+</div>
+
+<pre class="example">
+helm-swish-e
+</pre>
+
+<p>
+Now I can run M-x helm-swish-e and enter "efrc AND computing infrastructure" to find org files containing those words, then press enter to find the file. Nice and easy. I have not tested the query syntax very fully, but so far it is working fine!
+</p>
+<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/06/25/Integrating-swish-e-and-Emacs.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>]]></content:encoded>
+    </item>
     <item>
       <title>Conditional hydra menus</title>
       <link>http://jkitchin.github.io/blog/2015/06/24/Conditional-hydra-menus</link>
@@ -1296,61 +1440,6 @@ Let's not forget the <a href="http://www.scopus.com/authid/detail.url?origin=Aut
 Now you can use org-mode for reproducible scientific literature searching in Scopus!
 </p>
 <p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/06/07/Getting-a-Scopus-EID-from-a-DOI.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>]]></content:encoded>
-    </item>
-    <item>
-      <title>New publication in ACS Catalysis on data sharing practices</title>
-      <link>http://jkitchin.github.io/blog/2015/05/17/New-publication-in-ACS-Catalysis-on-data-sharing-practices</link>
-      <pubDate>Sun, 17 May 2015 14:22:54 EDT</pubDate>
-      <category><![CDATA[news]]></category>
-      <category><![CDATA[publication]]></category>
-      <guid isPermaLink="false">_SUzlFFKrmyDTOcNuD5GdH9zoPc=</guid>
-      <description>New publication in ACS Catalysis on data sharing practices</description>
-      <content:encoded><![CDATA[
-
-
-<p>
-In this perspective we show an example of data sharing practices we have developed. We use the supporting information file from <a href="#boes-2015-estim-bulk">boes-2015-estim-bulk</a> to show how one can extract the data from our paper and reuse it for new purposes. We illustrate this for both computational and experimental data. We use org-mode for doing this, but we also show that data in the supporting information can be extracted using Python, and independently of Emacs, so that org-mode is not critical for people who do not use it.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-bibtex"><span style="color: #006699;">@article</span>{<span style="color: #D0372D;">kitchin-2015-examp</span>,
-  <span style="color: #BA36A5;">author</span> =       {Kitchin, John R.},
-  <span style="color: #BA36A5;">title</span> =        {Examples of Effective Data Sharing in Scientific Publishing},
-  <span style="color: #BA36A5;">journal</span> =      {ACS Catalysis},
-  <span style="color: #BA36A5;">volume</span> =       0,
-  <span style="color: #BA36A5;">number</span> =       {ja},
-  <span style="color: #BA36A5;">pages</span> =        {null},
-  <span style="color: #BA36A5;">year</span> =         2015,
-  <span style="color: #BA36A5;">doi</span> =          {<span style="color: #006DAF; text-decoration: underline;">10.1021/acscatal.5b00538</span>},
-  <span style="color: #BA36A5;">url</span> =          {<span style="color: #006DAF; text-decoration: underline;"> http://dx.doi.org/10.1021/acscatal.5b00538 </span>},
-  <span style="color: #BA36A5;">eprint</span> =       { http://dx.doi.org/10.1021/acscatal.5b00538 },
-}
-</pre>
-</div>
-
-<p>
-The published version of this manuscript doesn't look exactly like the version I generated, for example, the output from the source blocks is missing. Hopefully that will make it into a supporting information file. Until then, you may be interested in the org file and version I submitted below.
-</p>
-
-<p>
-Org source: <a href="/media/2015-05-17-New-publication-in-ACS-Catalysis-on-data-sharing-practices/acs-cat-manuscript.org">acs-cat-manuscript.org</a> 
-</p>
-
-<p>
-References: <a href="/media/2015-05-17-New-publication-in-ACS-Catalysis-on-data-sharing-practices/acs-cat-references.bib">acs-cat-references.bib</a> 
-</p>
-
-<p>
-Manuscript: <a href="/media/2015-05-17-New-publication-in-ACS-Catalysis-on-data-sharing-practices/acs-cat-manuscript-2015-05-07.zip">acs-cat-manuscript-2015-05-07.zip</a> 
-</p>
-
-
-<p>
-<h1>Bibliography</h1>
-<ul><li><a id="boes-2015-estim-bulk">[boes-2015-estim-bulk] Jacob Boes, Gamze Gumuslu, James Miller, Andrew, Gellman & John Kitchin, Estimating Bulk-Composition-Dependent \ceH2 Adsorption  Energies on \ceCu_xPd_1-x Alloy (111) Surfaces, <i>ACS Catalysis</i>, <b>5</b>, 1020-1026 (2015). <a href="http://dx.doi.org/10.1021/cs501585k">link</a>. <a href="http://dx.doi.org/10.1021/cs501585k">doi</a>.</a></li>
-</ul></p>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/05/17/New-publication-in-ACS-Catalysis-on-data-sharing-practices.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>]]></content:encoded>
     </item>
   </channel>
 </rss>
