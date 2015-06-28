@@ -1,3 +1,572 @@
+* A sudo org-link and sh block
+
+#+BEGIN_SRC emacs-lisp
+;http://stackoverflow.com/questions/2472273/how-do-i-run-a-sudo-command-in-emacs
+(org-add-link-type
+ "sudo"
+ (lambda (cmd)
+   "Run CMD with sudo."
+   (shell-command
+    (concat "echo " (shell-quote-argument (read-passwd "Password? "))
+	    " | sudo -S " cmd))))
+#+END_SRC
+
+
+
+#+BEGIN_SRC emacs-lisp :tangle ob-sudo.el
+;;; ob-sudo.el --- An org-mode source block to run shell commands as sudo
+
+;;; Commentary:
+;; Runs the block of code as a shell command with sudo.
+
+;;; Code:
+
+(defun org-babel-execute:sudo (body params)
+  "Run BODY as a shell command using sudo."
+  (let* ((passwd (shell-quote-argument (read-passwd "Password? ")))
+	 (result (shell-command-to-string
+		  (concat "echo " passwd
+			  " | sudo -S " body))))
+    ;; this is verbatim from ob-emacs-lisp
+    (org-babel-result-cond (cdr (assoc :result-params params))
+      (let ((print-level nil)
+	    (print-length nil))
+	(if (or (member "scalar" (cdr (assoc :result-params params)))
+		(member "verbatim" (cdr (assoc :result-params params))))
+	    (format "%S" result)
+	  (format "%s" result)))
+      (org-babel-reassemble-table
+       result
+       (org-babel-pick-name (cdr (assoc :colname-names params))
+			    (cdr (assoc :colnames params)))
+       (org-babel-pick-name (cdr (assoc :rowname-names params))
+			    (cdr (assoc :rownames params)))))))
+
+(provide 'ob-sudo)
+;;; ob-sudo.el ends here
+
+#+END_SRC
+
+Let us add the current dir to our path so we can load it. If you use this a lot, you should put the library on your permanent path.
+
+#+BEGIN_SRC emacs-lisp :results silent
+(add-to-list 'load-path (expand-file-name "."))
+#+END_SRC
+
+
+#+BEGIN_SRC emacs-lisp
+(org-babel-do-load-languages
+ 'org-babel-load-languages
+ '((emacs-lisp . t)
+   (python . t)
+   (sh . t)
+   (matlab . t)
+   (sqlite . t)
+   (ruby . t)
+   (perl . t)
+   (org . t)
+   (dot . t)
+   (plantuml . t)
+   (R . t)
+   (sudo . t)))
+#+END_SRC
+
+#+RESULTS:
+
+
+#+BEGIN_SRC sudo :results silent
+du -hs .
+#+END_SRC
+
+
+* DONE Serializing an Atoms object in xml
+  CLOSED: [2015-06-28 Sun 12:26]
+  :PROPERTIES:
+  :categories: python,xml,ase
+  :date:     2015/06/28 12:26:00
+  :updated:  2015/06/28 12:26:00
+  :END:
+I have a future need to serialize an Atoms object from [[https://wiki.fysik.dtu.dk/ase/][ase]] as XML. I would use json usually, but I want to use a program that will index xml. I have previously used [[https://pypi.python.org/pypi/pyxser/1.5.2-r2][pyxser]] for this, but I recall it being difficult to install, and it does not pip install on my Mac. So, here we look at [[https://pypi.python.org/pypi/xmlwitch/0.2.1][xmlwitch]] which does pip install ;). This package does some serious magic with context managers.
+
+One thing I am not sure about here is the best way to represent numbers and lists/arrays. I am using repr here, and assuming you would want to read this back in to Python where this could simply be eval'ed. Some alternatives would be to convert them to lists, or save them as arrays of xml elements.
+
+#+BEGIN_SRC python
+from ase.data.g2 import data
+from ase.structure import molecule
+import xmlwitch
+
+atoms = molecule('H2O')
+
+def serialize_atoms(atoms):
+    'Return an xml string of an ATOMS object.'
+    xml = xmlwitch.Builder(version='1.0', encoding='utf-8')
+
+    with xml.atoms():
+        for atom in atoms:
+            with xml.atom(index=repr(atom.index)):
+                xml.symbol(atom.symbol)
+                xml.position(repr(atom.position))
+                xml.magmom(repr(atom.magmom))
+                xml.mass(repr(atom.mass))
+                xml.momentum(repr(atom.momentum))
+                xml.number(repr(atom.number))
+        xml.cell(repr(atoms.cell))
+        xml.pbc(repr(atoms.pbc))
+    return xml
+
+atoms_xml = serialize_atoms(atoms)
+print atoms_xml
+
+with open('atoms.xml', 'w') as f:
+    f.write(str(atoms_xml))
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+<?xml version="1.0" encoding="utf-8"?>
+<atoms>
+  <atom index="0">
+    <symbol>O</symbol>
+    <position>array([ 0.      ,  0.      ,  0.119262])</position>
+    <magmom>0.0</magmom>
+    <mass>15.9994</mass>
+    <momentum>array([ 0.,  0.,  0.])</momentum>
+    <number>8</number>
+  </atom>
+  <atom index="1">
+    <symbol>H</symbol>
+    <position>array([ 0.      ,  0.763239, -0.477047])</position>
+    <magmom>0.0</magmom>
+    <mass>1.0079400000000001</mass>
+    <momentum>array([ 0.,  0.,  0.])</momentum>
+    <number>1</number>
+  </atom>
+  <atom index="2">
+    <symbol>H</symbol>
+    <position>array([ 0.      , -0.763239, -0.477047])</position>
+    <magmom>0.0</magmom>
+    <mass>1.0079400000000001</mass>
+    <momentum>array([ 0.,  0.,  0.])</momentum>
+    <number>1</number>
+  </atom>
+  <cell>array([[ 1.,  0.,  0.],
+       [ 0.,  1.,  0.],
+       [ 0.,  0.,  1.]])</cell>
+  <pbc>array([False, False, False], dtype=bool)</pbc>
+</atoms>
+#+end_example
+
+Now, we can try reading that file. I am going to use emacs-lisp here for fun, and compute the formula.
+
+#+BEGIN_SRC emacs-lisp
+(let* ((xml (car (xml-parse-file "atoms.xml")))
+       (atoms (xml-get-children xml 'atom))
+       (symbol-elements (mapcar (lambda (atom)
+				  (car (xml-get-children atom 'symbol)))
+				atoms))
+       (symbols (mapcar (lambda (x)
+			  (car (xml-node-children x)))
+			symbol-elements)))
+  (mapconcat (lambda (c)
+	       (format "%s%s" (car c)
+		       (if (= 1 (cdr c))
+			   ""
+			 (cdr c))))
+	     (loop for sym in (-uniq symbols)
+		   collect (cons
+			    sym
+			    (-count (lambda (x) (string= x sym)) symbols)))
+	     ""))
+#+END_SRC
+
+#+RESULTS:
+: OH2
+
+Here is a (misleadingly) concise way to do this in Python. It is so short thanks to there being a Counter that does what we want, and some pretty nice list comprehension!
+
+#+BEGIN_SRC python
+import xml.etree.ElementTree as ET
+from collections import Counter
+with open('atoms.xml') as f:
+    xml = ET.fromstring(f.read())
+
+counts = Counter([el.text for el in xml.findall('atom/symbol')])
+
+print ''.join(['{0}{1}'.format(a,b) if b>1 else a for a,b in counts.iteritems()])
+#+END_SRC
+
+#+RESULTS:
+: H2O
+
+And finally a test on reading a unit cell.
+
+#+BEGIN_SRC python
+import xml.etree.ElementTree as ET
+from numpy import array
+
+with open('atoms.xml') as f:
+    xml = ET.fromstring(f.read())
+
+print eval(xml.find('cell').text)
+#+END_SRC
+
+#+RESULTS:
+: [[ 1.  0.  0.]
+:  [ 0.  1.  0.]
+:  [ 0.  0.  1.]]
+
+That seems to work but, yeah, you won't want to read untrusted xml with that! See http://stupidpythonideas.blogspot.com/2013/11/repr-eval-bad-idea.html. It might be better (although not necessarily more secure) to use pickle or some other serialization strategy for this.
+
+* Get spoken definitions from Meriam dictionary
+http://www.dictionaryapi.com/account/index.htm
+
+Key (Dictionary): 64f0950a-03b9-4315-9ba5-a73a964251ed
+Key (Thesaurus): ff0e39e2-b31f-4f17-833c-24e2875aad5d
+
+#+BEGIN_SRC emacs-lisp :results code
+(defun speak-definition ()
+  (interactive)
+  (let* ((keyword (if (use-region-p)
+		      (buffer-substring (region-beginning) (region-end))
+		    (thing-at-point 'word)))
+	 (api-key "64f0950a-03b9-4315-9ba5-a73a964251ed")
+	 (xml (with-current-buffer
+		  (url-retrieve-synchronously
+		   (format
+		    "http://www.dictionaryapi.com/api/v1/references/collegiate/xml/%s?key=%s"
+		    keyword
+		    api-key))
+		(xml-parse-region url-http-end-of-headers (point-max))))
+	 (entries (xml-get-children (car xml) 'entry))
+	 (nentries (length entries))
+	 (defs (loop for entry in entries
+		     collect (car (xml-get-children entry 'def)))))
+    (do-applescript
+     (format
+      "say \"%s\""
+      (format
+       "%s"
+       (concat
+	(format "%s has %s definitions.  " keyword nentries)
+	(mapconcat
+	 'identity
+	 (loop for element in
+	       (loop for def in defs
+		     collect (car (xml-get-children def 'dt)))
+	       for i from 1
+	       collect (format "%s %s" i (car (xml-node-children element))))
+	 " ")))))))
+#+END_SRC
+
+
+"asynchronous \\ test"
+
+(replace-regexp-in-string "\\\\" "\\\\\\\\" "test \\ t")
+
+* Getting Emacs to read to me
+  :PROPERTIES:
+  :categories: emacs
+  :END:
+
+I thought it would be interesting to have Emacs read text on the screen. Why? Sometimes I get tired of reading ;) Seriously though, this has applications in accessibility, learning to read, translation, taking a break from looking at the screen, reading emails out loud, etc... Seems like a worthwhile endeavor!
+
+On a Mac, it turns out to be easy to get a voice with a little applescript:
+
+#+BEGIN_SRC emacs-lisp
+(do-applescript "say \"Hello John\" using \"Victoria\"")
+#+END_SRC
+
+#+RESULTS:
+
+All we need are some interactive functions that grab text, and pass them to the applescript with an appropriate amount of escaping any quotes and backslashes.
+
+Here is a function to speak the word at point, or selected region, or the text passed to the function:
+
+#+BEGIN_SRC emacs-lisp
+(defvar words-voice "Vicki"
+  "Mac voice to use for speaking.")
+
+(defun words-speak (&optional text)
+  "Speak word at point or region. Mac only."
+  (interactive)
+  (unless text
+    (setq text (if (use-region-p)
+		   (buffer-substring
+		    (region-beginning) (region-end))
+		 (thing-at-point 'word))))
+  ;; escape some special applescript chars
+  (setq text (replace-regexp-in-string "\\\\" "\\\\\\\\" text))
+  (setq text (replace-regexp-in-string "\"" "\\\\\"" text))
+  (do-applescript
+   (format
+    "say \"%s\" using \"%s\""
+    text
+    words-voice)))
+#+END_SRC
+
+#+RESULTS:
+: words-speak
+
+Now we can write:
+
+#+BEGIN_SRC emacs-lisp
+(words-speak "Hello John")
+#+END_SRC
+
+#+RESULTS:
+
+One reason I wrote this is to read org-files to me. So, now we write some functions to read words, sentences and paragraphs. These are all syntactic units in Emacs. We write code to enable us to read the next or previous units with the prefix args. Finally,  we bind the commands to some keys and a hydra for fun.
+
+#+BEGIN_SRC emacs-lisp
+
+(setq sentence-end-double-space nil)
+
+(defun mac-say-word (&optional arg)
+  "Speak word at point. With ARG, go forward ARG words."
+  (interactive "P")
+  ;; arg can be (4), 4, "-", or -1. we handle these like this.
+  (let ((newarg))
+    (when arg
+      (setq newarg (cond
+		    ((listp arg)
+		     (round (log (car arg) 4)))
+		    ((and (stringp arg) (string= "-" arg))
+		     ((< 0 arg) arg)
+		     -1)
+		    (t arg)))
+      (forward-word newarg))
+    (when (thing-at-point 'word)
+      (words-speak (thing-at-point 'word)))))
+
+(defun mac-say-sentence (&optional arg)
+  "Speak sentence at point. With ARG, go forward ARG sentences."
+  (interactive "P")
+  ;; arg can be (4), 4, "-", or -1. we handle these like this.
+  (let ((newarg))
+    (when arg
+      (setq newarg (cond
+		    ((listp arg)
+		     (round (log (car arg) 4)))
+		    ((and (stringp arg) (string= "-" arg))
+		     ((< 0 arg) arg)
+		     -1)
+		    (t arg)))
+      (forward-sentence newarg)
+      (when (< 0 newarg) (forward-word)))
+    (when (thing-at-point 'sentence)
+      (words-speak (thing-at-point 'sentence)))))
+
+(defun mac-say-paragraph (&optional arg)
+  "Speak paragraph at point. With ARG, go forward ARG paragraphs."
+  (interactive "P")
+  ;; arg can be (4), 4, "-", or -1. we handle these like this.
+  (let ((newarg))
+    (when arg
+      (setq newarg (cond
+		    ((listp arg)
+		     (round (log (car arg) 4)))
+		    ((and (stringp arg) (string= "-" arg))
+		     ((< 0 arg) arg)
+		     -1)
+		    (t arg)))
+      (forward-paragraph newarg)
+      (when (< 0 newarg) (forward-word)))
+    (when (thing-at-point 'paragraph)
+      (words-speak (thing-at-point 'paragraph)))))
+#+END_SRC
+
+#+RESULTS:
+: mac-say-paragraph
+
+Now for some key-bindings. I will make a hydra that allows repeating commands, and a keymap for more direct function calls.
+
+#+BEGIN_SRC emacs-lisp
+
+(defhydra mac-speak (:color red)
+  "word speak"
+  ("w" (progn (mac-say-word) (forward-word)) "Next word")
+  ("W" (mac-say-word -1) "Previous word")
+  ("s" (progn (mac-say-sentence) (forward-sentence)(forward-word)) "Next sentence")
+  ("S" (mac-say-sentence -1) "Previous sentence")
+  ("p" (progn (mac-say-paragraph) (forward-paragraph)) "Next paragraph")
+  ("P" (mac-say-paragraph -1) "Previous paragraph"))
+
+(define-prefix-command 'mac-speak-keymap)
+(define-key mac-speak-keymap (vector ?w) 'mac-say-word)
+(define-key mac-speak-keymap (vector ?s) 'mac-say-sentence)
+(define-key mac-speak-keymap (vector ?p) 'mac-say-paragraph)
+(define-key mac-speak-keymap (vector ?h) 'mac-speak/body)
+(global-set-key (kbd "\C-xr") 'mac-speak-keymap)
+#+END_SRC
+
+Now, I can navigate text and have my Mac read it to me. It isn't quite like hearing a real person read it, but it is not too bad either. When you need a break from reading, this might be a nice tool!
+
+* Spoken translations in Emacs
+
+Finally, for fun, let us try a translation. Here is a free translator that has the courtesy to reply with json with the translated text in it. http://mymemory.translated.net/api/get?q=Hello%20World!&langpair=en|de I had to download a German voice called Anna, then get some translated code. Here it is!
+
+#+BEGIN_SRC emacs-lisp :results code
+(let* ((words-voice "Anna")
+       (text "Hello. My name is John. I am glad to meet you.")
+       (url (format "http://mymemory.translated.net/api/get?q=%s!&langpair=en|de"
+		    text))
+       (json (with-current-buffer
+		 (url-retrieve-synchronously url)
+	       (json-read-from-string
+		(buffer-substring url-http-end-of-headers (point-max)))))
+       (translated-text (cdr (assoc 'translatedText (cdr (assoc 'responseData json))))))
+  (words-speak translated-text)
+  translated-text)
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC emacs-lisp
+"Hallo. Mein Name ist John. Ich freue mich, Sie kennen zu lernen.!"
+#+END_SRC
+
+How about Chinese? Again, I downloaded a Chinese voice called "Ting-Ting".
+#+BEGIN_SRC emacs-lisp :results code
+(let* ((words-voice "Ting-Ting")
+       (text "Hello. My name is John. I am glad to meet you.")
+       (url (format "http://mymemory.translated.net/api/get?q=%s!&langpair=en|zh"
+		    text))
+       (json (with-current-buffer
+		 (url-retrieve-synchronously url)
+	       (json-read-from-string
+		(buffer-substring url-http-end-of-headers (point-max)))))
+       (translated-text (cdr (assoc 'translatedText (cdr (assoc 'responseData json))))))
+  (words-speak translated-text)
+  translated-text)
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC emacs-lisp
+"你好。我的名字是约翰。我很高兴见到你。!"
+#+END_SRC
+
+So, can any Chinese readers and listeners confirm if the text translates correctly, and if Ting-Ting said it correctly? Hopefully it is good enough to make some sense and be useful!
+
+* Worldcat
+This returns an atom XML feed of entry items
+#+BEGIN_SRC emacs-lisp :results output
+;; (let* ((xml (with-current-buffer
+;;		(url-retrieve-synchronously "http://www.worldcat.org/webservices/catalog/search/opensearch?q=civil%20war&wskey=Z65ynvQVhbmmxq07PX3IN1n71Z91pjUXYSSCCP9p2n8gD241P46jMyMHDuAvqRejIX1g8YbrwOAbobBM")
+;;	      (xml-parse-region url-http-end-of-headers (point-max))))
+;;        (entries (xml-get-children (car xml) 'entry))
+;;        (formatted-entries (mapcar
+;;			   (lambda (entry)
+;;			     (format " - %s. %s\n  %s\n%s\n\n"
+;;				     (car (xml-node-children
+;;					   (car (xml-get-children  entry 'title))))
+;;				     (car (xml-node-children
+;;					   (car (xml-get-children
+;;						 (car (xml-get-children entry 'author))
+;;						 'name))))
+;;				     (car (xml-node-children (car (xml-get-children entry 'summary))))
+;;				     (car (xml-node-children (car (xml-get-children entry 'id))))))
+;;			   entries)))
+;;   (loop for s in formatted-entries
+;;	do (princ s)))
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+ - The Civil War. Burns, Ken, 1953- Ward, Geoffrey C. Burns, Ric. McCullough, David G. Dewhurst, Colleen. Fishburne, Laurence, 1961- Freeman, Morgan. Irons, Jeremy, 1948- Jacobi, Derek. Robards, Jason. Waterston, Sam. Axton, Hoyt. Shaw, Bruce.
+  An epic documentary bringing life to America's most destructive - and defining - conflict. Here is the saga of celebrated generals and the ordinary soldiers. A heroic and transcendent president and a country that had to divide itself in two in order to become one again.
+http://worldcat.org/oclc/57408580
+
+ - Pharsalia (aka "The civil war"). Lucan, 39-65.
+  nil
+http://worldcat.org/oclc/49294459
+
+ - The Civil War.. Jordan, Robert Paul.
+  Personalized portrait and pictorial chronicle of the men and events, campaigns and battlefields of the American Civil War.
+http://worldcat.org/oclc/1034667
+
+ - The Spanish Civil War. Thomas, Hugh, 1931-
+  nil
+http://worldcat.org/oclc/395987
+
+ - Civil War. Stanchak, John E.
+  Examines many aspects of the Civil War, including the issue of slavery, secession, the raising of armies, individual battles, the commanders, Northern life, Confederate culture, the surrender of the South, and the aftermath.
+http://worldcat.org/oclc/43487214
+
+ - The red badge of courage : an episode of the American Civil War. Crane, Stephen, 1871-1900.
+  This stirring tale of action in the American Civil War captures the immediacies and experiences of actual battle and army life.
+http://worldcat.org/oclc/8114241
+
+ - The Civil War. Simpson, Brooks D., editor. Sears, Stephen W., editor. Sheehan-Dean, Aaron Charles, editor.
+  Drawn from letters, diaries, speeches, articles, poems, songs, military reports, legal opinions, and memoirs, this collection brings together over 120 pieces by more than 60 men and women to create a firsthand narrative of the first year of the Civil War. Beginning on the eve of Lincoln's election in 1860 and ending in January 1862 with the appointment of Edwin M. Stanton as Secretary of War, the selections provide a sense of the immediacy, uncertainty, and urgency of events as the nation was torn asunder. Includes headnotes, a chronology of events, and biographical and explanatory endnotes.--Adapted from publisher description.
+http://worldcat.org/oclc/642844029
+
+ - The Civil War. Catton, Bruce, 1899-1978.
+  nil
+http://worldcat.org/oclc/197955
+
+ - Observations on the nature of civil liberty, the principles of government, and the justice and policy of the war with America to which is added an appendix, containing a state of the national debt, an estimate of the money drawn from the public by the taxes, and an account of the national income and expenditure since the last war. Price, Richard, 1723-1791.
+  nil
+http://worldcat.org/oclc/65353752
+
+ - The war was you and me : civilians in the American Civil War. Cashin, Joan E.
+  Though civilians constituted the majority of the nation's population and were intimately involved with almost every aspect of the war, we know little about the civilian experience of the Civil War. Southerners lived through the breakup of basic social and economic institutions, including slavery. Northerners witnessed the reorganization of society to fight the war. And citizens of the border regions grappled with elemental questions of loyalty that reached into the family itself. These original essays recover the stories of civilians from Natchez to New England. They address the experiences of men, women, and children of whites, slaves, and free blacks and of civilians from numerous classes. Not least of these stories are the on-the-ground experiences of slaves seeking emancipation and the actions of white Northerners who resisted the draft. Many of the authors present brand new material, such as the war's effect on the sounds of daily life and on reading culture. Others examine the war's premiere events, including the battle of Gettysburg and the Lincoln assassination, from fresh perspectives. Several consider the passionate debate that broke out over how to remember the war, a debate that has persisted into our own time.
+http://worldcat.org/oclc/47785571
+
+#+end_example
+
+
+
+* Looking up chemicals by CAS number
+
+Benzene has a CAS number of 71-43-2. That number can be used to retrieve information about benzene, e.g.
+
+http://www.commonchemistry.org/ChemicalDetail.aspx?ref=71-43-2
+
+Aldrich: http://www.sigmaaldrich.com/catalog/search?term=71-43-2&interface=CAS%20No.&N=0&mode=partialmax&lang=en&region=US&focus=product
+
+#+BEGIN_SRC emacs-lisp
+(org-add-link-type
+ "cas"
+ (lambda (cas-number)
+   (browse-url
+    (format "http://www.commonchemistry.org/ChemicalDetail.aspx?ref=%s" cas-number))))
+#+END_SRC
+
+What? Of course that looks like an opportunity for an org-link ;)
+
+cas:71-43-2
+
+Of course, you might also use button-lock.
+
+cite:alvarez-moreno-2015-manag-comput
+
+#+BEGIN_SRC emacs-lisp
+(button-lock-set-button
+ org-ref-cite-re
+ nil
+ :face '((:background "gray80") (:underline t))
+ :help-echo (lambda (window object position)
+	      (save-excursion
+		(goto-char (position))
+		(format "%s" (org-element-context)))))
+#+END_SRC
+
+#+RESULTS:
+| \(cite\ | nocite\ | citet\ | citet\*\ | citep\ | citep\*\ | citealt\ | citealt\*\ | citealp\ | citealp\*\ | citenum\ | citetext\ | citeauthor\ | citeauthor\*\ | citeyear\ | citeyear\*\ | Citet\ | Citep\ | Citealt\ | Citealp\ | Citeauthor\ | Cite\ | parencite\ | Parencite\ | footcite\ | footcitetext\ | textcite\ | Textcite\ | smartcite\ | Smartcite\ | cite\*\ | parencite\*\ | supercite\ | autocite\ | Autocite\ | autocite\*\ | Autocite\*\ | Citeauthor\*\ | citetitle\ | citetitle\*\ | citedate\ | citedate\*\ | citeurl\ | fullcite\ | footfullcite\ | notecite\ | Notecite\ | pnotecite\ | Pnotecite\ | fnotecite\ | cites\ | Cites\ | parencites\ | Parencites\ | footcites\ | footcitetexts\ | smartcites\ | Smartcites\ | textcites\ | Textcites\ | supercites\ | autocites\ | Autocites\ | bibentry\):\([a-zA-Z0-9-_:\./]*,?\)* | (0 (quote (face ((:background gray80) (:underline t)) keymap (keymap (mouse-1)) button-lock t mouse-face button-lock-mouse-face help-echo (lambda (window object position) (save-excursion (goto-char (position)) (format %s (org-element-context)))) rear-nonsticky t)) append) |
+
+
+#+BEGIN_SRC emacs-lisp
+(defun comment-org-in-src-block ()
+ (interactive)
+ (org-edit-special)
+ (comment-dwim nil)
+ (org-edit-src-exit))
+#+END_SRC
+
+#+BEGIN_SRC python
+def test(t):
+   # rere                         #
+#+END_SRC
+
 * DONE Clickable text for learning environments
   CLOSED: [2015-06-26 Fri 11:22]
   :PROPERTIES:
