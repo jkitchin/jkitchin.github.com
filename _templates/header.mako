@@ -33,10 +33,9 @@ def nav_class(path):
 
       <li><a href="${bf.util.site_path_helper('about.html')}"
              class="${nav_class(bf.util.site_path_helper('about.html'))}">About us</a></li>
-      <li><a href="${bf.util.site_path_helper('subscribe.html')}"
-             class="${nav_class(bf.util.site_path_helper('subscribe.html'))}">Subscribe</a></li>
 
-http://feeds.feedburner.com/TheKitchinResearchGroup
+      <li><a href="${bf.util.site_path_helper('subscribe.html')}">Subscribe</a></li>
+
     </ul>
   </div>
 </header>
