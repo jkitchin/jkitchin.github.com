@@ -83,6 +83,691 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="A-prototype-implementation-of-jasp-in-emacs-lisp"></div>
+      <h2 class="blog_post_title"><a href="/blog/2014/12/24/A-prototype-implementation-of-jasp-in-emacs-lisp/" rel="bookmark" title="Permanent Link to A prototype implementation of jasp in emacs-lisp">A prototype implementation of jasp in emacs-lisp</a></h2>
+      <p><small><span class="blog_post_date">Posted December 24, 2014 at 11:41 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/lisp/'>lisp</a>, <a href='/blog/category/vasp/'>vasp</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/ase/'>ase</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2014/12/24/A-prototype-implementation-of-jasp-in-emacs-lisp#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#sec-1">1. The Atom class</a></li>
+<li><a href="#sec-2">2. The Atoms class</a></li>
+<li><a href="#sec-3">3. The Calculator class</a></li>
+<li><a href="#sec-4">4. Putting it all together to run calculations</a></li>
+<li><a href="#sec-5">5. Summary thoughts</a></li>
+</ul>
+</div>
+</div>
+
+<p>
+I want to try implementing an interface to <a href="http://www.vasp.at">VASP</a> in emacs-lisp. VASP is a program that uses density functional theory to calculate properties of materials. VASP was designed for the user to create several text-based input files that contain an atomic geometry, and calculation parameters. Then you run the VASP program, which reads those input files and generates output files. Finally, you parse out the results you want from the output files. 
+</p>
+
+<p>
+It is moderately tedious to do that, so we already have a very extensive Python interface (<a href="http://github.com/jkitchin/jasp">http://github.com/jkitchin/jasp</a> ) that automates the input file creation and output file parsing, and with org-mode we have a pretty good literate research environment to document what we do. But, the Python/emacs environment is not as integrated as the emacs-lisp/emacs environment is, particularly when it comes to accessing documentation. So, I want to try out a lisp approach to see what this would look like, and if it has any benefits.
+</p>
+
+<p>
+The bare bones implementation will have an Atom object, to store the type of atom and its coordinates, an Atoms object which will be a collection of atoms, and a unit cell, and a Calculator object that will store calculation parameters.
+</p>
+
+<p>
+Then, we will try using it to see what advantages it might have. This will be a moderately long post.
+</p>
+
+<div id="outline-container-sec-1" class="outline-2">
+<h2 id="sec-1"><span class="section-number-2">1</span> The Atom class</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+This is my first serious effort to use the <a href="https://www.gnu.org/software/emacs/manual/html_node/eieio/">object system</a> in emacs-lisp, so I do not claim it is optimal, or beautiful. It is functional though. We make a simple Atom class that holds the chemical symbol, and xyz coordinates. We do not consider having a magnetic moment at this point, and this class has no methods.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">defclass</span> <span style="color: #4682b4;">Atom</span> ()
+  ((symbol <span style="color: #cd0000;">:initarg</span> <span style="color: #cd0000;">:symbol</span>
+           <span style="color: #cd0000;">:documentation</span> <span style="color: #228b22;">"A string for the chemical symbol"</span>)
+   (x <span style="color: #cd0000;">:initarg</span> <span style="color: #cd0000;">:x</span>
+      <span style="color: #cd0000;">:documentation</span> <span style="color: #228b22;">"The x coordinate"</span>)
+   (y <span style="color: #cd0000;">:initarg</span> <span style="color: #cd0000;">:y</span>
+      <span style="color: #cd0000;">:documentation</span> <span style="color: #228b22;">"The y coordinate"</span>)
+   (z <span style="color: #cd0000;">:initarg</span> <span style="color: #cd0000;">:z</span>
+      <span style="color: #cd0000;">:documentation</span> <span style="color: #228b22;">"The z coordinate"</span>))
+ <span style="color: #228b22;">"A class to represent an atom."</span>)
+
+(<span style="color: #8b0000;">provide</span> '<span style="color: #cd0000;">Atom</span>)
+</pre>
+</div>
+
+<pre class="example">
+Atom
+</pre>
+
+<p>
+Let us try it out. We make an Atom, then get the symbol using the oref function. I don't think we need a "Name" for the atom, so the second argument is nil.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(Atom nil <span style="color: #cd0000;">:symbol</span> <span style="color: #228b22;">"C"</span> <span style="color: #cd0000;">:x</span> 0 <span style="color: #cd0000;">:y</span> 0 <span style="color: #cd0000;">:z</span> 0)
+</pre>
+</div>
+
+<pre class="example">
+[object Atom nil "C" 0 0 0]
+</pre>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">let</span> ((a1 (Atom nil <span style="color: #cd0000;">:symbol</span> <span style="color: #228b22;">"C"</span> <span style="color: #cd0000;">:x</span> 0 <span style="color: #cd0000;">:y</span> 0  <span style="color: #cd0000;">:z</span> 0)))
+  (oref a1 symbol))
+</pre>
+</div>
+
+<pre class="example">
+C
+</pre>
+
+<p>
+It is not difficult to modify an Atom object. We use oset.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">let</span> ((a1 (Atom nil <span style="color: #cd0000;">:symbol</span> <span style="color: #228b22;">"C"</span> <span style="color: #cd0000;">:x</span> 0 <span style="color: #cd0000;">:y</span> 0  <span style="color: #cd0000;">:z</span> 0)))
+  (oset a1 x 2.5)
+  a1)
+</pre>
+</div>
+
+<pre class="example">
+[object Atom nil "C" 2.5 0 0]
+</pre>
+</div>
+</div>
+
+<div id="outline-container-sec-2" class="outline-2">
+<h2 id="sec-2"><span class="section-number-2">2</span> The Atoms class</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+We need at Atoms object, which will store a list of Atom objects, and a unit cell. I do not know how to make this class act like a list the way that the Atoms object in ase acts. We will have to access the list of atoms as a slot. We define one method here to get the ith atom from the object.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">defclass</span> <span style="color: #4682b4;">Atoms</span> ()
+  ((atoms <span style="color: #cd0000;">:initarg</span> <span style="color: #cd0000;">:atoms</span>
+          <span style="color: #cd0000;">:documentation</span> <span style="color: #228b22;">"A list of `</span><span style="color: #cd0000;">Atom</span><span style="color: #228b22;">' objects"</span>)
+   (cell <span style="color: #cd0000;">:initarg</span> <span style="color: #cd0000;">:cell</span>
+         <span style="color: #cd0000;">:documentation</span> <span style="color: #228b22;">"A 3-tuple of lengths of an orthorhombic unit cell"</span>))
+  <span style="color: #228b22;">"A class to represent an atoms object."</span>)
+
+
+(<span style="color: #8b0000;">defmethod</span> <span style="color: #8b2323;">get-atom</span> ((atoms Atoms) <span style="color: #4682b4;">&amp;rest</span> args)
+  <span style="color: #228b22;">"Get a list of atoms in ARGS.</span>
+<span style="color: #228b22;">Return atom if ARGS contains one element, a list of atom objects</span>
+<span style="color: #228b22;">otherwise."</span>
+  (<span style="color: #8b0000;">cond</span>
+   ((= 1 (length args))
+    (elt (oref atoms atoms) (car args)))
+   (t
+    (mapcar (<span style="color: #8b0000;">lambda</span> (i)
+              (elt (oref atoms atoms) i))
+            args))))
+
+(<span style="color: #8b0000;">provide</span> '<span style="color: #cd0000;">Atoms</span>)
+</pre>
+</div>
+
+<pre class="example">
+get-atom
+</pre>
+
+<p>
+That seems to do what we need. It has some limitations:
+</p>
+<ol class="org-ol">
+<li>We only allowed for orthorhombic unit cells
+</li>
+<li>We did not enable any constraints or magnetic moments on the atoms.
+</li>
+</ol>
+
+<p>
+Here is an example Atoms object. Note we use `, notation to ensure each Atom is created, since Atom is a constructor function that returns the object.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(Atoms nil
+       <span style="color: #cd0000;">:atoms</span> `(,(Atom nil <span style="color: #cd0000;">:symbol</span> <span style="color: #228b22;">"C"</span> <span style="color: #cd0000;">:x</span> 0 <span style="color: #cd0000;">:y</span> 0 <span style="color: #cd0000;">:z</span> 0)
+                ,(Atom nil <span style="color: #cd0000;">:symbol</span> <span style="color: #228b22;">"O"</span> <span style="color: #cd0000;">:x</span> 1.1 <span style="color: #cd0000;">:y</span> 0 <span style="color: #cd0000;">:z</span> 0))
+       <span style="color: #cd0000;">:cell</span> '(8 9 10))
+</pre>
+</div>
+
+<pre class="example">
+[object Atoms nil ([object Atom nil "C" 0 0 0] [object Atom nil "O" 1.1 0 0]) (8 9 10)]
+</pre>
+
+<p>
+We can drill into the object, e.g. to get the second atom:
+</p>
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">let</span> ((A1 (Atoms nil
+                 <span style="color: #cd0000;">:atoms</span> `(,(Atom nil <span style="color: #cd0000;">:symbol</span> <span style="color: #228b22;">"C"</span> <span style="color: #cd0000;">:x</span> 0 <span style="color: #cd0000;">:y</span> 0 <span style="color: #cd0000;">:z</span> 0)
+                          ,(Atom nil <span style="color: #cd0000;">:symbol</span> <span style="color: #228b22;">"O"</span> <span style="color: #cd0000;">:x</span> 1.1 <span style="color: #cd0000;">:y</span> 0 <span style="color: #cd0000;">:z</span> 0))
+                 <span style="color: #cd0000;">:cell</span> '(8 9 10))))
+  (get-atom A1 1))
+</pre>
+</div>
+
+<pre class="example">
+[object Atom nil "O" 1.1 0 0]
+</pre>
+
+<p>
+We can modify the atoms in place like this. Suppose we want to change the symbol of the first atom to "O". We use setf for this too.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">let</span> ((A1 (Atoms nil
+                 <span style="color: #cd0000;">:atoms</span> `(,(Atom nil <span style="color: #cd0000;">:symbol</span> <span style="color: #228b22;">"C"</span> <span style="color: #cd0000;">:x</span> 0 <span style="color: #cd0000;">:y</span> 0 <span style="color: #cd0000;">:z</span> 0)
+                          ,(Atom nil <span style="color: #cd0000;">:symbol</span> <span style="color: #228b22;">"O"</span> <span style="color: #cd0000;">:x</span> 1.1 <span style="color: #cd0000;">:y</span> 0 <span style="color: #cd0000;">:z</span> 0))
+                 <span style="color: #cd0000;">:cell</span> '(8 9 10))))
+  (oset (get-atom A1 0) symbol <span style="color: #228b22;">"O"</span>)
+  A1)
+</pre>
+</div>
+
+<pre class="example">
+[object Atoms nil ([object Atom nil "O" 0 0 0] [object Atom nil "O" 1.1 0 0]) (8 9 10)]
+</pre>
+
+<p>
+The only think I do not like about this syntax is the need to get the list of atoms from the object. That is a little clunkier than the Python analog where the object is a list itself. That may be just my inexperience with emacs-lisp. Probably you can define some getter function to smooth this over.
+</p>
+
+<p>
+This Atoms class lacks much of the functionality of the <a href="https://wiki.fysik.dtu.dk/ase/ase/atoms.html">ase.Atoms</a> class, but it is sufficient for this prototype.
+</p>
+</div>
+</div>
+
+<div id="outline-container-sec-3" class="outline-2">
+<h2 id="sec-3"><span class="section-number-2">3</span> The Calculator class</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+Next, we need our Calculator. This will store the parameters, and be responsible for creating the INCAR, POSCAR, KPOINTS, and POTCAR files, running a calculation, and getting data from the output. We also create a with-current-directory macro that will temporarily change the working directory since VASP uses the same filenames over and over, but in different directories. 
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">defmacro</span> <span style="color: #8b2323;">with-current-directory</span> (directory <span style="color: #4682b4;">&amp;rest</span> body)
+  <span style="color: #228b22;">"Set the working directory temporarily set to DIRECTORY and run BODY.</span>
+<span style="color: #228b22;">DIRECTORY is expanded, and create it and its parents if needed."</span>
+  `(<span style="color: #8b0000;">progn</span>
+     (<span style="color: #8b0000;">unless</span> (file-exists-p (file-name-as-directory
+                             (expand-file-name ,directory)))
+       (make-directory ,directory t))
+     
+     (<span style="color: #8b0000;">let</span> ((default-directory (file-name-as-directory
+                                (expand-file-name ,directory)))) 
+        ,@body)))
+
+
+(<span style="color: #8b0000;">defclass</span> <span style="color: #4682b4;">Jasp</span> ()
+  ((wd <span style="color: #cd0000;">:initarg</span> <span style="color: #cd0000;">:wd</span>
+       <span style="color: #cd0000;">:initform</span> <span style="color: #228b22;">"."</span>  ; <span style="color: #ff0000; font-weight: bold;">default to the current working directory</span>
+       <span style="color: #cd0000;">:documentation</span> <span style="color: #228b22;">"Directory to run calculation in."</span>)
+   (encut <span style="color: #cd0000;">:initarg</span> <span style="color: #cd0000;">:encut</span>
+          <span style="color: #cd0000;">:documentation</span> <span style="color: #228b22;">"Positive number in eV for planewave cutoff.</span>
+<span style="color: #228b22;">See URL `</span><span style="color: #cd0000;">http://cms.mpi.univie.ac.at/vasp/vasp/ENCUT_tag.html</span><span style="color: #228b22;">'."</span>)
+   (nbands <span style="color: #cd0000;">:initarg</span> <span style="color: #cd0000;">:nbands</span>
+           <span style="color: #cd0000;">:documentation</span> <span style="color: #228b22;">"Integer number of bands.</span>
+<span style="color: #228b22;">See URL `</span><span style="color: #cd0000;">http://cms.mpi.univie.ac.at/vasp/vasp/NBANDS_tag.html</span><span style="color: #228b22;">'."</span>)
+   (kpts <span style="color: #cd0000;">:initarg</span> <span style="color: #cd0000;">:kpts</span>
+         <span style="color: #cd0000;">:initform</span> (1 1 1)  ; <span style="color: #ff0000; font-weight: bold;">default value</span>
+         <span style="color: #cd0000;">:documentation</span> <span style="color: #228b22;">"3-tuple for Monkhorst-Pack K-point grid."</span>)
+   (xc <span style="color: #cd0000;">:initarg</span> <span style="color: #cd0000;">:xc</span>
+       <span style="color: #cd0000;">:documentation</span> <span style="color: #228b22;">"String of exchange correlation functional."</span>)
+   (atoms <span style="color: #cd0000;">:initarg</span> <span style="color: #cd0000;">:atoms</span>
+          <span style="color: #cd0000;">:documentation</span> <span style="color: #228b22;">"An `</span><span style="color: #cd0000;">Atoms</span><span style="color: #228b22;">' object."</span>))
+ <span style="color: #228b22;">"A class to represent a calculator that runs VASP."</span>)
+
+
+(<span style="color: #8b0000;">defmethod</span> <span style="color: #8b2323;">view-atoms</span> ((calc Jasp))
+  <span style="color: #228b22;">"Open the ase-gui"</span>
+  (<span style="color: #8b0000;">unless</span> (and (file-exists-p <span style="color: #228b22;">"POSCAR"</span>)
+               (file-exists-p <span style="color: #228b22;">"POTCAR"</span>))
+    (write-poscar calc)
+    (write-potcar calc))
+  (shell-command <span style="color: #228b22;">"ase-gui POSCAR"</span>))
+
+
+(<span style="color: #8b0000;">defmethod</span> <span style="color: #8b2323;">write-poscar</span> ((calc Jasp))
+  <span style="color: #228b22;">"create a POSCAR file for CALC."</span>
+  (<span style="color: #8b0000;">with-temp-file</span> <span style="color: #228b22;">"POSCAR"</span>
+    (insert <span style="color: #228b22;">"Created by jasp.el\n"</span>)
+    (insert <span style="color: #228b22;">"  1.0"</span>) ; <span style="color: #ff0000; font-weight: bold;">unit cell scale factor</span>
+    (<span style="color: #8b0000;">let*</span> ((atoms (oref calc atoms))
+           (cell (oref atoms cell)))
+      (loop for v in cell
+            for i below (length cell)     
+            do
+            (insert <span style="color: #228b22;">"\n"</span>)
+            (loop for j below (length cell)
+                  do
+                  (<span style="color: #8b0000;">if</span> (equal i j)
+                      (insert (format <span style="color: #228b22;">" %f "</span> (float (elt cell i))))
+                    (insert (format <span style="color: #228b22;">" %f "</span> 0.0 ))))))
+    ;; <span style="color: #ff0000; font-weight: bold;">The next line is counts for each atom type. For each number in</span>
+    ;; <span style="color: #ff0000; font-weight: bold;">this line, there will be a copy of the POTCAR in the POTCAR</span>
+    ;; <span style="color: #ff0000; font-weight: bold;">file. In ase, we sort the atoms and group them so that there is</span>
+    ;; <span style="color: #ff0000; font-weight: bold;">only one POTCAR per atom. We do not do that here yet. We will</span>
+    ;; <span style="color: #ff0000; font-weight: bold;">have a POTCAR for each atom.</span>
+    (insert <span style="color: #228b22;">"\n"</span>)
+    (loop for atom in (oref (oref calc atoms) atoms)
+          do (insert (format <span style="color: #228b22;">"1 "</span>)))
+    
+    ;; <span style="color: #ff0000; font-weight: bold;">now we do the atoms</span>
+    (insert <span style="color: #228b22;">"\nCartesian\n"</span>)
+    (loop for atom in (oref (oref calc atoms) atoms)
+          do
+          (insert
+           (format <span style="color: #228b22;">"%f %f %f\n"</span>
+                   (oref atom x)
+                   (oref atom y)
+                   (oref atom z))))
+    (buffer-string)))
+
+
+(<span style="color: #8b0000;">defmethod</span> <span style="color: #8b2323;">write-kpoints</span> ((calc Jasp))
+  <span style="color: #228b22;">"Create KPOINTS file for CALC. </span>
+<span style="color: #228b22;">Limited to automatic generation, and no offset."</span>
+  (<span style="color: #8b0000;">with-temp-file</span> <span style="color: #228b22;">"KPOINTS"</span>
+    (insert <span style="color: #228b22;">"Automatic mesh</span>
+<span style="color: #228b22;">0</span>
+<span style="color: #228b22;">Monkhorst-Pack</span>
+<span style="color: #228b22;">"</span>)
+    (<span style="color: #8b0000;">dolist</span> (k (oref calc kpts))
+      (insert (format <span style="color: #228b22;">"%4d "</span> k)))
+    (insert <span style="color: #228b22;">"\n0.0 0.0 0.0"</span>)
+    (buffer-string)))
+
+
+(<span style="color: #8b0000;">defmethod</span> <span style="color: #8b2323;">write-potcar</span> ((calc Jasp))
+  <span style="color: #228b22;">"Generate the POTCAR file for CALC.</span>
+<span style="color: #228b22;">No `</span><span style="color: #cd0000;">Atom</span><span style="color: #228b22;">' grouping is done, there is one POTCAR for each atom."</span>
+  (<span style="color: #8b0000;">with-temp-file</span> <span style="color: #228b22;">"POTCAR"</span>
+    (<span style="color: #8b0000;">let</span> ((xc (oref calc xc))
+          (atoms (oref calc atoms))
+          (vasp_pp_path (getenv <span style="color: #228b22;">"VASP_PP_PATH"</span>)))
+      (loop for atom in (oref atoms atoms)
+            do
+            (insert-file-contents
+             (f-join
+              vasp_pp_path
+              (concat <span style="color: #228b22;">"potpaw_"</span> xc)
+              (oref atom symbol)
+              <span style="color: #228b22;">"POTCAR"</span>))))
+    (buffer-string)))
+
+
+(<span style="color: #8b0000;">defmethod</span> <span style="color: #8b2323;">write-incar</span> ((calc Jasp))
+  <span style="color: #228b22;">"Generate the INCAR file for CALC."</span>
+  (<span style="color: #8b0000;">with-temp-file</span> <span style="color: #228b22;">"INCAR"</span>
+    (insert (format <span style="color: #228b22;">"ENCUT = %f\n"</span> (oref calc encut)))
+    (insert (format <span style="color: #228b22;">"NBANDS = %d\n"</span> (oref calc nbands)))
+    (buffer-string)))
+
+
+(<span style="color: #8b0000;">defmethod</span> <span style="color: #8b2323;">run</span> ((calc Jasp))
+  <span style="color: #228b22;">"Write out input files, and run VASP as a simple shell command"</span>
+  (write-poscar calc)
+  (write-kpoints calc)
+  (write-potcar calc)
+  (write-incar calc)
+  (shell-command <span style="color: #228b22;">"vasp"</span>))
+
+
+(<span style="color: #8b0000;">defmethod</span> <span style="color: #8b2323;">update</span> ((calc Jasp))
+  <span style="color: #228b22;">"Run vasp if needed for CALC.</span>
+<span style="color: #228b22;">We just check for a properly ended OUTCAR."</span>
+  (with-current-directory
+   (oref calc wd)
+   (<span style="color: #8b0000;">unless</span> (and (file-exists-p <span style="color: #228b22;">"OUTCAR"</span>)
+                (<span style="color: #8b0000;">with-temp-buffer</span>
+                  (insert-file-contents <span style="color: #228b22;">"OUTCAR"</span>)
+                  (re-search-forward
+                  <span style="color: #228b22;">"                 Voluntary context switches:"</span>
+                  (point-max)
+                  t)))
+     (run calc))))
+
+
+(<span style="color: #8b0000;">defmethod</span> <span style="color: #8b2323;">get-potential-energy</span> ((calc Jasp))
+  <span style="color: #228b22;">"Get potential energy from CALC."</span>
+  (update calc)
+  (with-current-directory
+   (oref calc wd)
+   (<span style="color: #8b0000;">with-temp-buffer</span>
+     (insert-file-contents <span style="color: #228b22;">"OUTCAR"</span>)
+     ;; <span style="color: #ff0000; font-weight: bold;">go to last entry</span>
+     (<span style="color: #8b0000;">while</span> (re-search-forward
+             <span style="color: #228b22;">"free  energy   TOTEN  =\\s-*</span><span style="color: #228b22;">\\</span><span style="color: #228b22;">(</span><span style="color: #228b22;">[-]?[0-9]*\\.[0-9]*</span><span style="color: #228b22;">\\</span><span style="color: #228b22;">)</span><span style="color: #228b22;"> eV"</span>
+             (point-max)
+             t)
+       nil)
+     ;; <span style="color: #ff0000; font-weight: bold;">return last match</span>
+     (string-to-number  (match-string 1)))))
+
+(<span style="color: #8b0000;">provide</span> '<span style="color: #cd0000;">jasp</span>)
+</pre>
+</div>
+
+<pre class="example">
+get-potential-energy
+</pre>
+
+
+<p>
+This is worth some discussion. On one hand, the constructor is a bit more verbose than the implementation in Python. In Python we use a context handler in place of the macro here. On the other hand, that verbosity comes with detailed, accessible documentation for each argument. We only considered the simplest of input arguments. It might be trickier to include lists, and other types of input. But I think those can all be worked out like they were in ase. We only implemented the simplest job control logic, but that also can be worked out. The biggest challenge might be getting more complex data from the output. Nearly everything can be obtained from vasprun.xml also, in the event that parsing is to slow or difficult.
+</p>
+
+<p>
+Now, let us test this out. We can make a calculator:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(setq calc (Jasp
+            nil
+            <span style="color: #cd0000;">:xc</span> <span style="color: #228b22;">"PBE"</span>
+            <span style="color: #cd0000;">:encut</span> 350
+            <span style="color: #cd0000;">:nbands</span> 6
+            <span style="color: #cd0000;">:atoms</span> (Atoms
+                    nil
+                    <span style="color: #cd0000;">:atoms</span> `(,(Atom nil <span style="color: #cd0000;">:symbol</span> <span style="color: #228b22;">"C"</span> <span style="color: #cd0000;">:x</span> 0 <span style="color: #cd0000;">:y</span> 0 <span style="color: #cd0000;">:z</span> 0)
+                             ,(Atom nil <span style="color: #cd0000;">:symbol</span> <span style="color: #228b22;">"O"</span> <span style="color: #cd0000;">:x</span> 1.1 <span style="color: #cd0000;">:y</span> 0 <span style="color: #cd0000;">:z</span> 0))
+                    <span style="color: #cd0000;">:cell</span> '(8 9 10))))
+</pre>
+</div>
+
+<pre class="example">
+[object Jasp nil "." 350 6 (1 1 1) "PBE" [object Atoms nil ([object Atom nil "C" 0 0 0] [object Atom nil "O" 1.1 0 0]) (8 9 10)]]
+</pre>
+
+<p>
+We can call the class functions like this. Here we write out the corresponding POSCAR:
+</p>
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(write-poscar calc)
+</pre>
+</div>
+
+<pre class="example">
+Created by jasp.el
+  1.0
+ 8.000000  0.000000  0.000000 
+ 0.000000  9.000000  0.000000 
+ 0.000000  0.000000  10.000000 
+1 1 
+Cartesian
+0.000000 0.000000 0.000000
+1.100000 0.000000 0.000000
+</pre>
+
+<p>
+It looks a little backward if you have only seen Python, where this would be calc.write<sub>poscar</sub>(). It is almost the same characters, just a different order (and no . in lisp)!
+</p>
+
+<p>
+Here we get the KPOINTS file:
+</p>
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(write-kpoints calc)
+</pre>
+</div>
+
+<pre class="example">
+Automatic mesh
+0
+Monkhorst-Pack
+   1    1    1 
+0.0 0.0 0.0
+</pre>
+
+
+<p>
+I cannot show the POTCAR file for licensing reasons, but it works.
+</p>
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(write-potcar calc)
+</pre>
+</div>
+
+<p>
+and the INCAR file:
+</p>
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(write-incar calc)
+</pre>
+</div>
+
+<pre class="example">
+ENCUT = 350.000000
+NBANDS = 6
+</pre>
+
+<p>
+We run a calculation like this. This will run vasp directly (not through the queue system). 
+</p>
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(run calc)
+</pre>
+</div>
+
+<pre class="example">
+0
+</pre>
+
+<p>
+The returned 0 means the shell command finished correctly.
+</p>
+
+<p>
+And we retrieve the potential energy like this:
+</p>
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(get-potential-energy calc)
+</pre>
+</div>
+
+<pre class="example">
+-14.687906
+</pre>
+
+<p>
+Not bad. That is close to the result we got from a similar calculation <a href="http://kitchingroup.cheme.cmu.edu/dft-book/dft.html#sec-3-3-1">here</a> . 
+</p>
+</div>
+</div>
+
+<div id="outline-container-sec-4" class="outline-2">
+<h2 id="sec-4"><span class="section-number-2">4</span> Putting it all together to run calculations</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+If we put this all together the way we might use it in practice, it looks like this. 
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(load-file <span style="color: #228b22;">"Atom.el"</span>)
+(load-file <span style="color: #228b22;">"Atoms.el"</span>)
+(load-file <span style="color: #228b22;">"Jasp.el"</span>)
+
+(<span style="color: #8b0000;">let*</span> ((co (Atoms
+            nil
+            <span style="color: #cd0000;">:atoms</span> `(,(Atom nil <span style="color: #cd0000;">:symbol</span> <span style="color: #228b22;">"C"</span> <span style="color: #cd0000;">:x</span> 0 <span style="color: #cd0000;">:y</span> 0 <span style="color: #cd0000;">:z</span> 0)
+                     ,(Atom nil <span style="color: #cd0000;">:symbol</span> <span style="color: #228b22;">"O"</span> <span style="color: #cd0000;">:x</span> 1.1 <span style="color: #cd0000;">:y</span> 0 <span style="color: #cd0000;">:z</span> 0))
+            <span style="color: #cd0000;">:cell</span> '(8 9 10)))
+
+       (calc (Jasp
+              nil
+              <span style="color: #cd0000;">:xc</span> <span style="color: #228b22;">"PBE"</span>
+              <span style="color: #cd0000;">:nbands</span> 6
+              <span style="color: #cd0000;">:encut</span> 350
+              <span style="color: #cd0000;">:atoms</span> co)))
+  
+  (get-potential-energy calc))
+</pre>
+</div>
+
+<pre class="example">
+-14.687906
+</pre>
+
+<p>
+Compare this with this Python code which does approximately the same thing:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">from</span> ase <span style="color: #8b0000;">import</span> Atoms, Atom
+<span style="color: #8b0000;">from</span> jasp <span style="color: #8b0000;">import</span> *
+
+<span style="color: #000000; background-color: #cccccc; font-weight: bold;">co</span> = Atoms([Atom(<span style="color: #228b22;">'C'</span>, [<span style="color: #000000; background-color: #cccccc; font-weight: bold;">0</span>,   <span style="color: #000000; background-color: #cccccc; font-weight: bold;">0</span>, <span style="color: #000000; background-color: #cccccc; font-weight: bold;">0</span>]),
+            Atom(<span style="color: #228b22;">'O'</span>, [<span style="color: #000000; background-color: #cccccc; font-weight: bold;">1</span>.<span style="color: #000000; background-color: #cccccc; font-weight: bold;">1</span>, <span style="color: #000000; background-color: #cccccc; font-weight: bold;">0</span>, <span style="color: #000000; background-color: #cccccc; font-weight: bold;">0</span>])],
+            <span style="color: #000000; background-color: #cccccc; font-weight: bold;">cell</span>=(<span style="color: #000000; background-color: #cccccc; font-weight: bold;">6</span>., <span style="color: #000000; background-color: #cccccc; font-weight: bold;">6</span>., <span style="color: #000000; background-color: #cccccc; font-weight: bold;">6</span>.))
+
+<span style="color: #8b0000;">with</span> jasp(<span style="color: #228b22;">'molecules/simple-co'</span>, <span style="color: #ff0000; font-weight: bold;">#output dir</span>
+          <span style="color: #000000; background-color: #cccccc; font-weight: bold;">xc</span>=<span style="color: #228b22;">'PBE'</span>,  <span style="color: #ff0000; font-weight: bold;"># the exchange-correlation functional</span>
+          <span style="color: #000000; background-color: #cccccc; font-weight: bold;">nbands</span>=<span style="color: #000000; background-color: #cccccc; font-weight: bold;">6</span>,  <span style="color: #ff0000; font-weight: bold;"># number of bands</span>
+          <span style="color: #000000; background-color: #cccccc; font-weight: bold;">encut</span>=<span style="color: #000000; background-color: #cccccc; font-weight: bold;">350</span>, <span style="color: #ff0000; font-weight: bold;"># planewave cutoff</span>
+          <span style="color: #000000; background-color: #cccccc; font-weight: bold;">atoms</span>=co) <span style="color: #8b0000;">as</span> calc:
+    <span style="color: #8b0000;">print</span> <span style="color: #228b22;">'energy = {0} eV'</span>.format(co.get_potential_energy())
+</pre>
+</div>
+
+<p>
+They look pretty similar. One thing clearly missing from emacs-lisp that Python has is full support for numerics and plotting. Some of this could be addressed via <a href="http://kitchingroup.cheme.cmu.edu/blog/2014/10/19/Using-Pymacs-to-integrate-Python-into-Emacs/">Pymacs</a> , but certainly not all of it. Some of it could also be handled using org-mode to enable data from emacs-lisp to go to other code blocks that can handle it. 
+</p>
+
+<p>
+Finally, for a little fun, we illustrate mapping over a range of bond lengths. There is more than one way to do this. For example, we could create a list of calculators, and then run over them. Here we create one calculator, and just change the x position in a loop. We use the more general setf approach instead of oset to see what it looks like.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">let*</span> ((co (Atoms
+            nil
+            <span style="color: #cd0000;">:atoms</span> `(,(Atom nil <span style="color: #cd0000;">:symbol</span> <span style="color: #228b22;">"C"</span> <span style="color: #cd0000;">:x</span> 0 <span style="color: #cd0000;">:y</span> 0 <span style="color: #cd0000;">:z</span> 0)
+                     ,(Atom nil <span style="color: #cd0000;">:symbol</span> <span style="color: #228b22;">"O"</span> <span style="color: #cd0000;">:x</span> 1.1 <span style="color: #cd0000;">:y</span> 0 <span style="color: #cd0000;">:z</span> 0))
+            <span style="color: #cd0000;">:cell</span> '(8 9 10)))
+       (calc (Jasp
+              nil
+              <span style="color: #cd0000;">:wd</span> nil
+              <span style="color: #cd0000;">:xc</span> <span style="color: #228b22;">"PBE"</span>
+              <span style="color: #cd0000;">:nbands</span> 6
+              <span style="color: #cd0000;">:encut</span> 350
+              <span style="color: #cd0000;">:atoms</span> co)))
+  (<span style="color: #8b0000;">dolist</span> (d '(1.05 1.1 1.15 1.2 1.25))
+    ;; <span style="color: #ff0000; font-weight: bold;">change working directory</span>
+    (setf (oref calc wd) (format <span style="color: #228b22;">"co-%s"</span> d))
+    ;; <span style="color: #ff0000; font-weight: bold;">set x-coordinate on oxygen atom</span>
+    (setf (oref (elt (oref co atoms) 1) x) d)
+    (print (format <span style="color: #228b22;">"d = %s\nEnergy = %s eV"</span>
+                   d
+                   (get-potential-energy calc)))))
+</pre>
+</div>
+
+<pre class="example">
+"d = 1.05
+Energy = -14.195892 eV"
+
+"d = 1.1
+Energy = -14.698456 eV"
+
+"d = 1.15
+Energy = -14.814809 eV"
+
+"d = 1.2
+Energy = -14.660395 eV"
+
+"d = 1.25
+Energy = -14.319904 eV"
+</pre>
+
+<p>
+See <a href="http://kitchingroup.cheme.cmu.edu/dft-book/dft.html#sec-3-4-1">http://kitchingroup.cheme.cmu.edu/dft-book/dft.html#sec-3-4-1</a> for how this was done in Python. It looks pretty similar to me.
+</p>
+</div>
+</div>
+
+<div id="outline-container-sec-5" class="outline-2">
+<h2 id="sec-5"><span class="section-number-2">5</span> Summary thoughts</h2>
+<div class="outline-text-2" id="text-5">
+<p>
+We implemented a bare bones emacs-lisp calculator for VASP. The library automates creation of input files, running the calculation, and parsing the output.
+</p>
+
+<p>
+It seems pretty feasible to implement a pretty complete interface to VASP in emacs-lisp. The main reasons to do this are:
+</p>
+<ol class="org-ol">
+<li>Integrated access to documentation
+</li>
+<li>Emacs editing of emacs-lisp code 
+</li>
+<li>Integration with org-mode
+</li>
+</ol>
+
+<p>
+Even with Python editor that had access to documentation as deeply integrated as emacs has with emacs-lisp, it would still just be a Python editor, i.e. you probably could not use the editor to write org-mode, LaTeX, etc&#x2026; It is time to recognize we need both scientific document creation <i>and</i> code editing capability in the same place! This kind of suggests a need to get a better Python environment going in Emacs, which deeper integration of the documentation. See <a href="http://kitchingroup.cheme.cmu.edu/blog/2014/12/20/A-new-mode-for-Python-documentation/">this</a> post for some progress in that area!
+</p>
+</div>
+</div>
+<p>Copyright (C) 2014 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2014/12/24/A-prototype-implementation-of-jasp-in-emacs-lisp.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2014/12/24/A-prototype-implementation-of-jasp-in-emacs-lisp#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="New-export-function-for-Matlab-posts-in-blogofile"></div>
       <h2 class="blog_post_title"><a href="/blog/2014/12/24/New-export-function-for-Matlab-posts-in-blogofile/" rel="bookmark" title="Permanent Link to New export function for Matlab posts in blogofile">New export function for Matlab posts in blogofile</a></h2>
       <p><small><span class="blog_post_date">Posted December 24, 2014 at 10:41 AM</span> | categories:
@@ -946,68 +1631,6 @@ Admittedly, there seems to be a lot of boilerplate code for propertizing the str
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2014/12/20/A-new-mode-for-Python-documentation#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="org-mode-+-Python-+-git-in-a-graduate-engineering-course"></div>
-      <h2 class="blog_post_title"><a href="/blog/2014/12/18/org-mode-+-Python-+-git-in-a-graduate-engineering-course/" rel="bookmark" title="Permanent Link to org-mode + Python + git in a graduate engineering course">org-mode + Python + git in a graduate engineering course</a></h2>
-      <p><small><span class="blog_post_date">Posted December 18, 2014 at 09:10 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/education/'>education</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2014/12/18/org-mode-+-Python-+-git-in-a-graduate-engineering-course#disqus_thread">View Comments</a>
-      <p><small><span class="blog_post_date">Updated December 19, 2014 at 11:19 AM</span>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-
-<p>
-The Fall 2014 semester is over! I thought I would summarize here what we did. I taught a Master's course in Chemical Reaction Engineering for the second time. This time we had 58 students from around the world. What is remarkable about this course is that this time it was taught completely from Emacs. Every lecture was given from Emacs, every assignment completed in Emacs, turned in from Emacs, graded in Emacs, returned in Emacs. 
-</p>
-
-<p>
-Students came to class, opened Emacs, and ran a command that downloaded the latest syllabus and opened it. They opened the day's lecture notes from a link in the syllabus. I lectured from the notes in Emacs, editing them on the screen live, running Python code to illustrate engineering concepts. Students did exercises in class in Emacs, and ran an Emacs command to "turn it in" which pushed their work to a git server. Later, I ran an Emacs command to collect and grade the work, then return it. Students could run a menu command in Emacs to see their grade report.
-</p>
-
-<p>
-Techela provided a menu of commands to turn in assignments, check grade reports, send me feedback, open the syllabus, etc&#x2026; The notes were written in org-mode, and we used org-latex-fragments to see the equations. We used code-blocks to show Python examples of problem solving, every day in class.  It was awesome!
-</p>
-
-<p>
-The way this worked is that most of my students got laptops as part of the MS program they enrolled in. I had my <a href="http://github.com/jkitchin/jmax">jmax</a> repo installed on those computers, along with git, TexLive and Canopy Python. jmax provided a starter-kit for emacs that gave it the functionality I use on a regular basis. In jmax, I created a package of code I call techela, which interfaces Emacs with git, and which provides commands to download and turn in assignments, and to control permissions on each repo. This enabled me to change repos to read-only after they were due, and to grant read access when I wanted students to see them. About 15% of the class had their own computer, and we had to help them get this software installed. This got done in the first week of class, thanks to the help of my teaching assistants.
-</p>
-
-<p>
-I ran a <a href="http://gitolite.com/gitolite/index.html">gitolite</a> server that served the course materials, and a repo for each assignment for each student. When students first ran techela, it created a set of ssh keys which were used to authenticate each student in the gitolite server. Techela automates creation of the repos, and the permissions on each repo. Grading of assignments was done in Emacs. Every assignment turned in was an org-file, and we stored grades in the assignments as file tags.  Techela constructed a dynamic gradebook on demand, among other things.
-</p>
-
-<p>
-Org-mode played a central role in the success of this course! It enabled the distribution of the notes in a readable, functional form. The programmable aspects of org-mode made it possible to create custom links for machine-gradable multiple choice questions, assignments, and solutions. It made it possible to use the assignments as a data storage source for grades, and later to pull the grades out for analysis.
-</p>
-
-<p>
-Overall, the experience was just awesome. Techela has a few edges that need smoothed out, but I look forward to using it again this spring, this time on a course on Molecular Simulation!
-</p>
-<p>Copyright (C) 2014 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2014/12/18/org-mode-+-Python-+-git-in-a-graduate-engineering-course.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2014/12/18/org-mode-+-Python-+-git-in-a-graduate-engineering-course#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="../11">« Previous Page</a>
   --  
  <a href="../13">Next Page »</a>
@@ -1049,11 +1672,11 @@ Overall, the experience was just awesome. Techela has a few edges that need smoo
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2015/07/01/Spoken-translations-in-Emacs/">Spoken translations in Emacs</a></li>
       <li><a href="/blog/2015/06/30/Get-spoken-definitions-from-the-Meriam-dictionary/">Get spoken definitions from the Meriam dictionary</a></li>
       <li><a href="/blog/2015/06/29/Getting-Emacs-to-read-to-me/">Getting Emacs to read to me</a></li>
       <li><a href="/blog/2015/06/28/New-NSF-Grant-funded/">New NSF Grant funded</a></li>
       <li><a href="/blog/2015/06/28/Serializing-an-Atoms-object-in-xml/">Serializing an Atoms object in xml</a></li>
-      <li><a href="/blog/2015/06/26/Clickable-text-for-learning-environments/">Clickable text for learning environments</a></li>
     </ul>
   </section>
 
