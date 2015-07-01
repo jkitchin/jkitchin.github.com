@@ -1,4 +1,205 @@
+* CANCELLED Pyparsing meets Emacs to find chemical formulas
+  CLOSED: [2015-06-30 Tue 20:02]
+
+
+Today we expand the concepts of clickable text and merge an idea from Python with Emacs. Here we will use Python to find chemical formulas in the buffer, and then highlight them with Emacs.  We will use pyparsing to find the chemical formulas and then use them to create a pattern for button-lock. I chose this approach because regular expressions are hard to use on the most general kinds of chemical formulas, and a parser should be better equipped to handle this. I adapted an [[https://pyparsing.wikispaces.com/file/view/chemicalFormulas.py/31041705/chemicalFormulas.py][example]] grammar to match simple chemical formulas, i.e. ones that do not have any parentheses, or charges different than + or -. Here is an example usage:
+
+#+BEGIN_SRC python
+# adapted from [[https://pyparsing.wikispaces.com/file/view/chemicalFormulas.py/31041705/chemicalFormulas.py]]
+
+from pyparsing import *
+
+element = oneOf( """H He Li Be B C N O F Ne Na Mg Al Si P S Cl
+            Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Ge
+            As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag
+            Cd In Sn Sb Te I Xe Cs Ba Lu Hf Ta W Re Os
+            Ir Pt Au Hg Tl Pb Bi Po At Rn Fr Ra Lr Rf
+            Db Sg Bh Hs Mt Ds Rg Uub Uut Uuq Uup Uuh Uus
+            Uuo La Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm
+            Yb Ac Th Pa U Np Pu Am Cm Bk Cf Es Fm Md No """ )
+
+integer = Word(nums)
+elementRef = Group(element + Optional( integer, default="1"))
+chemicalFormula = (OneOrMore(elementRef)
+                   + Optional(Or([Literal("-"),
+                                  Literal("+")]))
+#+ WordEnd(wordChars=alphas)
+)
+
+s = '''Water is H2O not h2o, methane is CH4 and of course there is PtCl4.
+What about H+ and OH-? and carbon or Carbon or H2SO4?'''
+for match, start, stop in chemicalFormula.scanString(s):
+   print match, s[start:stop]
+#+END_SRC
+#+RESULTS:
+: [['W', '1']] W
+: [['H', '2'], ['O', '1']] H2O
+: [['C', '1'], ['H', '4']] CH4
+: [['Pt', '1'], ['Cl', '4']] PtCl4
+: [['W', '1']] W
+: [['H', '1'], '+'] H+
+: [['O', '1'], ['H', '1'], '-'] OH-
+: [['Ca', '1']] Ca
+: [['H', '2'], ['S', '1'], ['O', '4']] H2SO4
+
+
+#+BEGIN_SRC python
+# adapted from [[https://pyparsing.wikispaces.com/file/view/chemicalFormulas.py/31041705/chemicalFormulas.py]]
+
+from pyparsing import *
+
+caps = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+lowers = caps.lower()
+digits = "0123456789"
+integer = Word( digits )
+parl = Literal("(").suppress()
+parr = Literal(")").suppress()
+
+element = oneOf( """H He Li Be B C N O F Ne Na Mg Al Si P S Cl
+            Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Ge
+            As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag
+            Cd In Sn Sb Te I Xe Cs Ba Lu Hf Ta W Re Os
+            Ir Pt Au Hg Tl Pb Bi Po At Rn Fr Ra Lr Rf
+            Db Sg Bh Hs Mt Ds Rg Uub Uut Uuq Uup Uuh Uus
+            Uuo La Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm
+            Yb Ac Th Pa U Np Pu Am Cm Bk Cf Es Fm Md No """ )
+
+separator = Literal( "," ).setParseAction(lambda s,l,t: t[0].replace(',','.')) | Literal( "." )
+
+nreal = (Combine( integer + Optional( separator +\
+    Optional( integer ) ))\
+    | Combine( separator + integer )).setParseAction( lambda s,l,t: [ float(t[0]) ] )
+
+block = Forward()
+groupElem = (Group( element('elem') + Optional( nreal, default=1)('esteq') ))('dupla') | \
+     Group( parl + block + parr + Optional( nreal,default=1 )('modi'))
+block << groupElem + ZeroOrMore( groupElem )
+formula = OneOrMore( block )  + Optional(Or([Literal("-"), Literal("+")]))
+
+for f in '''H2O
+CH4
+(CH3)4C
+PtCl4
+H+
+OH-'''.split('\n'):
+    print formula.parseString(f)
+
+print
+s = '''Water is H2O not h2o, methane is CH4 and of course there is PtCl4.
+What about H+ and OH-? and carbon or Carbon or H2SO4?'''
+for match, start, stop in formula.scanString(s):
+  print match, s[start:stop]
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+[['H', 2.0], ['O', 1]]
+[['C', 1], ['H', 4.0]]
+[[['C', 1], ['H', 3.0], 4.0], ['C', 1]]
+[['Pt', 1], ['Cl', 4.0]]
+[['H', 1], '+']
+[['O', 1], ['H', 1], '-']
+
+[['W', 1]] W
+[['H', 2.0], ['O', 1]] H2O
+[['C', 1], ['H', 4.0]] CH4
+[['Pt', 1], ['Cl', 4.0], ['W', 1]] PtCl4.
+W
+[['H', 1], '+'] H+
+[['O', 1], ['H', 1], '-'] OH-
+[['Ca', 1]] Ca
+[['H', 2.0], ['S', 1], ['O', 4.0]] H2SO4
+#+end_example
+
+
+
+
+You can see we found a few chemical formulas in the string, but we missed the H+. I don't know why.  If the string was actually our buffer, we could use those to create a regexp to put text-properties on them. The trick is how to get the buffer string to the Python function, and then get back usable information. We actually explored this [[http://kitchingroup.cheme.cmu.edu/blog/2015/05/16/Python-data-structures-to-lisp/][before]]!
+
+The first thing we should do is work out a Python script that will output the lisp results we want, which are the found formulas (I tried getting the start and stop positions, but I don't think they map onto the buffer positions very well). Here it is. We set it up as a command line tool.
+
+#+BEGIN_SRC python :tangle parse_chemical_formulas.py :tangle-mode (identity #o755) :shebang #!/usr/bin/env python
+import sys
+from pylisp import *
+from pyparsing import *
+
+from pyparsing import *
+
+element = oneOf( """H He Li Be B C N O F Ne Na Mg Al Si P S Cl
+            Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Ge
+            As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag
+            Cd In Sn Sb Te I Xe Cs Ba Lu Hf Ta W Re Os
+            Ir Pt Au Hg Tl Pb Bi Po At Rn Fr Ra Lr Rf
+            Db Sg Bh Hs Mt Ds Rg Uub Uut Uuq Uup Uuh Uus
+            Uuo La Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm
+            Yb Ac Th Pa U Np Pu Am Cm Bk Cf Es Fm Md No""" )
+
+integer = Word(nums)
+elementRef = Group(element
+                    + Optional( integer, default="1" )
+                    + Optional(Or([Literal("-"),
+                                   Literal("+")])))
+chemicalFormula = OneOrMore(elementRef) + NotAny(Word(alphas))
+
+formulas = []
+
+text = sys.stdin.read().strip()
+
+for match, start, stop in chemicalFormula.scanString(text):
+  formulas.append(text[start:stop])
+
+print "'{}".format(formulas.lisp)
+#+END_SRC
+
+
+#+BEGIN_SRC sh
+echo "Water is H2O, methane is CH4 and of course PtCl4, what about H+ and OH-? and carbon or Carbon. Water is H2O not h2o or mH2o, methane is CH4 and of course PtCl4, what about H+ and OH-? carbon, Carbon and SRC" | ./parse_chemical_formulas.py
+#+END_SRC
+#+RESULTS:
+: '("H2O" "PtCl4" "OH-" "PtCl4" "OH-" "C")
+
+Weird, this also misses a few, and unlike the previous example has a false hit at the end.
+
+Now, the Emacs side to call that function. That looks like a lot of matches.
+
+[[http://stackoverflow.com/questions/3576192/how-to-implement-shell-command-on-region-to-string-emacs-elisp-function][How to implement 'shell-command-on-region-to-string' emacs/elisp function? - Stack Overflow]]
+
+#+BEGIN_SRC emacs-lisp
+(sort '("a" "aa" "f" "fff") (lambda (a b) (> (length a) (length b))))
+#+END_SRC
+
+#+RESULTS:
+| fff | aa | a | f |
+
+We have to sort these with longest pattern first.
+#+BEGIN_SRC emacs-lisp :results silent
+;; Thanks!
+(defun shell-command-on-region-to-string (start end command)
+  (with-output-to-string
+    (shell-command-on-region start end command standard-output)))
+
+(button-lock-set-button
+ (mapconcat
+  'regexp-quote
+  (sort  (-uniq (eval (read (shell-command-on-region-to-string (point-min) (point-max) "./parse_chemical_formulas.py"))))
+ (lambda (a b) (> (length a) (length b))))
+  "\\|")
+ nil
+ :face '((:underline t) (:background "gray80"))
+ :help-echo "A chemical formula"
+ :additional-property 'cas)
+#+END_SRC
+
+
+
+and some tests: CH4, C2H5OH, C6H6
+
+C6H6
+
+
+Is this actually useful? Conceptually yes, I think it could be, but clearly the parsing is not recognizing formulas perfectly. Conceptually, sending the buffer to a dedicated program that can return a list of matches to highlight in Emacs is a good idea, especially if it is not easy to build in Emacs, or if a proven solution exists.
 * A sudo org-link and sh block
+
 
 #+BEGIN_SRC emacs-lisp
 ;http://stackoverflow.com/questions/2472273/how-do-i-run-a-sudo-command-in-emacs
@@ -223,6 +424,77 @@ Now for some key-bindings. I will make a hydra that allows repeating commands, a
 
 Now, I can navigate text and have my Mac read it to me. It isn't quite like hearing a real person read it, but it is not too bad either. When you need a break from reading, this might be a nice tool!
 
+* helm-brew
+
+These are installed brew packages
+#+BEGIN_SRC emacs-lisp
+(shell-command-to-string "brew list")
+#+END_SRC
+
+brew cat
+
+#+BEGIN_SRC sh
+brew --cellar
+#+END_SRC
+
+#+RESULTS:
+: /usr/local/Cellar
+
+#+BEGIN_SRC sh
+brew --prefix
+#+END_SRC
+#+RESULTS:
+: /usr/local
+
+#+BEGIN_SRC sh
+brew --cache
+#+END_SRC
+
+#+RESULTS:
+: /Library/Caches/Homebrew
+
+
+#+BEGIN_SRC sh
+brew --repository
+#+END_SRC
+
+#+RESULTS:
+: /usr/local
+
+#+BEGIN_SRC sh
+brew search emacs
+#+END_SRC
+
+#+RESULTS:
+: emacs
+: emacs-clang-complete-async
+: Caskroom/cask/emacs
+
+#+BEGIN_SRC sh
+ls $(brew --prefix)/Library/Formula
+#+END_SRC
+
+
+#+BEGIN_SRC emacs-lisp
+(let (formula cmd desc)
+
+  (loop for formularb in (split-string
+			  (shell-command-to-string
+			   "ls $(brew --prefix)/Library/Formula") "\n")
+
+	do
+	(setq formula (replace-regexp-in-string "\\.rb" "" formularb))
+	(setq cmd (format "grep desc %s" (expand-file-name
+					  formularb
+					  (s-trim  (shell-command-to-string
+						    "brew --prefix")))))
+
+	(setq desc (shell-command-to-string cmd))
+         collect (list formula desc)))
+#+END_SRC
+#+RESULTS:
+| a2ps.rb | a52dec.rb | aacgain.rb | aalib.rb | aamath.rb | aap.rb | aardvark_shell_utils.rb | abcde.rb | abcl.rb | abcm2ps.rb | abcmidi.rb | abduco.rb | abi-compliance-checker.rb | abnfgen.rb | abook.rb | ace.rb | aces_container.rb | ack.rb | acme.rb | acpica.rb | activemq-cpp.rb | activemq.rb | admesh.rb | adns.rb | adplug.rb | advancecomp.rb | aescrypt-packetizer.rb | aescrypt.rb | aeskeyfind.rb | aespipe.rb | afflib.rb | afio.rb | afl-fuzz.rb | afsctool.rb | aften.rb | agda.rb | aget.rb | aggregate.rb | aha.rb | ahcpd.rb | aiccu.rb | aircrack-ng.rb | akka.rb | alac.rb | aldo.rb | algernon.rb | algol68g.rb | align.rb | allegro.rb | alpine.rb | alure.rb | amap.rb | amtterm.rb | analog.rb | android-ndk.rb | android-platform-tools.rb | android-sdk.rb | ansible.rb | ansifilter.rb | ant-contrib.rb | ant.rb | antigen.rb | antiword.rb | antlr.rb | anttweakbar.rb | aoeui.rb | apache-drill.rb | apache-forrest.rb | apache-opennlp.rb | apache-spark.rb | apachetop.rb | ape.rb | apel.rb | apg.rb | apgdiff.rb | apib.rb | apktool.rb | apngasm.rb | apollo.rb | app-engine-java-sdk.rb | apparix.rb | appscale-tools.rb | apr-util.rb | apr.rb | apt-cacher-ng.rb | apt-dater.rb | aptly.rb | aqbanking.rb | arabica.rb | arangodb.rb | archey.rb | argp-standalone.rb | argtable.rb | argus-clients.rb | argus.rb | argyll-cms.rb | aria2.rb | arm.rb | arp-scan.rb | arp-sk.rb | arping.rb | arpoison.rb | arpon.rb | arss.rb | artifactory.rb | ascii.rb | asciidoc.rb | asciinema.rb | asciitex.rb | asm6.rb | asn1c.rb | aspcud.rb | aspell.rb | assimp.rb | astyle.rb | at-spi2-atk.rb | at-spi2-core.rb | atdtool.rb | aterm.rb | atf.rb | atk.rb | atkmm.rb | atomicparsley.rb | atool.rb | ats2-postiats.rb | aubio.rb | audiofile.rb | augeas.rb | auto-scaling.rb | autobench.rb | autoconf-archive.rb | autoconf.rb | autoenv.rb | autogen.rb | autojump.rb | automake.rb | automoc4.rb | automysqlbackup.rb | autopano-sift-c.rb | autopsy.rb | autossh.rb | autotrace.rb | avce00.rb | avian.rb | avidemux.rb | aview.rb | avra.rb | avrdude.rb | avro-c.rb | avro-cpp.rb | avro-tools.rb | aws-cfn-tools.rb | aws-cloudsearch.rb | aws-elasticache.rb | aws-elasticbeanstalk.rb | aws-sns-cli.rb | awscli.rb | axel.rb | b43-fwcutter.rb | babeld.rb | babl.rb | backupninja.rb | bacula-fd.rb | bagit.rb | balance.rb | bam.rb | bar.rb | baresip.rb | base64.rb | basex.rb | bash-completion.rb | bash-git-prompt.rb | bash.rb | bashdb.rb | bashish.rb | batik.rb | bats.rb | bazaar.rb | bbcolors.rb | bbe.rb | bbftp-client.rb | bchunk.rb | bcpp.rb | bcrypt.rb | bdw-gc.rb | beansdb.rb | beanstalk.rb | bear.rb | beecrypt.rb | berkeley-db.rb | berkeley-db4.rb | betty.rb | bfg.rb | bgpq3.rb | bgrep.rb | bib-tool.rb | bibclean.rb | bibtex2html.rb | bibtexconv.rb | bibutils.rb | bigdata.rb | bigloo.rb | bind.rb | binutils.rb | binwalk.rb | bip.rb | bison.rb | bitchx.rb | bitlbee.rb | bittwist.rb | blahtexml.rb | blazeblogger.rb | blink1.rb | blitz.rb | blitzwave.rb | blockhash.rb | bltool.rb | blucat.rb | blueutil.rb | bmake.rb | bmon.rb | bogofilter.rb | bokken.rb | bonnie++.rb | boost-bcp.rb | boost-build.rb | boost-python.rb | boost.rb | boot-clj.rb | boot2docker.rb | botan.rb | box2d.rb | boxes.rb | bpm-tools.rb | brag.rb | brew-gem.rb | brew-pip.rb | briss.rb | bro.rb | browser.rb | bsdconv.rb | bsdiff.rb | bsdmake.rb | bsdsfv.rb | bsponmpi.rb | btparse.rb | btpd.rb | buildapp.rb | bulk_extractor.rb | bullet.rb | bup.rb | burl.rb | burp.rb | bvi.rb | bwctl.rb | bwm-ng.rb | byacc.rb | byobu.rb | c-ares.rb | c-kermit.rb | cabal-install.rb | cabextract.rb | cabocha.rb | cadaver.rb | caddy.rb | cadubi.rb | cairo.rb | cairomm.rb | calabash.rb | calc.rb | calcurse.rb | camellia.rb | camlistore.rb | camlp4.rb | camlp5.rb | capnp.rb | capstone.rb | carthage.rb | cask.rb | casperjs.rb | cassandra.rb | cattle.rb | caudec.rb | cayley.rb | cbmbasic.rb | cc65.rb | ccache.rb | ccal.rb | ccat.rb | ccd2iso.rb | ccextractor.rb | cclive.rb | ccm.rb | cconv.rb | ccrypt.rb | cctools-headers.rb | cctools.rb | ccze.rb | cd-discid.rb | cdargs.rb | cdb.rb | cdecl.rb | cdimgtools.rb | cdk.rb | cdlabelgen.rb | cdparanoia.rb | cdpr.rb | cdrdao.rb | cdrtools.rb | center-im.rb | cereal.rb | ceylon.rb | cf.rb | cfengine.rb | cfitsio.rb | cflow.rb | cfv.rb | cgal.rb | cgdb.rb | cgrep.rb | cgvg.rb | chapel.rb | charm-tools.rb | chcase.rb | cheat.rb | check.rb | check_postgres.rb | checkbashisms.rb | checkstyle.rb | cherokee.rb | chgems.rb | chibi-scheme.rb | chicken.rb | chinadns-c.rb | chipmunk.rb | chisel.rb | chkrootkit.rb | chmlib.rb | chordii.rb | chromaprint.rb | chrome-cli.rb | chromedriver.rb | chruby-fish.rb | chruby.rb | chuck.rb | cidrmerge.rb | cifer.rb | cig.rb | cimg.rb | cityhash.rb | cjdns.rb | cksfv.rb | clamav.rb | clamz.rb | clang-format.rb | clang-omp.rb | clasp.rb | class-dump.rb | classads.rb | clay.rb | clean.rb | clens.rb | cless.rb | clhep.rb | clib.rb | cliclick.rb | clipper.rb | clipsafe.rb | clisp.rb | cln.rb | cloc.rb | clockywock.rb | clojurescript.rb | cloog.rb | closure-compiler.rb | closure-linter.rb | cloud-watch.rb | cloudbees-sdk.rb | clozure-cl.rb | clpbar.rb | clucene.rb | clutter-gst.rb | clutter-gtk.rb | clutter.rb | cmake.rb | cmatrix.rb | cmigemo.rb | cmocka.rb | cmockery.rb | cmockery2.rb | cmu-pocketsphinx.rb | cmu-sphinxbase.rb | cmuclmtk.rb | cmus.rb | cntlm.rb | coccinelle.rb | cocot.rb | coda-cli.rb | codequery.rb | cogl.rb | coin.rb | collada-dom.rb | collectd.rb | colordiff.rb | colormake.rb | colorsvn.rb | colortail.rb | commonmark.rb | compcert.rb | compface.rb | concurrencykit.rb | confuse.rb | conserver.rb | contacts.rb | convertlit.rb | convmv.rb | cookiecutter.rb | coq.rb | coreutils.rb | corkscrew.rb | couchdb-lucene.rb | couchdb.rb | couchpotatoserver.rb | cowpatty.rb | cowsay.rb | cpanminus.rb | cpansearch.rb | cpmtools.rb | cpp-netlib.rb | cppcheck.rb | cppdom.rb | cppformat.rb | cppi.rb | cpptest.rb | cppunit.rb | cpputest.rb | cproto.rb | cpulimit.rb | cputhrottle.rb | cracklib-words.rb | cracklib.rb | crash.rb | creduce.rb | crf++.rb | crm114.rb | cronolog.rb | crosstool-ng.rb | crunch.rb | crush-tools.rb | cryptol.rb | cryptopp.rb | crystal.rb | crystax-ndk.rb | cscope.rb | csfml.rb | csmith.rb | cspice.rb | css-crush.rb | cssembed.rb | csshx.rb | csup.rb | csv-fix.rb | csvprintf.rb | csync.rb | ctags.rb | ctail.rb | ctemplate.rb | ctl.rb | ctorrent.rb | ctunnel.rb | cuetools.rb | cunit.rb | cups-pdf.rb | curaengine.rb | curl.rb | curlish.rb | curlpp.rb | cutter.rb | cuty_capt.rb | cvc4.rb | cvs.rb | cvs2svn.rb | cvsps.rb | cvsutils.rb | cvsync.rb | cweb.rb | cxxtest.rb | cyassl.rb | czmq.rb | d-bus.rb | daemon.rb | daemonize.rb | daemonlogger.rb | daemontools.rb | dante.rb | daq.rb | dar.rb | darcs.rb | dark-mode.rb | darkhttpd.rb | darkice.rb | darkstat.rb | dash.rb | dasm.rb | dateutils.rb | datomic.rb | davix.rb | davmail.rb | dbacl.rb | dbus-glib.rb | dc3dd.rb | dcal.rb | dcd.rb | dcfldd.rb | dcled.rb | dcmtk.rb | dcraw.rb | ddar.rb | ddate.rb | ddclient.rb | ddrescue.rb | debianutils.rb | deheader.rb | deis.rb | deisctl.rb | deja-gnu.rb | delta.rb | denominator.rb | depqbf.rb | detox.rb | devil.rb | devtodo.rb | dex.rb | dex2jar.rb | dfc.rb | dfu-programmer.rb | dfu-util.rb | dhcpdump.rb | dhcping.rb | dhex.rb | di.rb | dialog.rb | dict.rb | diction.rb | dieharder.rb | diff-pdf.rb | diffuse.rb | dirac.rb | dircproxy.rb | direnv.rb | dirmngr.rb | dirt.rb | disco.rb | discodex.rb | discount.rb | disktype.rb | distcc.rb | distribution.rb | ditaa.rb | djbdns.rb | djview4.rb | djvu2pdf.rb | djvulibre.rb | dmalloc.rb | dmd.rb | dmtx-utils.rb | dns2tcp.rb | dnscrypt-proxy.rb | dnscrypt-wrapper.rb | dnsmap.rb | dnsmasq.rb | dnsperf.rb | dnsrend.rb | dnstop.rb | dnstracer.rb | docbook-xsl.rb | docbook.rb | docbook2x.rb | docker-machine.rb | docker-swarm.rb | docker.rb | dockutil.rb | doitlive.rb | dos2unix.rb | double-conversion.rb | doublecpp.rb | doubledown.rb | dovecot.rb | doxygen.rb | doxymacs.rb | dpkg.rb | drake.rb | drip.rb | dropbear.rb | dsd.rb | dsh.rb | dsocks.rb | dtach.rb | dtc.rb | dterm.rb | dtrx.rb | dub.rb | duck.rb | duff.rb | duo_unix.rb | duplicity.rb | duply.rb | duti.rb | dvd+rw-tools.rb | dvdauthor.rb | dvdbackup.rb | dvdrtools.rb | dvorak7min.rb | dvtm.rb | dwarf.rb | dwatch.rb | dwdiff.rb | dxflib.rb | dyld-headers.rb | dylibbundler.rb | dynamips.rb | dynamodb-local.rb | e2fsprogs.rb | easy-git.rb | ebook-tools.rb | ec2-ami-tools.rb | ec2-api-tools.rb | ecasound.rb | echoping.rb | echoprint-codegen.rb | ecj.rb | ecl.rb | ecm.rb | edelta.rb | editorconfig.rb | ee.rb | eet.rb | efl.rb | eigen.rb | eina.rb | ejabberd.rb | ejdb.rb | ekg2.rb | ekhtml.rb | elasticsearch.rb | elb-tools.rb | elementary.rb | elinks.rb | elixir-build.rb | elixir.rb | emacs-clang-complete-async.rb | emacs.rb | embryo.rb | embulk.rb | emscripten.rb | enca.rb | enchant.rb | enet.rb | engine_pkcs11.rb | enscript.rb | ent.rb | entr.rb | envchain.rb | envv.rb | eot-utils.rb | epeg.rb | epic5.rb | eprover.rb | epsilon.rb | epstool.rb | epubcheck.rb | erlang.rb | es.rb | esniper.rb | esound.rb | espeak.rb | etcd.rb | etl.rb | ettercap.rb | euca2ools.rb | euler-py.rb | evas-generic-loaders.rb | evas.rb | eventlog.rb | ex-vi.rb | exact-image.rb | exempi.rb | exenv.rb | exif.rb | exiftags.rb | exiftool.rb | exim.rb | exiv2.rb | exodriver.rb | expat.rb | eye-d3.rb | ezlupdate.rb | ezstream.rb | f3.rb | faac.rb | faad2.rb | fabric.rb | fail2ban.rb | fakeroot.rb | falcon.rb | fantom.rb | fasd.rb | fastbit.rb | fastjar.rb | fatsort.rb | fb-adb.rb | fb-client.rb | fbida.rb | fcgi.rb | fcgiwrap.rb | fcrackzip.rb | fdclone.rb | fdk-aac.rb | fdupes.rb | fetch-crl.rb | fex.rb | ffe.rb | ffind.rb | ffmbc.rb | ffmpeg.rb | ffmpeg2theora.rb | ffmpegthumbnailer.rb | ffms2.rb | ffts.rb | fftw.rb | fibjs.rb | ficy.rb | fig.rb | figlet.rb | finatra.rb | findbugs.rb | findutils.rb | fio.rb | fish.rb | fits.rb | fizsh.rb | flac.rb | flac123.rb | flactag.rb | flake.rb | flashrom.rb | flasm.rb | flatbuffers.rb | flawfinder.rb | fleet-db.rb | fleetctl.rb | flex.rb | flickcurl.rb | flow-tools.rb | flow.rb | flowgrind.rb | fltk.rb | fluid-synth.rb | flvmeta.rb | flvstreamer.rb | flyway.rb | fmdiff.rb | fon-flash-cli.rb | fondu.rb | fontconfig.rb | fontforge.rb | fop.rb | forego.rb | foremost.rb | fortune.rb | fossil.rb | fourstore.rb | fpc.rb | fping.rb | fpp.rb | frag_find.rb | fragroute.rb | freealut.rb | freediameter.rb | freeimage.rb | freeipmi.rb | freeling.rb | freeradius-server.rb | freeswitch.rb | freetds.rb | freetype.rb | freexl.rb | frege.rb | frei0r.rb | frescobaldi.rb | fribidi.rb | fsevent_watch.rb | fsh.rb | fsharp.rb | fsw.rb | fswatch.rb | ftgl.rb | ftimes.rb | ftjam.rb | funcoeszz.rb | fuseki.rb | fuzzy-find.rb | fwknop.rb | fzf.rb | g2.rb | gabedit.rb | gaffitter.rb | galen.rb | gambit-scheme.rb | game-music-emu.rb | gammaray.rb | gammu.rb | ganglia.rb | gant.rb | garmintools.rb | gauche.rb | gauge.rb | gaul.rb | gawk.rb | gbdfed.rb | gcab.rb | gcal.rb | gcc.rb | gconf.rb | gcore.rb | gcovr.rb | gcutil.rb | gd.rb | gdal-grass.rb | gdal.rb | gdbm.rb | gdk-pixbuf.rb | gdmap.rb | gdnsd.rb | gdrive.rb | gearman.rb | gecode.rb | gegl.rb | genders.rb | gengetopt.rb | genstats.rb | geocouch.rb | geogit.rb | geographiclib.rb | geoip.rb | geoipupdate.rb | geos.rb | geoserver.rb | get-flash-videos.rb | getdns.rb | getmail.rb | gettext.rb | getxbook.rb | gexiv2.rb | gflags.rb | gforth.rb | gh.rb | ghc.rb | ghi.rb | ghostscript.rb | gibbslda.rb | gibo.rb | gifify.rb | giflib.rb | giflossy.rb | gifsicle.rb | ginac.rb | gist.rb | gistit.rb | git-annex.rb | git-archive-all.rb | git-cal.rb | git-cola.rb | git-crypt.rb | git-encrypt.rb | git-extras.rb | git-fixup.rb | git-flow-avh.rb | git-flow.rb | git-ftp.rb | git-gerrit.rb | git-hooks.rb | git-imerge.rb | git-integration.rb | git-lfs.rb | git-multipush.rb | git-now.rb | git-number.rb | git-octopus.rb | git-open.rb | git-plus.rb | git-review.rb | git-sh.rb | git-ssh.rb | git-stree.rb | git-subrepo.rb | git-test.rb | git-tf.rb | git-tracker.rb | git-url-sub.rb | git.rb | gitbucket.rb | giter8.rb | github-release.rb | gitslave.rb | gitup.rb | gl2ps.rb | glassfish.rb | glbinding.rb | glew.rb | glib-networking.rb | glib.rb | glibmm.rb | glide.rb | glm.rb | global.rb | globus-toolkit.rb | glog.rb | gloox.rb | glui.rb | gmail-backup.rb | gmediaserver.rb | gmime.rb | gmp.rb | gmtl.rb | gnatsd.rb | gnome-common.rb | gnome-doc-utils.rb | gnome-icon-theme.rb | gnu-apl.rb | gnu-barcode.rb | gnu-cobol.rb | gnu-getopt.rb | gnu-indent.rb | gnu-prolog.rb | gnu-sed.rb | gnu-smalltalk.rb | gnu-tar.rb | gnu-time.rb | gnu-typist.rb | gnu-units.rb | gnu-which.rb | gnupg-pkcs11-scd.rb | gnupg.rb | gnupg2.rb | gnuplot.rb | gnustep-make.rb | gnutls.rb | go-app-engine-32.rb | go-app-engine-64.rb | go.rb | goaccess.rb | gobject-introspection.rb | gocr.rb | goffice.rb | golo.rb | goocanvas.rb | google-app-engine.rb | google-perftools.rb | google-sparsehash.rb | google-sql-tool.rb | googlecl.rb | goolabs.rb | gost.rb | gosu.rb | gource.rb | gpac.rb | gpg-agent.rb | gpgme.rb | gphoto2.rb | gplcver.rb | gpm.rb | gpp.rb | gpsbabel.rb | gpsd.rb | gpsim.rb | gptfdisk.rb | gptsync.rb | gputils.rb | gqlplus.rb | gqview.rb | gradle.rb | grails.rb | grap.rb | graphicsmagick.rb | graphviz.rb | grass.rb | grc.rb | grepcidr.rb | grib-api.rb | griffon.rb | gringo.rb | grok.rb | groonga-normalizer-mysql.rb | groonga.rb | groovy.rb | groovysdk.rb | groovyserv.rb | growly.rb | grsync.rb | gsasl.rb | gsettings-desktop-schemas.rb | gsl.rb | gsoap.rb | gssdp.rb | gssh.rb | gst-libav.rb | gst-plugins-bad.rb | gst-plugins-base.rb | gst-plugins-good.rb | gst-plugins-ugly.rb | gst-python.rb | gst-validate.rb | gstreamer.rb | gti.rb | gtk+.rb | gtk+3.rb | gtk-doc.rb | gtk-engines.rb | gtk-gnutella.rb | gtk-mac-integration.rb | gtk-murrine-engine.rb | gtkdatabox.rb | gtkextra.rb | gtkglext.rb | gtkmm.rb | gtkmm3.rb | gtksourceview.rb | gtksourceview3.rb | gtkspell3.rb | gtmess.rb | gts.rb | guile.rb | gumbo-parser.rb | gupnp-av.rb | gupnp-tools.rb | gupnp.rb | gvp.rb | gwenhywfar.rb | gws.rb | gwt.rb | gwyddion.rb | gzrt.rb | h2.rb | h264bitstream.rb | h2o.rb | hachoir-metadata.rb | hackrf.rb | hadoop.rb | halibut.rb | hamlib.rb | hamsterdb.rb | haproxy.rb | harbour.rb | hardlink-osx.rb | hardlink.rb | harfbuzz.rb | hashcash.rb | hashpump.rb | haxe.rb | hbase.rb | headphones.rb | hebcal.rb | hello.rb | help2man.rb | henplus.rb | hercules.rb | heroku-toolbelt.rb | herrie.rb | hevea.rb | hexcurse.rb | hexedit.rb | hfsutils.rb | hg-flow.rb | hh.rb | hicolor-icon-theme.rb | hidapi.rb | highlight.rb | highlighting-kate.rb | hilite.rb | hiredis.rb | hive.rb | hoedown.rb | homebank.rb | honcho.rb | honeyd.rb | horndis.rb | hornetq.rb | hostdb.rb | hping.rb | hqx.rb | hr.rb | ht.rb | html-xml-utils.rb | html2text.rb | htmlcleaner.rb | htmlcompressor.rb | htmlcxx.rb | htmldoc.rb | htop-osx.rb | htpdate.rb | http-parser.rb | http_load.rb | httperf.rb | httpie.rb | httping.rb | httpry.rb | httptunnel.rb | httrack.rb | hub.rb | hubflow.rb | hugo.rb | hunspell.rb | hydra.rb | hyperestraier.rb | hyperspec.rb | i2util.rb | iat.rb | ical-buddy.rb | icarus-verilog.rb | icbirc.rb | icdiff.rb | ice.rb | icecast.rb | icecream.rb | icon-naming-utils.rb | icon.rb | icoutils.rb | icu4c.rb | id3ed.rb | id3lib.rb | id3tool.rb | id3v2.rb | idcomments.rb | ideviceinstaller.rb | idnits.rb | idris.rb | idutils.rb | ievms.rb | ifstat.rb | iftop.rb | ii.rb | ike-scan.rb | ilmbase.rb | imagejs.rb | imagemagick.rb | imagesnap.rb | imageworsener.rb | imap-uw.rb | imapfilter.rb | imapsync.rb | imlib2.rb | influxdb.rb | iniparser.rb | innoextract.rb | innotop.rb | ino.rb | inspircd.rb | intercal.rb | internetarchive.rb | intltool.rb | io.rb | iodine.rb | iojs.rb | ioke.rb | ioping.rb | ios-class-guard.rb | ios-sim.rb | ios-webkit-debug-proxy.rb | iozone.rb | ip_relay.rb | ipbt.rb | ipcalc.rb | ipe.rb | iperf.rb | iperf3.rb | iphotoexport.rb | ipinfo.rb | ipmitool.rb | ipmiutil.rb | iprint.rb | ipsumdump.rb | ipv6calc.rb | ipv6toolkit.rb | ircd-hybrid.rb | ircd-irc2.rb | ircii.rb | irods.rb | irrlicht.rb | irrtoolset.rb | irssi.rb | isc-dhcp.rb | isl.rb | iso-codes.rb | ispc.rb | ispell.rb | isync.rb | itex2mml.rb | itpp.rb | itstool.rb | ivy.rb | jack.rb | jags.rb | jailkit.rb | jam.rb | jansson.rb | jasmin.rb | jasper.rb | javarepl.rb | jbake.rb | jbig2dec.rb | jbig2enc.rb | jbigkit.rb | jboss-as.rb | jboss-forge.rb | jcal.rb | jdnssec-tools.rb | jed.rb | jemalloc.rb | jena.rb | jenkins-job-builder.rb | jenkins.rb | jenv.rb | jerm.rb | jetty-runner.rb | jetty.rb | jhead.rb | jhiccup.rb | jigdo.rb | jing.rb | jless.rb | jlog.rb | jmeter.rb | jmxtrans.rb | jnettop.rb | joe.rb | john-jumbo.rb | john.rb | jooby-bootstrap.rb | jove.rb | jp2a.rb | jpeg-archive.rb | jpeg-turbo.rb | jpeg.rb | jpeginfo.rb | jpegoptim.rb | jpegrescan.rb | jq.rb | jrnl.rb | jruby.rb | js-test-driver.rb | jsawk.rb | jsdoc-toolkit.rb | jsdoc3.rb | jshon.rb | jslint4java.rb | jsmin.rb | json-c.rb | json-fortran.rb | json-glib.rb | json_spirit.rb | jsoncpp.rb | jsonpp.rb | jsvc.rb | judy.rb | juise.rb | juju-quickstart.rb | juju.rb | julius.rb | juman.rb | jvgrep.rb | jvmtop.rb | jython.rb | kafka.rb | kafkacat.rb | kakasi.rb | kanif.rb | karn.rb | kawa.rb | kbtin.rb | kdiff3.rb | keepassc.rb | kes.rb | kestrel.rb | kettle.rb | keybase.rb | keychain.rb | kibana.rb | kimwitu++.rb | kitchen-sync.rb | kite.rb | kjell.rb | knock.rb | knot.rb | known_hosts.rb | konoha.rb | kore.rb | kotlin-compiler.rb | kqwait.rb | ksh.rb | kstart.rb | ktoblzcheck.rb | kubernetes-cli.rb | kvazaar.rb | kyoto-cabinet.rb | kyoto-tycoon.rb | kytea.rb | kyua.rb | l-smash.rb | lablgtk.rb | lame.rb | languagetool.rb | lasi.rb | lastfmfpclient.rb | lastfmlib.rb | lastpass-cli.rb | laszip.rb | latex2html.rb | latex2rtf.rb | launch.rb | launch4j.rb | launchdns.rb | lbdb.rb | lbzip2.rb | lcab.rb | lcdf-typetools.rb | lcdproc.rb | lci.rb | lcov.rb | lcrack.rb | ld64.rb | ldapvi.rb | ldc.rb | ldns.rb | le.rb | leafnode.rb | ledger.rb | ledit.rb | legit.rb | leiningen.rb | lemon.rb | lensfun.rb | leptonica.rb | lesspipe.rb | lesstif.rb | leveldb.rb | lfe.rb | lft.rb | lftp.rb | lha.rb | lhasa.rb | lib3ds.rb | libaacs.rb | libagg.rb | libantlr3c.rb | libao.rb | libarchive.rb | libart.rb | libass.rb | libassuan.rb | libatomic_ops.rb | libav.rb | libb2.rb | libbind.rb | libbinio.rb | libbluray.rb | libbpg.rb | libbs2b.rb | libbson.rb | libbtbb.rb | libcaca.rb | libcanberra.rb | libcapn.rb | libcddb.rb | libcdio.rb | libcdr.rb | libcec.rb | libcello.rb | libcmph.rb | libcoap.rb | libconfig.rb | libcouchbase.rb | libcppa.rb | libcroco.rb | libcsv.rb | libcue.rb | libcuefile.rb | libdaemon.rb | libdap.rb | libdbi.rb | libdbusmenu-qt.rb | libdc1394.rb | libdca.rb | libdiscid.rb | libdmtx.rb | libdnet.rb | libdrawtext.rb | libdshconfig.rb | libdsk.rb | libdv.rb | libdvbpsi.rb | libdvdcss.rb | libdvdnav.rb | libdvdread.rb | libebml.rb | libebur128.rb | libechonest.rb | libelf.rb | libepoxy.rb | libestr.rb | libetonyek.rb | libev.rb | libevent.rb | libewf.rb | libexif.rb | libexosip.rb | libextractor.rb | libfaketime.rb | libffi.rb | libfishsound.rb | libfixbuf.rb | libflowmanager.rb | libforensic1394.rb | libfreefare.rb | libfreehand.rb | libfreenect.rb | libftdi.rb | libftdi0.rb | libgadu.rb | libgaiagraphics.rb | libgcrypt.rb | libgda.rb | libgee.rb | libgeotiff.rb | libgetdata.rb | libgfshare.rb | libghthash.rb | libgit2-glib.rb | libgit2.rb | libglade.rb | libglademm.rb | libgnomecanvas.rb | libgnomecanvasmm.rb | libgpg-error.rb | libgphoto2.rb | libgroove.rb | libgsf.rb | libgsm.rb | libgtop.rb | libgxps.rb | libharu.rb | libhdhomerun.rb | libhid.rb | libical.rb | libicns.rb | libid3tag.rb | libident.rb | libidl.rb | libidn.rb | libimobiledevice.rb | libinfinity.rb | libiomp.rb | libiptcdata.rb | libiscsi.rb | libjson-rpc-cpp.rb | libkate.rb | libkml.rb | libksba.rb | liblacewing.rb | liblas.rb | liblastfm.rb | liblinear.rb | liblo.rb | liblockfile.rb | liblqr.rb | libltc.rb | liblunar.rb | liblwgeom.rb | libmaa.rb | libmagic.rb | libmarisa.rb | libmatroska.rb | libmaxminddb.rb | libmemcached.rb | libmetalink.rb | libmicrohttpd.rb | libmikmod.rb | libming.rb | libmms.rb | libmodbus.rb | libmodplug.rb | libmongoclient.rb | libmonome.rb | libmowgli.rb | libmp3splt.rb | libmpc.rb | libmpd.rb | libmpdclient.rb | libmpeg2.rb | libmrss.rb | libmspub.rb | libmtp.rb | libmusicbrainz.rb | libmxml.rb | libnatpmp.rb | libnet.rb | libnfc.rb | libnfs.rb | libnice.rb | libnids.rb | libntlm.rb | libnxml.rb | liboauth.rb | libodbc++.rb | libodfgen.rb | libofx.rb | libogg.rb | liboil.rb | libopendkim.rb | libopennet.rb | liboping.rb | libopkele.rb | libosip.rb | libotr.rb | libowfat.rb | libp11.rb | libpagemaker.rb | libpano.rb | libpcl.rb | libpgm.rb | libplist.rb | libpng.rb | libpointing.rb | libpoker-eval.rb | libpqxx.rb | libpst.rb | libpuzzle.rb | libqalculate.rb | libqglviewer.rb | libquicktime.rb | libquvi.rb | librasterlite.rb | libraw.rb | librcsc.rb | librdkafka.rb | libre.rb | libreadline-java.rb | librem.rb | libreplaygain.rb | libresample.rb | libressl.rb | librevenge.rb | librsvg.rb | librsync.rb | librtlsdr.rb | libsamplerate.rb | libsass.rb | libscrypt.rb | libsecret.rb | libshout.rb | libsigc++.rb | libsigsegv.rb | libslax.rb | libsmf.rb | libsmi.rb | libsndfile.rb | libsodium.rb | libsoup.rb | libsoxr.rb | libspatialite.rb | libspiro.rb | libssh.rb | libssh2.rb | libstfl.rb | libstrophe.rb | libstxxl.rb | libsvg-cairo.rb | libsvg.rb | libsvm.rb | libswiften.rb | libtar.rb | libtasn1.rb | libtecla.rb | libtermkey.rb | libtess2.rb | libtextcat.rb | libtiff.rb | libtins.rb | libtomcrypt.rb | libtommath.rb | libtool.rb | libtorrent-rasterbar.rb | libtorrent.rb | libtrace.rb | libunistring.rb | libunwind-headers.rb | libupnp.rb | libusb-compat.rb | libusb.rb | libusrsctp.rb | libutf.rb | libuv.rb | libuvc.rb | libvbucket.rb | libvidstab.rb | libvirt.rb | libvisio.rb | libvo-aacenc.rb | libvoikko.rb | libvorbis.rb | libvpx.rb | libwbxml.rb | libwebsockets.rb | libwmf.rb | libwpd.rb | libwpg.rb | libwps.rb | libxc.rb | libxdg-basedir.rb | libxdiff.rb | libxmi.rb | libxml++.rb | libxml2.rb | libxmlsec1.rb | libxmp-lite.rb | libxmp.rb | libxslt.rb | libxspf.rb | libyaml.rb | libyubikey.rb | libzdb.rb | libzip.rb | libzzip.rb | lifelines.rb | lightning.rb | lighttpd.rb | lilv.rb | link-grammar.rb | linklint.rb | links.rb | liquibase.rb | liquidprompt.rb | litmus.rb | little-cms.rb | little-cms2.rb | lldpd.rb | llvm.rb | lmdb.rb | lnav.rb | lockrun.rb | log4c.rb | log4cplus.rb | log4cpp.rb | log4cxx.rb | log4shib.rb | logcheck.rb | logentries.rb | logrotate.rb | logstalgia.rb | logstash.rb | logtalk.rb | lolcode.rb | lorem.rb | loudmouth.rb | lout.rb | lpc21isp.rb | lrdf.rb | lrzip.rb | lrzsz.rb | lsdvd.rb | lsh.rb | lsyncd.rb | ltc-tools.rb | ltl2ba.rb | lua.rb | lua51.rb | luabind.rb | luajit.rb | luciddb.rb | lutok.rb | luvit.rb | luyten.rb | lv.rb | lv2.rb | lwtools.rb | lxsplit.rb | lynis.rb | lynx.rb | lysp.rb | lz4.rb | lzip.rb | lzlib.rb | lzo.rb | lzop.rb | mac-robber.rb | mackup.rb | macvim.rb | mad.rb | madplay.rb | magit.rb | mahout.rb | mailcheck.rb | mailutils.rb | mairix.rb | makedepend.rb | makefile2graph.rb | makeicns.rb | makensis.rb | makepkg.rb | makepp.rb | makeself.rb | mal4s.rb | malaga.rb | malbolge.rb | man2html.rb | mandoc.rb | mapnik.rb | mapserver.rb | mariadb.rb | markdown.rb | marst.rb | masscan.rb | mat.rb | matlab2tikz.rb | maven-shell.rb | maven.rb | mawk.rb | mbelib.rb | mboxgrep.rb | mcabber.rb | mcpp.rb | mcrypt.rb | md.rb | md5deep.rb | md5sha1sum.rb | mda-lv2.rb | mdbtools.rb | mdf2iso.rb | mdk.rb | mdp.rb | mdr.rb | mdxmini.rb | mecab-ipadic.rb | mecab-jumandic.rb | mecab-ko-dic.rb | mecab-ko.rb | mecab-unidic.rb | mecab.rb | media-info.rb | mediatomb.rb | megacmd.rb | megatools.rb | memcache-top.rb | memcached.rb | memcacheq.rb | memo.rb | memtester.rb | menhir.rb | mercurial.rb | mercury.rb | mergelog.rb | mergepbx.rb | mesos.rb | metaproxy.rb | metashell.rb | mfcuk.rb | mfoc.rb | mftrace.rb | mg.rb | mhash.rb | midgard2.rb | midicsv.rb | midnight-commander.rb | mighttpd2.rb | mikmod.rb | mimms.rb | minbif.rb | minicom.rb | minidjvu.rb | minidlna.rb | minimodem.rb | minisat.rb | minised.rb | miniupnpc.rb | minizinc.rb | minizip.rb | minuit2.rb | miredo.rb | miruo.rb | mitie.rb | mitmproxy.rb | mjpegtools.rb | mkclean.rb | mkcue.rb | mksh.rb | mktorrent.rb | mkvalidator.rb | mkvdts2ac3.rb | mkvtomp4.rb | mkvtoolnix.rb | mldonkey.rb | mlogger.rb | mlt.rb | mm-common.rb | mmix.rb | mmsrip.rb | mmv.rb | mobile-shell.rb | mobiledevice.rb | moc.rb | mockserver.rb | moco.rb | modman.rb | modules.rb | moe.rb | mogenerator.rb | mon.rb | monetdb.rb | mongo-c.rb | mongodb.rb | mongoose.rb | mongrel2.rb | mongroup.rb | monit.rb | monkeysphere.rb | mono.rb | monotone.rb | montage.rb | moreutils.rb | mosquitto.rb | most.rb | movgrab.rb | mozilla-addon-sdk.rb | mozjpeg.rb | mp3blaster.rb | mp3cat.rb | mp3check.rb | mp3gain.rb | mp3info.rb | mp3splt.rb | mp3val.rb | mp3wrap.rb | mp4v2.rb | mpack.rb | mpc.rb | mpck.rb | mpd.rb | mpdas.rb | mpdscribble.rb | mpdviz.rb | mpegdemux.rb | mpfi.rb | mpfr.rb | mpg123.rb | mpg321.rb | mpgtx.rb | mpich2.rb | mplayer.rb | mplayershell.rb | mpop.rb | mpssh.rb | mpw.rb | mr.rb | mrtg.rb | mruby.rb | msdl.rb | msgpack.rb | msitools.rb | msktutil.rb | msmtp.rb | mspdebug.rb | mtools.rb | mtr.rb | mu.rb | multimarkdown.rb | multirust.rb | multitail.rb | muparser.rb | mupdf-tools.rb | musepack.rb | mussh.rb | mutt.rb | mvnvm.rb | mvptree.rb | mypy.rb | mysql++.rb | mysql-cluster.rb | mysql-connector-c++.rb | mysql-connector-c.rb | mysql-connector-odbc.rb | mysql-proxy.rb | mysql-sandbox.rb | mysql-search-replace.rb | mysql.rb | mysqltuner.rb | mytop.rb | n.rb | nacl.rb | nagios-plugins.rb | nagios.rb | nailgun.rb | namazu.rb | namebench.rb | nanomsg.rb | nanopb-generator.rb | nant.rb | narwhal.rb | nasm.rb | natalie.rb | naturaldocs.rb | nave.rb | nbimg.rb | ncdc.rb | ncdu.rb | ncftp.rb | ncmpc.rb | ncmpcpp.rb | ncp.rb | ncrack.rb | ndiff.rb | ndpi.rb | negfix8.rb | neko.rb | neo4j.rb | neon.rb | nesc.rb | net-snmp.rb | net6.rb | netcat.rb | netcat6.rb | netpbm.rb | netperf.rb | nettle.rb | newlisp.rb | newsbeuter.rb | newt.rb | nexus.rb | nfcutils.rb | nfdump.rb | nghttp2.rb | nginx.rb | ngircd.rb | ngrep.rb | ngrok.rb | ngspice.rb | nickle.rb | nicovideo-dl.rb | nikto.rb | nimrod.rb | ninja-ide.rb | ninja.rb | nkf.rb | nload.rb | nmap.rb | node.rb | nodebrew.rb | nodenv.rb | nordugrid-arc.rb | normalize.rb | notmuch.rb | noweb.rb | npth.rb | nrg2iso.rb | nrpe.rb | nsd.rb | nspr.rb | nsq.rb | nss.rb | ntl.rb | ntopng.rb | nu.rb | num-utils.rb | nut.rb | nutcracker.rb | nuttcp.rb | nvi.rb | nvm.rb | nylon.rb | nzbget.rb | oath-toolkit.rb | objc-codegenutils.rb | objc-run.rb | objective-caml.rb | ocamlsdl.rb | ocp.rb | ocrad.rb | ode.rb | odo.rb | odt2txt.rb | offline-imap.rb | oggz.rb | ogmtools.rb | ohcount.rb | ola.rb | olsrd.rb | omega.rb | omniorb.rb | ondir.rb | one-ml.rb | onepass.rb | onetime.rb | oniguruma.rb | ooniprobe.rb | opam.rb | open-babel.rb | open-cobol.rb | open-mesh.rb | open-mpi.rb | open-ocd.rb | open-scene-graph.rb | open-sp.rb | open-vcdiff.rb | open-zwave.rb | openal-soft.rb | opencbm.rb | opencc.rb | opencolorio.rb | openconnect.rb | opencore-amr.rb | opendbx.rb | opendetex.rb | openexr.rb | openh264.rb | openhmd.rb | openjpeg.rb | openlitespeed.rb | openrtsp.rb | opensaml.rb | opensc.rb | openslide.rb | openslp.rb | openssl.rb | openvpn.rb | openwsman.rb | ophcrack.rb | optipng.rb | opus-tools.rb | opus.rb | opusfile.rb | orbit.rb | orc.rb | orfeo.rb | orientdb.rb | orpie.rb | ortp.rb | oscats.rb | osh.rb | osm-pbf.rb | osm2pgrouting.rb | osm2pgsql.rb | osmosis.rb | osquery.rb | osslsigncode.rb | ossp-uuid.rb | osxfuse.rb | osxutils.rb | owamp.rb | owfs.rb | p0f.rb | p11-kit.rb | p7zip.rb | pacapt.rb | packer.rb | pacvim.rb | pakchois.rb | pam_yubico.rb | pandoc-citeproc.rb | pandoc.rb | pango.rb | pangomm.rb | pangox-compat.rb | paperkey.rb | paps.rb | paq8px.rb | par.rb | par2.rb | par2tbb.rb | parallel.rb | parrot.rb | partio.rb | pass.rb | passenger.rb | passpie.rb | pastebinit.rb | patchutils.rb | pax-construct.rb | pax-runner.rb | pazpar2.rb | pbc-sig.rb | pbc.rb | pbrt.rb | pbzip2.rb | pcal.rb | pcap_dnsproxy.rb | pce.rb | pcre++.rb | pcre.rb | pcre2.rb | pcsc-lite.rb | pdal.rb | pdf-redact-tools.rb | pdf-tools.rb | pdf2htmlex.rb | pdf2json.rb | pdfcrack.rb | pdfgrep.rb | pdflib-lite.rb | pdftohtml.rb | pdksh.rb | pdns.rb | pdnsd.rb | pdnsrec.rb | pdsh.rb | peco.rb | peervpn.rb | peg-markdown.rb | peg.rb | perceptualdiff.rb | percona-server.rb | percona-toolkit.rb | perl-build.rb | perl.rb | perlmagick.rb | pev.rb | pex.rb | pg_top.rb | pgbadger.rb | pgbouncer.rb | pgcli.rb | pgdbf.rb | pgformatter.rb | pgloader.rb | pgpdump.rb | pgpool-ii.rb | pgrouting.rb | pgtap.rb | pgtune.rb | phantomjs.rb | phash.rb | phoon.rb | phoronix-test-suite.rb | physfs.rb | pianobar.rb | pianod.rb | picoc.rb | picocom.rb | picolisp.rb | pidcat.rb | pidgin.rb | pidof.rb | pig.rb | pigz.rb | pike.rb | pillar.rb | pincaster.rb | pinentry-mac.rb | pinentry.rb | pipebench.rb | pipemeter.rb | pit.rb | pius.rb | pixman.rb | pixz.rb | pjproject.rb | pk.rb | pkcrack.rb | pkcs11-helper.rb | pkg-config.rb | pkgdiff.rb | pktanon.rb | pla.rb | plan9port.rb | plantuml.rb | platypus.rb | plenv.rb | plod.rb | plotutils.rb | plowshare.rb | plplot.rb | plt-racket.rb | plustache.rb | plzip.rb | pmccabe.rb | pmd.rb | pmdmini.rb | pms.rb | png++.rb | png2ico.rb | pngcheck.rb | pngcrush.rb | pngnq.rb | pngpaste.rb | pngquant.rb | poco.rb | podiff.rb | podofo.rb | points2grid.rb | polarssl.rb | polipo.rb | polygen.rb | polyml.rb | ponyc.rb | ponysay.rb | poppler.rb | popt.rb | portaudio.rb | portmidi.rb | poster.rb | postgis.rb | postgres-xc.rb | postgresql.rb | postmark.rb | potrace.rb | pound.rb | povray.rb | pow.rb | powerman.rb | ppss.rb | pre-commit.rb | predictionio.rb | premake.rb | prettyping.rb | primesieve.rb | prips.rb | privoxy.rb | probatron4j.rb | proctools.rb | profanity.rb | proftpd.rb | proguard.rb | proj.rb | proof-general.rb | protobuf-c.rb | protobuf-swift.rb | protobuf.rb | proxychains-ng.rb | proxytunnel.rb | ps2eps.rb | psftools.rb | psgrep.rb | psqlodbc.rb | pssh.rb | pstoedit.rb | pstree.rb | psutils.rb | ptex.rb | pth.rb | ptunnel.rb | puf.rb | pulledpork.rb | pulseaudio.rb | pup.rb | pure-ftpd.rb | purescript.rb | pushpin.rb | putmail-queue.rb | putmail.rb | putty.rb | pv.rb | pwgen.rb | pwnat.rb | pwntools.rb | pwsafe.rb | pxz.rb | py2cairo.rb | py3cairo.rb | pyenv-ccache.rb | pyenv-pip-migrate.rb | pyenv-virtualenv.rb | pyenv-virtualenvwrapper.rb | pyenv-which-ext.rb | pyenv.rb | pyexiv2.rb | pygobject.rb | pygobject3.rb | pygtk.rb | pygtkglext.rb | pygtksourceview.rb | pylucene.rb | pypy.rb | pypy3.rb | pyqt.rb | pyqt5.rb | pyqwt.rb | pyside-tools.rb | pyside.rb | python.rb | python3.rb | q.rb | qbs.rb | qca.rb | qcachegrind.rb | qd.rb | qdbm.rb | qemu.rb | qi.rb | qjson.rb | qpdf.rb | qprint.rb | qrencode.rb | qscintilla2.rb | qstat.rb | qt.rb | qt5.rb | qtfaststart.rb | qtplay.rb | quantlib.rb | quassel.rb | quazip.rb | queequeg.rb | quex.rb | quilt.rb | quotatool.rb | quvi.rb | qwt.rb | qwtpolar.rb | qxmpp.rb | r3.rb | rabbitmq-c.rb | rabbitmq.rb | radamsa.rb | radare2.rb | ragel.rb | rainbarf.rb | rakudo-star.rb | rancid.rb | randomize-lines.rb | ranger.rb | rapidjson.rb | raptor.rb | rarian.rb | rasqal.rb | rats.rb | rbenv-aliases.rb | rbenv-binstubs.rb | rbenv-bundle-exec.rb | rbenv-bundler-ruby-version.rb | rbenv-bundler.rb | rbenv-communal-gems.rb | rbenv-ctags.rb | rbenv-default-gems.rb | rbenv-gem-rehash.rb | rbenv-gemset.rb | rbenv-readline.rb | rbenv-use.rb | rbenv-vars.rb | rbenv-whatis.rb | rbenv.rb | rc.rb | rcs.rb | rcssserver.rb | rdate.rb | rdfind.rb | rdiff-backup.rb | rds-command-line-tools.rb | rdup.rb | re2.rb | re2c.rb | readline.rb | readosm.rb | reattach-to-user-namespace.rb | reaver.rb | rebar.rb | reclass.rb | recode.rb | recoverjpeg.rb | recutils.rb | redir.rb | redis.rb | redland.rb | redo.rb | redpen.rb | redshift.rb | redsocks.rb | redstore.rb | regex-opt.rb | regina-rexx.rb | regldg.rb | remake.rb | remarshal.rb | remctl.rb | remind.rb | ren.rb | rename.rb | renameutils.rb | reop.rb | repl.rb | repo.rb | reposurgeon.rb | rest-shell.rb | restund.rb | resty.rb | rethinkdb.rb | rexster-console.rb | rexster.rb | rfcdiff.rb | rfcmarkup.rb | rfcstrip.rb | rgbds.rb | rhash.rb | rhino.rb | riak.rb | riemann-client.rb | riemann.rb | rig.rb | rinetd.rb | ringojs.rb | ripmime.rb | rkflashtool.rb | rkhunter.rb | rlog.rb | rlwrap.rb | rmate.rb | rmcast.rb | rmtrash.rb | rnv.rb | robodoc.rb | rock.rb | rocket.rb | rocksdb.rb | rolldice.rb | roundup.rb | rp.rb | rpg.rb | rpl.rb | rpm.rb | rpm2cpio.rb | rrdtool.rb | rsense.rb | rsnapshot.rb | rssh.rb | rsstail.rb | rsyslog.rb | rt-audio.rb | rtf2latex2e.rb | rtmpdump.rb | rtorrent.rb | rtpbreak.rb | rubber.rb | ruby-build.rb | ruby-install.rb | ruby.rb | runcocoa.rb | runit.rb | rush.rb | rust.rb | ry.rb | rzip.rb | s-lang.rb | s3cmd.rb | s3sync.rb | safe-rm.rb | saltstack.rb | sam2p.rb | samba.rb | sane-backends.rb | sary.rb | sassc.rb | savana.rb | saxon-b.rb | saxon.rb | sbcl.rb | sblim-sfcc.rb | sbt.rb | sbtenv.rb | sbuild.rb | sc68.rb | scala.rb | scalaenv.rb | scalariform.rb | scalastyle.rb | scale2x.rb | scamper.rb | scheme48.rb | schroedinger.rb | scm-manager.rb | scons.rb | screenbrightness.rb | screenfetch.rb | screenresolution.rb | scriptcs.rb | scrollkeeper.rb | scrub.rb | scrypt.rb | scsh.rb | sdcc.rb | sdcv.rb | sdf.rb | sdhash.rb | sdl.rb | sdl2.rb | sdl2_gfx.rb | sdl2_image.rb | sdl2_mixer.rb | sdl2_net.rb | sdl2_ttf.rb | sdl_gfx.rb | sdl_image.rb | sdl_mixer.rb | sdl_net.rb | sdl_rtf.rb | sdl_sound.rb | sdl_ttf.rb | sec.rb | sedna.rb | seexpr.rb | selecta.rb | selenium-server-standalone.rb | sendemail.rb | ser2net.rb | serd.rb | serialosc.rb | sersniff.rb | setweblocthumb.rb | sf-pwgen.rb | sfcgal.rb | sfk.rb | sflowtool.rb | sfml.rb | sgrep.rb | sha2.rb | shadowsocks-libev.rb | shakespeare.rb | shapelib.rb | shared-mime-info.rb | shellcheck.rb | shellinabox.rb | shiboken.rb | shivavg.rb | shmcat.rb | shmux.rb | shntool.rb | shocco.rb | shorten.rb | shpotify.rb | shrewsoft-vpn-client.rb | shtool.rb | shunit2.rb | sic.rb | sickbeard.rb | siege.rb | signify-osx.rb | signing-party.rb | silc-client.rb | silk.rb | simgrid.rb | simh.rb | simple-amqp-client.rb | simple-tiles.rb | since.rb | sip.rb | sipcalc.rb | sipp.rb | sipsak.rb | sisc-scheme.rb | sispmctl.rb | skinny.rb | skipfish.rb | skktools.rb | skytools.rb | sl.rb | sleepwatcher.rb | sleuthkit.rb | slimerjs.rb | sloccount.rb | slony.rb | slowhttptest.rb | slrn.rb | slurm.rb | smake.rb | smali.rb | smartmontools.rb | smartypants.rb | smlnj.rb | snap7.rb | snappy.rb | snappystream.rb | snapraid.rb | sngrep.rb | snobol4.rb | snort.rb | snow.rb | snownews.rb | sntop.rb | snzip.rb | socat.rb | soccerwindow2.rb | soci.rb | sofia-sip.rb | softhsm.rb | solid.rb | solr.rb | somagic-tools.rb | somagic.rb | sonar-runner.rb | sonar.rb | sord.rb | sound-touch.rb | source-highlight.rb | sourcekitten.rb | sox.rb | spark.rb | sparkey.rb | sparse.rb | spatialindex.rb | spatialite-gui.rb | spatialite-tools.rb | spawn-fcgi.rb | spdylay.rb | speech-tools.rb | speedtest_cli.rb | speex.rb | sphinx.rb | spidermonkey.rb | spim.rb | spin.rb | spiped.rb | splint.rb | spoof-mac.rb | spring-loaded.rb | spring-roo.rb | sproxy.rb | sqlcipher.rb | sqlite-analyzer.rb | sqlite.rb | sqlitebrowser.rb | sqliteman.rb | sqlmap.rb | sqoop.rb | sqsh.rb | sqtop.rb | squashfs.rb | squid.rb | squirrel.rb | sratom.rb | src.rb | srclib.rb | srecord.rb | srmio.rb | srtp.rb | ssdb.rb | ssdeep.rb | ssed.rb | ssh-copy-id.rb | sshguard.rb | sshrc.rb | sshtrix.rb | sshuttle.rb | ssldump.rb | sslh.rb | sslmate.rb | sslyze.rb | ssreflect.rb | ssss.rb | sstp-client.rb | st.rb | stanford-parser.rb | star.rb | stash-cli.rb | stgit.rb | stk.rb | stklos.rb | stlink.rb | stlviewer.rb | stoken.rb | stone.rb | storm.rb | stormssh.rb | stow.rb | streamripper.rb | stress.rb | strongswan.rb | stunnel.rb | stuntman.rb | style-check.rb | sub2srt.rb | subliminal.rb | submarine.rb | subnetcalc.rb | subversion.rb | suomi-malaga-voikko.rb | supersonic.rb | surfraw.rb | suricata.rb | svdlibc.rb | svg2pdf.rb | svg2png.rb | svtplay-dl.rb | swaks.rb | swatchbooker.rb | swfmill.rb | swftools.rb | swiftlint.rb | swig.rb | swish-e.rb | switchaudio-osx.rb | sword.rb | syck.rb | sync_gateway.rb | syncthing.rb | synfig.rb | synfigstudio.rb | synscan.rb | syntaxerl.rb | sysbench.rb | sysdig.rb | szip.rb | szl.rb | t1lib.rb | t1utils.rb | ta-lib.rb | tachyon.rb | tag.rb | taglib.rb | taktuk.rb | tal.rb | talk-filters.rb | talloc.rb | tarsnap.rb | task-spooler.rb | task.rb | taskd.rb | tasksh.rb | tbb.rb | tcc.rb | tclap.rb | tcpflow.rb | tcping.rb | tcpreplay.rb | tcpsplit.rb | tcptrace.rb | tcptraceroute.rb | tcptrack.rb | tcptunnel.rb | tcsh.rb | td.rb | teapot.rb | tee-clc.rb | teem.rb | teensy_loader_cli.rb | tegh.rb | telegraf.rb | telepathy-gabble.rb | telepathy-glib.rb | telepathy-idle.rb | telepathy-mission-control.rb | tenyr.rb | term.rb | terminal-notifier.rb | termrec.rb | termshare.rb | terraform.rb | tesseract.rb | testdisk.rb | tevent.rb | texapp.rb | texi2html.rb | texinfo.rb | texmath.rb | thc-pptp-bruter.rb | the_platinum_searcher.rb | the_silver_searcher.rb | thefuck.rb | theharvester.rb | theora.rb | thrift.rb | thrulay.rb | tidy-html5.rb | tidyp.rb | tiff2png.rb | tig.rb | tika.rb | timedog.rb | timelimit.rb | timidity.rb | tin.rb | tinc.rb | tintin.rb | tiny-fugue.rb | tinycdb.rb | tinyproxy.rb | tinyscheme.rb | tinysvm.rb | tinyxml.rb | tinyxml2.rb | tippecanoe.rb | titan-server.rb | tivodecode.rb | tkdiff.rb | tlassemble.rb | tlsdate.rb | tmpreaper.rb | tmpwatch.rb | tmux-cssh.rb | tmux-mem-cpu-load.rb | tmux.rb | tn5250.rb | tnef.rb | tnote.rb | todo-txt.rb | tofrodos.rb | toilet.rb | tokyo-cabinet.rb | tokyo-dystopia.rb | tokyo-tyrant.rb | tomcat-native.rb | tomcat.rb | tomee-jax-rs.rb | tomee-plume.rb | tomee-plus.rb | tomee-webprofile.rb | topgit.rb | tor.rb | torrentcheck.rb | torsocks.rb | tpl.rb | tpp.rb | tracebox.rb | tractorgen.rb | trafficserver.rb | trafshow.rb | trang.rb | transcrypt.rb | translate-toolkit.rb | transmission.rb | trash.rb | tre.rb | tree.rb | treecc.rb | treeline.rb | trr.rb | truecrack.rb | tsung.rb | tta.rb | ttf2eot.rb | ttf2pt1.rb | ttfautohint.rb | tth.rb | tty-clock.rb | ttylog.rb | ttyrec.rb | ttytter.rb | tuntap.rb | tutum.rb | tvnamer.rb | twemcache.rb | two-lame.rb | txt2man.rb | txt2tags.rb | typesafe-activator.rb | typespeed.rb | u-boot-tools.rb | uade.rb | uberftp.rb | uchardet.rb | ucl.rb | ucommon.rb | ucspi-tcp.rb | ucspi-tools.rb | udis86.rb | udns.rb | udptunnel.rb | udpxy.rb | udunits.rb | ufraw.rb | uim.rb | unac.rb | unar.rb | unarj.rb | unbound.rb | uncrustify.rb | unfs3.rb | uni2ascii.rb | unifdef.rb | unison.rb | unittest-cpp.rb | unittest.rb | unixodbc.rb | unoconv.rb | unp.rb | unpaper.rb | unrar.rb | unrtf.rb | unshield.rb | unyaffs.rb | uptimed.rb | upx.rb | uriparser.rb | urlview.rb | uru.rb | usbmuxd.rb | userspace-rcu.rb | utimer.rb | uudeview.rb | uwsgi.rb | v.rb | v8.rb | vala.rb | valabind.rb | valgrind.rb | validns.rb | valkyrie.rb | varnish.rb | vassh.rb | vault-cli.rb | vavrdiasm.rb | vbindiff.rb | vc4asm.rb | vcdimager.rb | vcodex.rb | vcprompt.rb | vcsh.rb | vde.rb | vegeta.rb | vera++.rb | verilator.rb | vert.x.rb | vf.rb | vgmstream.rb | vice.rb | vifm.rb | vilistextum.rb | vim.rb | vimpager.rb | vimpc.rb | vip.rb | virtualhost.sh.rb | virtualpg.rb | virtuoso.rb | visionmedia-watch.rb | visitors.rb | visualnetkit.rb | vit.rb | vmalloc.rb | vncsnapshot.rb | vnstat.rb | vnu.rb | volatility.rb | voldemort.rb | voltdb.rb | voms.rb | vorbis-tools.rb | vorbisgain.rb | vowpal-wabbit.rb | vpcs.rb | vpnc.rb | vramsteg.rb | vrpn.rb | vsftpd.rb | vstr.rb | vtclock.rb | vte.rb | vte3.rb | vttest.rb | w-calc.rb | w3m.rb | wait_on.rb | wakatime-cli.rb | wakeonlan.rb | waon.rb | watch-sim.rb | watch.rb | watchman.rb | wavpack.rb | wbox.rb | wdiff.rb | web100clt.rb | webalizer.rb | webfs.rb | webkit2png.rb | webp.rb | weechat.rb | weighttp.rb | wellington.rb | wemux.rb | wget.rb | wgetpaste.rb | whatmask.rb | when.rb | whereami.rb | whirr.rb | whitedb.rb | whohas.rb | why3.rb | wifi-password.rb | wiggle.rb | wildfly-as.rb | wimlib.rb | wine.rb | winetricks.rb | winexe.rb | wireshark.rb | wirouter_keyrec.rb | with-readline.rb | wla-dx.rb | wordnet.rb | wordplay.rb | wps2odt.rb | wput.rb | wrangler.rb | writerperfect.rb | wrk-trello.rb | wrk.rb | wry.rb | wslay.rb | wsmancli.rb | wtf.rb | wv.rb | wv2.rb | wwwoffle.rb | wxmac.rb | wxpython.rb | wy60.rb | wyrd.rb | x11vnc.rb | x264.rb | x265.rb | xa.rb | xapian.rb | xar-mackyle.rb | xaric.rb | xastir.rb | xbee-comm.rb | xcproj.rb | xctool.rb | xdelta.rb | xerces-c.rb | xlslib.rb | xml-coreutils.rb | xml-security-c.rb | xml-tooling-c.rb | xml2.rb | xmlcatmgr.rb | xmlformat.rb | xmlrpc-c.rb | xmlsh.rb | xmlstarlet.rb | xmlto.rb | xmltoman.rb | xmp.rb | xonsh.rb | xorriso.rb | xplanet.rb | xplanetfx.rb | xqilla.rb | xrootd.rb | xsane.rb | xsp.rb | xspin.rb | xstow.rb | xsw.rb | xtail.rb | xtitle.rb | xulrunner.rb | xvid.rb | xz.rb | yacas.rb | yaf.rb | yafc.rb | yajl.rb | yamcha.rb | yamdi.rb | yaml-cpp.rb | yap.rb | yara.rb | yash.rb | yasm.rb | yaws.rb | yaz.rb | yaze-ag.rb | yazpp.rb | yconalyzer.rb | ydict.rb | yeti.rb | ykclient.rb | ykpers.rb | yle-dl.rb | youtube-dl.rb | yubico-piv-tool.rb | yuicompressor.rb | yydecode.rb | z.rb | z80asm.rb | z80dasm.rb | zabbix.rb | zbackup.rb | zbar.rb | zdelta.rb | zebra.rb | zeromq.rb | zile.rb | zinc.rb | zint.rb | zmap.rb | znc.rb | zookeeper.rb | zopfli.rb | zorba.rb | zpaq.rb | zpython.rb | zsh-completions.rb | zsh-history-substring-search.rb | zsh-lovers.rb | zsh-syntax-highlighting.rb | zsh.rb | zshdb.rb | zssh.rb | zsync.rb | zurl.rb | zxcc.rb | zzuf.rb |
+
 * DONE Get spoken definitions from the Meriam dictionary
   CLOSED: [2015-06-30 Tue 11:26]
   :PROPERTIES:
@@ -308,10 +580,27 @@ Let us try this out on a few words: asynchronous  synchronous  flibbity
 
 I guess this would be helpful sometimes ;)
 
-* Spoken translations in Emacs
+* DONE Spoken translations in Emacs
+  CLOSED: [2015-07-01 Wed 11:42]
+  :PROPERTIES:
+  :categories: emacs,speech
+  :date:     2015/07/01 11:42:28
+  :updated:  2015/07/01 11:42:28
+  :END:
 
-Finally, for fun, let us try a translation. Here is a free translator that has the courtesy to reply with json with the translated text in it. http://mymemory.translated.net/api/get?q=Hello%20World!&langpair=en|de I had to download a German voice called Anna, then get some translated code. Here it is!
+Finally, continuing our experiments with computer speech for fun, let us try a translation of text to another language that is then spoken. Here is a free translator that has the courtesy to reply with json with the translated text in it. http://mymemory.translated.net/api/get?q=Hello%20World!&langpair=en|de I had to download a German voice called Anna, then get some translated text.
 
+As with previous posts, there is a video: https://www.youtube.com/watch?v=8CBKnahE0ak. I am trying ScreenFlow for these (instead of Camtasia), and I still have not quite mastered the aspect ratio, so the videos still look a little odd.
+
+As a reminder, we have this easy way to speak text in applescript. If you are on Linux, check out [[https://wiki.archlinux.org/index.php/Festival][Festival]] and on windows you may find some inspiration [[http://stackoverflow.com/questions/1040655/ms-speech-from-command-line][here]].
+
+#+BEGIN_SRC emacs-lisp
+(do-applescript "say \"Hello. My name is John. I am glad to meet you.\"")
+#+END_SRC
+
+#+RESULTS:
+
+You can retrieve json data of the translated text, and then we can use it in our [[http://kitchingroup.cheme.cmu.edu/blog/2015/06/29/Getting-Emacs-to-read-to-me/][word-speak]] function we previously developed. Here is an example in in German.
 #+BEGIN_SRC emacs-lisp :results code
 (let* ((words-voice "Anna")
        (text "Hello. My name is John. I am glad to meet you.")
@@ -330,6 +619,7 @@ Finally, for fun, let us try a translation. Here is a free translator that has t
 #+BEGIN_SRC emacs-lisp
 "Hallo. Mein Name ist John. Ich freue mich, Sie kennen zu lernen.!"
 #+END_SRC
+
 
 How about Chinese? Again, I downloaded a Chinese voice called "Ting-Ting".
 #+BEGIN_SRC emacs-lisp :results code
@@ -441,23 +731,33 @@ What? Of course that looks like an opportunity for an org-link ;)
 
 cas:71-43-2
 
-Of course, you might also use button-lock.
+https://en.wikipedia.org/wiki/CAS_Registry_Number
 
-cite:alvarez-moreno-2015-manag-comput
+
+Of course, you might also use button-lock for some more flexibility, say CAS: 71-43-2 or CAS 71-43-2.
+
+cas 56-67-7
 
 #+BEGIN_SRC emacs-lisp
+(setq cas-re  "\\(CAS\\|cas\\)\\(:?\\)\\s-*\\([0-9]\\{2,7\\}-[0-9]\\{2\\}-[0-9]\\)")
 (button-lock-set-button
- org-ref-cite-re
- nil
- :face '((:background "gray80") (:underline t))
- :help-echo (lambda (window object position)
-	      (save-excursion
-		(goto-char (position))
-		(format "%s" (org-element-context)))))
+ cas-re
+ (lambda ()
+   (interactive)
+   (save-match-data
+     (let ((s (get-surrounding-text-with-property 'cas)))
+       (string-match cas-re s)
+       (message-box "you clicked on cas number: %s" (match-string 3 s))
+     )
+
+   ))
+ :face '((:underline t))
+ :additional-property 'cas
+ )
 #+END_SRC
 
 #+RESULTS:
-| \(cite\ | nocite\ | citet\ | citet\*\ | citep\ | citep\*\ | citealt\ | citealt\*\ | citealp\ | citealp\*\ | citenum\ | citetext\ | citeauthor\ | citeauthor\*\ | citeyear\ | citeyear\*\ | Citet\ | Citep\ | Citealt\ | Citealp\ | Citeauthor\ | Cite\ | parencite\ | Parencite\ | footcite\ | footcitetext\ | textcite\ | Textcite\ | smartcite\ | Smartcite\ | cite\*\ | parencite\*\ | supercite\ | autocite\ | Autocite\ | autocite\*\ | Autocite\*\ | Citeauthor\*\ | citetitle\ | citetitle\*\ | citedate\ | citedate\*\ | citeurl\ | fullcite\ | footfullcite\ | notecite\ | Notecite\ | pnotecite\ | Pnotecite\ | fnotecite\ | cites\ | Cites\ | parencites\ | Parencites\ | footcites\ | footcitetexts\ | smartcites\ | Smartcites\ | textcites\ | Textcites\ | supercites\ | autocites\ | Autocites\ | bibentry\):\([a-zA-Z0-9-_:\./]*,?\)* | (0 (quote (face ((:background gray80) (:underline t)) keymap (keymap (mouse-1)) button-lock t mouse-face button-lock-mouse-face help-echo (lambda (window object position) (save-excursion (goto-char (position)) (format %s (org-element-context)))) rear-nonsticky t)) append) |
+| \(CAS\ | cas\)\(:?\)\s-*\([0-9]\{2,7\}-[0-9]\{2\}-[0-9]\) | (0 (quote (face ((:underline t)) keymap (keymap (mouse-1 lambda nil (interactive) (save-match-data (let ((s (get-surrounding-text-with-property (quote cas)))) (string-match cas-re s) (message-box you clicked on cas number: %s (match-string 3 s)))))) button-lock t cas t mouse-face button-lock-mouse-face rear-nonsticky t)) append) |
 
 
 #+BEGIN_SRC emacs-lisp
@@ -897,18 +1197,66 @@ Indexing done!
 
 
 #+BEGIN_SRC sh
-swish-e -f ~/.swish-e/office-index.swish-e -x '%r\t%p\n' -w alesi hydrogen | grep pptx
+swish-e -f ~/.swish-e/office-index.swish-e -x '%r\t%p\n' -w bingyun
 #+END_SRC
 
 #+RESULTS:
-: 430	/Users/jkitchin/Dropbox/CMU/projects/archive/IAES/amine-sorbents/presentations/2008/Symposium/RA-Symposium-Poster_v1.pptx
-: 388	/Users/jkitchin/Dropbox/CMU/projects/archive/IAES/amine-sorbents/presentations/2009/03.24 NETL Energy/walesi_NETL_PITT_poster.pptx
-: 388	/Users/jkitchin/Dropbox/CMU/archive/group/students/Rich Alesi/walesi-presentations/RA-NETL-Poster(2-20).pptx
-: 388	/Users/jkitchin/Dropbox/CMU/projects/archive/IAES/2007-2009/CO2 management thrust area/NETL approvals/submitted/walesi_NETL_PITT_poster.pptx
-: 335	/Users/jkitchin/Dropbox/CMU/projects/archive/IAES/amine-sorbents/presentations/2009/09.24 PCC/walesi_NETL_IPCC_poster.pptx
-: 335	/Users/jkitchin/Dropbox/CMU/projects/archive/IAES/amine-sorbents/presentations/2009/05.04 Carbon Capture Conference/walesi_NETL_CCS_poster.pptx
-: 335	/Users/jkitchin/Dropbox/CMU/projects/archive/IAES/2007-2009/CO2 management thrust area/NETL approvals/submitted/walesi_NETL_CCS_poster.pptx
-: 260	/Users/jkitchin/Dropbox/CMU/meetings/@archive/2009/kitchin-Dow/@kitchin-dow-overview.pptx
+#+begin_example
+# SWISH format: 2.4.7
+# Search words: bingyun
+# Removed stopwords:
+# Number of hits: 47
+# Search time: 0.003 seconds
+# Run time: 0.015 seconds
+1000	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY12/Task-94-solvent-Raman/monthly-reports/co2-april-2012-kitchin.docx
+1000	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY12/Task-94-solvent-Raman/monthly-reports/co2-january-2012-kitchin.docx
+1000	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY12/Task-94-solvent-Raman/monthly-reports/co2-june-2012-kitchin.docx
+1000	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY12/Task-94-solvent-Raman/monthly-reports/co2-march-2012-kitchin.docx
+1000	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY12/Task-94-solvent-Raman/monthly-reports/co2-may-2012-kitchin.docx
+922	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY12/Task-94-solvent-Raman/monthly-reports/August-2012-all-reports-RUA.docx
+824	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY12/Task-94-solvent-Raman/monthly-reports/May-2012-all-reports-RUA.docx
+824	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY12/Task-94-solvent-Raman/monthly-reports/January-2012-all-reports-RUA.docx
+824	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY12/amine-co2/monthly-reports/Carbon Capture Monthly Report - December 2011 - kitchin.docx
+824	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY12/Task-94-solvent-Raman/monthly-reports/co2-september-2012-kitchin.docx
+824	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY12/Task-94-solvent-Raman/monthly-reports/co2-july-2012-kitchin.docx
+824	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY12/Task-94-solvent-Raman/monthly-reports/co2-february-2012-kitchin.docx
+824	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY12/Task-94-solvent-Raman/monthly-reports/co2-august-2012-kitchin.docx
+824	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY12/Task-94-solvent-Raman/monthly-reports/Carbon Capture Monthly September 2012 Ver 3.docx
+824	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY12/Task-94-solvent-Raman/monthly-reports/April-2012-all-reports-RUA.docx
+824	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY12/amine-co2/monthly-reports/December-2011-luebke-monthly.docx
+824	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY12/Task-94-solvent-Raman/monthly-reports/February-2012-all-reports-RUA.docx
+711	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY12/Task-94-solvent-Raman/monthly-reports/Carbon Capture Monthly Oct 2012 Ver 2.docx
+561	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY13/FY13-URS/Carbon Capture Monthly Template FY-13 ver 1.docx
+561	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY12/amine-co2/monthly-reports/November-2011-luebke-summary.docx
+561	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY12/Task-94-solvent-Raman/monthly-reports/March-2012-all-reports-RUA.docx
+561	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY12/Task-94-solvent-Raman/monthly-reports/kitchin-sept-2013-quarterly-Carbon Capture Monthly Template FY-13 ver 10.docx
+561	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY13/task-136/Carbon Capture Monthly Template FY-13 ver 7 Solvents Hydrophobic Enick  rme.docx
+561	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY13/task-136/kitchin-Mar-Carbon Capture Monthly Template FY-13 ver 7.docx
+561	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY13/task-136/kitchin-july-2013-Carbon Capture Monthly Template FY-13 ver 9.docx
+561	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY13/task-136/kitchin-Carbon Capture Monthly Template FY-13 - Feb.docx
+561	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY13/task-136/kitchin-august-2013-Carbon Capture Monthly Template FY-13 ver 10.docx
+561	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY13/task-136/kitchin-april-Carbon Capture Monthly Template FY-13 ver 7.docx
+561	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY13/task-136/CarbonCaptureAugust.docx
+561	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY13/task-136/CarbonCaptureApril-1.docx
+561	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY13/task-136/CaptureMonthlyMay-1.docx
+561	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY12/amine-co2/monthly-reports/October-2011-luebke-monthly.docx
+561	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY12/Task-94-solvent-Raman/monthly-reports/December-2012.docx
+561	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY12/Task-94-solvent-Raman/monthly-reports/co2-october-2012-kitchin.docx
+561	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY12/Task-94-solvent-Raman/monthly-reports/co2-november-2012-kitchin.docx
+561	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY12/Task-94-solvent-Raman/monthly-reports/Carbon Capture Monthly Nov 2012 Final.docx
+561	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY12/Task-94-solvent-Raman/monthly-reports/co2-january-2013-kitchin.docx
+561	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY12/Task-94-solvent-Raman/monthly-reports/co2-december-2012-kitchin.docx
+561	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY13/task-136/kitchin-may-2013Carbon Capture Monthly Template FY-13 ver 8-1.docx
+355	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY14/kitchin-feb-2014-Carbon Capture Monthly Template FY-14 ver 9.docx
+355	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY14/2014-08-monthly-kitchin.docx
+355	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY14/carbon-capture-templates/kitchin-2014-3rd-quarterly-report.docx
+355	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY14/kitchin-may-2014-Carbon Capture Monthly Template FY-14 ver 9.docx
+355	/Users/jkitchin/Dropbox/kitchingroup/students/ahallenb/reports/2014-01-kitchin-Carbon Capture Monthly Template FY-14 ver 6.docx
+355	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY14/CC-November-2013.docx
+355	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY14/kitchin-Carbon Capture Monthly Template FY-14 ver 11-2.docx
+355	/Users/jkitchin/Dropbox/CMU/projects/archive/RUA/FY13/task-136/kitchin-Carbon Capture Monthly Template FY-14 ver 4.docx
+.
+#+end_example
 
 
 * DONE Integrating swish-e and Emacs
