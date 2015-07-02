@@ -38,6 +38,10 @@ def lispify(L):
             s += [":{0} {1}".format(key, L[key].lisp)]
         return '(' + ' '.join(s) + ')'
 
+def lispify_str(s):
+    #s = s.replace("\"", "\\\"")
+    return s
+
 get_dict(str)['lisp'] = property(lambda s:'"{}"'.format(str(s)))
 get_dict(float)['lisp'] = property(lambda f:'{}'.format(str(f)))
 get_dict(int)['lisp'] = property(lambda f:'{}'.format(str(f)))
