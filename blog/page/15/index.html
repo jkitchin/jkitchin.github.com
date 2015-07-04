@@ -83,6 +83,175 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="A-helm-interface-to-ps"></div>
+      <h2 class="blog_post_title"><a href="/blog/2014/11/22/A-helm-interface-to-ps/" rel="bookmark" title="Permanent Link to A helm interface to ps">A helm interface to ps</a></h2>
+      <p><small><span class="blog_post_date">Posted November 22, 2014 at 12:57 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/helm-emacs/'>helm emacs</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2014/11/22/A-helm-interface-to-ps#disqus_thread">View Comments</a>
+      <p><small><span class="blog_post_date">Updated November 22, 2014 at 03:00 PM</span>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+Occassionally, I need to find the PID of a process to kill it or do something else. Usually I do the old-school unix thing  of piping the output of one command (ps) to another command (grep) to filter out interesting lines. Then, I can do something with that output.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-sh">ps aux | grep emacs
+</pre>
+</div>
+
+<pre class="example">
+jkitchin         4781   3.1  0.8  2639316  70432 s002  S    12:45PM   0:06.68 /usr/local/Cellar/emacs/HEAD/Emacs.app/Contents/MacOS/Emacs
+jkitchin         4777   0.0  0.0  2433364    932 s002  S    12:45PM   0:00.00 /bin/bash /usr/local/bin/emacs
+jkitchin         4874   0.0  0.0  2432784    604   ??  S    12:46PM   0:00.00 grep emacs
+</pre>
+
+<p>
+Today, I will explore using helm in emacs to do something like that. The idea is to create a helm command that uses the output of ps as candidates, and then you select the process you want through the helm interface, and then select an action.
+</p>
+
+<p>
+It is easy enough to get the output of the ps command in emacs like this. Here, we just get the first three results, and specify the output we want.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">let</span> ((results (split-string
+                (shell-command-to-string
+                 <span style="color: #228b22;">"ps x -o ruser,pid,command"</span>) <span style="color: #228b22;">"\n"</span>)))
+  (loop for i from 1 to 3
+        collect (elt results i)))
+</pre>
+</div>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #228b22;">"jkitchin   139 /sbin/launchd"</span> <span style="color: #228b22;">"jkitchin   151 /usr/libexec/UserEventAgent (Aqua)"</span> <span style="color: #228b22;">"jkitchin   152 /usr/sbin/distnoted agent"</span>)
+</pre>
+</div>
+
+<p>
+These will be the candidates for the helm command. We will create a few actions. One will provide details about the pid, and one could in principle kill the pid or send some signal to it. We will just have these actions create message boxes for us to see helm in action. We will make the kill function interactive, so it allows an arbitrary signal to be sent. The other actions are placeholders for future actions, and so we can show off some shortcuts in helm later.
+</p>
+
+<p>
+For the candidates, we will construct a list of cons cells where the car is a line from ps, and that is what will show in the helm selection interface, and the cdr will be the pid which we get by parsing the line to get the second element. When you select an entry in helm, the cdr of that entry (if it exists) is passed to the action function selected.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">ps-candidates</span> ()
+  <span style="color: #228b22;">"return a list of cons cells (line . pid) for the output of ps"</span>
+  (loop for line in
+        ;; <span style="color: #ff0000; font-weight: bold;">skip the first line which is a header</span>
+        (cdr (split-string
+              (shell-command-to-string
+               <span style="color: #228b22;">"ps ax -o ruser,pid,command"</span>) <span style="color: #228b22;">"\n"</span>))
+        collect
+        (cons
+         line
+         (elt (split-string line) 1))))
+
+(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">ps-details</span> (pid)
+  <span style="color: #228b22;">"give details of PID."</span>
+  (message-box <span style="color: #228b22;">"%s"</span> (shell-command-to-string (format <span style="color: #228b22;">"ps ux %s"</span> pid))))
+
+(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">ps-kill</span> (pid)
+  <span style="color: #228b22;">"Message box instead of killing PID."</span>
+  (<span style="color: #8b0000;">let</span> ((SIG (read-string <span style="color: #228b22;">"Kill with signal: "</span>)))
+    (message-box <span style="color: #228b22;">"Killing pid %s with signal %s"</span> pid SIG)))
+
+(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">ps-hello</span> (pid)
+  (message-box <span style="color: #228b22;">"Silly 3rd action for %s"</span> pid))
+
+(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">ps-bye</span> (pid)
+  (message-box <span style="color: #228b22;">"Silly 4th action for %s"</span> pid))
+
+(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">ps-byebye</span> (pid)
+  (message-box <span style="color: #228b22;">"Silly 5th action for %s"</span> pid))
+
+;; <span style="color: #ff0000; font-weight: bold;">the source variable for helm</span>
+(setq helm-source-ps '((name . <span style="color: #228b22;">"ps output"</span>)
+                       ;; <span style="color: #ff0000; font-weight: bold;">these are the entries you can select</span>
+                       (candidates . ps-candidates)
+                       ;; <span style="color: #ff0000; font-weight: bold;">these are the actions available for the</span>
+                       ;; <span style="color: #ff0000; font-weight: bold;">selected entry. each function gets the cdr</span>
+                       ;; <span style="color: #ff0000; font-weight: bold;">of the entry selected.</span>
+                       (action . ((<span style="color: #228b22;">"details"</span> . ps-details)
+                                  (<span style="color: #228b22;">"kill"</span> . ps-kill)
+                                  (<span style="color: #228b22;">"hello"</span> . ps-hello)
+                                  (<span style="color: #228b22;">"bye"</span> . ps-bye)
+                                  (<span style="color: #228b22;">"byb-bye"</span> . ps-byebye)))))
+
+;; <span style="color: #ff0000; font-weight: bold;">now we run the helm command</span>
+(helm <span style="color: #cd0000;">:sources</span> '(helm-source-ps))
+</pre>
+</div>
+
+
+<p>
+You can navigate the helm interface with the arrows, or C-n (next/down) C-p (previous/up), or by typing in the pattern you want to match. There are only two actions here. The first one is the default action, which you can run by pressing tab or enter. The subtle difference between them is that tab leaves the helm window open, while enter runs the default action and closes the helm window. You can get it back with C-c h r (or M-x helm-resume). 
+</p>
+
+<p>
+To get the kill function, you can press C-z to get the action menu, and then press enter. Helm provides a shortcut for this. C-e selects the second action, so when you remember what the second action is and you want it, you can skip the C-z activity. You can access the third action with C-j. There is a command like helm-select-4th-action, but it is not bound to a key, so we have to make one like this.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(define-key helm-map (kbd <span style="color: #228b22;">"C-k"</span>) 'helm-select-4th-action)
+</pre>
+</div>
+
+<p>
+You can also define a 5th action like this. It does not seem possible to define an arbitrary nth action, because you cannot get an input for n while helm uses the minibuffer. 
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">5th-action</span> ()
+ (interactive)
+ (<span style="color: #8b0000;">let</span> ((n 5))
+   ;; <span style="color: #ff0000; font-weight: bold;">actions start at 0, so the 5th action is actually indexed at 4</span>
+   (helm-select-nth-action (- n 1))))
+
+(define-key helm-map (kbd <span style="color: #228b22;">"C-l"</span>) '5th-action)
+</pre>
+</div>
+
+<p>
+That is the proof of concept in using a helm interface to interact with unix commands. There are other actions you might choose, like renice, or maybe it is possible to suspend a job by pid. The real application for this I had in mind was interaction with the Torque queue system, where you might want to modify, kill jobs in the queue system this way. I could also see applications in user management, where you have some well defined functions to run, e.g. checking quotas, changing passwords, etc&#x2026; Clearly the utility of this approach rests heavily on there being a set of actions you do regularly enough to justify coding them into functions, and often enough you would remember to use your helm command! It is an interesting approach as an alternative to writing shell scripts to do this though.
+</p>
+
+<p>
+This post might make more sense if you watch this video of the helm interface in action: <a href="http://www.youtube.com/watch?v=3FImB6OwHI0">http://www.youtube.com/watch?v=3FImB6OwHI0</a> </p>
+<p>Copyright (C) 2014 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2014/11/22/A-helm-interface-to-ps.org">org-mode source</a><p><p>Org-mode version = 8.2.7c</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2014/11/22/A-helm-interface-to-ps#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="The-loop-macro-in-emacs-lisp"></div>
       <h2 class="blog_post_title"><a href="/blog/2014/11/20/The-loop-macro-in-emacs-lisp/" rel="bookmark" title="Permanent Link to The loop macro in emacs lisp">The loop macro in emacs lisp</a></h2>
       <p><small><span class="blog_post_date">Posted November 20, 2014 at 09:50 AM</span> | categories:
@@ -1401,348 +1570,6 @@ Some of these are now included in <a href="https://github.com/jkitchin/jmax/blob
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2014/11/04/Accessing-web-of-science-entry-citing-and-related-articles-from-a-doi-in-emacs#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="words-some-interesting-utilities-for-text-in-emacs"></div>
-      <h2 class="blog_post_title"><a href="/blog/2014/11/03/words-some-interesting-utilities-for-text-in-emacs/" rel="bookmark" title="Permanent Link to words - some interesting utilities for text in emacs">words - some interesting utilities for text in emacs</a></h2>
-      <p><small><span class="blog_post_date">Posted November 03, 2014 at 11:31 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2014/11/03/words-some-interesting-utilities-for-text-in-emacs#disqus_thread">View Comments</a>
-      <p><small><span class="blog_post_date">Updated November 04, 2014 at 09:20 AM</span>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-Recently I <a href="http://kitchingroup.cheme.cmu.edu/blog/2014/11/02/A-generalized-org-link-with-an-extendable-menu-of-actions/">posted</a> about an org-link with a menu. Here I extend the idea to a command that will do approximately the same thing. The idea is a command called words that will be run interactively. It will grab the word at point, or operate on a selected region, and then offer a menu to lookup the definition, find it in a thesaurus, google it, etc&#x2026; We structure the code so you can add functions to it later, without directly modifying this code. The only limitation of this code is that the functions must have a signature with no arguments. That does not seem terribly limiting, as we can check for a region, and use it if we want (see the words-google function).
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">words-dictionary</span> ()
-  (interactive)
-  (browse-url
-   (format
-    <span style="color: #228b22;">"http://dictionary.reference.com/browse/%s?s=t"</span>
-    (thing-at-point 'word))))
-
-(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">words-thesaurus</span> ()
-  (interactive)
-  (browse-url
-   (format
-    <span style="color: #228b22;">"http://www.thesaurus.com/browse/%s"</span>
-    (thing-at-point 'word))))
-
-(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">words-google</span> ()
-  (interactive)  
-  (browse-url
-   (format
-    <span style="color: #228b22;">"http://www.google.com/search?q=%s"</span>
-    (<span style="color: #8b0000;">if</span> (region-active-p)
-        (url-hexify-string (buffer-substring (region-beginning)
-                                             (region-end)))
-      (thing-at-point 'word)))))
-
-
-(<span style="color: #8b0000;">defvar</span> <span style="color: #8b008b;">words-funcs</span> '()
- <span style="color: #228b22;">"functions to run in `</span><span style="color: #cd0000;">words</span><span style="color: #228b22;">'. Each entry is a list of (key menu-name function)."</span>)
-
-(setq words-funcs
-  '((<span style="color: #228b22;">"d"</span> <span style="color: #228b22;">"ictionary"</span> words-dictionary)
-    (<span style="color: #228b22;">"t"</span> <span style="color: #228b22;">"hesaurus"</span> words-thesaurus)
-    (<span style="color: #228b22;">"g"</span> <span style="color: #228b22;">"oogle"</span> words-google)))
- 
-
-(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">words</span> ()
-  (interactive)
-   (message
-   (concat
-    (mapconcat
-     (<span style="color: #8b0000;">lambda</span> (tup)
-       (concat <span style="color: #228b22;">"["</span> (elt tup 0) <span style="color: #228b22;">"]"</span>
-               (elt tup 1) <span style="color: #228b22;">" "</span>))
-     words-funcs <span style="color: #228b22;">""</span>) <span style="color: #228b22;">": "</span>))
-   (<span style="color: #8b0000;">let</span> ((input (read-char-exclusive)))
-     (funcall
-      (elt 
-       (assoc
-        (char-to-string input) words-funcs)
-       2))))
-</pre>
-</div>
-
-<pre class="example">
-words
-</pre>
-
-<p>
-This works nicely. Now, let us add a new function that looks up the word or selection on twitter. We just define a new function, and add the menu selection to the words-func variable. 
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">words-twitter</span> ()
-  (interactive)
-  (browse-url
-   (format
-    <span style="color: #228b22;">"https://twitter.com/search?q=%s"</span>
-    (<span style="color: #8b0000;">if</span> (region-active-p)
-        (url-hexify-string (buffer-substring (region-beginning)
-                                             (region-end)))
-      (thing-at-point 'word)))))
-
-(add-to-list 'words-funcs
-  '(<span style="color: #228b22;">"w"</span> <span style="color: #228b22;">"twitter"</span> words-twitter)
-  t) ; <span style="color: #ff0000; font-weight: bold;">append</span>
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="left" />
-
-<col  class="left" />
-
-<col  class="left" />
-</colgroup>
-<tbody>
-<tr>
-<td class="left">d</td>
-<td class="left">ictionary</td>
-<td class="left">words-dictionary</td>
-</tr>
-
-<tr>
-<td class="left">t</td>
-<td class="left">hesaurus</td>
-<td class="left">words-thesaurus</td>
-</tr>
-
-<tr>
-<td class="left">g</td>
-<td class="left">oogle</td>
-<td class="left">words-google</td>
-</tr>
-
-<tr>
-<td class="left">w</td>
-<td class="left">twitter</td>
-<td class="left">words-twitter</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-Finally, the most complicated idea: spelling and grammar. I know there is flyspell, and such, but they are build on an ancient dictionary. Here, for fun, we explore a web api. This next function is not a trivial one, and I will not explain it here beyond saying it sends a selection of text to a url, gets an xml response back, and that response is parsed and printed to a buffer by this function. The main point is to illustrate we can do interesting things with a selection of text!
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">words-atd</span> ()
-  <span style="color: #228b22;">"Send paragraph at point to After the deadline for spell and grammar checking."</span>
-  (interactive)
-  
-  (<span style="color: #8b0000;">let*</span> ((url-request-method <span style="color: #228b22;">"POST"</span>)
-         (url-request-data (format
-                            <span style="color: #228b22;">"key=some-random-text-&amp;data=%s"</span>
-                            (url-hexify-string
-                             (thing-at-point 'paragraph))))
-         (xml  (<span style="color: #8b0000;">with-current-buffer</span>
-                   (url-retrieve-synchronously
-                    <span style="color: #228b22;">"http://service.afterthedeadline.com/checkDocument"</span>)
-                 (xml-parse-region url-http-end-of-headers (point-max))))
-         (results (car xml))
-         (errors (xml-get-children results 'error)))
-    
-    (switch-to-buffer-other-frame <span style="color: #228b22;">"*ATD*"</span>)
-    (erase-buffer)
-    (<span style="color: #8b0000;">dolist</span> (err errors)
-      (<span style="color: #8b0000;">let*</span> ((children (xml-node-children err))
-             ;; <span style="color: #ff0000; font-weight: bold;">for some reason I could not get the string out, and had to do this.</span>
-             (s (car (last (nth 1 children))))
-             ;; <span style="color: #ff0000; font-weight: bold;">the last/car stuff doesn't seem right. there is probably</span>
-             ;; <span style="color: #ff0000; font-weight: bold;">a more idiomatic way to get this</span>
-             (desc (last (car (xml-get-children children 'description))))
-             (type (last (car (xml-get-children children 'type))))
-             (suggestions (xml-get-children children 'suggestions))
-             (options (xml-get-children (xml-node-name suggestions) 'option))
-             (opt-string  (mapconcat
-                           (<span style="color: #8b0000;">lambda</span> (el)
-                             (<span style="color: #8b0000;">when</span> (listp el)
-                               (car (last el))))
-                           options
-                           <span style="color: #228b22;">" "</span>)))
-
-        (insert (format <span style="color: #228b22;">"** %s ** %s</span>
-<span style="color: #228b22;">Description: %s</span>
-<span style="color: #228b22;">Suggestions: %s</span>
-
-<span style="color: #228b22;">"</span> s type desc opt-string))))))
-
-(add-to-list 'words-funcs
-  '(<span style="color: #228b22;">"s"</span> <span style="color: #228b22;">"spell/grammar"</span> words-atd)
-  t) ; <span style="color: #ff0000; font-weight: bold;">append</span>
-</pre>
-</div>
-
-<pre class="example">
-words-atd
-</pre>
-
-<p>
-My final words menu looks like: 
-</p>
-
-<div class="figure">
-<p><img src="/media/2014-11-03-words---some-interesting-utilities-for-text-in-emacs/final-menu.png"> 
-</p>
-</div>
-
-<p>
-If I have the cursor in the previous paragraph, run the words command and select "s" I get a buffer with these contents:
-</p>
-
-<p>
-#+BEGIN<sub>EXAMPLE</sub>
-</p>
-<div id="outline-container-sec-1" class="outline-2">
-<h2 id="sec-1"><span class="section-number-2">1</span> flyspell ** (spelling)</h2>
-<div class="outline-text-2" id="text-1">
-<p>
-Description: (Spelling)
-Suggestions: flywheel flyball
-</p>
-</div>
-</div>
-
-<div id="outline-container-sec-2" class="outline-2">
-<h2 id="sec-2"><span class="section-number-2">2</span> are build on ** (grammar)</h2>
-<div class="outline-text-2" id="text-2">
-<p>
-Description: (Auxiliary Verb Agreement)
-Suggestions: are built on
-</p>
-</div>
-</div>
-
-<div id="outline-container-sec-3" class="outline-2">
-<h2 id="sec-3"><span class="section-number-2">3</span> api ** (spelling)</h2>
-<div class="outline-text-2" id="text-3">
-<p>
-Description: (Spelling)
-Suggestions: app ape apt ai ami
-</p>
-</div>
-</div>
-
-<div id="outline-container-sec-4" class="outline-2">
-<h2 id="sec-4"><span class="section-number-2">4</span> url ** (spelling)</h2>
-<div class="outline-text-2" id="text-4">
-<p>
-Description: (Spelling)
-Suggestions: urn ure curl hurl burl
-</p>
-</div>
-</div>
-
-<div id="outline-container-sec-5" class="outline-2">
-<h2 id="sec-5"><span class="section-number-2">5</span> xml ** (spelling)</h2>
-<div class="outline-text-2" id="text-5">
-<p>
-Description: (Spelling)
-Suggestions: xl ml
-</p>
-</div>
-</div>
-
-<div id="outline-container-sec-6" class="outline-2">
-<h2 id="sec-6"><span class="section-number-2">6</span> selection ** (suggestion)</h2>
-<div class="outline-text-2" id="text-6">
-<p>
-Description: (Complex Expression)
-Suggestions: choice
-</p>
-</div>
-</div>
-
-<div id="outline-container-sec-7" class="outline-2">
-<h2 id="sec-7"><span class="section-number-2">7</span> an xml ** (grammar)</h2>
-<div class="outline-text-2" id="text-7">
-<p>
-Description: (Wrong article)
-Suggestions: a xml
-</p>
-</div>
-</div>
-
-<div id="outline-container-sec-8" class="outline-2">
-<h2 id="sec-8"><span class="section-number-2">8</span> a selection of ** (grammar)</h2>
-<div class="outline-text-2" id="text-8">
-<p>
-Description: (Hidden Verbs)
-Suggestions: 
-</p>
-</div>
-</div>
-
-<div id="outline-container-sec-9" class="outline-2">
-<h2 id="sec-9"><span class="section-number-2">9</span> is parsed ** (grammar)</h2>
-<div class="outline-text-2" id="text-9">
-<p>
-Description: (Passive voice)
-Suggestions: 
-</p>
-</div>
-</div>
-
-<div id="outline-container-sec-10" class="outline-2">
-<h2 id="sec-10"><span class="section-number-2">10</span> selection ** (suggestion)</h2>
-<div class="outline-text-2" id="text-10">
-<p>
-Description: (Complex Expression)
-Suggestions: choice
-</p>
-</div>
-</div>
-
-<div id="outline-container-sec-11" class="outline-2">
-<h2 id="sec-11"><span class="section-number-2">11</span> a selection of ** (grammar)</h2>
-<div class="outline-text-2" id="text-11">
-<p>
-Description: (Hidden Verbs)
-Suggestions: 
-#+END<sub>EXAMPLE</sub>
-</p>
-
-<p>
-It might be nice to link back to those words, so you could click on them and fix them, but that is a beyond today's goal. In summary, today we looked at a framework to create a user-modifiable menu of commands that are launched from a single command. Here we called the command words, and then built up some different things we might want to do with the word or selection at point. While you can of course just remember the individual commands, remembering one command and then being prompted might have some advantages.
-</p>
-</div>
-</div>
-<p>Copyright (C) 2014 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2014/11/03/words---some-interesting-utilities-for-text-in-emacs.org">org-mode source</a><p><p>Org-mode version = 8.2.7c</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2014/11/03/words-some-interesting-utilities-for-text-in-emacs#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="../14">« Previous Page</a>
   --  
  <a href="../16">Next Page »</a>
@@ -1784,11 +1611,11 @@ It might be nice to link back to those words, so you could click on them and fix
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2015/07/04/An-xml-representation-of-an-org-document-for-indexing-with-swish-e/">An xml representation of an org document for indexing with swish-e</a></li>
       <li><a href="/blog/2015/07/03/Using-swish-e-to-index-org-files-as-html/">Using swish-e to index org files as html</a></li>
       <li><a href="/blog/2015/07/02/Pyparsing-meets-Emacs-to-find-chemical-formulas/">Pyparsing meets Emacs to find chemical formulas</a></li>
       <li><a href="/blog/2015/07/01/Spoken-translations-in-Emacs/">Spoken translations in Emacs</a></li>
       <li><a href="/blog/2015/06/30/Get-spoken-definitions-from-the-Meriam-dictionary/">Get spoken definitions from the Meriam dictionary</a></li>
-      <li><a href="/blog/2015/06/29/Getting-Emacs-to-read-to-me/">Getting Emacs to read to me</a></li>
     </ul>
   </section>
 
