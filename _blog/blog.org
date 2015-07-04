@@ -128,7 +128,7 @@ if CLOSINGP print the closing tag instead."
   :PROPERTIES:
   :categories: emacs,search
   :date:     2015/07/04 11:49:23
-  :updated:  2015/07/04 11:49:23
+  :updated:  2015/07/04 19:34:22
   :END:
 
 Swish-e can index xml data, and enable searching by tag. Here we push our org-mode indexing idea a little further. Initially we indexed org files as text. Then, we exported it to html, and indexed the html. That enabled some richer searching. Now, we will create an xml representation of the org file for indexing. This will enable us to use a custom tag system and search for specific text in tables, or src-blocks, or in headlines, or for headlines with certain tags, todo state or properties.
@@ -364,82 +364,91 @@ You should use `xml-escape-string' on text going into the attributes to avoid er
 (defun main ()
   (find-file (car command-line-args-left))
   (princ (tag 'root `((filename . ,(buffer-file-name))
-			  (indexed-on . ,(current-time-string)))
-		  ;; map the headlines
-		  (mapconcat
-		   'identity
-		   (org-map-entries
-		    (lambda ()
-		      (let* ((tags (org-get-tags))
-			     (heading-components (org-heading-components))
-			     (todo (nth 2 heading-components))
-			     (title (nth 4 heading-components))
-			     (thislevel (nth 0 heading-components))
-			     (properties (org-entry-properties)))
-			(tag 'heading `((level . ,thislevel))
-			     (tag 'title () (xml-escape-string title))
-			     (tag 'tags () (mapconcat 'identity tags " "))
-			     (when todo
-			       (tag 'todo () todo))
-			     (tag 'properties ()
-				  (mapconcat
-				   (lambda (x)
-				     (tag 'property `((label . ,(xml-escape-string (car x))))
-					  (xml-escape-string (cdr x))))
-				   properties
-				   ""))))))
-		   "")
+		      (indexed-on . ,(current-time-string)))
+	      ;; map the headlines
+	      (mapconcat
+	       'identity
+	       (org-map-entries
+		(lambda ()
+		  (let* ((tags (org-get-tags))
+			 (heading-components (org-heading-components))
+			 (todo (nth 2 heading-components))
+			 (headline (nth 4 heading-components))
+			 (thislevel (nth 0 heading-components))
+			 (properties (org-entry-properties)))
+		    (tag 'heading `((level . ,thislevel))
+			 (tag 'headline () (xml-escape-string headline))
+			 (tag 'tags () (mapconcat 'identity tags " "))
+			 (when todo
+			   (tag 'todo () todo))
+			 (tag 'properties ()
+			      (mapconcat
+			       (lambda (x)
+				 (tag 'property `((name . ,(xml-escape-string (car x))))
+				      (xml-escape-string (cdr x))))
+			       properties
+			       ""))))))
+	       "")
 
-		  ;; map specific element types
-		  (tag 'source-blocks ()
-		       (mapconcat
-			'identity
-			(org-element-map
-			    (org-element-parse-buffer)
-			    'src-block
-			  (lambda (element)
-			    (tag 'src-block
-				 `((language .
-					     ,(org-element-property
-					       :language element)))
-				 (tag 'contents ()
-				      (xml-escape-string
-				       (org-element-property :value element)))))) ""))
+	      ;; get file keywords, TITLE, authors, etc...
+	      (tag 'file-keywords ()
+		   (mapconcat 'identity
+			      (org-element-map (org-element-parse-buffer 'element) 'keyword
+				(lambda (keyword)
+				  (tag (xml-escape-string (org-element-property :key keyword)) ()
+				       (xml-escape-string (org-element-property :value keyword)))))
+			      ""))
 
-		  (tag 'tables ()
-		       (mapconcat
-			'identity
-			(org-element-map
-			    (org-element-parse-buffer)
-			    'table
-			  (lambda (element)
-			    (tag 'table ()
-				 (when (org-element-property :caption element)
-				   (tag 'caption ()
-					(format
-					 "%s"
-					 (org-element-property
-					  :caption element))))
-				 (xml-escape-string
-				  (buffer-substring
-				   (org-element-property :contents-begin element)
-				   (org-element-property :contents-end element))))))
-			""))
+	      ;; map specific element types
+	      (tag 'source-blocks ()
+		   (mapconcat
+		    'identity
+		    (org-element-map
+			(org-element-parse-buffer)
+			'src-block
+		      (lambda (element)
+			(tag 'src-block
+			     `((language .
+					 ,(org-element-property
+					   :language element)))
+			     (tag 'contents ()
+				  (xml-escape-string
+				   (org-element-property :value element)))))) ""))
 
-		  (tag 'paragraphs ()
-		       (mapconcat
-			'identity
-			(org-element-map
-			    (org-element-parse-buffer)
-			    'paragraph
-			  (lambda (element)
-			    (tag 'paragraph ()
-				 (xml-escape-string
-				  (buffer-substring
-				   (org-element-property :contents-begin element)
-				   (org-element-property :contents-end element))))))
-			""
-			)))))
+	      (tag 'tables ()
+		   (mapconcat
+		    'identity
+		    (org-element-map
+			(org-element-parse-buffer)
+			'table
+		      (lambda (element)
+			(tag 'table ()
+			     (when (org-element-property :caption element)
+			       (tag 'caption ()
+				    (format
+				     "%s"
+				     (org-element-property
+				      :caption element))))
+			     (xml-escape-string
+			      (buffer-substring
+			       (org-element-property :contents-begin element)
+			       (org-element-property :contents-end element))))))
+		    ""))
+
+	      (tag 'paragraphs ()
+		   (mapconcat
+		    'identity
+		    (org-element-map
+			(org-element-parse-buffer)
+			'paragraph
+		      (lambda (element)
+			(tag 'paragraph ()
+			     (xml-escape-string
+			      (buffer-substring
+			       (org-element-property :contents-begin element)
+			       (org-element-property :contents-end element))))))
+		    ""
+		    )))))
 #+END_SRC
 
 We could do more, e.g. links, or images, but this is pretty good for now. Now, let's configure a swish indexer. We instruct swish-e to use some metanames, and attributes so we can search on them later.
@@ -461,9 +470,9 @@ IndexContents XML* .org
 
 FileFilter .org /Users/jkitchin/blogofile-jkitchin.github.com/_blog/org2xml.el
 
+# index all tags for searching
+UndefinedMetaTags auto
 UndefinedXMLAttributes auto
-
-MetaNames heading title tags todo property content table src-block swishtitle swishdocpath
 #+END_SRC
 
 And now, run the index command. I did this at the command line. There might be some problems with the script as there were some warnings about non-zero exits, but there was only a few so we ignore them for now.
@@ -471,8 +480,6 @@ And now, run the index command. I did this at the command line. There might be s
 #+BEGIN_SRC sh
 swish-e -c swish-org2xml.conf
 #+END_SRC
-
-#+RESULTS:
 
 
 ** Examples of searching for org-files
@@ -648,6 +655,38 @@ swish-e -f index-org2xml.swish-e -w src-block.language=python -w src-block=diffu
 : # Search time: 0.000 seconds
 : # Run time: 0.011 seconds
 : 1000 /Users/jkitchin/blogofile-jkitchin.github.com/_site/org/2013/04/02/Transient-diffusion---partial-differential-equations.org "Transient-diffusion---partial-differential-equations.org" 3660
+: .
+
+*** An org-file with a UUID
+
+#+BEGIN_SRC sh
+swish-e -f index-org2xml.swish-e -w  property="(38FCCF3D-7FC5-49BF-BB77-486BBAA17CD9)"
+#+END_SRC
+
+#+RESULTS:
+: # SWISH format: 2.4.7
+: # Search words: property=(38FCCF3D-7FC5-49BF-BB77-486BBAA17CD9)
+: # Removed stopwords:
+: # Number of hits: 1
+: # Search time: 0.000 seconds
+: # Run time: 0.007 seconds
+: 1000 /Users/jkitchin/blogofile-jkitchin.github.com/_site/org/2014/11/23/Machine-gradable-quizzes-in-emacs+org-modex.org "Machine-gradable-quizzes-in-emacs+org-modex.org" 5743
+: .
+
+Interesting, again the parentheses are necessary to find a match. I think because of the dashes. The next example is similar, but finds an entry with that bibtex key in a CUSTOM_ID property.
+
+#+BEGIN_SRC sh
+swish-e -f index-org2xml.swish-e -w  property="(mantina-2008-first-princ)"
+#+END_SRC
+
+#+RESULTS:
+: # SWISH format: 2.4.7
+: # Search words: property=(mantina-2008-first-princ)
+: # Removed stopwords:
+: # Number of hits: 1
+: # Search time: 0.000 seconds
+: # Run time: 0.010 seconds
+: 1000 /Users/jkitchin/blogofile-jkitchin.github.com/_site/media/2014-02-19-Extracting-bibtex-file-from-an-org-buffer/notes.org "notes.org" 195515
 : .
 
 ** Summary
