@@ -15,11 +15,9 @@ if CLOSINGP print the closing tag instead."
 	" "
 	(mapconcat
 	 (lambda (x)
-	   (format "%s=\"%s\""
-		   (car x)
-		   (cdr x)))
-	 attrs
-	 " "))
+	   (format "%s=\"%s\"" (car x) (cdr x)))
+	   attrs
+	   " "))
      "")))
 
 (defmacro tag (name attributes &rest body)
@@ -43,11 +41,7 @@ if CLOSINGP print the closing tag instead."
 			     (todo (nth 2 heading-components))
 			     (title (nth 4 heading-components))
 			     (thislevel (nth 0 heading-components))
-			     (properties (org-entry-properties))
-			     (elem (org-element-at-point))
-			     (bp (org-element-property :contents-begin elem))
-			     (ep (org-element-property :contents-end elem))
-			     (content (buffer-substring bp ep)))
+			     (properties (org-entry-properties)))
 			(tag 'heading `((level . ,thislevel))
 			     (tag 'title () (xml-escape-string title))
 			     (tag 'tags () (mapconcat 'identity tags " "))
@@ -56,11 +50,10 @@ if CLOSINGP print the closing tag instead."
 			     (tag 'properties ()
 				  (mapconcat
 				   (lambda (x)
-				     (tag 'property `((label . ,(car x))) (cdr x)))
+				     (tag 'property `((label . ,(xml-escape-string (car x))))
+					  (xml-escape-string (cdr x))))
 				   properties
-				   ""))
-			     (tag 'content ()
-				  (format "%s" (xml-escape-string content)))))))
+				   ""))))))
 		   "")
 
 		  ;; map specific element types
