@@ -1,0 +1,464 @@
+* An xml representation of an org document for indexing with swish-e
+  :PROPERTIES:
+  :categories: emacs,search
+  :date:     2015/07/04 11:49:23
+  :updated:  2015/07/04 11:49:23
+  :END:
+
+Swish-e can index xml data, and enable searching by tag. Here we push our org-mode indexing idea a little further. Initially we indexed org files as text. Then, we exported it to html, and indexed the html. That enabled some richer searching. Now, we will create an xml representation of the org file for indexing. This will enable us to use a custom tag system and search for specific text in tables, or src-blocks, or in headlines, or for headlines with certain tags, todo state or properties.
+
+Incidentally, this is a general strategy for indexing arbitrary files. You just make an xml representation of the file containing the data to be indexed, and use swish-e to index that xml.
+
+Let us start with code to generate xml. I adapted this from some code in [[http://landoflisp.com][Land Of Lisp]]. First, a function that simply prints a tag with attributes.
+
+#+BEGIN_SRC emacs-lisp
+(defun print-tag (name attrs &optional closingp)
+  "Print an xml tag with symbol NAME and ATTRS (a cons list of (attribute . value)).
+if CLOSINGP print the closing tag instead."
+  (format
+   "<%s%s%s>"
+   (if closingp "/" "")
+   name
+   (if (and attrs (not closingp))
+       (concat
+	" "
+	(mapconcat
+	 (lambda (x)
+	   (format "%s=\"%s\""
+		   (car x)
+		   (xml-escape-string (cdr x))))
+	 attrs
+	 " "))
+     "")))
+
+(print-tag 'html '((color . "blue") (label . "test")))
+#+END_SRC
+
+#+RESULTS:
+: <html color="blue" label="test">
+
+XML tags almost always come in pairs. We define a macro to make this happen here. The macro prints the opening tag, evaluates the body, and prints the closing body. Note that the body may contain other tags, or a string. The string should be escaped to avoid illegal xml characters.
+
+#+BEGIN_SRC emacs-lisp
+(defmacro tag (name attributes &rest body)
+  `(format "%s%s%s"
+	   (print-tag ,name ,attributes nil)
+           (concat
+	   ,@body)
+	   (print-tag ,name nil t)))
+
+;; example usage
+(tag "xml" '((test . "id"))
+     (tag "body" nil
+	  (tag "p" nil (xml-escape-string "paragraph & < 1"))
+	  (tag "p" nil "paragraph 2")))
+#+END_SRC
+
+#+RESULTS:
+: <xml test="id"><body><p>paragraph &amp; &lt; 1</p><p>paragraph 2</p></body></xml>
+
+Now, we can use this to get an xml representation of the source blocks, e.g.
+
+#+BEGIN_SRC emacs-lisp
+(mapconcat 'identity
+	   (org-element-map
+	       (org-element-parse-buffer)
+	       'src-block
+	     (lambda (element)
+	       (tag
+		'src-block
+		`((language . ,(org-element-property :language element)))
+		(tag 'contents ()
+		     (xml-escape-string
+		      (org-element-property :value element))))))
+	   "")
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+<src-block language="emacs-lisp"><contents>(defun print-tag (name attrs &amp;optional closingp)
+  &quot;Print an xml tag with symbol NAME and ATTRS (a cons list of (attribute . value)).
+if CLOSINGP print the closing tag instead.&quot;
+  (format
+   &quot;&lt;%s%s%s&gt;&quot;
+   (if closingp &quot;/&quot; &quot;&quot;)
+   name
+   (if (and attrs (not closingp))
+       (concat
+	&quot; &quot;
+	(mapconcat
+	 (lambda (x)
+	   (format &quot;%s=\&quot;%s\&quot;&quot;
+		   (car x)
+		   (xml-escape-string (cdr x))))
+	 attrs
+	 &quot; &quot;))
+     &quot;&quot;)))
+
+(print-tag &apos;html &apos;((color . &quot;blue&quot;) (label . &quot;test&quot;)))
+</contents></src-block><src-block language="emacs-lisp"><contents>(defmacro tag (name attributes &amp;rest body)
+  `(format &quot;%s%s%s&quot;
+	   (print-tag ,name ,attributes nil)
+           (concat
+	   ,@body)
+	   (print-tag ,name nil t)))
+
+(tag &quot;xml&quot; &apos;((test . &quot;id&quot;))
+     (tag &quot;body&quot; nil
+	  (tag &quot;p&quot; nil (xml-escape-string &quot;paragraph &amp; &lt; 1&quot;))
+	  (tag &quot;p&quot; nil &quot;paragraph 2&quot;)))
+</contents></src-block><src-block language="emacs-lisp"><contents>(mapconcat &apos;identity
+	   (org-element-map
+	       (org-element-parse-buffer)
+	       &apos;src-block
+	     (lambda (element)
+	       (tag
+		&apos;src-block
+		`((language . ,(org-element-property :language element)))
+		(tag &apos;contents ()
+		     (xml-escape-string
+		      (org-element-property :value element))))))
+	   &quot;&quot;)
+</contents></src-block><src-block language="emacs-lisp"><contents>(let ((xml (tag &apos;root `((filename . ,(buffer-file-name))
+			(indexed-on . ,(current-time-string)))
+		;; map the headlines
+		(mapconcat
+		 &apos;identity
+		 (org-map-entries
+		  (lambda ()
+		    (let* ((tags (org-get-tags))
+			   (heading-components (org-heading-components))
+			   (title (nth 4 heading-components))
+			   (level (nth 0 heading-components))
+			   (properties (org-entry-properties))
+			   (elem (org-element-at-point))
+			   (bp (org-element-property :contents-begin elem))
+			   (ep (org-element-property :contents-end elem))
+			   (content (buffer-substring bp ep)))
+		      (tag &apos;heading `((level . ,level))
+			   (tag &apos;title () (xml-escape-string title))
+			   (tag &apos;tags () (mapconcat &apos;identity tags &quot; &quot;))
+			   (tag &apos;properties ()
+				(mapconcat
+				 (lambda (x)
+				   (tag &apos;property `((label . (car ,x))) (cdr x)))
+				 properties
+				 &quot;&quot;))
+			   (tag &apos;content ()
+				(format &quot;%s&quot; (xml-escape-string content)))))))
+		 &quot;&quot;)
+
+		;; map specific element types
+		(tag &apos;source-blocks ()
+		     (mapconcat
+		      &apos;identity
+		      (org-element-map
+			  (org-element-parse-buffer)
+			  &apos;src-block
+			(lambda (element)
+			  (tag &apos;src-block
+			       `((language .
+					   ,(org-element-property
+					     :language element)))
+			       (tag &apos;contents ()
+				    (xml-escape-string
+				     (org-element-property :value element)))))) &quot;&quot;))
+
+		(tag &apos;tables ()
+		     (mapconcat
+		      &apos;identity
+		      (org-element-map
+			  (org-element-parse-buffer)
+			  &apos;table
+			(lambda (element)
+			  (tag &apos;table ()
+			       (when (org-element-property :caption element)
+				 (tag &apos;caption ()
+				(caaar (org-element-property :caption element))))
+			       (xml-escape-string
+				(buffer-substring
+				 (org-element-property :contents-begin element)
+				 (org-element-property :contents-end element))))))
+		      &quot;&quot;))
+
+		(tag &apos;paragraphs ()
+		     (mapconcat
+		      &apos;identity
+		      (org-element-map
+			  (org-element-parse-buffer)
+			  &apos;paragraph
+			(lambda (element)
+			  (tag &apos;paragraph ()
+			       (xml-escape-string
+				(buffer-substring
+				 (org-element-property :contents-begin element)
+				 (org-element-property :contents-end element))))))
+		      &quot;&quot;
+		      ))
+		)))
+  (with-temp-file &quot;org2xml.xml&quot;
+    (insert xml)))
+</contents></src-block><src-block language="emacs-lisp"><contents>(xml-parse-file &quot;org2xml.xml&quot;)
+</contents></src-block>
+#+end_example
+
+So, finally we can map the entries to get some information about them, e.g. the tags, properties, todo state, etc... Then we create xml representing all that information so we can have a more precise search. Instead of looking for a word, we can specify that the word be in a property for example. Then, we make xml representations of the tables, src-blocks and paragraphs. For swish-e paragraphs are overkill, the text is already indexed from the headline contents. But other indexers allow you to rank the importance of where text is, so we put it here for now.
+
+I am going to follow the example [[http://kitchingroup.cheme.cmu.edu/blog/2015/07/03/Using-swish-e-to-index-org-files-as-html/][here]] that we worked out before on html and create a filter function that takes an org-file and spits out xml at the command line.
+
+#+BEGIN_SRC emacs-lisp :tangle org2xml.el :tangle-mode (identity #o755)
+:;exec emacs -batch -l $0 -f main "$@"
+(require 'org)
+(require 'xml)
+
+(defun print-tag (name attrs &optional closingp)
+  "Print an xml tag with symbol NAME and ATTRS (a cons list of (attribute . value)).
+if CLOSINGP print the closing tag instead."
+  (format
+   "<%s%s%s>"
+   (if closingp "/" "")
+   name
+   (if (and attrs (not closingp))
+       (concat
+	" "
+	(mapconcat
+	 (lambda (x)
+	   (format "%s=\"%s\""
+		   (car x)
+		   (cdr x)))
+	 attrs
+	 " "))
+     "")))
+
+(defmacro tag (name attributes &rest body)
+  `(format "%s%s%s"
+	   (print-tag ,name ,attributes nil)
+           (concat
+	   ,@body)
+	   (print-tag ,name nil t)))
+
+(defun main ()
+  (find-file (car command-line-args-left))
+  (princ (tag 'root `((filename . ,(buffer-file-name))
+			  (indexed-on . ,(current-time-string)))
+		  ;; map the headlines
+		  (mapconcat
+		   'identity
+		   (org-map-entries
+		    (lambda ()
+		      (let* ((tags (org-get-tags))
+			     (heading-components (org-heading-components))
+			     (todo (nth 2 heading-components))
+			     (title (nth 4 heading-components))
+			     (thislevel (nth 0 heading-components))
+			     (properties (org-entry-properties))
+			     (elem (org-element-at-point))
+			     (bp (org-element-property :contents-begin elem))
+			     (ep (org-element-property :contents-end elem))
+			     (content (buffer-substring bp ep)))
+			(tag 'heading `((level . ,thislevel))
+			     (tag 'title () (xml-escape-string title))
+			     (tag 'tags () (mapconcat 'identity tags " "))
+			     (when todo
+			       (tag 'todo () todo))
+			     (tag 'properties ()
+				  (mapconcat
+				   (lambda (x)
+				     (tag 'property `((label . ,(car x))) (cdr x)))
+				   properties
+				   ""))
+			     (tag 'content ()
+				  (format "%s" (xml-escape-string content)))))))
+		   "")
+
+		  ;; map specific element types
+		  (tag 'source-blocks ()
+		       (mapconcat
+			'identity
+			(org-element-map
+			    (org-element-parse-buffer)
+			    'src-block
+			  (lambda (element)
+			    (tag 'src-block
+				 `((language .
+					     ,(org-element-property
+					       :language element)))
+				 (tag 'contents ()
+				      (xml-escape-string
+				       (org-element-property :value element)))))) ""))
+
+		  (tag 'tables ()
+		       (mapconcat
+			'identity
+			(org-element-map
+			    (org-element-parse-buffer)
+			    'table
+			  (lambda (element)
+			    (tag 'table ()
+				 (when (org-element-property :caption element)
+				   (tag 'caption ()
+					(format
+					 "%s"
+					 (org-element-property
+					  :caption element))))
+				 (xml-escape-string
+				  (buffer-substring
+				   (org-element-property :contents-begin element)
+				   (org-element-property :contents-end element))))))
+			""))
+
+		  (tag 'paragraphs ()
+		       (mapconcat
+			'identity
+			(org-element-map
+			    (org-element-parse-buffer)
+			    'paragraph
+			  (lambda (element)
+			    (tag 'paragraph ()
+				 (xml-escape-string
+				  (buffer-substring
+				   (org-element-property :contents-begin element)
+				   (org-element-property :contents-end element))))))
+			""
+			)))))
+#+END_SRC
+
+I think that looks good. Now, let's configure a swish indexer. We instruct swish-e to use some metanames, and attributes so we can search on them later. We also ignore _site and _deploy here which contain duplicate information.
+
+#+BEGIN_SRC text :tangle swish-org2xml.conf
+# Example configuration file
+
+# Tell Swish-e what to directories to index
+IndexDir /Users/jkitchin/blogofile-jkitchin.github.com/_site
+
+# where to save the index
+IndexFile /Users/jkitchin/blogofile-jkitchin.github.com/_blog/index-org2xml.swish-e
+
+# What to index
+IndexOnly .org
+
+# Tell Swish-e that .txt files are to use the HTML parser.
+IndexContents XML* .org
+
+FileFilter .org /Users/jkitchin/blogofile-jkitchin.github.com/_blog/org2xml.el
+
+UndefinedXMLAttributes auto
+
+MetaNames heading title tags todo property content table src-block swishtitle swishdocpath
+#+END_SRC
+
+And now, run the index command. I did this at the command line. There might be some problems with the script as there were some warnings about non-zero exits due to Wrong type argument: integer-or-marker-p, nil, but it gave no hint what file that was on, so I have not debugged it yet.
+
+#+BEGIN_SRC sh
+swish-e -c swish-org2xml.conf
+#+END_SRC
+
+#+RESULTS:
+
+** Examples of searching for org-files
+*** Files with headlines containing a word
+Now, lets find documents with "Compiled" in a heading title with level=2
+#+BEGIN_SRC sh
+swish-e -f index-org2xml.swish-e -w heading.level=2 title=Compiled -m5
+#+END_SRC
+
+#+RESULTS:
+: # SWISH format: 2.4.7
+: # Search words: heading.level=2 title=Compiled
+: # Removed stopwords:
+: # Number of hits: 1
+: # Search time: 0.000 seconds
+: # Run time: 0.007 seconds
+: 1000 /Users/jkitchin/blogofile-jkitchin.github.com/_site/media/2014-07-12-Org-mode-is-awesome/why-org-mode.org "why-org-mode.org" 13522
+: .
+
+*** Headlines marked TODO
+We can find documents with headlines marked TODO:
+#+BEGIN_SRC sh
+swish-e -f index-org2xml.swish-e  -w "todo=TODO" -m 5
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+# SWISH format: 2.4.7
+# Search words: todo=TODO
+# Removed stopwords:
+# Number of hits: 12
+# Search time: 0.000 seconds
+# Run time: 0.008 seconds
+1000 /Users/jkitchin/blogofile-jkitchin.github.com/_site/media/2014-01-27-Clocking-your-time-in-org-mode/blog.org "blog.org" 134160
+624 /Users/jkitchin/blogofile-jkitchin.github.com/_site/org/2014/02/16/A-dynamic-snippet-for-a-task-due-7-days-from-now.org "A-dynamic-snippet-for-a-task-due-7-days-from-now.org" 2587
+425 /Users/jkitchin/blogofile-jkitchin.github.com/_site/org/2014/02/16/END.org "END.org" 1531
+269 /Users/jkitchin/blogofile-jkitchin.github.com/_site/org/2015/02/01/Handling-multiple-selections-in-helm.org "Handling-multiple-selections-in-helm.org" 3290
+269 /Users/jkitchin/blogofile-jkitchin.github.com/_site/org/2015/01/30/More-adventures-in-helm---more-than-one-action.org "More-adventures-in-helm---more-than-one-action.org" 3236
+.
+#+end_example
+
+
+*** Tagged headlines
+Find entries with a "slide" tag.
+#+BEGIN_SRC sh
+swish-e -f index-org2xml.swish-e -w "tags=slide"
+#+END_SRC
+
+#+RESULTS:
+: # SWISH format: 2.4.7
+: # Search words: tags=slide
+: # Removed stopwords:
+: # Number of hits: 1
+: # Search time: 0.000 seconds
+: # Run time: 0.009 seconds
+: 1000 /Users/jkitchin/blogofile-jkitchin.github.com/_site/media/2014-07-12-Org-mode-is-awesome/why-org-mode.org "why-org-mode.org" 13522
+: .
+
+Evidently there is one file where I talk about slides in org-show.
+
+*** Headlines with a property
+Here I find documents with headlines that have thermodynamics in the property "categories".
+#+BEGIN_SRC sh
+swish-e -f index-org2xml.swish-e -w "property.label=categories property=thermodynamics"
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+# SWISH format: 2.4.7
+# Search words: property.label=categories property=thermodynamics
+# Removed stopwords:
+# Number of hits: 10
+# Search time: 0.000 seconds
+# Run time: 0.009 seconds
+1000 /Users/jkitchin/blogofile-jkitchin.github.com/_site/org/2013/02/01/Water-gas-shift-equilibria-via-the-NIST-Webbook.org "Water-gas-shift-equilibria-via-the-NIST-Webbook.org" 10789
+1000 /Users/jkitchin/blogofile-jkitchin.github.com/_site/org/2013/03/01/Gibbs-energy-minimization-and-the-NIST-webbook.org "Gibbs-energy-minimization-and-the-NIST-webbook.org" 5441
+1000 /Users/jkitchin/blogofile-jkitchin.github.com/_site/org/2013/03/01/Finding-equilibrium-composition-by-direct-minimization-of-Gibbs-free-energy-on-mole-numbers.org "Finding-equilibrium-composition-by-direct-minimization-of-Gibbs-free-energy-on-mole-numbers.org" 6155
+1000 /Users/jkitchin/blogofile-jkitchin.github.com/_site/org/2013/02/27/Reading-parameter-database-text-files-in-python.org "Reading-parameter-database-text-files-in-python.org" 3947
+1000 /Users/jkitchin/blogofile-jkitchin.github.com/_site/org/2013/02/18/The-Gibbs-free-energy-of-a-reacting-mixture-and-the-equilibrium-composition.org "The-Gibbs-free-energy-of-a-reacting-mixture-and-the-equilibrium-composition.org" 8230
+1000 /Users/jkitchin/blogofile-jkitchin.github.com/_site/org/2013/02/18/Calculating-a-bubble-point-pressure-of-a-mixture.org "Calculating-a-bubble-point-pressure-of-a-mixture.org" 3203
+1000 /Users/jkitchin/blogofile-jkitchin.github.com/_site/org/2013/02/15/The-equal-area-method-for-the-van-der-Waals-equation.org "The-equal-area-method-for-the-van-der-Waals-equation.org" 5737
+1000 /Users/jkitchin/blogofile-jkitchin.github.com/_site/org/2013/02/12/Using-constrained-optimization-to-find-the-amount-of-each-phase-present.org "Using-constrained-optimization-to-find-the-amount-of-each-phase-present.org" 5210
+1000 /Users/jkitchin/blogofile-jkitchin.github.com/_site/org/2013/02/05/Constrained-minimization-to-find-equilibrium-compositions.org "Constrained-minimization-to-find-equilibrium-compositions.org" 5666
+1000 /Users/jkitchin/blogofile-jkitchin.github.com/_site/org/2014/09/23/Generating-an-atomic-stoichiometric-matrix.org "Generating-an-atomic-stoichiometric-matrix.org" 3487
+.
+#+end_example
+
+That seems about right, according to http://kitchingroup.cheme.cmu.edu/categories.html there are 9 documents. I am not sure why they don't totally agree, but I can live with it.
+
+*** Documents with a Python source block containing a word
+Find org files with diffusion in a python source block.
+#+BEGIN_SRC sh
+swish-e -f index-org2xml.swish-e -w src-block.language=python -w src-block=diffusion
+#+END_SRC
+
+#+RESULTS:
+: # SWISH format: 2.4.7
+: # Search words: src-block.language=python src-block=diffusion
+: # Removed stopwords:
+: # Number of hits: 1
+: # Search time: 0.000 seconds
+: # Run time: 0.011 seconds
+: 1000 /Users/jkitchin/blogofile-jkitchin.github.com/_site/org/2013/04/02/Transient-diffusion---partial-differential-equations.org "Transient-diffusion---partial-differential-equations.org" 3660
+: .
+
+** Summary
+This is pretty cool. There are still some bugs to work out in the indexing filter I think, but this demonstrates you can index org-files, and have pretty refined searches to find your files. There is still some thinking to do on how to schedule an incremental indexing, and whether we need more or better metanames. The indexing is not fast, but that is probably because I am running this through a FileFilter, rather than the -s prog option in swish-e. This is super promising to me though. Imagine building an agenda from files found with TODO headlines in them; a global todo list! Or, grabbing contacts from wherever they are.  No more losing files you have not used in a while. Find all documents containing a citation. With some extra work, you could index links, citations, [[http://kitchingroup.cheme.cmu.edu/blog/2015/07/02/Pyparsing-meets-Emacs-to-find-chemical-formulas/][chemical formulas]], or other types of identifiable content.
+
+The logical conclusion of this work might be an ox-swish-e-xml export engine to render the org-file into xml, rather than the script I used here. It would be really great to get some refined output, e.g. rather than just get matching documents, get location information so you could open the document to the matching element. That might be out of reach for swish-e, but could be in reach for other programs like Sphinx that are more integrated with a database. There is a very interesting project here: https://github.com/wvxvw/sphinx-mode to integrate org-mode with the Sphinx search (http://sphinxsearch.com) engine.
