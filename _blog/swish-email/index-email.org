@@ -1,0 +1,241 @@
+* Indexing an old email archive with swish-e
+
+I get 8-10 GB of email every year. A lot I delete, but somewhere between 2-4GB stays each year. To reduce the amount of email in my Gmail account, I have been archiving emails older than 2 years old into a folder, and I now have a little over 8 GB of mail from 2011 through 2013. Today, we look at indexing these emails with swish-e so I can search them.
+
+#+BEGIN_SRC sh
+du -hs ~/Maildir-archive
+#+END_SRC
+#+RESULTS:
+: 8.2G	/Users/jkitchin/Maildir-archive
+
+The idea is pretty simple, we generate an xml representation of each email, and then index it by swish-e.
+
+#+BEGIN_SRC python
+import os
+from os.path import join, getsize
+
+for root, dirs, files in os.walk('/Users/jkitchin/Maildir-archive'):
+    print "{0} consumes {1:1.2f} GB in {2} non-directory files".format(root, sum([getsize(join(root, name)) / 1024.0**3  for name in files]), len(files))
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+/Users/jkitchin/Maildir-archive consumes 0.00 GB in 1 non-directory files
+/Users/jkitchin/Maildir-archive/2011 consumes 0.00 GB in 0 non-directory files
+/Users/jkitchin/Maildir-archive/2011/cur consumes 1.96 GB in 9404 non-directory files
+/Users/jkitchin/Maildir-archive/2011/new consumes 0.00 GB in 1 non-directory files
+/Users/jkitchin/Maildir-archive/2011/tmp consumes 0.00 GB in 0 non-directory files
+/Users/jkitchin/Maildir-archive/2012 consumes 0.00 GB in 0 non-directory files
+/Users/jkitchin/Maildir-archive/2012/cur consumes 3.42 GB in 10598 non-directory files
+/Users/jkitchin/Maildir-archive/2012/new consumes 0.00 GB in 0 non-directory files
+/Users/jkitchin/Maildir-archive/2012/tmp consumes 0.00 GB in 0 non-directory files
+/Users/jkitchin/Maildir-archive/2013 consumes 0.00 GB in 0 non-directory files
+/Users/jkitchin/Maildir-archive/2013/cur consumes 2.73 GB in 12066 non-directory files
+/Users/jkitchin/Maildir-archive/2013/new consumes 0.00 GB in 0 non-directory files
+/Users/jkitchin/Maildir-archive/2013/tmp consumes 0.00 GB in 0 non-directory files
+#+end_example
+
+#+BEGIN_SRC python :tangle python-email-xml.py :shebang #!/usr/bin/env python :tangle-mode (identity #o755)
+from __future__ import print_function
+import email, os
+from xml.sax.saxutils import escape, quoteattr
+import os
+from os.path import join, getsize
+
+
+
+def printtag(name,closing=False):
+    if closing:
+        return '</{}>'.format(name)
+    else:
+        return '<{}>'.format(name)
+
+
+def tag(name, *content):
+    return '{0}{1}{2}'.format(printtag(name),
+                             ''.join(content),
+                             printtag(name, closing=True))
+
+
+template = '''Path-Name: {0}
+Content-Length: {1}
+Document-Type: XML*
+
+{2}'''
+
+
+headers_to_index = ['To', 'From', 'Subject', 'Cc',
+                    'Bcc', 'Sender', 'Message-ID', 'Date']
+
+def email_document(fname):
+    with open(fname) as f:
+        msg = email.message_from_file(f)
+
+    headers = ''.join([tag(key.lower(), escape(msg.get(key, None)))
+                       for key in headers_to_index if msg.get(key, None)])
+
+    msg_body = ''
+    attachments = ''
+    if msg.is_multipart():
+        for part in msg.walk():
+            if part.get_content_type() in ['text/plain', 'text/html']:
+                msg_body += part.get_payload()
+            elif part.get_filename() is not None:
+                attachments += tag('attachment',
+                                   tag('content_type', escape(part.get_content_type())),
+                                   tag('filename', escape(part.get_filename())))
+
+    swishdefault = tag('swishdefault', escape(msg_body))
+
+    desc = tag('desc', escape(msg['Subject']))
+
+    # in MB
+    size = tag('size', str(float(getsize(fname)) / 1024**2))
+
+    xml = ''.join([i if ord(i) < 128 else ' ' for i in
+                   tag("email", desc + headers + size
+                       + swishdefault + attachments)])
+    return template.format(os.path.abspath(fname), len(xml), xml)
+
+
+for root, dirs, files in os.walk('/Users/jkitchin/Maildir-archive/2011/cur'):
+    for f in files:
+        try:
+            # use end arg to avoid an extra space and carriage return
+            print(email_document(os.path.join(root, f)), end='')
+        except:
+            pass
+
+#+END_SRC
+
+
+A configuration
+
+#+BEGIN_SRC text :tangle swish-email-archive.conf
+# Example configuration file
+
+# where to save the index
+IndexFile index-email-archive.swish-e
+
+PropertyNames swish-position
+
+# Save descriptions for context on search results.
+StoreDescription XML <desc> 500
+StoreDescription XML* <desc> 500
+
+# index all tags for searching
+# UndefinedMetaTags auto
+# UndefinedXMLAttributes auto
+
+MetaNames to from subject cc bcc sender message-id date attachment
+#+END_SRC
+
+#+BEGIN_SRC sh
+swish-e -c ./swish-email-archive.conf -S prog -i ./python-email-xml.py
+#+END_SRC
+
+
+
+#+BEGIN_SRC python
+import email, os
+
+count = 0
+
+for root, dirs, files in os.walk('/Users/jkitchin/Maildir-archive/2011/cur'):
+    for f in files:
+        if count > 2:
+            import sys; sys.exit()
+        count += 1
+        fname = os.path.join(root, f)
+        with open(fname) as f:
+            msg = email.message_from_file(f)
+
+            if msg.is_multipart():
+                for part in msg.walk():
+                    if part.get_content_type() == 'text/plain':
+                        print part.get_content_type()
+                        p = part.get_payload()
+                        print p
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+text/plain
+Thanks for the update. If you could finish it in the next week (preferrably
+;) or two I would really appreciate it.
+
+John
+
+-----------------------------------
+John Kitchin
+Associate Professor
+Doherty Hall A207F
+Department of Chemical Engineering
+Carnegie Mellon University
+Pittsburgh, PA 15213
+412-268-7803
+http://kitchingroup.cheme.cmu.edu
+
+
+
+
+On Wed, Dec 28, 2011 at 1:23 PM, Jeffrey Greeley <jgreeley@anl.gov> wrote:
+
+> Hi John,
+>
+> I apologize that we've been a little delayed in getting this article to
+> you.  We're currently working on it, however, and I hope that it will be
+> finished within the next couple of weeks.
+>
+> Best and happy holidays,
+>
+> Jeff
+>
+>
+>
+
+text/plain
+John,
+
+We'll do our best.  If there are any complications (hopefully not), I'll
+let you know.
+
+Jeff
+
+
+On 12/29/11 2:50 PM, John Kitchin wrote:
+> Thanks for the update. If you could finish it in the next week
+> (preferrably ;) or two I would really appreciate it.
+>
+> John
+>
+> -----------------------------------
+> John Kitchin
+> Associate Professor
+> Doherty Hall A207F
+> Department of Chemical Engineering
+> Carnegie Mellon University
+> Pittsburgh, PA 15213
+> 412-268-7803
+> http://kitchingroup.cheme.cmu.edu
+>
+>
+>
+>
+> On Wed, Dec 28, 2011 at 1:23 PM, Jeffrey Greeley <jgreeley@anl.gov
+> <mailto:jgreeley@anl.gov>> wrote:
+>
+>     Hi John,
+>
+>     I apologize that we've been a little delayed in getting this
+>     article to you.  We're currently working on it, however, and I
+>     hope that it will be finished within the next couple of weeks.
+>
+>     Best and happy holidays,
+>
+>     Jeff
+>
+>
+>
+
+#+end_example

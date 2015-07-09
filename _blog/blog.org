@@ -1,3 +1,1617 @@
+* Drag images onto org-mode and insert link
+see [[file:~/Dropbox/kitchingroup/jmax/user/org-download.el]]
+
+I want to drag and drop an image onto an org mode file and get a link that
+#+BEGIN_SRC emacs-lisp
+(defun org-image-dnd (uri action)
+  (insert "#+ATTR_ORG: :width 300\n")
+  (insert (format "[[%s]]" uri))
+  (previous-line)
+  (org-display-inline-images t t))
+
+(setq dnd-protocol-alist '())
+(add-to-list 'dnd-protocol-alist '("^file:/.*\\.\\(png\\)" . org-image-dnd))
+#+END_SRC
+#+ATTR_ORG: :width 300
+[[file:/Users/jkitchin/Dropbox/CMU/manuscripts/@archive/2015/data-ACS-Catalysis/images/attachments.png]]
+* DONE Acronym minor mode for Emacs
+  CLOSED: [2015-07-09 Thu 08:04]
+  :PROPERTIES:
+  :categories: emacs,tooltip, video
+  :date:     2015/07/09 08:04:40
+  :updated:  2015/07/09 08:04:40
+  :END:
+
+Three letter acronyms (TLA) are pretty common, as are other kinds of acronyms, e.g. ferromagnetic (FM), anti-ferromagnetic (AFM), National Security Agency (NSA), even [[https://www.gnu.org/fun/jokes/gnuemacs.acro.exp.html][Escape-Meta-Alt-Control-Shift]] (EMACS) etc... in technical documents. As you get away from the definition, it can get hard to remember what they are, so here we develop a minor mode that will put a tooltip over acronyms that hopefully shows what they mean.
+
+You can see this in action here: https://www.youtube.com/watch?v=2G2isMO6E2c
+
+When we turn the mode on, it will scan the buffer looking for an acronym pattern, deduce its likely meaning, and put tooltips on every subsequent use of the acronym. The pattern we will look for is a sequence of uppercase letters surrounded by parentheses. We will assume that if we find N uppercase letters, that the previous N words contain the definition of the acronym. This is pretty approximate, but it is not likely to be that wrong. Then, we will use button-lock to put the tooltips on all subsequent instances of acronyms. We don't want flyspell interfering with the tooltips, so we remove the overlays if they are there.
+
+Unlike previous examples where we just use button-lock, here we wrap the feature into a minor mode that you can turn on and off. Note, you cannot add new acronyms and have them have tooltips. You have to refresh the buttons.
+
+Here is the minor mode code. We use the interesting rx package to build the regular expression. It is more verbose, but a little easier to read than a straight regexp like (concat "\\<" (match-string 1) "\\>") in my opinion.
+
+#+BEGIN_SRC emacs-lisp
+(make-variable-buffer-local
+  (defvar *acronym-buttons* '() "list of acronym buttons"))
+
+(require 'rx)
+
+(defun highlight-acronyms ()
+  (save-excursion
+    (let ((case-fold-search nil))
+      (goto-char (point-min))
+      (while (re-search-forward "(\\([A-Z]+\\))" nil t)
+	(when flyspell-mode
+	  (flyspell-delete-region-overlays (match-beginning 1)
+					   (match-end 1)))
+	(let* ((acronym (match-string 1))
+	       (p (point))
+	       (definition (save-excursion
+			     (goto-char (match-beginning 1))
+			     (backward-word (length acronym))
+			     (buffer-substring (point) p))))
+	  (add-to-list '*acronym-buttons*
+		       (button-lock-set-button
+			(rx word-start (eval (match-string 1)) word-end)
+			nil
+			:help-echo definition)))))))
+
+
+(defun remove-acronym-buttons ()
+  (dolist (button *acronym-buttons*)
+      (button-lock-unset-button button))
+  (setq *acronym-buttons* '()))
+
+
+(defun refresh-acronyms ()
+  "Refresh acronym tooltips in buffer."
+  (interactive)
+  (remove-acronym-buttons)
+  (highlight-acronyms))
+
+
+;;;###autoload
+(define-minor-mode acronym-mode
+  "Put definitions on acronyms."
+  :lighter " AM"
+  (if acronym-mode
+      (highlight-acronyms)
+    (remove-acronym-buttons)))
+
+
+(provide 'acronym-mode)
+#+END_SRC
+
+#+RESULTS:
+: acronym-mode
+
+There it is. Now any time we have an acronym like EMACS we can mouse over it, or type C-h . on the acronym to see how it was previously defined. If you don't like it, you can turn it off!
+
+
+* old acronym code
+
+#+BEGIN_SRC emacs-lisp
+(defun highlight-tla ()
+  "Highlight three letter acronyms."
+  ;; First we have to get them.
+  (save-excursion
+    (goto-char (point-min))
+    (while (re-search-forward "\\(?1:\\(?2:[A-Z]\\)[a-z]+\\) \\(?3:\\(?4:[A-Z]\\)[a-z]+\\) \\(?5:\\(?6:[A-Z]\\)[a-z]+\\) (\\(?8:\\2\\4\\6\\))" nil t)
+      (let ((TLA (match-string 8))
+	    (definition (match-string 0)))
+	(button-lock-set-button
+	 TLA
+	 nil
+	 :help-echo definition)))))
+
+(highlight-tla)
+#+END_SRC
+#+RESULTS:
+
+TLA is a DFT
+
+
+#+BEGIN_SRC emacs-lisp
+(require 'rx)
+(defun highlight-tla-2 ()
+  "Highlight three letter acronyms."
+  ;; First we have to get them.
+  (save-excursion
+    (goto-char (point-min))
+    (while (re-search-forward
+	    (rx
+	     ;; group the three words into group 1
+	     (group-n
+	      1
+	      ;; first word, with first letter grouped
+	      (group-n
+	       2
+	       upper)
+	       (1+ letter)
+	      (1+ space)
+	      (group-n
+	       3
+	       upper)
+	       (1+ letter)
+	      (1+ space)
+	      (group-n
+	       4
+	       upper)
+	       (1+ letter))
+	     (1+ space)
+	     (group-n
+	      5
+	      "(" (backref 2) (backref 3) (backref 4) ")"))
+	    nil t)
+      (let ((TLA (match-string 5))
+	    (definition (match-string 1)))
+        (message-box "%s: %s" TLA definition)
+	(button-lock-set-button
+	 TLA
+	 nil				; no click function
+	 :help-echo definition)))))
+
+(highlight-tla-2)
+#+END_SRC
+#+RESULTS:
+
+Density Tunctional Theory (DTT)  DTT  DFT
+* Don't put headline in the email body
+  :PROPERTIES:
+  :SENT-ON:  Tue Jul  7 13:34:58 2015
+  :TO:       dixit@aya.yale.edu
+  :END:
+
+With the email.el in github it is not possible to not repeat the headline in the body of the message because it uses the whole subtree. Here is a modified version that fixes that issue and only puts the body of the current headline (including sub-headings).
+
+** modified email-heading function
+   :PROPERTIES:
+   :SENT-ON:  Tue Jul  7 14:30:46 2015
+   :TO:       dixit@aya.yale.edu
+   :END:
+(require 'org-mime)
+
+It looks like you need to put those into the body of the email-heading function. I am not too sure why. Also, I have to pass nil as an arg to org-mime-htmlize.
+
+#+BEGIN_SRC emacs-lisp
+(defun email-heading ()
+  "Send the current org-mode heading as the body of an email, with headline as the subject.
+
+use these properties
+TO
+CC
+BCC
+OTHER-HEADERS is an alist specifying additional
+header fields.  Elements look like (HEADER . VALUE) where both
+HEADER and VALUE are strings.
+
+Save when it was sent as a SENT property. this is overwritten on
+subsequent sends."
+  (interactive)
+  ; store location.
+  (setq *email-heading-point* (set-marker (make-marker) (point)))
+  (save-excursion
+    (let ((content (progn
+		     (unless (org-on-heading-p) (outline-previous-heading))
+		     (let ((headline (org-element-at-point)))
+		       (buffer-substring
+			(org-element-property :contents-begin headline)
+			(org-element-property :contents-end headline)))))
+	  (TO (org-entry-get (point) "TO" t))
+	  (CC (org-entry-get (point) "CC" t))
+	  (BCC (org-entry-get (point) "BCC" t))
+	  (SUBJECT (nth 4 (org-heading-components)))
+	  (OTHER-HEADERS (eval (org-entry-get (point) "OTHER-HEADERS")))
+	  (continue nil)
+	  (switch-function nil)
+	  (yank-action nil)
+	  (send-actions '((email-send-action . nil)))
+	  (return-action '(email-heading-return)))
+
+      (compose-mail TO SUBJECT OTHER-HEADERS continue switch-function yank-action send-actions return-action)
+      (message-goto-body)
+      (insert content)
+      (when CC
+	(message-goto-cc)
+	(insert CC))
+      (when BCC
+	(message-goto-bcc)
+	(insert BCC))
+      (if TO
+	  (message-goto-body)
+	(message-goto-to))
+
+      (end-of-buffer)
+      (insert "Warm regards,\nJay Dixit\n\n---\nJay Dixit
+(646) 355-8001
+[[http://jaydixit.com/][jaydixit.com]]
+\n"))
+(org-mime-htmlize nil)))
+#+END_SRC
+
+#+RESULTS:
+: email-heading
+
+* extracting content in MS Word and Powerpoint files
+
+These will be useful to index office documents.
+
+#+BEGIN_SRC python
+from docx import Document
+doc = Document('kitchin_cv.docx')
+
+for paragraph in doc.paragraphs:
+    print paragraph.text.encode('utf-8')
+
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+Annual report site: https://www.digitalmeasures.com/login/cmu/faculty
+Table of Contents
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+2.  Biographical Data
+2.A  Name
+
+John Robert Kitchin
+
+2.B   Place and Date of Birth
+
+Monroe, North Carolina. May 7, 1974
+2.C  Education
+
+	Degree        Discipline                                     University	Date
+
+
+B.S.	Chemistry	NC State	1996
+
+M.S.	Materials Science	U. Delaware	2002
+
+Ph.D.	Chemical Engineering	U. Delaware	2004
+
+PhD dissertation advisors: Jingguang Chen and Mark Barteau
+2.D  Former Positions
+
+	2014-present
+	Full Professor, Department of Chemical Engineering, Carnegie Mellon University.
+
+	2011-2014
+	Associate Professor, Department of Chemical Engineering, Carnegie Mellon University.
+
+	2006-2011
+	Assistant Professor, Department of Chemical Engineering, Carnegie Mellon University.
+
+	2004-2005
+Alexander von Humboldt Postdoctoral Research Fellow, Fritz Haber Institut, Berlin, Germany.
+Used atomistic thermodynamics to model alloy segregation in reactive environments. Supervised by Karsten Reuter and Matthias Scheffler.
+
+	1997-1999
+Chemist, Lord Corporation, Cary, North Carolina.
+Developed new magnetorheological fluid formulations with enhanced stability towards settling and degradation.
+
+
+
+
+3. Teaching and Education
+3.A  Courses Taught at CMU
+
+
+3.B  Student Projects
+
+(a) Undergraduate Projects
+
+Harry An (class of 2008) “Bicarbonate electrolysis” (Summer REU 2006).
+Attending MIT.
+Alia Lubers (class of 2009) (6/06-present)
+“Carbonate Electrolysis” (Summer REU 2006).
+“Placing platinum films on gold nanoparticles by Electrodeposition” (Summer REU 2007).
+Alia spent her junior year at the Naval Research Laboratory with Deborah Rolison investigating electrochemical systems.
+Won NSF Graduate Fellowship, attending UC Boulder.
+Carmeline Dsilva (class of 2010) (Intel First Year Research Experience, 2006-2010)
+“Synthesizing Metal Alloy Nanoparticles for Use as Fuel Cell Catalysts”.
+“Dealloying Ag-Pt methanol electrocatalysts”. 2nd place in IFYRE research competition 2008.
+Carmeline interned with Exxon Mobil in summer 2008.
+Won DOE Computational Science graduate fellowship.
+Attending Princeton for PhD.
+Diane Mattingly (class of 2010) (Intel First Year Research Experience, 2007-2008)
+“Distinguishing catalytic electrochemical surface area from double layer surface area”
+“Ultrathin Pt films on Au nanoparticles for methanol oxidation”.  1st place in IFYRE research competition 2008.
+Diane interned with Exxon Mobil in Summer 2008.
+Employed at Exxon Mobil.
+Diane Gomez “Membrane-less Glucose-O2 Biofuel Cells “ (PREM-REU Summer 2007).
+Shirley Huang (class of 2008) “Pt electrodeposition” (Fall 2007).
+Shirley works at Exxon Mobil.
+Carlene Ulish (class of 2008) “Glycerin and methanol fuel cells” (Senior Honors Thesis, 9/07-4/08).
+Carlene works at Exxon Mobil.
+Mark Depperman (Aachen exchange student), “Electrochemical reforming of methanol and glycerin”, 09/07-06/08.
+Natalie Brandell “Oxygen evolution electrocatalysts” Fall 2008.
+Natalie spent her junior year at the Naval Research Laboratory with Deborah Rolison investigating electrochemical systems.
+Josh Bordin, “Catalyzing CO2 absorption in aqueous carbonate solutions”, Summer 2009, F09-S10. Summer 2010.
+Attending CMU Energy M.S. program
+Dana Evert-Parise, “Biorenewable hydrogen production by electrochemical reforming”, SURF summer 2009, IUPN fellowship Fall 2009-Spring 2010.
+Works at Johnson & Johnson.
+Bryan Friedman, “Characterization of amine-based polymer CO2 sorbents”, senior honor’s thesis, Fall 2009-Spring 2010.
+Works for Westinghouse
+Holden Ranz (REU student from Lafayette College). “Mixed Ni-Co oxide electrocatalysts for the oxygen evolution reaction”, Summer 2010.
+Received honorable mention for his final REU poster presentation.
+Accepted into National Science Foundation: International Research Experience for Students (IRES) Collaborative Research Activities with China on Fuel Cells
+Rebecca McKeever (REU student from Texas A&M). "Core shell Ni-Fe oxide electrocatalysts for oxygen evolution reaction", summer 2011.
+Albert Liang
+Fall 2011. Characterization of OC1065 ion exchange resin as a CO2 sorbent.
+Spring 2012. Characterization of OC1065 ion exchange resin as a CO2 sorbent.
+Fall 2012/Spring 2013 Senior Honors Research.
+Mark Wong Siang Kai
+Fall 2011. Reparameterization of the Solid State Table.
+Amy Yuan
+Fall 2011. pH dependent activity of Fe-TAML for electrochemical oxygen evolution.
+Joey Ni
+REU student Summer 2012. Estimating oxide polymorph stability with density functional theory.
+Jill Chipman
+REU student Summer 2012. Measuring Henry’s law constants for CO2 in solvents with Raman spectroscopy.
+Neha Nandakumar
+Summer 2012. Modeling Chemical Looping processes using ASPEN.
+Fall 2012. Modeling post-combustion CO2 capture with ASPEN.
+Andrew Yee
+Summer 2013. Automating Aspen simulations using Python.
+
+(b) Master’s Students
+
+Jing Chou, "Electro-oxidation of Glycerin: Utilization of glycerin as a fuel cell fuel", 1/2006-5-2007. Jing is currently works for the Taiwan patent office.
+Frank DeCarlo, “Supported alkali carbonates for warm gas CO2 capture”, 9/2008-8/2010. Works at Eastern Research Group ().
+Sneha Sakhade, “Strain dependent reactivity of LaMnO3 surfaces”. June 2010-May 2011.
+Vivek Vinodan (co-advised with Erik Ydstie), “Modeling chemical looping processes”. 11/2011-5/2013.
+Zhizhong Ding (co-advised with Jim Miller), “Ni-Fe-based oxygen carriers for chemical looping applications”. 11/2011-5/2013.
+Prateek Mehta, “Modeling oxide polymorphs”, 11/2012-12/2013.
+Steve Illes (2012-2014) “in situ spectroscopy of electrodes”.
+Nitish Govindarajan, 12/2013-present.
+Meiheng Lu, 12/2013-present.
+Wenqin You, 12/2013-present.
+Qinggi Fan (2013-present)
+
+(c) Ph.D. Students
+
+John Michael (2013-present)
+Co-advised by Paul Sides
+Mehak Chawla (2013-present)
+Jacob Boes (2012-present)
+Dissertation topic: Predicting reactivity of ternary alloys
+Alexander Hallenback (2011-present)
+Dissertation topic: CO2 diffusivity in CO2 capture solvents
+Zhongnan Xu (2011-present)
+Dissertation topic: Trends in the reactivity of transition metal oxides
+Matthew Curnan (MSE)(2011-present)
+Dissertation topic: Perovskite oxides as oxygen carriers for chemical looping applications
+Ethan Demeter, (2008-2013)
+2010 Dowd-ICES graduate fellowship
+Dissertation topic: in situ spectroscopy of metal oxide electrocatalysts for water splitting
+Ethan works for Fuel Cell Energy ()
+Anita Lee, (2008-2013)
+2010-2011 Steinbrenner graduate fellowship
+Dissertation topic: Designing and characterizing CO2 capture solvents
+Anita has accepted a job with ExxonMobil
+Robin Chao (Co-advised by MSE Prof. Paul Salvador) (MSE, 2008-2012).
+Dissertation: Improving Solid Oxide Fuel Cell Cathode Performance by Infiltrating Mesoporous Perovskite Coatings
+Accepted job with IBM.
+Rich Alesi (2007-2012).
+Dissertation: Amine Based Sorbents : Developing a Quantitative Framework for Understanding CO2 Capture
+Accepted job with Intel.
+Nilay Inoglu (2007-2011).
+2009 Dowd-ICES graduate fellowship
+Dissertation: “Design of Sulfur Tolerant Transition Metal Catalysts and                                            Oxide Based Oxygen Evolution Electrocatalysts”
+Accepted job with ExxonMobil.
+James Landon (2006-2011).
+Dissertation: “Electrochemical Oxygen Production: Catalyst Development to Meet the World’s Oxygen Demands”.
+Accepted job with University of Kentucky Center for Applied Energy Research.
+Spencer Miller (2006-2011).
+Dissertation: “Towards an Understanding of Coverage Dependent  Atomic Adsorption on Late Transition Metals”
+Accepted job with Advanced Process Combinatorics, West Lafayette, Indiana.
+(d) Postdoctoral researchers
+Bin Liu. “Predicting phase behavior and gas solubility in Fe-Ni-Al alloys”. Jan 2013-present.s
+Li Yuan “Novel solid oxide fuel cell cathode materials” (03/08-06/08). Li accepted a job with a catalyst company who sponsored her visa and left quickly.
+(e) Thesis committees (other than my own students)
+Blake Rawlings (Ydstie), PhD proposal ,12/2013.
+Iryna Zenyuk, (Litster, ME), PhD defense, 12/2013.
+Tuhin Suvra Khan (Technical University of Denmark), external examiner for PhD defense, 7/2013.
+William Huhn (Widom, Physics), Annual review, 5/2011, 7/2013.
+Linchen Han (Gregory, CEE), Qualifier, 2/14/2011.
+Minyoung Lee (McGaughey, ME), PhD defense, 12/2010.
+Reza Rock (Sides), PhD proposal, 12/2010.
+Peter Versteeg (Rubin, EPP), PhD proposal, 12/2010. PhD defense, 3/23/2012.
+Keith Zorn (Sahinidis), PhD proposal, 1/2010.
+Brian Holzclaw (Gellman), PhD proposal 12/2009. PhD Defense 4/26/2012.
+Mei Sun (Lowry, CEE), PhD qualifier, 2/2009.
+Danish Faruqui (Gellman), PhD proposal, 12/2009. PhD defense, 8/2010.
+Xiaomi Xu (Weber, U Pitt), PhD defense (2009).
+  Electrochemical detection optimized for capillary liquid chromatographic determination of neuroactive compounds. Doctoral Dissertation, University of Pittsburgh. 2011.
+William Michalak (Gellman), PhD proposal, 11/2008.
+Casey O’Brian (Gellman), PhD proposal, 11/2008. PhD defense 4/2011.
+Emily Ryan (Amon, ME), PhD proposal, 4/2008. PhD defense 1/2010.
+Mohit Aggarwal (Ydstie, White), PhD proposal, 10/2007. PhD defense 5/2009.
+Chen Ling (Sholl), PhD proposal, 8/2007.
+Haibin Chen (Sholl), PhD defense, 8/2007.
+Vladimir Pushkarev (Gellman), PhD proposal, 6/2007. PhD defense 12/2009.
+Lymarie Semidey-Flecha (Sholl), PhD proposal, 8/2006.
+Andrew Lambe, PhD proposal, 10/2006, PhD defense 4/2009.
+3.C  Educational Contributions
+
+Course development and educational initiatives
+(2007) I introduced the use of software video tutorials for Mathcad in the Mathematical methods in chemical engineering course. Mathcad uses a point and click interface to build up worksheets of mathematical calculations. That interface makes it difficult to see how a complicated worksheet has been constructed, and it is very difficult to debug syntax errors. The videos capture mouse movements and clicks as well as audio so that students can hear me discuss the problem setup and trouble shooting.
+(2008) I developed a team-based “Transforming energy and low-value feedstocks to high-value products” concept for Unit Operations Laboratory (06-423). The course had previously been a large class project on “Corn to Polymers”.
+(2009) I created a departmental advising website () that provides curricular information, campus resources and suggestions to students and faculty as needed each semester.
+(2011) I developed a Matlab blog:  to provide examples of using Matlab in chemical engineering. Some usage statistics are shown below.
+
+
+
+(2013) I developed a new Master’s core course in Chemical and Reactive Systems (06-625). The course emphasizes the use of computational tools such as Python in solving chemical reaction engineering problems. The course will be taught for the first time in the Fall 2013.
+Study programs and workshops
+Attended “Making Academic Change”, Summer 2014.
+Participated in the Wimmer Faculty Teaching Fellow program at CMU, Summer 2008.
+Attended "Student Privacy Issues", FERPA review at CMU, Oct 2007.
+Attended "How to Engineer Engineering Education", Workshop at Bucknell University, July 16-18, 2007.
+Attended "Advising as Teaching", CMU workshop, October 2006.
+ 4. Publications
+4.A  Books
+4.B  Archival Papers Critically Reviewed Before Publication
+
+Web of Science Citation Report AU=(KITCHIN J*) AND OG=(UNIV DELAWARE OR TECH UNIV DENMARK OR CARNEGIE MELLON UNIV OR N CAROLINA STATE UNIV)
+ResearcherID: A-2363-2010 ()
+ORCID:
+Google Scholar:
+
+48.  Matthew T. Curnan and John R. Kitchin, Effects of Concentration, Crystal Structure, Magnetism, and Electronic Structure Method on First-Principles Oxygen Vacancy Formation Energy Trends in Perovskites, J. Phys. Chem. C., .
+
+47.  Zhongnan Xu and John R. Kitchin, Probing the Coverage Dependence of Site and Adsorbate Configurational Correlations on (111) Surfaces of Late Transition Metals, J. Phys. Chem. C., .
+
+46. Ethan L. Demeter , Shayna L. Hilburg , Newell R. Washburn , Terrence J. Collins , and John R. Kitchin, Electrocatalytic Oxygen Evolution with an Immobilized TAML Activator,  Journal of the American Chemical Society, 136(15) 5603-5606 (2014). http://dx.doi.org/10.1021/ja5015986
+
+45.  Robert L. Thompson, Wei Shi, Erik Albenze, Victor A. Kusuma, David Hopkinson, Krishnan Damodaran,  Anita S. Lee, John R. Kitchin, David R. Luebke and Hunaid Nulwala, Probing the effect of electron donation on CO2 absorbing 1,2,3-triazolide ionic liquids, RSC Advances, 4 (25), 12748-12755 (2014). .
+
+44. Mehta, Prateek; Salvador, Paul; Kitchin, John, Identifying Potential BO2 Oxide Polymorphs for Epitaxial Growth Candidates", ACS Applied Materials and Interfaces, 6(5), 3630-3639 (2014). .
+
+43. Spencer D. Miller, Vladimir V. Pushkarev, Andrew J. Gellman and John R. Kitchin, Simulating Temperature Programmed Desorption of Oxygen on Pt(111) Using DFT Derived Coverage Dependent Desorption Barriers, Topics In Catalysis, 57(1), 106-117 (2013).
+
+42. Zhongnan Xu and John R Kitchin, Relating the Electronic Structure and Reactivity of the 3d Transition Metal Monoxide Surfaces, Catalysis Communications, 52, 60-64 (2014),        http://dx.doi.org/10.1016/j.catcom.2013.10.028.
+
+41. Alex Hallenbeck and John R. Kitchin, Effects of O2 and SO2 on the Capture Capacity of a Primary-Amine Based Polymeric CO2 Sorbent, I&ECR, 52 (31), 10788-10794 (2013). .
+
+40. Anita Lee, John Eslick, David Miller, John R. Kitchin, Comparisons of Amine Solvents for Post-combustion CO2 Capture: A Multi-objective Analysis Approach, International Journal of Greenhouse Gas Control, 18, 68-74 (2013). .
+
+39. James X. Mao,† Anita Lee,‡ John R. Kitchin, Hunaid B. Nulwala,¶ David R. Luebke,¶ and Krishnan Damodaran, Interactions in 1-Ethyl-3-Methyl Imidazolium Tetracyanoborate Ion Pair: Spectroscopic and Density Functional Study, Journal of Molecular Structure,  1038, 12-18 (2013).
+
+38. Federico Calle-Vallejo*, Nilay G. Inoglu, Hai-Yan Su, José I. Martínez, Isabela C. Man, Marc T. M. Koper, John R. Kitchin, and Jan Rossmeisl, Number of Outer Electrons as Descriptor of the Reactivity of Transition Metals and Their Oxides. Chemical Science, 4, 1245-1249 (2013).
+
+37. Anita Lee, John R. Kitchin , Chemical and molecular descriptors for the reactivity of amines with CO2, Industrial & Engineering Chemistry Research, 51 (42), 13609–13618 (2012). http://dx.doi.org/10.1021/ie301419q
+
+36. Sneha A. Akhade and John R. Kitchin*, Effects of strain, d-band filling and oxidation state on the surface electronic structure and reactivity of 3d perovskite surface, J. Chem. Phys. 137, 084703 (2012).
+
+35. James Landon, Ethan Demeter, Nilay İnoğlu, Chris Keturakis, Israel E. Wachs, Relja Vasić, Anatoly I. Frenkel, John R. Kitchin, Spectroscopic characterization of mixed Fe-Ni oxide electrocatalysts for the oxygen evolution reaction in alkaline electrolytes, ACS Catalysis, 2, 1793-1801 (2012).  .
+
+34. John R. Kitchin*, , Topics in Catalysis, Vol. 55 (5-6), 227-228 (2012). .
+	This was a special issue I edited with 16 accepted manuscripts.
+
+33. Walter Alesi, John R. Kitchin*, Evaluation of a Primary Amine Functionalized Ion Exchange Resin for CO2 Capture, Industrial & Engineering Chemistry Research, 51(19), 6907–6915 (2012). http://dx.doi.org/10.1021/ie300452c.
+
+32. Edward S. Rubin*, Hari Mantripragada, Aaron Marks, Peter Versteeg, John Kitchin, The outlook for improved carbon capture technology, Progress in Energy and Combustion Science, 38 (5) 630–671 (2012).
+
+31. Robin Chao, Rumyana Petrova, Kirk Gerdes, John R. Kitchin, and Paul A. Salvador*, Structure and thermal stability of mesoporous (La,Sr)MnO₃ powders prepared using evaporation-induced self-assembly methods, Journal of the American Ceramic Society, 95 (7) 2339–2346 (2012).
+
+30. Sneha A. Akhade and John R. Kitchin*, Effects of strain, d-band filling and oxidation state on the bulk electronic structure of cubic 3d perovskites, J. Chem. Phys. 135, 104702 (2011). .
+
+29. Nilay Inoglu, and John R. Kitchin*, Identification of sulfur tolerant bimetallic surfaces using DFT parameterized models and atomistic thermodynamics, ACS Catalysis, 1, 399-407 (2011).
+
+28. Isabela C. Man, Hai-Yan Su, Federico Calle-Vallejo, Heine A. Hansen, José I. Martínez, Nilay G. Inoglu,  John Kitchin, Thomas F. Jaramillo, Jens K. Nørskov, Jan Rossmeisl*, Universality in Oxygen Evolution Electro-Catalysis on Oxide Surfaces, ChemCatChem, 3, 1159–1165 (2011).
+
+27. Spencer D. Miller, Nilay İnoğlu, and John R. Kitchin*, Configurational correlations in the coverage dependent adsorption energies of oxygen atoms on late transition metal fcc (111) surfaces, J. Chemical Physics, 134, 104709 (2011).
+
+26. Robin Chao, John R. Kitchin, Kirk Gerdes, Ed M. Sabolsky, and Paul A. Salvador, Preparation of Mesoporous La0.8Sr0.2MnO3 Infiltrated Coatings in Porous SOFC Cathodes Using Evaporation-Induced Self-Assembly Methods, ECS Transactions, 35 (1) 2387-2399 (2011). .
+
+25. W. Richard Alesi Jr., McMahan Gray, John R. Kitchin*, CO2 Adsorption on Supported Molecular Amidine Systems on Activated Carbon, ChemSusChem, 3(8), 948-956 (2010) Special issue on CO2 capture and Sequestration.
+
+24. Nilay Inoglu, John R. Kitchin*, Simple model explaining and predicting coverage-dependent atomic adsorption energies on transition metal surfaces, Physical Review B, 82, 045414 (2010) .
+
+23. James R. Landon, John R. Kitchin*, Electrochemical Concentration of Carbon Dioxide from an Oxygen/Carbon Dioxide Containing Gas Stream, J. Electrochem. Soc., 157, B1149-B1153 (2010). .
+
+22.	Nilay Inoglu, John R. Kitchin*, New Solid State Table: Estimating d-band Characteristics for Transition Metal Atoms, Molecular Simulation, 36(7), 633 (2010). .
+
+21. Heather L. Tierney, Ashleigh E. Baber, John R. Kitchin, and E. Charles Sykes*, Tuning palladium’s reactivity via atomic-level alloying in inert substrates, Physical Review Letters, 103, 246102 (2009). .
+
+20. Henry W. Pennline; Evan J. Granite*, David R Luebke, John R Kitchin, James Landon, Lisa Weiland, Separation of CO2 From Flue Gas Using Electrochemical Cells, Fuel, 89, 1307-1314 (2010).
+
+19. John R. Kitchin*, Correlations in coverage dependent atomic adsorption energies on Pd(111), Physical Review B, 79, 205412 (2009). .
+
+18. Spencer D. Miller and John R. Kitchin*, Uncertainty and Figure Selection for DFT based Cluster Expansions for Oxygen Adsorption on Au and Pt (111) Surfaces, Molecular Simulation, 35, 936-941, (2009).
+
+17. Nilay Inoglu and John R. Kitchin*, Sulfur Poisoning of Water Gas Shift Catalysts: Site Blocking and Electronic Structure Modification, Molecular Simulation, 35, 920-927 (2009).
+
+16. Jeong Woo Han, John R. Kitchin, and David S. Sholl*, Step decoration of chiral metal surfaces. The Journal of Chemical Physics, 2009. 130(12): p. 124710-8. .
+
+15. Spencer D. Miller, and John R. Kitchin*,  Relating the coverage dependence of oxygen adsorption on Au and Pt fcc(1 1 1) surfaces through adsorbate-induced surface electronic structure effects. Surface Science, 2009. 603(5): p. 794-801.
+
+14. Nilay Inoglu and John R. Kitchin*,  Atomistic thermodynamics study of the adsorption and the effects of water-gas shift reactants on Cu catalysts under reaction conditions. Journal of Catalysis, 2009. 261(2): p. 188-194.
+
+13. John R. Kitchin*, Karsten Reuter, and Matthias Scheffler,  Alloy surface segregation in reactive environments: A first-principles atomistic thermodynamics study of Ag3Pd(111) in oxygen atmospheres, Physical Review B, 2008. 77, 075437 (12 pages). .
+
+12. John R. Kitchin, Jens K. Nørskov, Mark A. Barteau, and Jingguang G. Chen, Trends in the chemical properties of early transition metal carbide surfaces: A density functional study. Catalysis Today, 2005. 105(1): p. 66-73.
+
+11. Jens K. Nørskov, Thomas Bligaard, Ashildur Logadottir, John R. Kitchin, Jingguang G. Chen, and S. Pandelov, Trends in the exchange current for hydrogen evolution, Journal of the Electrochemical Society, 2005. 152(3): p. J23-J26.
+
+10. Jens K. Nørskov, Jan Rossmeisl, Ashildur Logadottir, Lars Lindqvist, John R. Kitchin, Thomas Bligaard, and Hannes Jonsson, Origin of the overpotential for oxygen reduction at a fuel-cell cathode. Journal of Physical Chemistry B, 2004. 108(46): p. 17886-17892.
+
+9.  John R. Kitchin, Jens K. Nørskov, Mark A. Barteau, and Jingguang G. Chen, Role of strain and ligand effects in the modification of the electronic and chemical properties of bimetallic surfaces. Physical Review Letters, 2004. 93(15), 156801 (4 pages). .
+
+8. Ashish B. Mhadeshwar, John R. Kitchin, Mark A. Barteau, and Dion G. Vlachos, The role of adsorbate-adsorbate interactions in the rate controlling step and the most abundant reaction intermediate of NH3 decomposition on Ru. Catalysis Letters, 2004. 96(1-2): p. 13-22.
+
+7. John R. Kitchin, Jens K. Nørskov, Mark A. Barteau, and Jingguang G. Chen, Modification of the surface electronic and chemical properties of Pt(111) by subsurface 3d transition metals. Journal of Chemical Physics, 2004. 120(21): p. 10240-10246. .
+
+6. John R. McCormick, John R. Kitchin, Mark A. Barteau, and Jingguang G. Chen, A four-point probe correlation of oxygen sensitivity to changes in surface resistivity of TiO2(001) and Pd-modified TiO2(001). Surface Science, 2003. 545(1-2): p. L741-L746.
+
+5. John R. Kitchin, Neetha A. Khan, Mark A. Barteau, Jingguang G. Chen, Boris Yakshinksiy, and Ted E. Madey, Elucidation of the active surface and origin of the weak metal-hydrogen bond on Ni/Pt(111) bimetallic surfaces: a surface science and density functional theory study. Surface Science, 2003. 544(2-3): p. 295-308.
+
+4. John R. Kitchin, Mark A. Barteau, and Jingguang G. Chen, A comparison of gold and molybdenum nanoparticles on TiO2(110) 1 × 2 reconstructed single crystal surfaces. Surface Science, 2003. 526(3): p. 323-331.
+
+3. In K. Song, John R. Kitchin, and Mark A. Barteau, H3PW12O40-functionalized tip for scanning tunneling microscopy. Proceedings of the National Academy of Sciences of the United States of America, 2002. 99: p. 6471-6475.
+
+2. David A. Shultz, Andrew K. Boal, Debra J. Driscoll, Gary T. Farmer, John R. Kitchin, David B. Miller, and Gregory N. Tew, Preparation of paramagnetic ligands for coordination-complexes and networks with interesting magnetic properties. Molecular Crystals and Liquid Crystals Science and Technology Section a-Molecular Crystals and Liquid Crystals, 1997. 305: p. 303-310. .
+
+1. David A. Shultz, Andrew K. Boal, Debra J. Driscoll, John R. Kitchin, and Gregory N. Tew, Preparation and Characterization of a Bis-Semiquinone - a Bidentate Dianion Biradical. Journal of Organic Chemistry, 1995. 60(12): p. 3578-3579.
+4.B.1  Submitted papers
+
+4.B.2 Papers in preparation
+
+
+4.C  Papers in Symposium or Conference Proceedings Fully Reviewed Prior to Publication
+
+1. F. Gao, J.R. Kitchin, and L. Weiland, Rotational isomeric state theory applied to the stiffness prediction of an anion polymer electrolyte membrane, Behavior and Mechanics of Multifunctional and Composite Materials 2008. Edited by Dapino, Marcelo J.; Ounaies, Zoubeida. Proceedings of the SPIE, Volume 6929, pp. 69290M (6 pp.).
+	Review Process: Anonymous peer review of complete manuscript prior to acceptance.
+
+4.D  Other Papers in Symposium or Conference Proceedings
+4.E  Sections or Chapters in Edited Monographs or Similar Volumes
+3. Miller, S., C. Dsilva, and J.R. Kitchin, Coverage dependent adsorption properties of atomic adsorbates on late transition metal surfaces, in Catalysis. 2012, The Royal Society of Chemistry. p. 83-115.
+Review Process: Peer and editorial review of complete manuscript prior to acceptance.
+
+2. Kitchin, J.R., S.D. Miller, and D.S. Sholl, Density functional theory studies of alloys in heterogeneous catalysis, in Chemical Modelling. 2008, The Royal Society of Chemistry. p. 150-181.
+Review Process: Editorial review of complete manuscript prior to acceptance.
+
+1. N.A. Khan, J.R. Kitchin, V. Schwartz, L.E. Murillo, K.M. Bulanin, J.G. Chen, Novel Catalytic Properties of Bimetallic Surface Nanostructures, ACS Symposium Series, Nanotechnology in Catalysis II v.1 (2003) 17.
+Review Process: Editorial review of complete manuscript prior to acceptance.
+
+4.F  Published Abstracts, Discussions, Reviews
+
+4.G  Other Writings (Technical Reports and Testimony)
+Carbon Capture: A Technology Assessment, Congressional Research Service (2010). This technology assessment and report was undertaken by Carnegie Mellon University, Department of Engineering and Public Policy, under the leadership of Edward S. Rubin, together with Aaron Marks, Hari Mantripragada, Peter Versteeg, and John Kitchin. The work was performed under contract to CRS, and is part of a multiyear CRS project to examine different aspects of U.S. energy policy. .
+
+Basic Research Needs for Carbon Capture: Beyond 2020, This report is based on a SC/FE workshop on Carbon Capture: Beyond 2020, held March 4–5, 2010, to assess the basic research needed to address the current technical bottlenecks in carbon capture processes and to identify key research priority directions that will provide the foundations for future carbon capture technologies. I was a contributing author to the Liquid Absorbents section.
+
+Workshop Report: Building the Materials Innovation Infrastructure: Data and Standards, A Materials Genome Initiative Workshop”, May 14-15, 2012, Washingon, DC. Hosted by NIST. Contributing participant in the Catalysis section.
+
+4.H   Discussion or Reviews of Candidate’s Work
+4.I  Patents
+B.C. Muñoz, G.W. Adams, V.T. Ngo, and J.R. Kitchin, "Stable Magnetorheological Fluids", United States Patent 6,203,717, 2001.
+Newell Washburn, John R. Kitchin, “Molecular electrocatalyst-based system for oxidation and reduction of oxygen-containing species”, invention disclosure, 6/11/2011.
+5. Grants and Contracts Awarded to Date
+5.A  Principal Investigator
+
+“Computational Predictions Support”, NETL-RUA, 11/15/2011-12/31/2012, $115,114.
+“Characterization of the High Pressure Absorption of CO2 into Ionic Liquids”, NETL-RUA, 11/15/2011-11/14/2012, $128,200.
+“Investigation and Mechanistic Study of Amine-Enriched Sorbents for Post-Combustion CO2 Capture”, NETL-RUA, 11/15/2011-11/14/2012, $106,000.
+“ICMI Support for Oxygen Carrier Interaction Studies”, NETL-RUA, 9/30/2011-9/30/2013, $230,000.
+"Ion Exchange Resins as CO2 Sorbents for Post-combustion CO2 Capture", NETL-RUA, 11/15/2010-11/14/2011, $300,000.
+"A comprehensive computational approach to evaluating amine based solvents for post combustion CO2 capture", Steinbrenner Graduate Fellowship for Anita Lee, $35K, 2010.
+ “Mixed-metal oxide electrocatalysts for oxygen separation from air”, NETL-IAES, 1/14/2010-11/14/2010, $162,909
+“Supported amine sorbents: moisture, micro and molecular structure”, NETL-IAES, 1/14/2010-11/14/2010, $158,529
+“Multifunctional Oxygen Evolution Electrocatalyst Design and Synthesis”, DOE Early Career award, April 15, 2010- April 14, 2015, $750,000.
+“Tuning the reactivity of heteroatoms for the conversion of CO2 to energy-rich molecules”, Dowd-ICES fellowship for Nilay Inoglu, August 2008-August 2009.
+“PEM-based oxygen separation for oxy-fuel applications”, NETL-IAES, May 2008-1/14/2010, $110,881.
+“Carbon supported amine sorbents for low temperature capture”, co-PI: Greg Lowry (CEE), NETL-IAES, May 2008-1/14/2010, $152,038.
+“Model supported amine sorbents for low temperature capture”, co-PI: Andrew Gellman, NETL-IAES,  May 2008-1/14/2010, $171,784.
+"Electrochemical H2 Separation from H2/CO2 Mixtures", Siemens Power Generation University Embryonic Program, July 2008-12/31/2009, $50,000.
+"Modeling Coverage Dependence in Surface Reactions", DOE-BES, $342,000 September 2007-1/14/2010.
+"In situ spectroscopy on solid oxide fuel cell cathode materials", NETL-IAES, PI: John Kitchin, co-PIs:Salvador (CMU), Matranga (NETL), Finklea (WVU), July 2007-1/14/2010, $194,600.
+“Electrochemical systems for CO2 capture and H2/O2 production”, NETL-IAES, June 2007-October 2007, $13,964.
+"Biofuel fuel cells", Berkman Foundation, $5,000 (2006).
+"Electrochemical Separation of CO2 for Oxy-fired Combustion", NETL, PI: John Kitchin, co-PI: Lisa Weiland (Pitt), August 2006-June 2008, $134,600.
+5.B  Co-Principal Investigator
+
+“Systems Analysis of Advanced Power Plant Carbon Capture Technologies”, Stanford GCEP, $507,000, co-PI. PI: Ed Rubin.
+"Mesoporous Nanoscale Electrocatalysts for SOFC Cathode Performance Improvements ", NETL-RUA, PI: Paul Salvador, co-PI: John Kitchin. 11/15/2010-11/14/2011, $144,400.
+“Surface science studies of CO2 interactions w/inorganic sorbents”, PI: Andrew Gellman, co-PI: John Kitchin, NETL-IAES, May 2008-October 2009, $170,900.
+ “Mixed metal carbonates for warm gas CO2 capture”, NETL-IAES, PI: Andrew Gellman, co-PI: John Kitchin, 1/14/2010-11/14/2010, $198,614.
+
+5.C  Faculty Associate
+5.D  Pending proposals
+6.  Professional Activities
+6.A  Seminars – Presenter underlined
+(a) Invited Seminars - Academia
+19. John Kitchin, Jacob Boes, Gamze Gumuslu, James Miller, Andrew Gellman, “Bulk Composition Dependent H2 Dissociative Adsorption Energies on CuxPd1-x Alloy Surfaces”, U. Missouri, Department of Chemical Engineering, September 2014.
+18. John Kitchin, “The next evolution in water oxidation”, Department of Materials Science, Duke University, March 2014.
+17. John Kitchin, “Effects of crystal structure, oxidation state, vacancy concentration and composition on perovskite reactivity”, Department of Physics, Denmark Technical University, 7/2013.
+16. John Kitchin, “In situ spectroscopic studies of metal oxide electrodes during water oxidation”, MIT Energy Initiative, March 12, 2013.
+15. John Kitchin, “Trends in the reactivity of perovskites with applications in chemical looping”, Department of Chemical Engineering, U. Michigan, 11/2012.
+14. John Kitchin, “Fe-promoted NiO based oxygen evolution electrocatalysts”, Department of Chemical Engineering, UC Santa Barbara, 2/29/2012.
+13. John Kitchin, “Oxygen evolution on mixed metal oxide electrocatalysts”, Department of Chemical Engineering, University of Michigan, November 2011.
+12. John Kitchin, “Oxygen evolution on mixed metal oxide electrocatalysts”, Department of Chemical Engineering, Ohio State University, November 2011.
+11. John Kitchin, “Oxygen evolution on multicomponent oxide electrocatalysts”, Invited lecture for the Allan P. Colburn Memorial Lectureship, Department of Chemical Engineering, University of Delaware, March 2011.
+10. John Kitchin, “Modeling the interactions of adsorbates with each other and with metal surfaces”, Department of Physics, Brigham Young University, Nov. 9, 2010.
+9.  John Kitchin, “Modeling the coverage-dependent interactions of adsorbates with metal surfaces”,  The 2010 CAMD Summer School on Electronic Structure Theory and Materials Design at the Denmark Technical University, August 17, 2010.
+8.  John Kitchin, "Modeling the interactions of adsorbates with metal surfaces and the development of new sorbents for post-combustion CO2 capture”, Department of Chemical Engineering, Notre Dame University, April 6, 2010.
+7. John Kitchin, “Designing Amidine-Based CO2 Sorbents: A Computational and Experimental Study”, University of Pittsburgh, Department of Chemical Engineering, September 18, 2009.
+6. John Kitchin, “CO2 Capture Technology: a chemical engineering perspective”, Georgia Tech, Department of Chemical Engineering, April 16, 2009.
+5. John Kitchin, “Corresponding states of adsorption of coverage dependent atomic adsorption: Finding simplicity in complexity”, C2MEM seminar, Carnegie Mellon University October 30, 2008.
+4. John Kitchin, “Modeling segregation and coverage effects on alloy catalyst surfaces: An ab initio atomistic thermodynamics approach”, West Virginia University, Department of Chemical Engineering seminar, March 14, 2008.
+3. John Kitchin, “Electrochemical approaches to CO2 capture”, Carnegie Mellon University, Engineering and Public Policy departmental seminar, May 2, 2007.
+2. John Kitchin, “Understanding alloy surfaces with experiments and computations”, NETL, February 2006.
+1. John Kitchin, “Insight into the chemical properties of alloy surfaces”, Universiteit Leiden, Netherlands, Nov. 2005 – named lecture: Van Marum Colloquium.
+(b) Invited Presentations at Professional Meetings (presenter underlined)
+16. John Kitchin, Jacob Boes, Gamze Gumuslu, James Miller, Andrew Gellman, “Bulk Composition Dependent H2 Dissociative Adsorption Energies on CuxPd1-x Alloy Surfaces” Department of Energy - Basic Energy Science – Catalysis Program meeting, July 2014.
+15. John Kitchin, “Water Electrolysis on Fe/Ni Oxide Electrocatalysts”, February 9, 2013,  CEC Annual Workshop on Electrochemistry, UT Austin, TX.
+14. John Kitchin, “The role of oxidation state, d-band filling, crystal structure and strain in oxide reactivity”, Catalysis Gordon Conference, June 24-29, 2012. Colby-Sawyer College, New London, NH.
+13. John Kitchin, Rich Alesi, Anita Lee, “Modeling the reactivity of amines towards CO2 and its impact on post-combustion CO2 capture performance”, 3/26/2012, ACS 2012 (San Diego).
+12. John Kitchin, Paul Salvador, “Designing the electronic structure and reactivity of metal oxides through strain, d-band filling and oxidation state”, NSF Nanoscale Science and Engineering Grantees Conference, December 2011.
+12. John Kitchin, “Oxygen evolution on mixed metal oxide electrocatalysts”, ASME 2011 Conference on Smart Materials, Adaptive Structures and Intelligent Systems, Scottsdale, AZ (September 2011).
+11. John Kitchin, Spencer Miller, Nilay Inoglu, “Modeling the interactions of adsorbates with each other and with metal surfaces”, March APS meeting, Focus Session: Frontiers in Computational Thermodynamics of Materials, Dallas, TX, March 24, 2011.
+10. John Kitchin, Rich Alesi, Anita Lee and McMahan Gray, “Designing Amine-Based CO2 Sorbents - A Computational and Experimental Study”, Spring ACS meeting, San Francisco, March 24, 2010.
+9. John Kitchin, Spencer Miller, Nilay Inoglu, “Trends and similarities in coverage dependent adsorption of simple adsorbates: Density functional theory and parameterized model investigations”, Spring ACS meeting award Symposium for Chris Jones, winner of the Ipatieff award, San Francisco March 22, 2010.
+8. John Kitchin, “Corresponding states of adsorption of coverage dependent atomic adsorption: Trying to understand the trends”, Greater Lakes Regional ACS Meeting, May 2009.
+7. John Kitchin, “Similarity in coverage and configurational dependent atomic adsorbate behaviors on late transition metal surfaces”, Grand Challenges of Electron Chemistry and Catalysis at Interfaces, PIRE-ECCI, August 15, 2008.
+6. John Kitchin, “CO2 Capture Tutorial”, 3rd Energy Nanotechnology International Conference, ASME, August 11, 2008.
+5. John Kitchin, “Configurational correlations in the adsorption properties of atomic adsorbates on transition metal surfaces”, American Chemical Society Meeting, Spring 2008, April 9, 2008.
+4. John Kitchin, “Modeling coverage dependent properties”, AICHE Fall 2007.
+3. John Kitchin, “Modeling coverage dependent properties”, ACS, Fall 2007.
+2. John Kitchin, “CO2 capture from air”, CO2 Air Capture Workshop, Banff, Canada, July 2, 2007.
+1. John Kitchin, “Insight into the chemical properties of alloy surfaces”, Pittsburgh-Cleveland Catalysis Society Spring meeting, June 2006.
+(c) Other invited Presentations (presenter underlined)
+13. John Kitchin, “Effects of crystal structure, oxidation state, vacancy concentration and composition on perovskite reactivity”, Haldor Topsoe, Lyngby, Denmark, 7/2013.
+12. John Kitchin, “Effects of crystal structure, oxidation state, vacancy concentration and composition on perovskite reactivity”, Exxon Mobil Research and Engineering, 7/2013.
+11. John Kitchin, “in situ spectroscopic studies of metal oxide electrodes during water oxidation”, Philadelphia Catalysis Club, April 2013.
+10. John Kitchin, “In situ spectroscopic studies of metal oxide electrodes during water oxidation”, Michigan Catalysis Club, January 2013.
+9. John Kitchin, Anita Lee and Alex Hallenbeck, “Characterization of an Ion Exchange Resin for CO2 Capture and Vibrational Spectroscopy Characterization of CO2 in Oligomer Solvents for Pre-combustion CO2 Capture”, Stanford School of Earth Sciences, September 2012.
+8. John Kitchin, “±DFT: strategies for calibrating trends in DFT calculations - coverage dependent adsorption energies”,  Future of Catalysis, Jens Nørskov’s 60th birthday. September 2012.
+7. John Kitchin, “Understanding trends in oxide reactivity: applications in water splitting, solid oxide fuel cells and chemical looping”,  Partnership for International Research and Education in Electron Chemistry and Catalysis at Interfaces (PIRE-ECCI) Summer School in Sustainable Catalysis, Dalian, China, September 2012.
+6. John Kitchin, “CO2 Capture Technology Overview”, Guest lecturer, University of Michigan, November 2011.
+5. John Kitchin, Rich Alesi, Anita Lee, “Designing Amidine-Based CO2 Sorbents: A Computational and Experimental Study”, ExxonMobil Research and Engineering, October 26, 2009.
+4. James Landon and John Kitchin, “Electrochemical air separation as a means of carbon dioxide capture”, CEIC advisory board meeting, October 16, 2008.
+3. John Kitchin, “Electrochemical systems in CO2 capture”, presentation to google.org, CMU, July 24, 2008.
+2. John Kitchin and James Landon, “Prospects for CO2 flue gas removal by electrochemical membranes”, CEIC advisory board meeting, CMU, October 2007.
+1. John Kitchin, “Descriptor based alloy …”, PNNL NOx meeting, September 25, 2007.
+(d) Contributed Presentations at Professional Meetings (presenter underlined)
+2014
+79. Jacob R. Boes and John R. Kitchin, , AICHE Atlanta, Nov 2014.
+78. , AICHE Atlanta, Nov 2014.
+, AICHE Atlanta, Nov 2014.
+76. John Kitchin, A success story in using Python in a graduate chemical engineering course, SciPy 2014, June 2014.
+
+2013
+75. John Kitchin, Emacs + org-mode + python in reproducible research, SciPy 2013, June 2013.
+74. Matt Curnan, John Kitchin, The Effects of Oxidation State, d-band Filling, Crystal Structure and DFT Method on Perovskite Reactivity, North American Catalysis Society, June 2013.
+73. Zhongnan Xu, Ethan Demeter and John R. Kitchin, Promoting the Oxygen Evolution Reaction on Nickel Oxide with Iron and Alkali Cations, North American Catalysis Society, June 2013.
+72. Alex Hallenbeck and John Kitchin, O2 and SO2 Tolerance of a Primary Amine-based Ion-exchange Resin for Post-combustion CO2 Capture Applications, poster, North American Catalysis Society, June 2013.
+71. Anita S. Lee and John R. Kitchin, In Situ Characterization of Dissolved CO2 in Pre-combustion Capture Solvents at High Pressure and Temperature, North American Catalysis Society, June 2013.
+70. Prateek Mehta and John R. Kitchin, Trends in BO2 oxide polymorph stability, Pittsburgh Cleveland Catalysis Society Spring meeting, May 2013.
+69. Zhongnan, Xu and John R. Kitchin, Promoting the Oxygen Evolution Reaction on Nickel Oxide with Iron and Alkali Cations, Pittsburgh Cleveland Catalysis Society Spring meeting, May 2013.
+68. Matthew Curnan and John Kitchin, Effects Defect Concentration, Magnetism and DFT Method on Oxygen Vacancy Formation in Bulk Transition Metal Perovskites, poster, Pittsburgh Cleveland Catalysis Society Spring meeting, May 2013.
+
+2012
+67. Zhongnan Xu, John Kitchin, Assessing the Ability of Using First Principles to Predict Fe-Ni-O Bulk Phase Stability, AICHE 2012, Pittsburgh, PA.
+66. Anita Lee, John Kitchin, Vibrational Spectroscopy Characterization of CO2-Ionic Liquid Systems for Pre-Combustion CO2, AICHE 2012, Pittsburgh, PA.
+65. Ethan Demeter, John Kitchin, The Role of Electrolytes in the Oxygen Evolution Reaction On IrO2, AICHE 2012, Pittsburgh, PA.
+64. Alex Hallenbeck, John Kitchin, Characterization of an Ion Exchange Resin for CO2 Capture, AICHE 2012, Pittsburgh, PA.
+63. Ethan Demeter, John Kitchin, Electrocatalytic Water Oxidation Using Iron-Centered Organometallic Catalyst, AICHE 2012, Pittsburgh, PA.
+62. Anita Lee, John Kitchin, Comparisons of Solvents for Post-Combustion CO2 Capture Using a Multi-Objective Analysis Approach, AICHE 2012, Pittsburgh, PA.
+61. Neha Nandakumar, Michelle Najera,  John Kitchin, and Götz Veser, Exergetic Analysis of Chemical Looping Reforming, AICHE 2012, Pittsburgh, PA.
+60. John Kitchin, Distributed version control systems for data sharing and collaboration: an application in oxide polymorph stability (Poster), Harnessing the Materials Genome: Accelerated Materials Development via Computational and Experimental Tools. Vail, CO, September 2012.
+2011
+59. John R. Kitchin, Role of Band-Filling, Oxidation State, and Strain On Perovskite Reactivity”, AICHE 2011, Minneapolis, MN. October 2011.
+58. W. Richard Alesi  and John R. Kitchin, “The Effect of CO2 Partial Pressure On Capture with Ion Exchange Resins”,  AICHE 2011 (poster), Minneapolis, MN.
+57. Anita S. Lee and John R. Kitchin, “An Electronic Structure Based Understanding of Amine-Carbon Dioxide Interactions for CO2 Capture”, AICHE 2011, Minneapolis, MN.
+56. Ethan L. Demeter, James R Landon and John R Kitchin, “Mixed-Metal Oxide Electrocatalysts for Oxygen Evolution”, AICHE 2011, Minneapolis, MN.
+55. John Kitchin, Spencer Miller, "A systematic correction to DFT-derived energies using experimental data", NACS 2011 (poster), Detroit, MI.
+54. Ethan Demeter, James Landon, John Kitchin, "Mixed-metal oxide electrocatalysts for O2 evolution", NACS 2011 (poster), Detroit, MI.
+53. Rich Alesi, John Kitchin, "A Thermodynamic Model to Predict the Conditions for Optimal CO2 Capture of Solid Sorbents", NACS 2011, Detroit, MI.
+52. Anita Lee, John Kitchin, "An Electronic Structure Based Understanding of Amine-CO2 Interactions for Carbon Capture", NACS 2011, Detroit, MI.
+51. Rich Alesi, John Kitchin, “Determining the Conditions Necessary for Optimal CO2 Capture of Solid Sorbents”, Spring ACS 2011, Anaheim, CA.
+50. John R Kitchin, Sneha Akhade, Nilay Inoglu , “Role of band-filling, oxidation state, and strain on oxide reactivity”, Spring ACS 2011, Anaheim, CA.
+2010
+49. N. Inoglu and J. R. Kitchin, DFT and Parameterized-Model Studies On the Reactivity of Heterogeneous Catalyst Surfaces: Alloying and Coverage Effects, AICHE 2010, Salt Lake City, UT.
+48. S. Miller and J. R. Kitchin, Surface Oxides: Thermodynamics and Energetic Correlations for Surface Oxides of Transition Metal Surfaces, AICHE 2010, Salt Lake City, UT.
+47. J. R. Landon and J.R. Kitchin, Iron-Doped Nickel Catalysts as Anode Materials for An Electrochemical Air Separation Device, AICHE 2010, Salt Lake City, UT.
+46. W. R. Alesi and J. R. Kitchin, Intrinsic and Extrinsic Factors Associated with CO2 Capture in a Packed Bed Reactor, AICHE 2010, Salt Lake City, UT.
+45. Ashleigh E. Baber, Heather L. Tierney, Prof. John R. Kitchin, Prof. E. Charles H. Sykes, Engineering and atomic-scale characterization of bimetallic Pd alloys for hydrogen dissociation, ACS, Fall 2010.
+44. Heather L. Tierney, Ashleigh E. Baber, John R. Kitchin, and E. Charles H. Sykes, Catalyzing the catalyst: hydrogen dissociation and spillover on individual isolated palladium atoms, ACS, Fall 2010.
+43. J.R. Kitchin, W. R. Alesi, M. Gray, Designing Amine-Based CO2 Sorbents - A Computational and Experimental Study, The Materials Society, Seattle, Washington, Feb 14-17, 2010.
+2009
+42. Robin Chao, John Kitchin, Paul Salvador, Synthesis of High Surface Area Materials for Solid Oxide Fuel Cells, Materials Research Society Fall 2009.
+41. W. R. Alesi, J. R. Kitchin, Methods to Derive the Thermodynamic Properties of CO2 Interaction with Amine Based Sorbents, AICHE Fall 2009.
+40. J. R. Kitchin, N. Inoglu, S. Miller, A New Solid State Table for Predicting Coverage Dependent Adsorption Energies On Transition Metal Surfaces, AICHE Fall 2009.
+39. S. D. Miller, J. R. Kitchin, The Configurational Correlation: Relating Ab Initio Energies of Surface Oxides Across Transition Metal Surfaces, AICHE Fall 2009.
+38. Luebke, D., H. Pennline, E. Granite, J. Kitchin, J. Landon, and L. Weiland, Ancillary Oxygen-Fired Combustion Using Electrochemical Cells, presented at 102nd Air and Waste Management Association Annual Conference and Exhibition, Detroit, MI, June 2009.
+37. Heather L. Tierney, Ashleigh E. Baber, John R. Kitchin, E. Charles H. Sykes, “Novel pathways to hydrogen dissociation and diffusion on Pd alloys”,  Catalytic Materials for Energy, Green Processes, and Nanotechnology, MRS Fall 2009.
+36. John R. Kitchin, H.L. Tierney, A.E. Baber, and E.C.H. Sykes, “Catalyzing the catalyst: Hydrogen dissociation and spillover on Pd impurities in Cu(111) but not in Au(111)”,  International Conference for Surface and Colloid Science, New York, June 2009.
+35. N. Inoğlu and J. R. Kitchin, “Conversion of CO2 to Energy-Rich Molecules & Sulfur Poisoning & d-band Formalism”, North American Catalyst Society Annual Meeting, June 7-14, 2009, San Francisco, CA. (Poster Presentation).
+34. John R. Kitchin, H.L. Tierney, A.E. Baber, and E.C.H. Sykes, “Catalyzing the catalyst: Hydrogen dissociation and spillover on Pd impurities in Cu(111) but not in Au(111)”,  North American Catalyst Society Annual Meeting, June 7-14, 2009, San Francisco, CA.
+33. James Landon, John Kitchin, “Electrochemical Concentration of O2 and CO2 from the Air Using an Anion Exchange Membrane”, Electrochemical Society Meeting, May 2009.
+ 32. John Kitchin, “Corresponding states of adsorption of coverage dependent atomic adsorption: Finding simplicity in complexity”, DOE-BES contractor meeting, June 2009.
+31. John Kitchin, “Corresponding states of adsorption of coverage dependent atomic adsorption: Finding simplicity in complexity”, Spring ACS 2009.
+30. Rich Alesi, John Kitchin, “A First Principles Evaluation of the Role of Substituent Effects on the Interaction of Carbon Dioxide with Tertiary Amines”, Spring AICHE 2009.
+29. Rich Alesi, John Kitchin, “The Effect of Hydration on the Adsorption of Carbon Dioxide with Tertiary Amidines on Activated Carbon”, Spring AICHE 2009.
+28. Spencer Miller, John Kitchin, “Using DFT-based Cluster Expansions to Study Oxygen Adsorption on Platinum and Gold (111) Surfaces”, Spring APS 2009.
+27. Nilay Inoglu, John R. Kitchin*, “Adsorbate-Cu Interactions and Catalyst Morphologies Under Reactive Water-Gas-Shift Environment:  A First-Principle Study”, Spring ACS 2009.
+2008
+26. Nilay Inoglu and John Kitchin, “Interaction of Adsorbates with Cu in Reactive Environments  for Water Gas Shift Reaction”, AICHE 2008.
+25. Spencer Miller and John Kitchin, “Evaluating Uncertainty in the DFT-based Cluster Expansion for O adsorption on Pt and Au (111)”, AICHE 2008.
+24. John Kitchin and James Landon, “PEM-Based Electrochemical Separation of Gases”, AICHE 2008.
+23. John Kitchin, “Corresponding states of adsorption of coverage dependent atomic adsorption: Finding simplicity in complexity”, AICHE 2008.
+22. John Kitchin, Carmeline Dsilva, Alia Lubers and Diane Mattingly, “Pt-decorated electrocatalysts for direct alcohol fuel cell applications”, AICHE 2008.
+21. H.L. Tierney, A.E. Baber, Tufts University, J.R. Kitchin, Carnegie Mellon, E.C.H. Sykes, Tufts University, “Novel Pathways to Hydrogen Dissociation and Diffusion on Pd Alloys”, American Vacuum Society, October 2008.
+20. James Landon and John Kitchin, “Electrochemical Gas Transport/Separation of Oxygen, Carbon Dioxide, and Hydrogen”, American Chemical Society Fall meeting, Philadelphia, PA, August 20, 2008.
+19. John Kitchin, “Similarity in atomic adsorption on late transition metal (111) surfaces:
+Corresponding states of adsorption?”, Materials Research Institute Surface Analysis conference, June 13, 2008.
+18. Spencer Miller and John Kitchin, “"Similarities between O adsorption on Pt and Au (111) surfaces", PA-OH-WV Simulators Meeting, June 12, 2008.
+17. Nilay Inoglu and John Kitchin, “"First-principles prediction of Cu particle shapes in reactive sulfur-containing environments", PA-OH-WV Simulators Meeting, June 12, 2008.
+16. Nilay Inoglu, John R. Kitchin, “Interaction of S with Cu in H2S / H2 Environments:  A First-Principle Study”, Pittsburgh Cleveland Catalysis Society Meeting, June 9, 2008. 1st place in student presentation competition.
+15. James Landon, and John Kitchin, “Transport and Separation of Oxygen Using Electrochemical Membranes”, Pittsburgh Cleveland Catalysis Society Meeting, June 9, 2008.
+14. Spencer Miller and John Kitchin, “Relating O adsorption on Pt(111) and Au(111) through electronic structure effects”, Pittsburgh Cleveland Catalysis Society Meeting, June 9, 2008. 2nd place in student presentation competition.
+13. Rich Alesi, and John Kitchin, “Ab initio Calculations to Derive Trends in Kinetic and Thermodynamic Properties of Functionalized Tertiary Amines for Use in CO2 Separation”, poster, Pittsburgh Cleveland Catalysis Society Meeting, June 9, 2008.
+12. Li Yuan, and John Kitchin, “High Surface Cathode Materials for Solid Oxide Fuel Cells (SOFCs)”, poster, Pittsburgh Cleveland Catalysis Society Meeting, June 9, 2008.
+11. Diane Mattingly and John Kitchin, “Alloy Decorated Gold Electrocatalysts”, Meeting of the Minds, poster, CMU, May 7, 2008. 1st place in Intel First Year Research Experience undergraduate research competition.
+10. Carmeline Dsilva and John Kitchin, “Platinum-Silver Nanoparticles as Fuel Cell Catalysts”, Meeting of the Minds, poster, CMU, May 7, 2008. 2nd place in Intel First Year Research Experience undergraduate research competition.
+9. Carlene Ulish and John Kitchin, “Use of Glycerin in Fuel Cells”, Meeting of the Minds, senior thesis poster, CMU, May 7, 2008.
+8. James Landon and John Kitchin, “Electrochemical Gas Separation”, poster, Electrochemistry Gordon Conference, Ventura, CA, January 2008.
+2007
+7. Carmeline Dsilva, Alia Lubers and John Kitchin, “Electro-oxidation of glycerin on Pt nanoparticles”, AICHE Fall 2007.
+ 6. Carmeline Dsilva, Alia Lubers and John Kitchin ,“Electro-oxidation of glycerin on Pt nanoparticles”, ACS, Fall 2007.
+5. John Kitchin, “CO2 capture from air”, REU seminar, CMU, June 27, 2007.
+2006
+4. John Kitchin, “Coverage dependent oxygen adsorption on Pd and Ag(111)”, AICHE 2006.
+3. John Kitchin, “Coverage dependent oxygen adsorption on Ag/Pd alloy surfaces”, AICHE 2006.
+2. John Kitchin, “Computational insight into the chemical properties of alloy surfaces”, ACS Fall 2006.
+1. John Kitchin, “Alloy Segregation in Reactive Environments: An ab initio Atomistic Thermodynamics Approach”, poster, Catalysis Gordon Conference, June 2006.
+
+6.B	Government Committees, Civic Appointments, Board Memberships
+ARPA-E CO2 utilization workshop
+Participated in DOE BES workshop on Carbon Capture needs for 2020 and beyond, co-authored report (2011).
+6.C  Membership and Activities in Honorary Fraternities, Professional Societies
+Pittsburgh Cleveland Catalysis Society (2006-present)
+Member, American Chemical Society (1995-present)
+Member, American Institute of Chemical Engineers (2000-present)
+Member, Electrochemical Society member (2004-present)
+Member, Phi Beta Kappa, Honor Society
+6.D  Editorial Roles on Publications, Major Activities in Professional Meetings
+Involvement in Organization of National Meetings
+Chair for Area 20 (Catalysis and Reaction Engineering) for AICHE, 2012-present
+Symposium organizer for “Data-rich approaches to solving problems in catalysis”, ACS Spring 2012 (two sessions, 10 invited talks)
+Symposium organizer for “Molecular processes at oxide surfaces”, ACS Spring 2011, Anaheim, CA. (4 sessions, 9 invited talks)
+Vice-chair for AICHE program area 20A-Catalysis 2010-2012
+ Chair for CO2 Capture by Adsorption I
+ Chair for CO2 Capture by Adsorption II
+ Co-Chair for Electrocatalysis for PEM Fuel Cells I
+ Chair for Poster Session of CRE Division
+Symposium organizer for Catalysis in the 84th Colloid Science and Surface Science ACS meeting, Akron, OH June 2010.
+Symposium organizer for the 2009 13th IACIS International Conference on Surface and Colloid Science and 83rd ACS Colloid and Surface Science Symposium at Columbia University (June 14-19, 2009).
+Session co-chair “Characterization of adsorbents”, AICHE 2009.
+Session co-chair “Electrocatalysis for PEM Fuel Cells”, AICHE 2009.
+Session chair “CO2 capture on solid sorbents”, AICHE 2010.
+Continuing Symposium Chair for Molecular Processes at Solid Surfaces, ACS,  (2009 - 2012)
+Organized “Advanced Materials for Energy and Separations” symposium, ACS (2007)
+Organized “Computational Catalysis” sessions, AICHE (2005-2011)
+Organized Pittsburgh Cleveland Catalysis Society (PCCS) Spring and Fall 2007 meetings
+Reviewing activities
+Journal Reviewing (number of articles reviewed):
+Calphad (1)
+ACS Catalysis (2)
+ACS Nano (1)
+Chemical Engineering Science (1)
+ChemCatChem (1)
+ChemSusChem (1)
+Energy (1)
+Energy & Fuels (1)
+Energy Systems (2)
+Environmental Science & Technology (1)
+Fuel (1)
+Industrial & Engineering Chemistry Research (1)
+International Journal of Hydrogen Energy (1)
+            Journal of the American Chemical Society (2)
+            Journal of Catalysis (11)
+Journal of Chemical Physics (9)
+Journal of Physical Chemistry (12)
+Journal of Physical Chemistry B (4)
+Journal of Physical Chemistry Letters (4)
+Journal of Physics: Condensed Matter (1)
+Journal of Chemical Theory and Computation (1)
+Journal of the Electrochemical Society (1)
+Journal of Electronic Materials (1)
+Journal of Chinese Institute of Chemical Engineers (1)
+Langmuir (3)
+Molecular Simulation/Journal of Experimental Nanoscience (1)
+Nano Letters (1)
+Physical Review B (3)
+Physical Review Letters (3)
+Surface Science (10)
+
+Book/Book chapter reviews
+Model Systems in Catalysis: From Single Crystals and Size-Selected Clusters to Supported Enzyme Mimics (chapter 13).
+
+Advanced Engineering Mathematics 9th ed., Kreysig.
+
+Proposal reviewing:
+Center for Nanoscale Materials Proposal Review Board (Argonne National Laboratory) (1)
+ARPA-E reviewer (7)
+National Science Foundation Panel Reviewer (2)
+National Science Foundation Expert Reviewer (3)
+Department Of Energy EPSCoR (1)
+American Chemical Society Petroleum Research Foundation (3)
+UW-Milwaukee's Research Growth Initiative (3)
+ASME DOE CO2 Sequestration Peer Review, 3 day event (1)
+Portuguese Science and Technology Foundation (7)
+DOE BES Expert Reviewer (2)
+DOE Early Career Awards (2011, 2012)
+DOE Geological Sequestration Training grant (5)
+U.S. Civilian Research & Development Foundation (1)
+
+Conference abstract reviewer
+North American Catalysis Society Meeting – 2011 (10 abstracts)
+
+Center reviewer
+Midterm-reviewer for an Energy Frontier Research Center (IACT, Argonne/Northwestern/Purdue/U. Wisconsin)
+6.E  Awards, Prizes, Honors
+, 2014.
+CIT Dean’s Early Career Fellowship, 2013.
+
+This is a Carnegie Mellon College of Engineering award given to four junior faculty for the first time in 2013.
+Presidential Early Career Award for Scientists and Engineers (PECASE) – 1 of 96, 2011.
+Allan P. Colburn Memorial Lectureship, Department of Chemical Engineering, University of Delaware, March 4, 2011.
+Kun Li Award for excellence in Education – Awarded by the graduating undergraduate class of 2010.
+Department of Energy Early Career Award – 1 of 69 in the US out of 1750 applications, 2010.
+Wimmer Faculty Teaching Fellow, CMU, 2008.
+Alexander von Humboldt Postdoctoral Research Fellow, 2004-2005.
+American Vacuum Society Russell & Sigurd Varian Award, 2003.
+National Science Foundation Graduate Research Fellowship, 2000.
+George W. Laird Fellowship, 2000.
+6.F  Service on CMU Committees
+
+	Department of Chemical Engineering
+Department Graduate Seminar (Fall 2007)
+Department PhD Qualifying Exam Committee (2007,2009,2012)
+Departmental Computing Committee (2006-present)
+Department Undergraduate committee (2006-present)
+Senior survey analysis (2007-present)
+Sleeping Bag Weekend Presenter (2007-2012)
+
+Carnegie Institute of Technology
+2011 Materials Science and Engineering Search Committee
+Objective was to identify candidates with a focus on computational materials. Two offers were made.
+Judge CIT honors poster session: 2008
+Goldwater fellowship applicant selection panel (2008, 2009, 2010, 2011, 2012, 2013)
+The Barry M. Goldwater Scholarship and Excellence in Education Program was established by Congress in 1986 to honor Senator Barry M. Goldwater, who served his country for 56 years as a soldier and statesman, including 30 years of service in the U.S. Senate. The selection panel determines which CMU students apply for the Scholarship and helps them prepare their applications.
+2009 Carmeline Dsilva, Swati Varshney and Timothy Helbig were selected as Scholars.
+2010 Max Hutchinson, Marianna Sofman and Ellen Tworkoski were Scholars and Kellie Kravarik was selected for Honorable Mention.
+2011 Benjamin Cowley (ECE),  Stephanie Guerra (SHS-Biology/Hispanic Studies), Robert Tisherman (BME/MSE) were selected as scholars and   Jennifer Chu (SHS-Physics) was selected for Honorable Mention.
+2012 Margaret Myerhoffer, Jason Rocks, and Amer Al-Kouja were selected for Honorable Mention.
+2013 Kathryn McKeough was selected for Honorable Mention
+
+Judge for URO-SRC fellowship program (2009, 2010, 2011) – this is a program to fund undergraduate research over a 5 semester time frame including summers. I helped develop the program implementation and to select students to participate.
+Committee member on Non-tenured promotions
+7.  Other
+	Courtesy appointment in Materials Science and Engineering Department.
+Awards given by senior class at senior banquet.
+2011
+Favorite Class – Chemical Reaction Engineering
+Best Lecturer – Professor John Kitchin
+Most likely to be on a reality TV show – Professor John Kitchin
+2010
+Most likely to solve every problem using Matlab
+2008
+Professor most likely to be mistaken for a student
+#+end_example
+
+#+BEGIN_SRC python
+from pptx import Presentation
+
+prs = Presentation("Amino-Acid-Salt-Precipitates.pptx")
+for slide in prs.slides:
+    for shape in slide.shapes:
+        if hasattr(shape, 'text'):
+            print shape.text.encode('utf-8')
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+Amino Acid Salt Precipitates
+Method
+Created 3g solutions of  30 wt% of Taurate, Lysinate, Glycinate, and Prolinate (all with Potassium cation)
+
+Bubbled carbon dioxide through each for ~5 hours, or until saturated
+
+Filtered and washed solids out of the solution using Ethanol
+
+Stored solids in desiccator to remove the moisture
+
+Performed Raman spectroscopy on the solids to determine composition
+
+Method
+Also found spectra for possible precipitate constituents:
+
+Potassium bicarbonate
+
+Potassium carbonate
+
+Pure amino acid
+
+Ethanol (due to washing the filtrate)
+
+Dehydrated 30% wt solids (In the cases of glycine and taurine)
+Glycine Results
+Bicarbonate is not present in the precipitate
+
+Glycine’s peaks seem to correlate with the precipitate’s peaks, but do not match
+May be an indication that the precipitate is a different glycine ion
+Glycine Results
+The precipitate does share a peak with glycine at ~1440 cm-1
+
+However, the rest of the precipitate peaks are similar in structure yet shifted off center from the glycine peaks
+Taurine Results
+The precipitate clearly shares many peaks with Taurine
+
+Bicarbonate’s peaks are not in line with the precipitate’s peaks in any region of the spectrum
+Taurine Results
+A closer look at the two stronger peaks near ~1000 cm-1 reveals the congruency between the Taurine and precipitate spectra
+
+The bicarbonate peak around ~1030 is shown to be misaligned with the precipitate
+Taurine Results
+More congruency is seen further down along the spectra of both Taurine and the precipitate
+
+The precipitate has been found to be neutral Taurine
+30 wt% Lysine Results
+
+Bicarbonate has four main peaks, all shared with the precipitate
+
+At this concentration, no evidence of Lysine was found was found in the precipitate
+5M Lysine Results
+At a higher concentration, bicarbonate peaks are still present in the Precipitate
+
+A correlation can be seen between the peaks of the precipitate and the peaks of Lysine
+5M Lysine Results
+Further down the spectra, more correlation can be seen between Lysine and the precipitate
+
+The presence of both Lysine and bicarbonate could be due to the presence of unreacted Lysine in the precipitate at this high concentration
+Proline Results
+The precipitate was shown to be pure bicarbonate, with no traces of Proline
+Conclusions
+Glycinate’s precipitate was found to have many peaks shifted rightwards, but they still correlated with Glycine
+Indication that it may be a different ion of the glycine molecule
+
+Taurinate was found to precipitate pure Taurine
+
+Lysinate was found to precipitate only bicarbonate at lower concentrations, and both bicarbonate and Lysine at higher concentrations
+
+Prolinate was found to precipitate pure bicarbonate
+What’s Next?
+Clarification of conflicting Lysine spectra
+
+Microfluidic experiments at high concentrations
+
+Before and After Raman spectra of the amino acid salt solutions
+
+Further testing of the absorption capacities of used amino acid salt solutions
+#+end_example
+
+* The ultimate org indexer
+
+
+#+BEGIN_SRC emacs-lisp :tangle ~/bin/swish-org-documents.el :tangle-mode (identity #o755)
+:;exec emacs -batch -l $0 "$@"
+
+(require 'org)
+(require 'xml)
+(require 'cl)
+
+(add-to-list 'load-path "~/Dropbox/kitchingroup/jmax/elpa/f-20140828.716")
+(add-to-list 'load-path "~/Dropbox/kitchingroup/jmax/elpa/s-20140910.334")
+(add-to-list 'load-path "~/Dropbox/kitchingroup/jmax/elpa/dash-20141201.2206")
+(require 'f)
+
+(add-to-list 'load-path "~/Dropbox/kitchingroup/jmax/elpa/helm-20150701.117")
+(add-to-list 'load-path "~/Dropbox/kitchingroup/jmax/elpa/helm-bibtex-20150301.1221")
+(add-to-list 'load-path "~/Dropbox/kitchingroup/jmax/elpa/parsebib-20150205.1305")
+(add-to-list 'load-path "~/Dropbox/kitchingroup/jmax/org-ref")
+(require 'org-ref)
+
+
+(defun print-tag (name attrs &optional closingp)
+  "Print an xml tag with symbol NAME and ATTRS (a cons list of (attribute . value)).
+if CLOSINGP print the closing tag instead."
+  (format
+   "<%s%s%s>"
+   (if closingp "/" "")
+   name
+   (if (and attrs (not closingp))
+       (concat
+	" "
+	(mapconcat
+	 (lambda (x)
+	   (format "%s=\"%s\""
+		   (car x)
+		   (xml-escape-string (cdr x))))
+	 attrs
+	 " "))
+     "")))
+
+
+(defmacro tag (name attributes &rest body)
+  "macro to create an xml tag with NAME, ATTRIBUTES. BODY is executed in the tag."
+  `(format "%s%s%s"
+	   (print-tag ,name ,attributes nil)
+           (concat
+	    ,@body)
+	   (print-tag ,name nil t)))
+
+
+(defun swish-e-get-buffer-lines (n)
+  "Get N lines from point from buffer. Return as string with no properties."
+  (beginning-of-line)
+  (let ((p (point)))
+    (forward-line n)
+    (buffer-substring-no-properties
+     p (point))))
+
+
+(defun document (fname char content)
+  "Return string for a swish-e document to be indexed.
+FNAME is path to file.
+CHAR is a position in FNAME of the CONTENT."
+  (let ((stripped-content (replace-regexp-in-string
+			   "[^[:ascii:]]" "" (string-as-unibyte content))))
+    (when stripped-content
+      (format "Path-Name: [[elisp:(progn (find-file \"%s\") (goto-char %s) (show-subtree))][link]]
+Content-Length: %s
+Document-Type: XML*
+
+%s" fname
+char
+(length stripped-content)
+stripped-content))))
+
+
+;; * Document - for broadest of searching
+(defun document-xml ()
+  "Return xml string for the open document. Provides indexing on
+content, and file-keywords."
+  (let ((keywords (org-element-map
+		      (org-element-parse-buffer 'element)
+		      'keyword
+		    (lambda (keyword)
+		      (tag (xml-escape-string
+			    (format
+			     "%s" (org-element-property :key keyword)))
+			   ()
+			   (xml-escape-string
+			    (format
+			     "%s"
+			     (org-element-property :value keyword))))))))
+
+    (tag 'document ()
+	 (tag 'file-name () (buffer-file-name))
+	 (tag 'last-modified ()
+	      (format-time-string "%F %A %B" (visited-file-modtime)))
+	 (tag 'last-accessed ()
+	      (format-time-string
+	       "%F %A %B"
+	       (nth 4 (file-attributes (buffer-file-name)))))
+	 (tag 'desc () (xml-escape-string
+			(progn
+			  (goto-char (point-min))
+			  (swish-e-get-buffer-lines 4))))
+	 (tag 'swishtitle () (buffer-file-name))
+	 (tag 'swish-position () (int-to-string 1))
+	 ;; this is the content. saved in swishdefault for simple searching
+	 (tag 'swishdefault () (xml-escape-string (or (buffer-string) "")))
+	 (when keywords
+	   (tag 'file-keywords ()
+		(mapconcat
+		 'identity
+		 keywords
+		 ""))))))
+
+
+;; special case for documents
+(defun document-document ()
+  (let ((stripped-content (replace-regexp-in-string
+			   "[^[:ascii:]]" ""
+			   (string-as-unibyte (document-xml)))))
+    (when stripped-content
+      (format "Path-Name: [[file:%s]]
+Content-Length: %s
+Document-Type: XML
+
+%s" fname (length stripped-content) stripped-content))))
+
+
+;; * Headlines
+(defun headline-xml (headline)
+  "Return xml representation of an element HEADLINE.
+Provides indexing on headline title, tags, and properties."
+  (let ((title (org-element-property :title headline))
+	(tags (org-element-property :tags headline))
+	(properties  (org-element-map headline 'node-property
+		       (lambda (p)
+			 (cons (org-element-property :key p)
+			       (org-element-property :value p))))))
+    (tag 'headline ()
+	 (tag 'title () (xml-escape-string (format "%s" (car title))))
+	 (tag 'desc () (xml-escape-string (progn
+					    (goto-char
+					     (org-element-property :begin headline))
+					    (swish-e-get-buffer-lines 1))))
+	 (tag 'swishtitle () (xml-escape-string (buffer-file-name)))
+	 (when tags
+	   (tag 'tags () (xml-escape-string (mapconcat 'identity tags " "))))
+	 (when (org-element-property :todo-keyword headline)
+	   (tag 'todo-keyword ()
+		(xml-escape-string
+		 (format
+		  "%s"
+		  (org-element-property :todo-keyword headline)))))
+	 (when (org-element-property :todo-type headline)
+	   (tag 'todo-type ()
+		(xml-escape-string
+		 (format
+		  "%s"
+		  (org-element-property :todo-type headline)))))
+	 (when (org-element-property :priority headline)
+	   (tag 'priority ()
+		(cond
+		 ((symbolp (org-element-property :priority headline))
+		  (format "%s" (org-element-property :priority headline)))
+		 ((char-valid-p (org-element-property :priority headline))
+		  (char-to-string (org-element-property :priority headline))))))
+	 (when (org-element-property :archivedp headline)
+	   (tag 'archivedp ()
+		(format
+		 "%s"
+		 (org-element-property :archivedp headline))))
+	 (when (org-element-property :commentedp headline)
+	   (tag 'commentedp ()
+		(format
+		 "%s"
+		 (org-element-property :commentedp headline))))
+	 (when (org-element-property :quotedp headline)
+	   (tag 'quotedp ()
+		(format
+		 "%s"
+		 (org-element-property :quotedp headline))))
+	 (when properties
+	   (tag 'properties ()
+		(mapconcat
+		 'identity
+		 (loop for (p . v) in properties
+		       collect (tag p () (xml-escape-string (format "%s" v))))
+		 ""))))))
+
+(defun headline-document (headline)
+  "Return the headline \"document\" for swish-e to index."
+  (document (buffer-file-name)
+	    (org-element-property :begin headline)
+	    (headline-xml headline)))
+
+;; * Links
+(defun link-xml (link)
+  (tag 'link
+       `((type . ,(xml-escape-string (org-element-property :type link)))
+	 (path . ,(xml-escape-string (org-element-property :path link)))
+	 (raw-link . ,(xml-escape-string
+		       (org-element-property :raw-link link))))
+       (tag 'desc () (xml-escape-string (progn
+					  (goto-char
+					   (org-element-property :begin link))
+					  (swish-e-get-buffer-lines 1))))
+       (tag 'swishtitle () (xml-escape-string (buffer-file-name)))
+       ;; captions are in the parent paragraph. Captions can contain other stuff
+       ;; like latex fragments and links.
+       (when (org-element-property
+	      :caption
+	      (org-element-property :parent link))
+	 (tag 'caption ()
+	      (xml-escape-string
+	       (mapconcat
+		(lambda (x)
+		  (mapconcat
+		   (lambda (y)
+		     (format "%s" (car y)))
+		   x
+		   " "))
+		(org-element-property
+		 :caption
+		 (org-element-property :parent link))
+		" "))))
+       (when (org-element-property :contents-begin link)
+	 (buffer-substring (org-element-property :contents-begin link)
+			   (org-element-property :contents-end link)))))
+
+(defun link-document (link)
+  (document (buffer-file-name)
+	    (org-element-property :begin link)
+	    (link-xml link)))
+
+
+;; * Tables
+(defun table-xml (table)
+  (tag 'table ()
+       (let* ((caption (mapconcat
+			(lambda (x)
+			  (mapconcat 'car x " "))
+			(org-element-property :caption table) ""))
+	      (begin (org-element-property :begin table))
+	      (end (org-element-property :end table))
+	      (contents (buffer-substring begin end)))
+	 (tag 'desc () (xml-escape-string (progn
+					    (goto-char
+					     (org-element-property :begin table))
+					    (swish-e-get-buffer-lines 4))))
+	 (tag 'swishtitle () (xml-escape-string (buffer-file-name)))
+	 (tag 'caption () (xml-escape-string (format "%s" caption)))
+	 (tag 'table-contents () (xml-escape-string (format "%s" contents))))))
+
+
+(defun table-document (table)
+  (document (buffer-file-name)
+	    (org-element-property :begin table)
+	    (table-xml table)))
+
+
+;; * src-blocks
+(defun src-block-xml (src-block)
+  (tag
+   'src-block
+   `((language . ,(xml-escape-string
+		   (org-element-property :language src-block)))
+     (switches . ,(xml-escape-string
+		   (format
+		    "%s"
+		    (org-element-property :switches src-block))))
+     (parameters . ,(xml-escape-string
+		     (format
+		      "%s"
+		      (org-element-property :parameters src-block)))))
+   (tag 'desc () (xml-escape-string (progn
+				      (goto-char
+				       (org-element-property :begin src-block))
+				      (swish-e-get-buffer-lines 4))))
+   (tag 'swishtitle () (xml-escape-string (buffer-file-name)))
+   (when (org-element-property :name src-block)
+     (tag 'name () (xml-escape-string
+		    (org-element-property :name src-block))))
+   (when (org-element-property :caption src-block)
+     (tag 'caption ()
+	  (mapconcat
+	   (lambda (x)
+	     (mapconcat 'car x " "))
+	   (org-element-property :caption src-block) "")))
+   (tag 'code ()
+	(xml-escape-string
+	 (org-element-property :value src-block)))))
+
+
+(defun src-block-document (src-block)
+  (document (buffer-file-name)
+	    (org-element-property :begin src-block)
+	    (src-block-xml src-block)))
+
+
+;; * paragraphs
+(defun paragraph-xml (paragraph)
+  (tag 'paragraph ()
+       (tag 'swish-position ()
+	    (format "%s" (org-element-property :begin paragraph)))
+       (tag 'desc () (xml-escape-string (progn
+					  (goto-char
+					   (org-element-property :begin paragraph))
+					  (swish-e-get-buffer-lines 4))))
+       (tag 'swishtitle () (xml-escape-string (buffer-file-name)))
+       (xml-escape-string (buffer-substring-no-properties
+			   (org-element-property :begin paragraph)
+			   (org-element-property :end paragraph)))))
+
+
+(defun paragraph-document (paragraph)
+   (document (buffer-file-name)
+	     (org-element-property :begin paragraph)
+	     (paragraph-xml paragraph)))
+
+
+(defun process-file (fname)
+  "Print the `headline-document' for each headline in FNAME."
+  (find-file fname)
+  ;; one file had a local variable that switched the mode, so we make sure we
+  ;; are in org-mode here
+  (org-mode)
+  (princ (document-document))
+
+  (org-element-map (org-element-parse-buffer)
+      'headline
+    (lambda (headline)
+      (princ (headline-document headline))))
+
+  (org-element-map (org-element-parse-buffer)
+      'link
+    (lambda (link)
+      (princ (link-document link))))
+
+  (org-element-map (org-element-parse-buffer)
+      'table
+    (lambda (table)
+      (princ (table-document table))))
+
+  (org-element-map (org-element-parse-buffer)
+      'src-block
+    (lambda (src-block)
+      (princ (src-block-document src-block))))
+
+  (org-element-map (org-element-parse-buffer)
+      'paragraph
+    (lambda (paragraph)
+      (princ (paragraph-document paragraph))))
+  (kill-buffer))
+
+;; Here is the main work in the script.
+(loop for dir in '("/Users/jkitchin/Dropbox"
+		   "/Users/jkitchin/Box Sync"
+		   "/Users/jkitchin/dft-book"
+		   "/Users/jkitchin/research"
+		   "/Users/jkitchin/techela"
+		   "/Users/jkitchin/blogofile-jkitchin.github.com/_blog"
+)
+      do
+      (loop for fname in (f-entries
+			  dir
+			  (lambda (x)
+			    (string=  "org"  (file-name-extension x)))
+			  t)
+            ;; I do not like to ignore errors here, but if you don't then any
+            ;; error will stop the indexing.
+	    do (ignore-errors (process-file fname))))
+#+END_SRC
+
+A configuration
+
+#+BEGIN_SRC text :tangle ~/.swish-e/swish-org.conf
+# Example configuration file
+
+# where to save the index
+IndexFile /Users/jkitchin/.swish-e/index-org.swish-e
+
+PropertyNames swish-position
+
+# Save descriptions for context on search results.
+StoreDescription XML <desc> 500
+StoreDescription XML* <desc> 500
+
+# index all tags for searching
+UndefinedMetaTags auto
+UndefinedXMLAttributes auto
+#+END_SRC
+
+And run it.
+
+#+BEGIN_SRC sh
+swish-e -c ~/.swish-e/swish-org.conf -S prog -i ~/bin/swish-org-documents.el
+#+END_SRC
+
+The following metanames are supported (actually there are more, these are just the ones created above).
+- document
+  - file-keywords
+  - last-modified
+  - last-accessed
+  - content
+
+- headline
+  - title
+  - properties
+  - categories
+  - tags
+  - todo-keyword
+  - priority
+
+- link
+ - link.type
+ - link.path
+ - link.raw-link
+ - caption
+
+- table
+ - table-contents
+ - caption
+
+- src-block
+ - src-block.language
+ - src-block.switches
+ - src-block.parameters
+ - code
+
+- author
+
+- paragraph
+
+#+BEGIN_SRC sh
+swish-e -f ~/.swish-e/index-org.swish-e -x '<swishrank>\t<swishdocpath>\t<swish-position>\t<swishtitle>\t<swishdescription>\n' -w dft
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+# SWISH format: 2.4.7
+# Search words: dft
+# Removed stopwords:
+# Number of hits: 4
+# Search time: 0.000 seconds
+# Run time: 0.008 seconds
+1000	[[file:/Users/jkitchin/dft-book/dft.org]]	1	/Users/jkitchin/dft-book/dft.org	#+TITLE:     Modeling materials using density functional theory #+AUTHOR:    John Kitchin #+DRAWERS: HIDDEN HINT SOLUTION #+EMAIL:     jkitchin@cmu.edu
+498	[[file:/Users/jkitchin/dft-book/README.org]]	1	/Users/jkitchin/dft-book/README.org	This is a project to compile a pretty comprehensive set of notes and examples on using density functional theory to model properties of materials. Check out the new blog at http://jkitchin.github.com/dft-book.
+299	[[file:/Users/jkitchin/dft-book/index.org]]	1	/Users/jkitchin/dft-book/index.org	#+TITLE: Welcome to dft-book - [[./dft.pdf][PDF]]
+149	[[file:/Users/jkitchin/dft-book/header.org]]	1	/Users/jkitchin/dft-book/header.org	#+DRAWERS: HIDDEN HINT SOLUTION #+EMAIL:     jkitchin@cmu.edu #+DATE:      2012-07-11 Wed #+DESCRIPTION: A book on using density functional theory to model materials.
+.
+#+end_example
+
+
+#+BEGIN_SRC sh
+swish-e -f ~/.swish-e/index-org.swish-e -x '<swishrank>\t<swishdocpath>\t<swish-position>\t<swishtitle>\t<swishdescription>\n' -w paragraph=solvation
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+# SWISH format: 2.4.7
+# Search words: paragraph=solvation
+# Removed stopwords:
+# Number of hits: 4
+# Search time: 0.000 seconds
+# Run time: 0.007 seconds
+1000	[[elisp:(progn (find-file "/Users/jkitchin/dft-book/dft.org") (goto-char 419791) (show-subtree))][link]]	419791	/Users/jkitchin/dft-book/dft.org	Here is the evidence that we actually ran a calculation with solvation: #+BEGIN_SRC sh grep -A 5 Solvation molecules/CO-solvated/OUTCAR
+789	[[elisp:(progn (find-file "/Users/jkitchin/dft-book/dft.org") (goto-char 418900) (show-subtree))][link]]	418900	/Users/jkitchin/dft-book/dft.org	Next, we do the solvation calculation. We use the default solvent dielectric constant of water, which is 80. #+BEGIN_SRC python from jasp import *
+499	[[elisp:(progn (find-file "/Users/jkitchin/dft-book/dft.org") (goto-char 419513) (show-subtree))][link]]	419513	/Users/jkitchin/dft-book/dft.org	Note these take quite a bit longer to calculate (e.g. 10 times longer)! The energies here are a little different than the vacuum result. To use this energy in an energy difference, you need to make sure the other energies were run with lsol=True also, and the same parameters. Here is the evidence that we actually ran a calculation with solvation:
+499	[[elisp:(progn (find-file "/Users/jkitchin/dft-book/dft.org") (goto-char 418822) (show-subtree))][link]]	418822	/Users/jkitchin/dft-book/dft.org	The forces are high because nsw was set to 0, so only one iteration was run. Next, we do the solvation calculation. We use the default solvent dielectric constant of water, which is 80.
+.
+#+end_example
+
+#+BEGIN_SRC sh
+swish-e -f ~/.swish-e/index-org.swish-e -w todo-keyword=TODO
+#+END_SRC
+#+RESULTS:
+#+begin_example
+# SWISH format: 2.4.7
+# Search words: todo-keyword=TODO
+# Removed stopwords:
+# Number of hits: 42
+# Search time: 0.000 seconds
+# Run time: 0.009 seconds
+1000 [[elisp:(progn (find-file "/Users/jkitchin/dft-book/dft.org") (goto-char 21919) (show-subtree))][link]] "/Users/jkitchin/dft-book/dft.org" 218
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 61231) (show-subtree))][link]] "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org" 225
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 60802) (show-subtree))][link]] "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org" 289
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 60289) (show-subtree))][link]] "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org" 225
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 885779) (show-subtree))][link]] "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org" 256
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 884088) (show-subtree))][link]] "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org" 282
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 876922) (show-subtree))][link]] "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org" 226
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 871680) (show-subtree))][link]] "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org" 342
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 862511) (show-subtree))][link]] "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org" 310
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 860365) (show-subtree))][link]] "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org" 274
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 859209) (show-subtree))][link]] "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org" 333
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 858167) (show-subtree))][link]] "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org" 258
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 857251) (show-subtree))][link]] "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org" 228
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 848373) (show-subtree))][link]] "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org" 312
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 762835) (show-subtree))][link]] "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org" 238
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 717870) (show-subtree))][link]] "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org" 334
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 614118) (show-subtree))][link]] "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org" 217
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 614082) (show-subtree))][link]] "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org" 225
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 603103) (show-subtree))][link]] "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org" 227
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 115554) (show-subtree))][link]] "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org" 385
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 101644) (show-subtree))][link]] "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org" 385
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/why-org-mode.org") (goto-char 2044) (show-subtree))][link]] "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/why-org-mode.org" 247
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/why-org-mode.org") (goto-char 1989) (show-subtree))][link]] "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/why-org-mode.org" 243
+1000 [[elisp:(progn (find-file "/Users/jkitchin/dft-book/README.org") (goto-char 1279) (show-subtree))][link]] "/Users/jkitchin/dft-book/README.org" 239
+1000 [[elisp:(progn (find-file "/Users/jkitchin/dft-book/dft.org") (goto-char 556337) (show-subtree))][link]] "/Users/jkitchin/dft-book/dft.org" 247
+1000 [[elisp:(progn (find-file "/Users/jkitchin/dft-book/dft.org") (goto-char 462462) (show-subtree))][link]] "/Users/jkitchin/dft-book/dft.org" 202
+1000 [[elisp:(progn (find-file "/Users/jkitchin/dft-book/dft.org") (goto-char 424294) (show-subtree))][link]] "/Users/jkitchin/dft-book/dft.org" 242
+1000 [[elisp:(progn (find-file "/Users/jkitchin/dft-book/dft.org") (goto-char 417778) (show-subtree))][link]] "/Users/jkitchin/dft-book/dft.org" 193
+1000 [[elisp:(progn (find-file "/Users/jkitchin/dft-book/dft.org") (goto-char 410212) (show-subtree))][link]] "/Users/jkitchin/dft-book/dft.org" 227
+1000 [[elisp:(progn (find-file "/Users/jkitchin/dft-book/dft.org") (goto-char 410105) (show-subtree))][link]] "/Users/jkitchin/dft-book/dft.org" 274
+1000 [[elisp:(progn (find-file "/Users/jkitchin/dft-book/dft.org") (goto-char 410069) (show-subtree))][link]] "/Users/jkitchin/dft-book/dft.org" 229
+1000 [[elisp:(progn (find-file "/Users/jkitchin/dft-book/dft.org") (goto-char 398549) (show-subtree))][link]] "/Users/jkitchin/dft-book/dft.org" 217
+1000 [[elisp:(progn (find-file "/Users/jkitchin/dft-book/dft.org") (goto-char 372769) (show-subtree))][link]] "/Users/jkitchin/dft-book/dft.org" 217
+1000 [[elisp:(progn (find-file "/Users/jkitchin/dft-book/dft.org") (goto-char 370890) (show-subtree))][link]] "/Users/jkitchin/dft-book/dft.org" 255
+1000 [[elisp:(progn (find-file "/Users/jkitchin/dft-book/dft.org") (goto-char 370836) (show-subtree))][link]] "/Users/jkitchin/dft-book/dft.org" 263
+1000 [[elisp:(progn (find-file "/Users/jkitchin/dft-book/dft.org") (goto-char 304068) (show-subtree))][link]] "/Users/jkitchin/dft-book/dft.org" 205
+1000 [[elisp:(progn (find-file "/Users/jkitchin/dft-book/dft.org") (goto-char 304020) (show-subtree))][link]] "/Users/jkitchin/dft-book/dft.org" 189
+1000 [[elisp:(progn (find-file "/Users/jkitchin/dft-book/dft.org") (goto-char 303969) (show-subtree))][link]] "/Users/jkitchin/dft-book/dft.org" 258
+1000 [[elisp:(progn (find-file "/Users/jkitchin/dft-book/dft.org") (goto-char 252305) (show-subtree))][link]] "/Users/jkitchin/dft-book/dft.org" 238
+1000 [[elisp:(progn (find-file "/Users/jkitchin/dft-book/dft.org") (goto-char 85024) (show-subtree))][link]] "/Users/jkitchin/dft-book/dft.org" 295
+1000 [[elisp:(progn (find-file "/Users/jkitchin/dft-book/dft.org") (goto-char 26371) (show-subtree))][link]] "/Users/jkitchin/dft-book/dft.org" 213
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 61568) (show-subtree))][link]] "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org" 233
+.
+#+end_example
+
+
+* Load emacs with no output
+I would like to figure this out so I can load my initialization files for indexing. right now they put out a ton of output that I think will mess up the indexer.
+
+This did not work.
+#+BEGIN_SRC emacs-lisp :tangle emacs-batch.el :tangle-mode (identity #o755)
+:;exec emacs -batch -l $0 "$@"
+
+(defun nomessage (arg &rest args) nil)
+
+(advice-add 'message :around #'nomessage)
+
+(load-file "~/Dropbox/kitchingroup/jmax/init.el")
+#+END_SRC
+
+#+BEGIN_SRC emacs-lisp :tangle emacs-batch.el :tangle-mode (identity #o755)
+:;exec emacs -batch -l $0 "$@"
+(defun message (arg &rest args) nil)
+
+(with-output-to-string
+  (load-file "~/Dropbox/kitchingroup/jmax/init.el"))
+#+END_SRC
+
+#+BEGIN_SRC emacs-lisp
+(defun nomessage (arg &rest args) nil)
+
+(advice-add 'message :around #'nomessage)
+(advice-remove 'message #'nomessage)
+(message "test")
+
+;(org-add-link-type "test" nil nil)
+#+END_SRC
+
+#+RESULTS:
+: test
+
 * DONE Indexing headlines in org files with swish-e with laser-sharp results
   CLOSED: [2015-07-06 Mon 11:04]
   :PROPERTIES:
@@ -257,6 +1871,23 @@ swish-e -f index-org-headlines.swish-e -w todo=TODO
 
 ** Summary thoughts
 This could be super useful for a lot of different elements: headlines, src-blocks, links, tables, paragraphs are the main ones that come to mind. You could have pretty focused searches that go straight to the matches!
+
+* org-dp
+
+fdsa
+(org-element-contents (org-element-at-point))
+#+BEGIN_SRC emacs-lisp
+(defun p () (interactive) (org-dp-contents))
+
+(org-dp-contents)
+
+(org-element-contents (org-element-at-point))
+
+( org-dp-filter-node-props 'org)
+#+END_SRC
+#+RESULTS:
+
+
 * TODO [#B] Using -s prog with swish-e :test:tree:
   :PROPERTIES:
   :categories: emacs,orgmode,swishe
@@ -264,6 +1895,19 @@ This could be super useful for a lot of different elements: headlines, src-block
 This should speed up things.
 
 We can find entries ending in .org like this:
+
+#+BEGIN_SRC emacs-lisp
+(org-element-map (org-element-parse-buffer) 'headline
+  (lambda (h) (org-element-map h 'node-property
+  (lambda (p)
+    (cons (org-element-property :key p)
+	  (org-element-property :value p))))))
+
+
+#+END_SRC
+
+#+RESULTS:
+| (categories . emacs,orgmode,swishe) |
 
 #+BEGIN_SRC emacs-lisp
 (length (f-entries "." (lambda (x)
@@ -1466,27 +3110,6 @@ swish-e -f index-org2xml.swish-e -w  property="(mantina-2008-first-princ)"
 This is pretty cool. There are still some bugs to work out in the indexing filter I think, but this demonstrates you can index org-files, and have pretty refined searches to find your files. There is still some thinking to do on how to schedule an incremental indexing, and whether we need more or better metanames. The indexing is not fast, but that is probably because I am running this through a FileFilter, rather than the -s prog option in swish-e. This is super promising to me though. Imagine building an agenda from files found with TODO headlines in them; a global todo list! Or, grabbing contacts from wherever they are.  No more losing files you have not used in a while. Find all documents containing a citation. With some extra work, you could index links, citations, [[http://kitchingroup.cheme.cmu.edu/blog/2015/07/02/Pyparsing-meets-Emacs-to-find-chemical-formulas/][chemical formulas]], or other types of identifiable content.
 
 The logical conclusion of this work might be an ox-swish-e-xml export engine to render the org-file into xml, rather than the script I used here. It would be really great to get some refined output, e.g. rather than just get matching documents, get location information so you could open the document to the matching element. That might be out of reach for swish-e, but could be in reach for other programs like Sphinx that are more integrated with a database. There is a very interesting project here: https://github.com/wvxvw/sphinx-mode to integrate org-mode with the Sphinx search (http://sphinxsearch.com) engine.
-
-* Clickable twitter improvements
-
-John Kitchin @johnkitchin @mess  @johnkitchin @johnkitchin  @SannaLab @WE3Lab
-
-@prtk_m
-
-This often works, but not always right away.
-
-#+BEGIN_SRC emacs-lisp
-(get-most-recent-tweet "prtk_m")
-#+END_SRC
-
-#+RESULTS:
-: 07/01/15 22:30 PM - The story behind @AcademicsSay http://t.co/eidyj7Zb3M <-- makes it even better!
-
-
-
-[[elisp:(highlight-twitter-handles)]]
-
-[[elisp:unhighlight-twitter-handles]]
 
 * rx
 
