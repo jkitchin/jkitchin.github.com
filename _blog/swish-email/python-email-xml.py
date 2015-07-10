@@ -51,7 +51,8 @@ def email_document(fname):
 
     swishdefault = tag('swishdefault', escape(msg_body))
 
-    desc = tag('desc', escape(msg['Subject']))
+    desc = tag('desc', escape('From: {0}\nSubject{1}'.format(msg['From'],
+                                                             msg['Subject'])))
 
     # in MB
     size = tag('size', str(float(getsize(fname)) / 1024**2))
@@ -62,7 +63,7 @@ def email_document(fname):
     return template.format(os.path.abspath(fname), len(xml), xml)
 
 
-for root, dirs, files in os.walk('/Users/jkitchin/Maildir-archive/2011/cur'):
+for root, dirs, files in os.walk('/Users/jkitchin/Maildir-archive/'):
     for f in files:
         try:
             # use end arg to avoid an extra space and carriage return
