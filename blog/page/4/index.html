@@ -83,6 +83,202 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Clickable-org-contacts-in-text-files"></div>
+      <h2 class="blog_post_title"><a href="/blog/2015/06/22/Clickable-org-contacts-in-text-files/" rel="bookmark" title="Permanent Link to Clickable org-contacts in text files">Clickable org-contacts in text files</a></h2>
+      <p><small><span class="blog_post_date">Posted June 22, 2015 at 01:07 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/contacts/'>contacts</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2015/06/22/Clickable-org-contacts-in-text-files#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+
+<p>
+Continuing my adventures with clickable text (See <a href="http://kitchingroup.cheme.cmu.edu/blog/2015/06/21/Clickable-email-addresses-in-emacs/">clickable email addresses</a> and <a href="http://kitchingroup.cheme.cmu.edu/blog/2015/03/18/Clickable-links-for-Twitter-handles-in-Emacs/">clickable twitter handles</a> ), here we consider how to get clickable names that are also in my org-contacts database. The goal is to have these names highlighted and clickable so that when I click on them I get a hydra menu of actions, e.g. to open the contact, email them, etc&#x2026; We will again use button-lock to do the action. We will construct a fairly large regexp to match all the names in the org-contacts database. This turns out to be very easy using the regexp-opt function.
+</p>
+
+<p>
+First, I formalize the code I used last time to get text around the point that has a text-property. We will use that to get the text that has been highlighted by button-lock.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">get-surrounding-text-with-property</span> (property)
+  <span style="color: #036A07;">"Return text surrounding point with the text-property PROPERTY."</span>
+  (<span style="color: #0000FF;">let</span> ((start) (end))
+    (<span style="color: #0000FF;">when</span> (get-text-property (point) property)
+      (<span style="color: #0000FF;">save-excursion</span>
+        (<span style="color: #0000FF;">while</span> (get-text-property (point) property)
+          (backward-char))
+        (forward-char)
+        (<span style="color: #0000FF;">setq</span> start (point))
+        (<span style="color: #0000FF;">while</span> (get-text-property (point) property)
+          (forward-char))
+        (<span style="color: #0000FF;">setq</span> end (point)))
+      (buffer-substring start end))))
+</pre>
+</div>
+
+<pre class="example">
+get-surrounding-text-with-property
+</pre>
+
+<p>
+I want to use nicknames that are defined in my org-contacts database. We first try to return an assoc lookup, then the slower approach of looping through the entries to find a matching nickname.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">get-contact-from-name-or-nickname</span> (name-or-nickname)
+  <span style="color: #036A07;">"Return a contact from the org-contacts database for NAME-OR-NICKNAME."</span>
+  (<span style="color: #0000FF;">or</span>
+   (assoc name-or-nickname (org-contacts-db))
+   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">no assoc, so now we have to find a nickname</span>
+   (<span style="color: #0000FF;">catch</span> '<span style="color: #D0372D;">contact</span>
+     (<span style="color: #0000FF;">dolist</span> (contact (org-contacts-db))
+       (<span style="color: #0000FF;">when</span> (-contains? (s-split <span style="color: #008000;">","</span> (<span style="color: #0000FF;">or</span> (cdr (assoc <span style="color: #008000;">"NICKNAMES"</span> (caddr contact))) <span style="color: #008000;">" "</span>)) name-or-nickname)
+         (<span style="color: #0000FF;">throw</span> '<span style="color: #D0372D;">contact</span> contact))))))
+</pre>
+</div>
+
+<pre class="example">
+get-contact-from-name-or-nickname
+</pre>
+
+<p>
+Now, let us write a hydra function that will be our menu of actions. For some reason, when you click on a highlighted text the mouse moves to the end of the text, so in our hydra function we move back a char, and then get the info. Basically, we get the name, then get the contact, and extract what we need from there. Here we provide functionality to open a contact, email a contact or open the url of the contact (if it exists). I also want a conditional hydra, which doesn't seem to be an option yet, so we we roll our own here. Basically, we construct the code for a hydra, and only add a menu option to open the url if we find one in the contact. We will have to eval the code returned from this function to get the hydra body, and then call the body function in the action function for the highlighted text.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">conditional-hydra-actions</span> ()
+  <span style="color: #036A07;">"Construct code to create a hydra with conditional options."</span>
+  (<span style="color: #0000FF;">let</span> ((code  '(defhydra org-contacts (<span style="color: #006FE0;">:color</span> blue)
+                  <span style="color: #008000;">"Org contacts"</span>)))
+    (<span style="color: #0000FF;">setq</span> code
+          (append
+           code
+           '((<span style="color: #008000;">"o"</span> (<span style="color: #0000FF;">progn</span>
+                    (backward-char)
+                    (<span style="color: #0000FF;">let*</span> ((name (get-surrounding-text-with-property 'org-contact))
+                           (contact (get-contact-from-name-or-nickname name))
+                           (contact-marker (nth 1 contact)))
+                      (switch-to-buffer (marker-buffer contact-marker))
+                      (goto-char (marker-position contact-marker))
+                      (show-subtree)))
+              <span style="color: #008000;">"Open contact"</span>))))
+
+    (<span style="color: #0000FF;">setq</span> code
+          (append
+           code '((<span style="color: #008000;">"e"</span> (<span style="color: #0000FF;">progn</span>
+                         (backward-char)
+                         (<span style="color: #0000FF;">let*</span> ((name (get-surrounding-text-with-property 'org-contact))
+                                (contact (get-contact-from-name-or-nickname name))
+                                (email (cdr (assoc <span style="color: #008000;">"EMAIL"</span> (caddr contact))))))
+                         (mu4e~compose-mail email))
+                   <span style="color: #008000;">"Email contact"</span>))))
+
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">conditional menu for opening a URL</span>
+    (<span style="color: #0000FF;">let*</span> ((name (get-surrounding-text-with-property 'org-contact))
+           (contact (assoc name (org-contacts-db)))
+           (url (cdr (assoc <span style="color: #008000;">"URL"</span> (caddr contact)))))
+      (<span style="color: #0000FF;">when</span> url
+        (<span style="color: #0000FF;">setq</span> code
+              (append
+               code '((<span style="color: #008000;">"w"</span> (<span style="color: #0000FF;">progn</span>
+                             (backward-char)
+                             (<span style="color: #0000FF;">let*</span> ((name (get-surrounding-text-with-property 'org-contact))
+                                    (contact (get-contact-from-name-or-nickname name))
+                                    (url (cdr (assoc <span style="color: #008000;">"URL"</span> (caddr contact)))))
+                               (<span style="color: #0000FF;">if</span> url
+                                   (browse-url url)
+                                 (message <span style="color: #008000;">"No url found."</span>))))
+                       <span style="color: #008000;">"Open in browser"</span>))))))
+    code))
+</pre>
+</div>
+
+<pre class="example">
+conditional-hydra-actions
+</pre>
+
+<p>
+I also want to have nicknames in this list, because sometimes I don't use the full names in my contact database. These are stored in a comma-separated property called NICKNAMES in entries that have them. A subtle point here is that it complicates looking up the contact in the database. Normally, I can get this by a simple assoc lookup. For the nicknames, that will fail, so we need a back up method. Now, the highlighting code. You can make the regexp by passing a list of strings to match to regexp-opt. We get our list of strings from:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(append
+ (mapcar 'car (org-contacts-db))
+ (<span style="color: #0000FF;">let</span> ((nicknames '()))
+   (<span style="color: #0000FF;">dolist</span> (contact (org-contacts-db))
+     (<span style="color: #0000FF;">when</span> (assoc <span style="color: #008000;">"NICKNAMES"</span> (caddr contact))
+       (<span style="color: #0000FF;">setq</span> nicknames
+             (append nicknames (s-split <span style="color: #008000;">","</span> (cdr (assoc <span style="color: #008000;">"NICKNAMES"</span> (caddr contact))))))))
+   nicknames))
+</pre>
+</div>
+
+<p>
+I am not going to show them here to protect my contacts ;). Now, we create the function that highlights the contacts. and add it as a hook function to text-mode-hook.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">highlight-org-contacts</span> ()
+  (button-lock-set-button
+   (regexp-opt
+    (append
+     (mapcar 'car (org-contacts-db))
+     (<span style="color: #0000FF;">let</span> ((nicknames '()))
+       (<span style="color: #0000FF;">dolist</span> (contact (org-contacts-db))
+         (<span style="color: #0000FF;">when</span> (assoc <span style="color: #008000;">"NICKNAMES"</span> (caddr contact))
+           (<span style="color: #0000FF;">setq</span> nicknames
+                 (append
+                  nicknames
+                  (s-split <span style="color: #008000;">","</span> (cdr (assoc <span style="color: #008000;">"NICKNAMES"</span> (caddr contact))))))))
+       nicknames)))
+   (<span style="color: #0000FF;">lambda</span> ()
+     (<span style="color: #0000FF;">interactive</span>)
+     (eval (conditional-hydra-actions))
+     (org-contacts/body))
+   <span style="color: #006FE0;">:face</span> '((<span style="color: #006FE0;">:background</span> <span style="color: #008000;">"MistyRose1"</span>)
+           (<span style="color: #006FE0;">:underline</span> t))
+   <span style="color: #006FE0;">:help-echo</span> (format <span style="color: #008000;">"An org contact"</span>)
+   <span style="color: #006FE0;">:keyboard-binding</span> (kbd <span style="color: #008000;">"RET"</span>)
+   <span style="color: #006FE0;">:additional-property</span> 'org-contact))
+
+(add-hook 'text-mode-hook 'highlight-org-contacts)
+</pre>
+</div>
+
+<p>
+That does it. Now, whenever I open a text-based file, the names that are in my contacts are highlighted and actionable. This should be useful for meeting notes, etc&#x2026;
+</p>
+<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/06/22/Clickable-org-contacts-in-text-files.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/06/22/Clickable-org-contacts-in-text-files#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Clickable-email-addresses-in-emacs"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/06/21/Clickable-email-addresses-in-emacs/" rel="bookmark" title="Permanent Link to Clickable email addresses in emacs">Clickable email addresses in emacs</a></h2>
       <p><small><span class="blog_post_date">Posted June 21, 2015 at 04:42 PM</span> | categories:
@@ -704,158 +900,6 @@ I like the idea of data representation as code, and its conversion to some other
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/06/10/A-sexp-version-of-a-bibtex-entry#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Converting-a-DOI-to-other-scientific-identifiers-in-Pubmed"></div>
-      <h2 class="blog_post_title"><a href="/blog/2015/06/09/Converting-a-DOI-to-other-scientific-identifiers-in-Pubmed/" rel="bookmark" title="Permanent Link to Converting a DOI to other scientific identifiers in Pubmed">Converting a DOI to other scientific identifiers in Pubmed</a></h2>
-      <p><small><span class="blog_post_date">Posted June 09, 2015 at 07:29 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/ref/'>ref</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2015/06/09/Converting-a-DOI-to-other-scientific-identifiers-in-Pubmed#disqus_thread">View Comments</a>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-
-<p>
-Sometimes it is useful to convert a DOI to another type of identifier. For example, in this <a href="http://kitchingroup.cheme.cmu.edu/blog/2015/06/07/Getting-a-Scopus-EID-from-a-DOI/">post</a> we converted a DOI to a Scopus EID, and in this <a href="http://kitchingroup.cheme.cmu.edu/blog/2015/06/08/Getting-a-WOS-Accession-number-from-a-DOI/">one</a> we got the WOS accession number from a DOI. Today, we consider how to get Pubmed identifiers. Pubmed provides an API for this purpose:
-</p>
-
-<p>
-<a href="http://www.ncbi.nlm.nih.gov/pmc/tools/id-converter-api/">http://www.ncbi.nlm.nih.gov/pmc/tools/id-converter-api/</a> 
-</p>
-
-<p>
-We will use the DOI tool. According to the documentation, we need to form a URL like this:
-</p>
-
-<p>
-DOI: <a href="http://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?tool=my_tool&email=my_email@example.com&ids=10.1093/nar/gks1195">http://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?tool=my_tool&email=my_email@example.com&ids=10.1093/nar/gks1195</a> 
-</p>
-
-<p>
-We will call our tool "org-ref" and use the value of user-mail-address. The URL above returns XML, so we can parse it, and then extract the identifiers. This is a simple http GET request, which we can construct using url-retrieve-synchronously. Here is what we get.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let*</span> ((url-request-method <span style="color: #008000;">"GET"</span>)
-       (doi<span style="color: #008000;">"10.1093/nar/gks1195"</span>)
-       (my-tool <span style="color: #008000;">"org-ref"</span>)
-       (url (format <span style="color: #008000;">"http://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?tool=%s&amp;email=%s&amp;ids=%s"</span>
-                    my-tool
-                    user-mail-address
-                    doi))
-       (xml (<span style="color: #0000FF;">with-current-buffer</span>  (url-retrieve-synchronously url)
-                (xml-parse-region url-http-end-of-headers (point-max)))))
-xml)
-</pre>
-</div>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">((pmcids
-  ((status . <span style="color: #008000;">"ok"</span>))
-  <span style="color: #008000;">"\n"</span>
-  (request
-   ((idtype . <span style="color: #008000;">"doi"</span>)
-    (dois . <span style="color: #008000;">""</span>)
-    (versions . <span style="color: #008000;">"yes"</span>)
-    (showaiid . <span style="color: #008000;">"no"</span>))
-   <span style="color: #008000;">"\n"</span>
-   (echo nil <span style="color: #008000;">"tool=org-ref;email=jkitchin%40andrew.cmu.edu;ids=10.1093%2Fnar%2Fgks1195"</span>)
-   <span style="color: #008000;">"\n"</span>)
-  <span style="color: #008000;">"\n"</span>
-  (record
-   ((requested-id . <span style="color: #008000;">"10.1093/NAR/GKS1195"</span>)
-    (pmcid . <span style="color: #008000;">"PMC3531190"</span>)
-    (pmid . <span style="color: #008000;">"23193287"</span>)
-    (doi . <span style="color: #008000;">"10.1093/nar/gks1195"</span>))
-   (versions nil
-             (version
-              ((pmcid . <span style="color: #008000;">"PMC3531190.1"</span>)
-               (current . <span style="color: #008000;">"true"</span>)))))
-  <span style="color: #008000;">"\n"</span>))
-</pre>
-</div>
-
-<p>
-The parsed xml is now just an emacs-lisp data structure. We need to get the record, and then get the attributes of it to extract the identifiers. Next, we create a plist of the identifiers. For fun, we add the Scopus EID and WOS accession number from the previous posts too.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let*</span> ((url-request-method <span style="color: #008000;">"GET"</span>)
-       (doi<span style="color: #008000;">"10.1093/nar/gks1195"</span>)
-       (my-tool <span style="color: #008000;">"org-ref"</span>)
-       (url (format <span style="color: #008000;">"http://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?tool=%s&amp;email=%s&amp;ids=%s"</span>
-                    my-tool
-                    user-mail-address
-                    doi))
-       (xml (car (<span style="color: #0000FF;">with-current-buffer</span>  (url-retrieve-synchronously url)
-                   (xml-parse-region url-http-end-of-headers (point-max)))))
-       (record (first  (xml-get-children xml 'record)))
-       (doi (xml-get-attribute record 'doi))
-       (pmcid (xml-get-attribute record 'pmcid))
-       (pmid (xml-get-attribute record 'pmid)))
-  (list <span style="color: #006FE0;">:doi</span> doi <span style="color: #006FE0;">:pmid</span> pmid <span style="color: #006FE0;">:pmcid</span> pmcid <span style="color: #006FE0;">:eid</span> (scopus-doi-to-eid doi) <span style="color: #006FE0;">:wos</span> (wos-doi-to-accession-number doi)))
-</pre>
-</div>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #006FE0;">:doi</span> <span style="color: #008000;">"10.1093/nar/gks1195"</span> <span style="color: #006FE0;">:pmid</span> <span style="color: #008000;">"23193287"</span> <span style="color: #006FE0;">:pmcid</span> <span style="color: #008000;">"PMC3531190"</span> <span style="color: #006FE0;">:eid</span> <span style="color: #008000;">"2-s2.0-80053651587"</span> <span style="color: #006FE0;">:wos</span> <span style="color: #008000;">"000312893300006"</span>)
-</pre>
-</div>
-
-<p>
-Well, there you have it, four new scientific document ids from one DOI. <i>Of course</i> we have defined org-mode links for each one of these:
-</p>
-
-<p>
-<a href="http://dx.doi.org/10.1093/nar/gks1195">doi:10.1093/nar/gks1195</a>
-</p>
-
-<p>
-<a href="http://www.ncbi.nlm.nih.gov/pmc/articles/mid/23193287">pmid:23193287</a>
-</p>
-
-<p>
-<a href="http://www.ncbi.nlm.nih.gov/pmc/articles/PMC3531190">pmcid:PMC3531190</a>
-</p>
-
-<p>
-<a href=" http://www.scopus.com/record/display.url?eid=2-s2.0-80053651587&origin=resultslist">eid:2-s2.0-80053651587</a>
-</p>
-
-<p>
-<a href="http://ws.isiknowledge.com/cps/openurl/service?url_ver=Z39.88-2004&rft_id=info:ut/000312893300006">wos:000312893300006</a>
-</p>
-
-<p>
-I have not tested this on too many DOIs yet. Not all of them are indexed by Pubmed.
-</p>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/06/09/Converting-a-DOI-to-other-scientific-identifiers-in-Pubmed.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/06/09/Converting-a-DOI-to-other-scientific-identifiers-in-Pubmed#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="../3">« Previous Page</a>
   --  
  <a href="../5">Next Page »</a>
@@ -897,11 +941,11 @@ I have not tested this on too many DOIs yet. Not all of them are indexed by Pubm
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2015/07/17/A-sudo-org-link-and-sh-block/">A sudo org-link and sh block</a></li>
       <li><a href="/blog/2015/07/10/Drag-images-and-files-onto-org-mode-and-insert-a-link-to-them/">Drag images and files onto org-mode and insert a link to them</a></li>
       <li><a href="/blog/2015/07/09/Acronym-minor-mode-for-Emacs/">Acronym minor mode for Emacs</a></li>
       <li><a href="/blog/2015/07/06/Indexing-headlines-in-org-files-with-swish-e-with-laser-sharp-results/">Indexing headlines in org files with swish-e with laser-sharp results</a></li>
       <li><a href="/blog/2015/07/04/An-xml-representation-of-an-org-document-for-indexing-with-swish-e/">An xml representation of an org document for indexing with swish-e</a></li>
-      <li><a href="/blog/2015/07/03/Using-swish-e-to-index-org-files-as-html/">Using swish-e to index org files as html</a></li>
     </ul>
   </section>
 
