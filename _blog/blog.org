@@ -1,3 +1,1383 @@
+* Get bibtex entries from a PDF
+
+Some reference managers like Zotero, Mendeley and Endnote can take a pdf and build a reference entry from it. There is a python project here: https://github.com/venthur/gscholar/blob/master/gscholar/gscholar.py that builds a google scholar query to get bibtex entries. We will build on this here, using emacs-lisp. The first step we need is to build the query. In gscholar.py they use [[http://www.foolabs.com/xpdf/download.html][pdftotext]] to get the pdf text and then select 20 words. The first 20 don't seem like the right choice to me since many pdfs have cover pages with nothing of substance on them. A really sophisticated tool would try to find the most relevant text, e.g. something that is clearly a title or doi, but there is so little structure in pdfs across the literature this does not seem worthwhile right now. So, we will take the last 20 words from the second page.
+
+#+BEGIN_SRC emacs-lisp
+(defun gscholar-pdf-words (pdf)
+  (s-join
+   " "
+   (last
+    (s-split
+     " "
+     (replace-regexp-in-string
+      "\\W" " "
+      (shell-command-to-string
+       (format "pdftotext -f 2 -l 2 %s - | less" pdf))))
+    20)))
+
+(gscholar-pdf-words "~/Dropbox/bibliography/bibtex-pdfs/alcock-1964-therm.pdf")
+#+END_SRC
+
+#+RESULTS:
+: electrolyte  its flat base resting on a tablet of a mixture of metal A and its
+
+
+[[https://github.com/cute-jumper/gscholar-bibtex/blob/master/gscholar-bibtex.el][gscholar-bibtex/gscholar-bibtex.el at master · cute-jumper/gscholar-bibtex]]
+
+
+#+BEGIN_SRC emacs-lisp
+;;; gscholar-bibtex.el --- Retrieve BibTeX from Google Scholar and other online sources(ACM, IEEE, DBLP)
+
+;; Copyright (C) 2014  Junpeng Qiu
+
+;; Author: Junpeng Qiu <qjpchmail@gmail.com>
+;; Keywords: extensions
+;; Version: 0.2
+
+;; This program is free software; you can redistribute it and/or modify
+;; it under the terms of the GNU General Public License as published by
+;; the Free Software Foundation, either version 3 of the License, or
+;; (at your option) any later version.
+
+;; This program is distributed in the hope that it will be useful,
+;; but WITHOUT ANY WARRANTY; without even the implied warranty of
+;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;; GNU General Public License for more details.
+
+;; You should have received a copy of the GNU General Public License
+;; along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+;;; Commentary:
+
+;; * gscholar bibtex
+
+;;   Retrieve BibTeX entries from Google Scholar, ACM Digital Library, IEEE Xplore
+;;   and DBLP by your query. All in Emacs Lisp!
+
+;;   *UPDATE*: ACM Digital Library, IEEE Xplore, and DBLP are now supported though
+;;    the package name doesn't suggest that.
+;; ** Basic usage
+;;    Without package.el:
+;;        (add-to-list 'load-path "/path/to/gscholar-bibtex.el")
+;;        (require 'gscholar-bibtex)
+
+;;    With package.el: install via melpa!
+
+;;    To use, simply call
+;;         M-x gscholar-bibtex
+
+;;   Choose a source, then enter your query and select the results.
+
+;;   Available commands in `gscholar-bibtex-mode', i.e., in the window of search
+;;   results:
+;;   - n/p: next/previous
+;;   - TAB: show BibTeX entry for current search result
+;;   - A/W: append/write to `gscholar-bibtex-database-file' (see later)
+;;   - a/w: append/write to a file
+;;   - c: close BibTeX entry window
+;;   - q: quit
+
+;; ** Sources
+;;   By default, I enable all sources(Google Scholar, ACM Digital Library, IEEE
+;;   Xplore and DBLP). If you don't want to enable some of them, you could call
+;;       M-x gscholar-bibtex-turn-off-sources
+
+;;   Similarly, if you want to enable some of them, you could call
+;;       M-x gscholar-bibtex-turn-on-sources
+
+;;   To keep the configuration in your init file, you could use the following
+;;   format(*NOT* real code):
+;;       (gscholar-bibtex-source-on-off action source-name)
+
+;;   Possible values:
+;;   - action: :on or :off
+;;   - source-name: "Google Scholar", "ACM Digital Library" or "IEEE Xplore"
+
+;;   Say if you want to disable "IEEE Xplore", use the following code:
+;;       (gscholar-bibtex-source-on-off :off "IEEE Xplore")
+
+;; ** Default source
+;;   If you have a preferred source, you can set it as default so you don't have to
+;;   type the name to select the source every time you call `gscholar-bibtex'. Say
+;;   if you want to set "Google Scholar" as default:
+;;       (setq gscholar-bibtex-default-source "Google Scholar")
+
+;;   Note that in order to make it work, you have to make sure the source name is
+;;   correct and you don't disable the source that you set as default, otherwise
+;;   the default source setting has no effect. Besides, if you only have one source
+;;   enabled, then the enabled source automatically becomes the default, regardless
+;;   of the value of `gscholar-bibtex-default-source'.
+
+;; ** Configuring `gscholar-bibtex-database-file'
+;;    If you have a master BibTeX file, say refs.bib, as database, and want to
+;;    append/write the BibTeX entry to refs.bib without being asked for a
+;;    filename to be written every time, you can set
+;;    `gscholar-bibtex-database-file':
+;;        (setq gscholar-bibtex-database-file "/path/to/refs.bib")
+
+;;    Then use "A" or "W" to append or write to refs.bib, respectively.
+
+;; ** Adding more sources
+;;    Currently these three sources cover nearly all my needs, and it is possible
+;;    if you need to add more sources.
+
+;;    Basically, you need to implement following five functions(if you're willing,
+;;    I think looking the source code is better. The implementation is easy!):
+;; #+BEGIN_SRC elisp
+;; (defun gscholar-bibtex-SourceName-search-results (query)
+;; "In the body, call `gscholar-bibtex--url-retrieve-as-string' to return a string
+;; containing query results"
+;;   body)
+
+;; (defun gscholar-bibtex-SourceName-titles (buffer-content)
+;; "Given the string `buffer-content', return the list of titles"
+;;   body)
+
+;; (defun gscholar-bibtex-SourceName-subtitles (buffer-content)
+;; "Given the string `buffer-content', return the list of subtitles"
+;;   body)
+
+;; (defun gscholar-bibtex-SourceName-bibtex-urls (buffer-content)
+;; "Given the string `buffer-content', return the list of urls(or maybe other
+;;  feature) of the BibTeX entries, which would be fed to the next function"
+;;   body)
+
+;; (defun gscholar-bibtex-SourceName-bibtex-content (arg)
+;; "Given the url(or other feature) of a BibTeX entry, return the entry as string.
+;; Also call `gscholar-bibtex--url-retrieve-as-string' for convenience"
+;;   body)
+;; #+END_SRC
+
+;;    Then you need to add a line:
+;;        (gscholar-bibtex-install-source "Source Name" 'SourceName)
+
+;;    You should put this line somewhere near the end of `gscholar-bibtex.el',
+;;    where you could find several `gscholar-bibtex-install-source' lines.
+
+;;    That's all. Enjoy hacking^_^
+
+;;; Code:
+
+(require 'bibtex)
+(require 'xml)
+
+(defgroup gscholar-bibtex nil
+  "Retrieve BibTeX from Google Scholar and other online sources(ACM, IEEE, DBLP)."
+  :group 'bibtex)
+
+(defconst gscholar-bibtex-version "0.2"
+  "gscholar-bibtex version number")
+
+(defvar gscholar-bibtex-caller-buffer nil
+  "Buffer that calls gscholar-bibtex")
+
+(defvar gscholar-bibtex-urls-cache nil
+  "Cache for all the urls of BibTeX entries")
+
+(defvar gscholar-bibtex-entries-cache nil
+  "Cache for the retrieved BibTeX entries")
+
+(defvar gscholar-bibtex-database-file nil
+  "Default BibTeX database file")
+
+(defconst gscholar-bibtex-item-height 3
+  "The height for each item")
+
+(defvar gscholar-bibtex-available-sources nil
+  "Avaiable sources for query")
+
+(defvar gscholar-bibtex-enabled-sources nil
+  "List of enabled sources")
+
+(defvar gscholar-bibtex-disabled-sources nil
+  "List of disabled sources")
+
+(defvar gscholar-bibtex-selected-source nil
+  "Currently selected source")
+
+(defvar gscholar-bibtex-default-source nil
+  "Default source name")
+
+(defconst gscholar-bibtex-result-buffer-name "*gscholar-bibtex Search Results*"
+  "Buffer name for Google Scholar search results")
+
+(defconst gscholar-bibtex-entry-buffer-name "*BibTeX entry*"
+  "Buffer name for BibTeX entry")
+
+(defconst gscholar-bibtex-function-suffixes-alist
+  '((:search-results . "search-results")
+    (:titles . "titles")
+    (:subtitles . "subtitles")
+    (:bibtex-urls . "bibtex-urls")
+    (:bibtex-content . "bibtex-content")))
+
+(defconst gscholar-bibtex-help
+  "[n/p] next/previous; [TAB] show BibTeX entry; [A/W] append/write to database;\
+ [a/w] append/write to file; [c] close BibTeX entry window; [q] quit;"
+  "Help string for gscholar-bibtex")
+
+;; Face related
+(defface gscholar-bibtex-title
+  '((t (:height 1.4 :foreground "light sea green")))
+  "Face for title"
+  :group 'gscholar-bibtex)
+
+(defface gscholar-bibtex-subtitle
+  '((t (:height 1.0)))
+  "Face for subtitle"
+  :group 'gscholar-bibtex)
+
+(defconst gcholar-bibtex-highlight-item-overlay
+  (let ((ov (make-overlay 1 1)))
+    (overlay-put ov 'face 'highlight)
+    ov)
+  "Overlay for item highlight")
+
+(defun gscholar-bibtex--move-to-line (N)
+  (goto-char (point-min))
+  (forward-line (1- N)))
+
+(defun gscholar-bibtex-prettify-title (s)
+  (propertize s 'face 'gscholar-bibtex-title))
+
+(defun gscholar-bibtex-prettify-subtitle (s)
+  (propertize s 'face 'gscholar-bibtex-subtitle))
+
+(defun gscholar-bibtex-highlight-current-item-hook ()
+  (save-excursion
+    (let* ((line (gscholar-bibtex--current-beginning-line))
+           (beg (progn (gscholar-bibtex--move-to-line line) (point)))
+           (end (progn (gscholar-bibtex--move-to-line (+ line 3)) (point))))
+      (move-overlay gcholar-bibtex-highlight-item-overlay beg end
+                    (current-buffer)))))
+
+;; Major mode
+(defvar gscholar-bibtex-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "n" 'gscholar-bibtex-next-item)
+    (define-key map "p" 'gscholar-bibtex-previous-item)
+    (define-key map (kbd "<tab>") 'gscholar-bibtex-retrieve-and-show-bibtex)
+    (define-key map "A" 'gscholar-bibtex-append-bibtex-to-database)
+    (define-key map "W" 'gscholar-bibtex-write-bibtex-to-database)
+    (define-key map "a" 'gscholar-bibtex-append-bibtex-to-file)
+    (define-key map "w" 'gscholar-bibtex-write-bibtex-to-file)
+    (define-key map "c" 'gscholar-bibtex-quit-entry-window)
+    (define-key map "q" 'gscholar-bibtex-quit-gscholar-window)
+    map))
+
+(define-derived-mode gscholar-bibtex-mode fundamental-mode "gscholar-bibtex"
+  (setq buffer-read-only t)
+  (add-hook 'pre-command-hook 'gscholar-bibtex-show-help nil t)
+  (add-hook 'post-command-hook 'gscholar-bibtex-highlight-current-item-hook
+            nil t))
+
+(defun gscholar-bibtex-show-help ()
+  (message gscholar-bibtex-help))
+
+(defun gscholar-bibtex-guard ()
+  (unless (eq major-mode 'gscholar-bibtex-mode)
+    (error "Error: you are not in `gscholar-bibtex-mode'!")))
+
+(defun gscholar-bibtex--string-cleanup (str)
+  (while (string-match "\\`^\n+\\|^\\s-+\\|\\s-+$\\|\n+\\|\r+\\|^\r\\'" str)
+    (setq str (replace-match "" t t str)))
+  (replace-regexp-in-string "[\r\n\t ]+" " " str))
+
+(defun gscholar-bibtex--current-beginning-line ()
+  (1+ (* (gscholar-bibtex--current-index) gscholar-bibtex-item-height)))
+
+(defun gscholar-bibtex--current-index ()
+  (let ((line-number (+ (line-number-at-pos)
+                        (if (= (point) (point-max))
+                            -1 0))))
+    (/ (1- line-number) gscholar-bibtex-item-height)))
+
+(defun gscholar-bibtex--delete-response-header ()
+  (ignore-errors
+    (save-match-data
+      (goto-char (point-min))
+      (delete-region (point-min)
+                     (1+ (re-search-forward "^$" nil t)))
+      (goto-char (point-min)))))
+
+(defun gscholar-bibtex--replace-html-entities (str)
+  (let ((retval str)
+        (pair-list
+         '(("&amp;" . "&")
+           ("&hellip;" . "...")
+           ("&quot;" . "\"")
+           ("&#[0-9]*;" .
+            (lambda (match)
+              (format "%c" (string-to-number (substring match 2 -1))))))))
+    (dolist (elt pair-list retval)
+      (setq retval (replace-regexp-in-string (car elt) (cdr elt) retval)))))
+
+(defun gscholar-bibtex--html-value-cleanup (s)
+  (gscholar-bibtex--string-cleanup
+   (gscholar-bibtex--replace-html-entities
+    (replace-regexp-in-string "<.*?>" "" s))))
+
+(defun gscholar-bibtex--xml-child (children)
+  (pcase-let ((`(,child) children)) child))
+
+(defun gscholar-bibtex--xml-node-child (node)
+  (gscholar-bibtex--xml-child
+   (xml-node-children node)))
+
+(defun gscholar-bibtex--xml-get-child (node child-name)
+  (gscholar-bibtex--xml-child
+   (xml-get-children node child-name)))
+
+(defun gscholar-bibtex--url-retrieve-as-buffer (url)
+  (let ((response-buffer (url-retrieve-synchronously url)))
+    (with-current-buffer response-buffer
+      (gscholar-bibtex--delete-response-header))
+    response-buffer))
+
+(defun gscholar-bibtex--url-retrieve-as-string (url)
+  (let ((response-buffer (gscholar-bibtex--url-retrieve-as-buffer url))
+        retval)
+    (with-current-buffer response-buffer
+      (setq retval (buffer-string)))
+    (kill-buffer response-buffer)
+    retval))
+
+(defun gscholar-bibtex-re-search (buffer-content surrounding-regexp subexp-count)
+  (save-match-data
+    (with-temp-buffer
+      (insert buffer-content)
+      (let (retval)
+        (goto-char (point-min))
+        (while (re-search-forward surrounding-regexp nil t)
+          (push (gscholar-bibtex--html-value-cleanup
+                 (match-string-no-properties subexp-count)) retval))
+        (nreverse retval)))))
+
+(defun gscholar-bibtex-next-item ()
+  (interactive)
+  (gscholar-bibtex-guard)
+  (gscholar-bibtex--move-to-line (+ (gscholar-bibtex--current-beginning-line)
+                                    gscholar-bibtex-item-height)))
+
+(defun gscholar-bibtex-previous-item ()
+  (interactive)
+  (gscholar-bibtex-guard)
+  (gscholar-bibtex--move-to-line (- (gscholar-bibtex--current-beginning-line)
+                                    gscholar-bibtex-item-height)))
+
+(defun gscholar-bibtex-retrieve-and-show-bibtex ()
+  (interactive)
+  (gscholar-bibtex-guard)
+  (let* ((index (gscholar-bibtex--current-index))
+         (bibtex-entry
+          (progn (when (string= "" (elt gscholar-bibtex-entries-cache index))
+                   (aset gscholar-bibtex-entries-cache index
+                         (gscholar-bibtex-dispatcher
+                          :bibtex-content
+                          (nth index gscholar-bibtex-urls-cache))))
+                 (elt gscholar-bibtex-entries-cache index)))
+         (entry-buffer (get-buffer-create gscholar-bibtex-entry-buffer-name))
+         (entry-window (get-buffer-window entry-buffer))
+         (gscholar-window (selected-window)))
+    (with-current-buffer entry-buffer
+      (erase-buffer)
+      (insert bibtex-entry)
+      (bibtex-mode)
+      ;; Have to manually call this to set `bibtex-entry-head', otherwise
+      ;; `bibtex-parse-buffers-stealthily' will throw some errors since the our
+      ;; BibTeX buffer is not associated with an existing file:-(
+      (bibtex-set-dialect)
+      (goto-char (point-min)))
+    (unless entry-window
+      (select-window (split-window-below))
+      (switch-to-buffer entry-buffer)
+      (select-window gscholar-window))))
+
+(defun gscholar-bibtex--write-bibtex-to-database-impl (&optional append)
+  (gscholar-bibtex-guard)
+  (gscholar-bibtex-retrieve-and-show-bibtex)
+  (unless gscholar-bibtex-database-file
+    (setq gscholar-bibtex-database-file
+          (read-file-name "gscholar-bibtex database file:")))
+  (if gscholar-bibtex-database-file
+      (progn
+        (with-current-buffer (get-buffer gscholar-bibtex-entry-buffer-name)
+          (write-region nil nil gscholar-bibtex-database-file append))
+        (message "%s BibTeX entry to %s" (if append "Append" "Write")
+                 gscholar-bibtex-database-file))
+    (error "Please set `gscholar-bibtex-database-file' first.")))
+
+(defun gscholar-bibtex-append-bibtex-to-database ()
+  (interactive)
+  (gscholar-bibtex--write-bibtex-to-database-impl t))
+
+(defun gscholar-bibtex-write-bibtex-to-database ()
+  (interactive)
+  (gscholar-bibtex--write-bibtex-to-database-impl))
+
+(defun gscholar-bibtex--write-bibtex-to-file-impl (prompt &optional append)
+  (gscholar-bibtex-guard)
+  (gscholar-bibtex-retrieve-and-show-bibtex)
+  (let ((filename (read-file-name prompt)))
+    (with-current-buffer (get-buffer gscholar-bibtex-entry-buffer-name)
+      (write-region nil nil filename append))
+    (message "%s BibTeX entry to %s" (if append "Append" "Write") filename)))
+
+(defun gscholar-bibtex-append-bibtex-to-file ()
+  (interactive)
+  (gscholar-bibtex--write-bibtex-to-file-impl "Append BibTeX entry to file: " t))
+
+(defun gscholar-bibtex-write-bibtex-to-file ()
+  (interactive)
+  (gscholar-bibtex--write-bibtex-to-file-impl "Write BibTeX entry to file: "))
+
+(defun gscholar-bibtex-quit-entry-window ()
+  (interactive)
+  (gscholar-bibtex-guard)
+  (let ((gscholar-window (selected-window))
+        (entry-window (get-buffer-window gscholar-bibtex-entry-buffer-name)))
+    (when entry-window
+      (select-window entry-window)
+      (delete-window)
+      (select-window gscholar-window))))
+
+(defun gscholar-bibtex-quit-gscholar-window ()
+  (interactive)
+  (gscholar-bibtex-guard)
+  (let ((gscholar-window (selected-window))
+        (entry-window (get-buffer-window gscholar-bibtex-entry-buffer-name))
+        (caller-window (get-buffer-window gscholar-bibtex-caller-buffer)))
+    (gscholar-bibtex-quit-entry-window)
+    (if (or (eq caller-window gscholar-window)
+            (eq caller-window entry-window)
+            (not (buffer-live-p gscholar-bibtex-caller-buffer)))
+        (next-buffer)
+      (if caller-window
+          (progn (delete-window) (select-window caller-window))
+        (switch-to-buffer gscholar-bibtex-caller-buffer))))
+  (message ""))
+
+(defun gscholar-bibtex-install-source (source-name source-symbol)
+  (let ((retval t))
+    (dolist (pair gscholar-bibtex-function-suffixes-alist retval)
+      (unless
+          (fboundp
+           (gscholar-bibtex--get-dispatch-func-name (car pair) source-symbol))
+        (setq retval nil)))
+    (unless retval
+      (error
+       "Installation failed! You need to define all necessary functions!"))
+    (push `(,source-name . ,source-symbol) gscholar-bibtex-available-sources)))
+
+(defun gscholar-bibtex--get-dispatch-func-name (kind source-symbol)
+  (intern
+   (concat
+    "gscholar-bibtex-"
+    (symbol-name source-symbol)
+    "-"
+    (assoc-default kind gscholar-bibtex-function-suffixes-alist))))
+
+;;; dispatcher
+(defun gscholar-bibtex-dispatcher (kind arg)
+  (funcall
+   (gscholar-bibtex--get-dispatch-func-name
+    kind
+    (assoc-default gscholar-bibtex-selected-source
+                   gscholar-bibtex-enabled-sources))
+   arg))
+
+(defun gscholar-bibtex--get-list-symbol-pair (action)
+  (let* ((alist '((:on . ("disabled" . "enabled"))
+                  (:off . ("enabled" . "disabled"))))
+         (names (assoc-default action alist))
+         (build-name (lambda (s)
+                       (intern (concat "gscholar-bibtex-" s "-sources")))))
+    `(,(funcall build-name (car names)) . ,(funcall build-name (cdr names)))))
+
+(defun gscholar-bibtex-source-on-off (action source-name)
+  (let* ((prompt (if (eq action :on) "available" "enabled"))
+         (symbol-pair (gscholar-bibtex--get-list-symbol-pair action))
+         (source-list (car symbol-pair))
+         (dest-list (cdr symbol-pair))
+         (source-pair (assoc source-name (symbol-value source-list))))
+    (if source-pair
+        (progn
+          (set source-list
+               (remove source-pair (symbol-value source-list)))
+          (push source-pair (symbol-value dest-list)))
+      (message
+       (concat "Please choose from the " prompt " sources!")))))
+
+(defun gscholar-bibtex--source-on-off-interactive-impl (action)
+  (let ((source-list (car (gscholar-bibtex--get-list-symbol-pair action)))
+        source-name)
+    (while (and (symbol-value source-list)
+                (not
+                 (string= "" (setq source-name
+                                   (completing-read
+                                    "Source[empty to exit]:"
+                                    (symbol-value source-list))))))
+      (gscholar-bibtex-source-on-off action source-name))))
+
+;;; acm
+(defun gscholar-bibtex-acm-search-results (query)
+  (let* ((url-request-method "POST")
+         (url-request-extra-headers
+          '(("Content-Type" . "application/x-www-form-urlencoded")))
+         (url-request-data
+          (mapconcat (lambda (arg)
+                       (concat (url-hexify-string (car arg))
+                               "="
+                               (url-hexify-string (cdr arg))))
+                     `(("query" . ,(replace-regexp-in-string " " "\+" query)))
+                     "&")))
+    (gscholar-bibtex--url-retrieve-as-string
+     "http://dl.acm.org/results.cfm?h=1")))
+(defun gscholar-bibtex-acm-titles (buffer-content)
+  (gscholar-bibtex-re-search
+   buffer-content
+   "<A HREF=\"citation.cfm[^>]*?>\\(.*?\\)</A>" 1))
+
+(defun gscholar-bibtex-acm-subtitles (buffer-content)
+  (gscholar-bibtex-re-search
+   buffer-content
+   "<div class=\"authors\">\\([[:print:][:space:]]*?\\)</div>" 1))
+
+(defun gscholar-bibtex-acm-bibtex-urls (buffer-content)
+  (mapcar
+   (lambda (href)
+     (let ((retval href)
+           (case-fold-search t)
+           (pair-list '(("coll=DL" . "expformat=bibtex")
+                        ("id" . "parent_id")
+                        ("\\." . "&id=")
+                        ("cfm" . "downformats.cfm"))))
+       (dolist (pair pair-list retval)
+         (setq retval
+               (replace-regexp-in-string (car pair) (cdr pair) retval)))))
+   (gscholar-bibtex-re-search
+    buffer-content
+    "<A HREF=\"citation\.\\(.*?\\)\"" 1)))
+
+(defun gscholar-bibtex-acm-bibtex-content (bibtex-url)
+  (gscholar-bibtex--url-retrieve-as-string
+   (concat "http://dl.acm.org/" bibtex-url)))
+
+;;; ieee
+(defun gscholar-bibtex-ieee-search-results (query)
+  (let* ((url-request-method "GET"))
+    (gscholar-bibtex--url-retrieve-as-string
+     (concat
+      "http://ieeexplore.ieee.org/search/searchresult.jsp?queryText="
+      (url-hexify-string query)))))
+
+(defun gscholar-bibtex-ieee-titles (buffer-content)
+  (gscholar-bibtex-re-search
+   buffer-content
+   "Select this article: \\(.*\\) type" 1))
+
+(defun gscholar-bibtex-ieee-subtitles (buffer-content)
+  (gscholar-bibtex-re-search
+   buffer-content
+   "<a.*?class=\"authorPreferredName[^>]*?>\\([[:space:][:print:]]*?\\)<a href='.." 1))
+
+(defun gscholar-bibtex-ieee-bibtex-urls (buffer-content)
+  (gscholar-bibtex-re-search
+   buffer-content
+   "<input.*id=\'\\(.*\\)\'" 1))
+
+(defun gscholar-bibtex-ieee-bibtex-content (bibtex-id)
+  (let* ((url-request-method "POST")
+         (url-request-extra-headers
+          '(("Content-Type" . "application/x-www-form-urlencoded")))
+         (url-request-data
+          (mapconcat (lambda (arg)
+                       (concat (url-hexify-string (car arg))
+                               "="
+                               (url-hexify-string (cdr arg))))
+                     `(("recordIds" . ,bibtex-id)
+                       ("citations-format" . "citation-only")
+                       ("download-format" . "download-bibtex"))
+                     "&"))
+         (pair-list '(("<br>\\|\r" . "")
+                      ("\n\n+" . "\n")
+                      ("\n *" . "\n  ")))
+         (retval (gscholar-bibtex--url-retrieve-as-string
+                  "http://ieeexplore.ieee.org/xpl/downloadCitations")))
+    (dolist (pair pair-list retval)
+      (setq retval (replace-regexp-in-string (car pair) (cdr pair) retval)))))
+
+;;; Google Scholar
+(defun gscholar-bibtex-google-scholar-search-results (query)
+  (let* ((url-request-method "GET")
+         (random-id (format "%016x" (random (expt 16 16))))
+         (url-request-extra-headers
+          `(("Cookie" . ,(concat "GSP=ID=" random-id ":CF=4")))))
+    (gscholar-bibtex--url-retrieve-as-string
+     (concat  "http://scholar.google.com/scholar?q="
+              (url-hexify-string
+               (replace-regexp-in-string " " "\+" query))))))
+
+(defun gscholar-bibtex-google-scholar-bibtex-urls (buffer-content)
+  (gscholar-bibtex-re-search buffer-content "\\(/scholar\.bib.*?\\)\"" 1))
+
+(defun gscholar-bibtex-google-scholar-titles (buffer-content)
+  (gscholar-bibtex-re-search buffer-content "<h3.*?>\\(.*?\\)</h3>" 1))
+
+(defun gscholar-bibtex-google-scholar-subtitles (buffer-content)
+  (gscholar-bibtex-re-search
+   buffer-content
+   "<div class=\"gs_a\">\\(.*?\\)</div>" 1))
+
+(defun gscholar-bibtex-google-scholar-bibtex-content (bibtex-url)
+  (gscholar-bibtex--url-retrieve-as-string
+   (concat "http://scholar.google.com" bibtex-url)))
+
+;;; DBLP
+(defun gscholar-bibtex-dblp-search-results (query)
+  (let* ((url-request-method "GET")
+         (response-buffer (gscholar-bibtex--url-retrieve-as-buffer
+                           (concat "http://dblp.uni-trier.de/search/publ/api?"
+                                   (url-build-query-string
+                                    `((q ,query)
+                                      (format xml)))))))
+    (with-current-buffer response-buffer
+      (set-buffer-multibyte t))
+    (prog1
+        (pcase-let ((`(,(and result `(result . ,_))) (xml-parse-region nil nil response-buffer)))
+          (mapcar (lambda (hit)
+                    (gscholar-bibtex--xml-get-child hit 'info))
+                  (xml-get-children (gscholar-bibtex--xml-get-child result 'hits) 'hit)))
+      (kill-buffer response-buffer))))
+
+(defun gscholar-bibtex-dblp-titles (search-results)
+  (mapcar (lambda (info)
+            (gscholar-bibtex--xml-node-child
+             (gscholar-bibtex--xml-get-child info 'title)))
+          search-results))
+
+(defun gscholar-bibtex-dblp-subtitles (search-results)
+  (mapcar (lambda (info)
+            (mapconcat #'gscholar-bibtex--xml-node-child
+                       (xml-get-children (gscholar-bibtex--xml-get-child info 'authors) 'author)
+                       ", "))
+          search-results))
+
+(defun gscholar-bibtex-dblp-bibtex-urls (search-results)
+  (mapcar (lambda (info)
+            (gscholar-bibtex--xml-node-child
+             (gscholar-bibtex--xml-get-child info 'url)))
+          search-results))
+
+(defun gscholar-bibtex-dblp-bibtex-content (html-url)
+  (string-match "/rec/" html-url)
+  (gscholar-bibtex--url-retrieve-as-string
+   (replace-match "/rec/bib2/" t t html-url)))
+
+;;;###autoload
+(defun gscholar-bibtex-turn-on-sources ()
+  (interactive)
+  (gscholar-bibtex--source-on-off-interactive-impl :on))
+
+;;;###autoload
+(defun gscholar-bibtex-turn-off-sources ()
+  (interactive)
+  (gscholar-bibtex--source-on-off-interactive-impl :off))
+
+;;;###autoload
+(defun gscholar-bibtex ()
+  (interactive)
+  (if (= 1 (length gscholar-bibtex-enabled-sources))
+      (setq gscholar-bibtex-selected-source
+            (caar gscholar-bibtex-enabled-sources))
+    (let* ((default-source (assoc
+                            gscholar-bibtex-default-source
+                            gscholar-bibtex-enabled-sources))
+           (source-prompt (if default-source
+                              (concat "Select a source[default "
+                                      gscholar-bibtex-default-source
+                                      "]: ")
+                            "Select a source: "))
+           (selected-source
+            (completing-read source-prompt
+                             gscholar-bibtex-enabled-sources)))
+      (setq gscholar-bibtex-selected-source
+            (if (string= "" selected-source)
+                gscholar-bibtex-default-source
+              selected-source))))
+  (unless (assoc gscholar-bibtex-selected-source
+                 gscholar-bibtex-enabled-sources)
+    (error "Please select an installed source!"))
+  (let* ((query (read-string
+                 (concat "Query[" gscholar-bibtex-selected-source "]: ")))
+         (search-results (gscholar-bibtex-dispatcher :search-results query))
+         (titles (gscholar-bibtex-dispatcher :titles search-results))
+         (subtitles (gscholar-bibtex-dispatcher :subtitles search-results))
+         (gscholar-buffer
+          (get-buffer-create gscholar-bibtex-result-buffer-name)))
+    (setq gscholar-bibtex-caller-buffer (current-buffer))
+    (setq gscholar-bibtex-urls-cache
+          (gscholar-bibtex-dispatcher :bibtex-urls search-results))
+    (setq gscholar-bibtex-entries-cache
+          (make-vector (length gscholar-bibtex-urls-cache) ""))
+    (unless (get-buffer-window gscholar-buffer)
+      (switch-to-buffer-other-window gscholar-buffer))
+    (setq buffer-read-only nil)
+    (erase-buffer)
+    (goto-char (point-min))
+    (dotimes (i (length titles))
+      (insert "* " (gscholar-bibtex-prettify-title (nth i titles)))
+      (newline-and-indent)
+      (insert "  "
+              (gscholar-bibtex-prettify-subtitle (nth i subtitles)) "\n\n"))
+    (goto-char (point-min))
+    (gscholar-bibtex-mode)
+    (gscholar-bibtex-show-help)))
+
+;; install sources
+(gscholar-bibtex-install-source "DBLP" 'dblp)
+(gscholar-bibtex-install-source "IEEE Xplore" 'ieee)
+(gscholar-bibtex-install-source "ACM Digital Library" 'acm)
+(gscholar-bibtex-install-source "Google Scholar" 'google-scholar)
+;; initalize
+(setq gscholar-bibtex-disabled-sources gscholar-bibtex-available-sources)
+;; enable all
+(gscholar-bibtex-source-on-off :on "DBLP")
+(gscholar-bibtex-source-on-off :on "IEEE Xplore")
+(gscholar-bibtex-source-on-off :on "ACM Digital Library")
+(gscholar-bibtex-source-on-off :on "Google Scholar")
+
+;; Remove byte compilation warnings
+(defvar evil-emacs-state-modes)
+(eval-after-load "evil"
+  '(add-to-list 'evil-emacs-state-modes 'gscholar-bibtex-mode))
+
+(provide 'gscholar-bibtex)
+;;; gscholar-bibtex.el ends here
+#+END_SRC
+
+#+BEGIN_SRC emacs-lisp
+
+
+(gscholar-bibtex-google-scholar-search-results " electrolyte  its flat base resting on a tablet of a mixture of metal A and its")
+#+END_SRC
+
+
+
+
+
+
+
+
+
+
+
+* A highlight annotation mode with overlays :ARCHIVE:
+One of my students asked about highlighting text in emacs for note-taking. For temporary use, this is pretty easy, you put an overlay on a region that modifies the face, and any other properties you choose. One downside of overlays, as opposed to font-lock properties, is they do not "follow" text when you cut and paste them. On the other hand, they are easier to work with. So, we will work through doing this with overlays, and another day try it out with font-lock properties.
+
+Here is a simple function to put a highlight on a region.
+
+#+BEGIN_SRC emacs-lisp
+(require 'ov)
+
+(defun highlight-region (beg end)
+ (interactive "r")
+ (ov beg end 'face '(:background "Light Salmon") 'help-echo "highlighted" 'highlighted t))
+
+(global-set-key (kbd "s-h") 'highlight-region)
+#+END_SRC
+
+#+RESULTS:
+: highlight-region
+
+The trouble is these are temporary, and disappear when you close the file. So, we need to save them. It is easy to get the overlays in the buffer, and we only want ones that have the 'highlighted property. So we just get those, and then save the information we need to recreate them.
+
+#+BEGIN_SRC emacs-lisp
+(ov-in 'highlighted t)
+#+END_SRC
+
+#+RESULTS:
+| #<overlay from 1041 to 1062 in blog.org> | #<overlay from 536 to 552 in blog.org> |
+
+Here is the code we use to save the overlay data in an external file. We use a hidden dotfile for this so we don't clutter our directory up. Then, we will save the start, end and properties of each overlay so we can reconstruct them later. We add this to a save hook, so it updates our file each time we save the buffer.
+
+#+BEGIN_SRC emacs-lisp :results silent
+(defun highlight-save-filename ()
+  "Return name of file to save overlays in."
+  (concat "." (file-name-nondirectory (buffer-file-name)) ".highlights"))
+
+(defun highlight-save ()
+  "Save highlight overlays in an external file"
+  (interactive)
+  (when (buffer-file-name)
+    (save-buffer)
+    (let ((fname (highlight-save-filename))
+	  (ovs (ov-in 'highlighted t)))
+      (if ovs
+	  (with-temp-file fname
+	    (prin1
+	     (mapcar
+	      (lambda (ov)
+		(list (overlay-start ov)
+		      (overlay-end ov)
+		      (overlay-properties ov)))
+	      ovs)
+	     (current-buffer)))
+	;; Delete file if no ovs
+	(and (file-exists-p fname)
+	     (delete-file fname))))))
+
+(add-hook 'after-save-hook 'highlight-save)
+#+END_SRC
+
+#+RESULTS:
+: highlight-save
+
+#+BEGIN_SRC emacs-lisp
+(highlight-save)
+#+END_SRC
+
+#+RESULTS:
+| 1041 | 1062 | (highlighted t help-echo highlighted face (:background Light Salmon)) |
+|  536 |  552 | (highlighted t help-echo highlighted face (:background Light Salmon)) |
+
+#+BEGIN_SRC sh
+cat .blog.org.highlights
+#+END_SRC
+
+#+RESULTS:
+: ((4288 4296 (highlighted t help-echo "Some note to yourself about the tip" face (:background "Yellow1"))) (4184 4188 (highlighted t help-echo "highlighted" face (:background "Darkolivegreen1"))) (4178 4182 (highlighted t help-echo "highlighted" face (:background "Coral"))) (3496 3508 (highlighted t help-echo "highlighted" face (:background "Light Salmon"))) (1041 1062 (highlighted t help-echo "highlighted" face (:background "Light Salmon"))) (536 552 (highlighted t help-echo "highlighted" face (:background "Light Salmon"))))
+
+
+Now, we also need to be able to load the overlays. We set this in a hook too, so the overlays get created when we open the file.
+
+#+BEGIN_SRC emacs-lisp :results silent
+(defun highlight-load ()
+  "Load and apply overlays"
+  (interactive)
+  (let ((fname (highlight-save-filename)))
+    (when (file-exists-p fname)
+      (mapc
+       (lambda (entry)
+	 (ov (nth 0 entry)		; beg
+	     (nth 1 entry)		; end
+	     (nth 2 entry)))		; properties
+
+      (with-temp-buffer
+	(insert-file-contents fname)
+	(read (current-buffer)))))))
+
+(add-hook 'find-file-hook 'highlight-load)
+#+END_SRC
+
+So far so good. Let's raise the bar on ridiculosity and use helm-colors to select the highlight color. You will be able to highlight  with crazy color resolution. We will up the ante and also allow this function to update an existing highlight.
+
+#+BEGIN_SRC emacs-lisp
+(defun highlight (beg end &optional color)
+  "Put a highlight overlay on the region. If on an overlay, change the color"
+  (interactive "r")
+  (unless color
+    (setq color (s-trim (helm-colors))))
+  (if (ov-at)
+      (ov-set (ov-at) 'face `(:background ,color))
+    (unless (region-active-p)
+      (error "No region selected."))
+    (ov beg end 'face `(:background ,color) 'help-echo "highlighted" 'highlighted t)))
+#+END_SRC
+
+#+RESULTS:
+: highlight
+
+What  else can we do? Let's make a special highlight note where you can put your own text as a tooltip, and a function to edit the text.
+
+#+BEGIN_SRC emacs-lisp
+(defun highlight-note (beg end &optional color note)
+  (interactive "r")
+  (unless (region-active-p)
+    (error "No region selected."))
+  (unless color
+    (setq color (s-trim (helm-colors))))
+  (unless note
+    (setq note (read-input "Note: ")))
+  (ov beg end 'face `(:background ,color) 'help-echo note 'highlighted t))
+
+;; We need to edit a note too
+(defun highlight-note-edit (new-note)
+  (interactive (list (read-input "New note: " (overlay-get (ov-at) 'help-echo))))
+  (ov-set (ov-at) 'help-echo new-note))
+#+END_SRC
+
+#+RESULTS:
+: highlight-note-edit
+
+After a while you may want to list your notes. This function is a little clumsy in window management. Basically we make a new buffer with the highlighted text and a link to get back to it.
+
+#+BEGIN_SRC emacs-lisp
+(defun highlight-list ()
+  (interactive)
+  (let* ((ovs (ov-in 'highlighted t))
+	 (cb (current-buffer))
+	 (links (mapcar
+		 (lambda (ov)
+		   (format "[[%s][link]]%s\n"
+			   (format
+			    "elisp:(progn (switch-to-buffer \"%s\")(goto-char %s))"
+			    cb (overlay-start ov))
+			   (buffer-substring
+			    (overlay-start ov)
+			    (overlay-end ov))))
+		 ovs)))
+    (split-window-right)
+    (switch-to-buffer-other-window "*highlights*") (erase-buffer)
+    (org-mode)
+    (mapc
+     (lambda (s)
+       (insert s))
+     links)))
+#+END_SRC
+
+#+RESULTS:
+: highlight-list
+
+At some point you will want to clear all your highlights. After you do this, if you save the buffer, they will be gone forever.
+
+#+BEGIN_SRC emacs-lisp
+(defun highlight-clear ()
+  (interactive)
+  (ov-clear 'highlighted t)
+  (when (get-buffer "*highlights*") (kill-buffer "*highlights*")))
+#+END_SRC
+
+#+RESULTS:
+: highlight-clear
+
+
+Finally, a few convenience functions and a menu. We define some standard highlight colors for convenience, an menu in the "Org" menu, a hydra, and a final key binding to the hydra.
+
+#+BEGIN_SRC emacs-lisp
+(defun highlight-yellow ()
+  (interactive)
+  (highlight (region-beginning) (region-end) "Yellow"))
+
+(defun highlight-blue ()
+  (interactive)
+  (highlight (region-beginning) (region-end) "LightBlue"))
+
+(defun highlight-pink ()
+  (interactive)
+  (highlight (region-beginning) (region-end) "Pink"))
+
+(defun highlight-green ()
+  (interactive)
+  (highlight (region-beginning) (region-end) "Darkolivegreen1"))
+
+(easy-menu-change
+ '("Org") "highlighter"
+ '(["Highlight" highlight]
+   ["Highlight (B)" highlight-blue]
+   ["Highlight (G)" highlight-green]
+   ["Highlight (P)" highlight-pink]
+   ["Highlight (Y)" highlight-yellow]
+   ["List highlights" highlight-list]
+   ["Clear highlights" highlight-clear])
+ "Show/Hide")
+
+(defhydra highlight (:color blue) "highlighter"
+  ("b" highlight-blue "blue")
+  ("g" highlight-green "Green")
+  ("p" highlight-pink "Pink")
+  ("s" (highlight (region-beginning) (region-end) "Lightsalmon1") "Salmon")
+  ("y" highlight-yellow "yellow")
+  ("c" highlight "Choose color")
+  ("n" (highlight-note (region-beginning) (region-end) "Thistle") "Thistle Note")
+  ("N" highlight-note "Note")
+  ("m" highlight-mouse-on "Mouse highlight")
+  ("M" highlight-mouse-off "Mouse off")
+  ("e" highlight-note-edit "Edit note")
+  ("l" highlight-list "List highlights")
+  ("r" highlight-load "Reload")
+  ("s" highlight-save "Save")
+  ("C" highlight-clear "Clear"))
+
+(global-set-key (kbd "s-h") 'highlight/body)
+#+END_SRC
+
+#+RESULTS:
+: highlight/body
+
+There  are some limitations here. Overlays are not attached to text, so you cannot cut and paste them. Boo... You have to use the hook functions to keep the external file synchronized with the buffer. If these ever get out of sync, good luck resynchronizing them.
+
+* overlay notes				 :ARCHIVE:
+
+(overlay-start (ov-next 'highlighted t))
+(overlay-end (ov-next 'highlighted t))
+(overlay-properties (ov-next 'highlighted t))
+(overlay-get (ov-next 'highlighted t) 'help-echo)
+(overlay-get (ov-next 'highlighted t) 'face)
+
+(ov-in 'highlighted t)
+
+(ov-spec (ov-prev 'highlighted t))
+clear all
+(ov-clear 'highlighted t)
+
+tree tree
+
+
+(ov-goto-next 'highlighted t)
+
+* highlight notes			 :ARCHIVE:
+
+
+#+BEGIN_SRC emacs-lisp
+(remove-hook 'activate-mark-hook 'highlight-yellow)
+(remove-hook 'deactivate-mark-hook 'highlight-yellow)
+#+END_SRC
+
+#+RESULTS:
+
+#+BEGIN_SRC emacs-lisp
+(defadvice handle-shift-selection (after my-show-point-and-mark () activate)
+  "Show point and mark."
+  (message "[%s %s]" (mark) (point)))
+
+(defadvice mouse-set-region (after my-highlight () activate)
+  "Highlight"
+  (highlight-green))
+#+END_SRC
+
+#+RESULTS:
+: mouse-set-region
+
+(setq org-support-shift-select t)
+
+
+what else can we  can we do? Let's make a new highlight /note/.
+
+#+BEGIN_SRC emacs-lisp
+(defun highlight-note (beg end note)
+  (interactive (list (region-beginning) (region-end) (read-input "Note: ")))
+  (unless (region-active-p)
+    (error "No region selected."))
+  (add-text-properties
+   beg end
+   `(help-echo ,note font-lock-face (:background "Thistle")
+		    highlighted t)))
+
+;; You might want to edit your note
+(defun highlight-note-edit (new-note)
+  (interactive (list (read-input "Note: " (get-text-property (point) 'help-echo))))
+  (let* ((region (button-lock-find-extent (point) 'highlighted))
+	 (beg (car region))
+	 (end (cdr region)))
+    (put-text-property beg end 'help-echo new-note)))
+#+END_SRC
+
+#+RESULTS:
+: highlight-note-edit
+
+f   dsaf   das    fds (ov-all)
+
+
+#+BEGIN_SRC emacs-lisp
+(require 'ov)
+
+(defun highlight-note (beg end note)
+  (interactive (list (region-beginning) (region-end) (read-input "Note: ")))
+  (unless (region-active-p)
+    (error "No region selected."))
+  (ov beg end 'help-echo note 'face '(:background "Thistle")))
+
+;; You might want to edit your note
+(defun highlight-note-edit (new-note)
+  (interactive (list (read-input "Note: " (get-text-property (point) 'help-echo))))
+  (let* ((region (button-lock-find-extent (point) 'highlighted))
+	 (beg (car region))
+	 (end (cdr region)))
+    (put-text-property beg end 'help-echo new-note)))
+#+END_SRC
+
+
+* Insert images from image-dired
+[[http://stackoverflow.com/questions/31311833/copy-links-from-image-dired-to-org-mode][emacs - Copy links from image-dired to org-mode - Stack Overflow]]
+
+
+#+BEGIN_SRC emacs-lisp
+(defun my-insert-current-image-path ()
+  (interactive)
+  (insert
+   (concat
+    "[["
+    (save-excursion
+      (with-current-buffer "*image-dired*"
+        (image-dired-original-file-name)))
+    "]]")
+(org-display-inline-images t t)))
+#+END_SRC
+
+#+RESULTS:
+| 2576 | 2580 | #FFFFFF      |
+| 2567 | 2574 | #FFFFFF      |
+| 1742 | 1746 | Light Salmon |
+|  479 |  509 | Light Salmon |
+|  160 |  179 | Light Salmon |
+
+
+* Altmetrics meet my publications
+Exploration of Altmetrics.
+
+#+BEGIN_SRC emacs-lisp
+(defun doi-altmetrics (doi)
+  (interactive "sDOI: ")
+  (let ((url-request-method "GET")
+	(url (concat "http://api.altmetric.com/v1/doi/" doi))
+	(json-object-type 'plist)
+	(json-data))
+    (setq json-data
+	  (with-current-buffer
+	      (url-retrieve-synchronously url)
+
+	    (json-read-from-string
+	     (buffer-substring
+	      url-http-end-of-headers (point-max)))))
+    (browse-url
+     (plist-get json-data :details_url))))
+
+(doi-altmetrics "10.1021/jp511426q")
+#+END_SRC
+
+#+RESULTS:
+: #<process open http://www.altmetric.com/details.php?citation_id=3863449>
+
+#+BEGIN_HTML
+<script type='text/javascript' src='https://d1bxh8uas1mnw7.cloudfront.net/assets/embed.js'></script>
+#+END_HTML
+
+
+#+BEGIN_SRC python :results html
+import requests
+import json
+
+resp = requests.get("http://pub.orcid.org/0000-0003-2625-9232/orcid-works",
+                    headers={'Accept':'application/orcid+json'})
+results = resp.json()
+
+data = []
+TITLES, DOIs = [], []
+
+
+badge = "<div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='{doi}'></div>"
+
+html = '<a href="http://dx.doi.org/{doi}">{title}</a>'
+
+for i, result in enumerate( results['orcid-profile']['orcid-activities']
+                            ['orcid-works']['orcid-work']):
+    title = str(result['work-title']['title']['value'].encode('utf-8'))
+    doi = 'None'
+
+    for x in result.get('work-external-identifiers', []):
+        for eid in result['work-external-identifiers']['work-external-identifier']:
+            if eid['work-external-identifier-type'] == 'DOI':
+                doi = str(eid['work-external-identifier-id']['value'].encode('utf-8'))
+
+    # AIP journals tend to have a \n in the DOI, and the doi is the second line. we get
+    # that here.
+    if len(doi.split('\n')) == 2:
+        doi = doi.split('\n')[1]
+
+    pub_date = result.get('publication-date', None)
+    if pub_date:
+        year = pub_date.get('year', None).get('value').encode('utf-8')
+    else:
+        year = 'Unknown'
+
+    # Try to minimize duplicate entries that are found
+    dup = False
+    if title.lower() in TITLES:
+        dup = True
+    if (doi != 'None'
+        and doi.lower() in DOIs):
+        dup = True
+
+    if not dup:
+        # truncate title to first 50 characters
+        print(html.format(doi=doi, title=title) + badge.format(doi=doi) + '\n')
+
+    TITLES.append(title.lower())
+    DOIs.append(doi.lower())
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_HTML
+<a href="http://dx.doi.org/10.1021/jp511426q">A Linear Response DFT+ U Study of Trends in the Oxygen Evolution Activity of Transition Metal Rutile Dioxides</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/jp511426q'></div>
+
+<a href="http://dx.doi.org/10.1063/1.4914093">Relationships between the surface electronic and chemical properties of doped 4d and 5d late transition metal dioxides</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1063/1.4914093'></div>
+
+<a href="http://dx.doi.org/10.1016/j.susc.2015.02.011">Core level shifts in Cu–Pd alloys as a function of bulk composition and structure</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/j.susc.2015.02.011'></div>
+
+<a href="http://dx.doi.org/10.1021/cs501585k">Estimating bulk-composition-dependent H2 adsorption energies on CuxPd1- x alloy (111) surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/cs501585k'></div>
+
+<a href="http://dx.doi.org/10.1021/jp508805h">Probing the Coverage Dependence of Site and Adsorbate Configurational Correlations on (111) Surfaces of Late Transition Metals</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/jp508805h'></div>
+
+<a href="http://dx.doi.org/10.1016/j.catcom.2013.10.028">Relating the electronic structure and reactivity of the 3d transition metal monoxide surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/j.catcom.2013.10.028'></div>
+
+<a href="http://dx.doi.org/10.1021/ja5015986">Electrocatalytic Oxygen Evolution with an Immobilized TAML Activator</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/ja5015986'></div>
+
+<a href="http://dx.doi.org/10.1021/am4059149">Identifying Potential BO 2 Oxide Polymorphs for Epitaxial Growth Candidates</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/am4059149'></div>
+
+<a href="http://dx.doi.org/10.1007/s11244-013-0166-3">Simulating temperature programmed desorption of oxygen on Pt(111) using DFT derived coverage dependent desorption barriers</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1007/s11244-013-0166-3'></div>
+
+<a href="http://dx.doi.org/10.1039/c3ra47097k">Probing the effect of electron donation on CO2 absorbing 1,2,3-triazolide ionic liquids</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1039/c3ra47097k'></div>
+
+<a href="http://dx.doi.org/10.1021/jp507957n">Effects of concentration, crystal structure, magnetism, and electronic structure method on first-principles oxygen vacancy formation energy trends in perovskites</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/jp507957n'></div>
+
+<a href="http://dx.doi.org/10.1021/ie400582a">Effects of O 2 and SO 2 on the Capture Capacity of a Primary-Amine Based Polymeric CO 2 Sorbent</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/ie400582a'></div>
+
+<a href="http://dx.doi.org/None">Number of outer electrons as descriptor for adsorption processes on transition metals and their oxides</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/http://dx.doi.org/10.1016/j.molstruc.2013.01.046">Interactions in 1-ethyl-3-methyl imidazolium tetracyanoborate ion pair: Spectroscopic and density functional study</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='http://dx.doi.org/10.1016/j.molstruc.2013.01.046'></div>
+
+<a href="http://dx.doi.org/http://dx.doi.org/10.1016/j.ijggc.2013.06.020">Comparisons of amine solvents for post-combustion CO2 capture: A multi-objective analysis approach</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='http://dx.doi.org/10.1016/j.ijggc.2013.06.020'></div>
+
+<a href="http://dx.doi.org/10.1021/ie301419q">Chemical and Molecular Descriptors for the Reactivity of Amines with CO 2</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/ie301419q'></div>
+
+<a href="http://dx.doi.org/10.1021/cs3002644">Spectroscopic Characterization of Mixed Fe–Ni Oxide Electrocatalysts for the Oxygen Evolution Reaction in Alkaline Electrolytes</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/cs3002644'></div>
+
+<a href="http://dx.doi.org/10.2172/1149701">Modeling Coverage Dependence in Surface Reaction Networks</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.2172/1149701'></div>
+
+<a href="http://dx.doi.org/None">Vibrational spectroscopy characterization of CO2-ionic liquid systems for pre-combustion CO2</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/None">The role of electrolytes in the oxygen evolution reaction on IrO2</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/10.1016/j.pecs.2012.03.003">The outlook for improved carbon capture technology</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/j.pecs.2012.03.003'></div>
+
+<a href="http://dx.doi.org/10.1111/j.1551-2916.2012.05236.x">Structure and Relative Thermal Stability of Mesoporous (La,Sr)MnO3 Powders Prepared Using Evaporation-Induced Self-Assembly Methods</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1111/j.1551-2916.2012.05236.x'></div>
+
+<a href="http://dx.doi.org/10.1007/s11244-012-9808-0">Preface: Trends in computational catalysis</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1007/s11244-012-9808-0'></div>
+
+<a href="http://dx.doi.org/None">Exergetic analysis of chemical looping reforming</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/10.1021/ie300452c">Evaluation of a Primary Amine-Functionalized Ion-Exchange Resin for CO2 Capture</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/ie300452c'></div>
+
+<a href="http://dx.doi.org/None">Electrocatalytic water oxidation using iron-centered organometallic catalyst</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/10.1063/1.4746117">Effects of strain, d-band filling, and oxidation state on the surface electronic structure and reactivity of 3d perovskite surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1063/1.4746117'></div>
+
+<a href="http://dx.doi.org/10.1039/9781849734776-00083">Coverage dependent adsorption properties of atomic adsorbates on late transition metal surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1039/9781849734776-00083'></div>
+
+<a href="http://dx.doi.org/None">Comparisons of solvents for post-combustion CO2 capture using a multi-objective analysis approach</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/None">Characterization of an ion exchange resin for CO2 capture</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/None">Assessing the ability of using first principles to predict Fe-Ni-O bulk phase stability</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/10.1002/cctc.201000397">Universality in Oxygen Evolution Electrocatalysis on Oxide Surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1002/cctc.201000397'></div>
+
+<a href="http://dx.doi.org/None">The effect of CO 2 partial pressure on capture with ion exchange resins</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/10.1149/1.3570235">Preparation of Mesoporous La 0.8Sr 0.2MnO 3 infiltrated coatings in porous SOFC cathodes using evaporation-induced self-assembly methods</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1149/1.3570235'></div>
+
+<a href="http://dx.doi.org/10.1021/cs200039t">Identification of sulfur-tolerant bimetallic surfaces using dft parametrized models and atomistic thermodynamics</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/cs200039t'></div>
+
+<a href="http://dx.doi.org/10.1063/1.3631948">Effects of strain, d-band filling, and oxidation state on the bulk electronic structure of cubic 3d perovskites</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1063/1.3631948'></div>
+
+<a href="http://dx.doi.org/None">Determining the conditions necessary for optimal CO 2 capture of solid sorbents</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/10.1063/1.3561287">Configurational correlations in the coverage dependent adsorption energies of oxygen atoms on late transition metal fcc(111) surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1063/1.3561287'></div>
+
+<a href="http://dx.doi.org/None">An electronic structure based understanding of amine-carbon dioxide interactions for CO 2 capture</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/10.1002/cssc.201000056">CO2 Adsorption on Supported Molecular Amidine Systems on Activated Carbon</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1002/cssc.201000056'></div>
+
+<a href="http://dx.doi.org/10.1016/j.fuel.2009.11.036">Separation of CO2 from flue gas using electrochemical cells</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/j.fuel.2009.11.036'></div>
+
+<a href="http://dx.doi.org/10.1080/08927022.2010.481794">New solid-state table: estimating d-band characteristics for transition metal atoms</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1080/08927022.2010.481794'></div>
+
+<a href="http://dx.doi.org/10.1103/PhysRevB.82.045414">Simple model explaining and predicting coverage-dependent atomic adsorption energies on transition metal surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1103/PhysRevB.82.045414'></div>
+
+<a href="http://dx.doi.org/None">Intrinsic and extrinsic factors associated with CO 2 capture in a packed bed reactor</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/10.1149/1.3432440">Electrochemical concentration of carbon dioxide from an oxygen/carbon dioxide containing gas stream</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1149/1.3432440'></div>
+
+<a href="http://dx.doi.org/None">Catalyzing the catalyst: Hydrogen dissociation and spillover on individual isolated palladium atoms</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/10.1080/08927020902833137">Uncertainty and figure selection for DFT based cluster expansions for oxygen adsorption on Au and Pt (111) surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1080/08927020902833137'></div>
+
+<a href="http://dx.doi.org/10.1080/08927020902833129">Sulphur poisoning of water-gas shift catalysts: Site blocking and electronic structure modification</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1080/08927020902833129'></div>
+
+<a href="http://dx.doi.org/10.1063/1.3096964">Step decoration of chiral metal surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1063/1.3096964'></div>
+
+<a href="http://dx.doi.org/10.1016/j.susc.2009.01.021">Relating the coverage dependence of oxygen adsorption on Au and Pt fcc(111) surfaces through adsorbate-induced surface electronic structure effects</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/j.susc.2009.01.021'></div>
+
+<a href="http://dx.doi.org/10.1103/PhysRevLett.103.246102">Hydrogen Dissociation and Spillover on Individual Isolated Palladium Atoms</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1103/PhysRevLett.103.246102'></div>
+
+<a href="http://dx.doi.org/10.1103/PhysRevB.79.205412">Correlations in coverage-dependent atomic adsorption energies on Pd(111)</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1103/PhysRevB.79.205412'></div>
+
+<a href="http://dx.doi.org/None">Catalyzing the catalyst: Novel pathways to hydrogen dissociation and spillover on palladium alloys</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/10.1016/j.jcat.2008.11.020">Atomistic thermodynamics study of the adsorption and the effects of water-gas shift reactants on Cu catalysts under reaction conditions</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/j.jcat.2008.11.020'></div>
+
+<a href="http://dx.doi.org/None">Ancillary oxygen-fired combustion using electrochemical cells</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/None">Adsorbate Cu interactions and catalyst morphologies under reactive water gas shift environment: A first principle study</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/10.1117/12.776303"><title>Rotational isomeric state theory applied to the stiffness prediction of an anion polymer electrolyte membrane</title></a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1117/12.776303'></div>
+
+<a href="http://dx.doi.org/None">The effect of hydration on the adsorption of carbon dioxide with tertiary amidines on activated carbon</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/None">Pt-decorated electrocatalysts for direct alcohol fuel cells</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/None">PEM-based electrochemical separation of gases</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/None">First principles, atomistic thermodynamics for sulfur poisoning of Cu water gas shift catalysts</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/None">Evaluating uncertainty in Ab initio phase diagrams of oxygen on Pt and Au(111)</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/None">ENVR 1-Basic research needs to assure a secure energy future</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/10.1039/b608782p">Density functional theory studies of alloys in heterogeneous catalysis</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1039/b608782p'></div>
+
+<a href="http://dx.doi.org/10.1103/PhysRevB.77.075437">Alloy surface segregation in reactive environments: First-principles atomistic thermodynamics study of Ag3Pd(111) in oxygen atmospheres</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1103/PhysRevB.77.075437'></div>
+
+<a href="http://dx.doi.org/None">A first principles evaluation of the role of substituent effects on the interaction of carbon dioxide with tertiary amines</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/None">Pt nanoparticle electrocatalyst synthesis for direct alcohol fuel cells</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/None">Pt nanoparticle anode electrocatalysts for direct alcohol fuel cells</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/10.1149/1.2358292">Response to &quot;comment on 'Trends in the exchange current for hydrogen evolution' J. Electrochem. Soc., 152, J23 (2005) &quot;</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1149/1.2358292'></div>
+
+<a href="http://dx.doi.org/10.1149/1.1856988">Trends in the exchange current for hydrogen evolution</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1149/1.1856988'></div>
+
+<a href="http://dx.doi.org/10.1016/j.cattod.2005.04.008">Trends in the chemical properties of early transition metal carbide surfaces: A density functional study</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/j.cattod.2005.04.008'></div>
+
+<a href="http://dx.doi.org/None">Alloy surface segregation in reactive environments via density functional theory and atomistic thermodynamics</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/None">The role of adsorbate-adsorbate interactions in the rate controlling step and the most abundant reaction intermediate of NH3 decomposition on Ru</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/10.1103/PhysRevLett.93.156801">Role of strain and ligand effects in the modification of the electronic and chemical properties of bimetallic surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1103/PhysRevLett.93.156801'></div>
+
+<a href="http://dx.doi.org/10.1021/jp047349j">Origin of the overpotential for oxygen reduction at a fuel-cell cathode</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/jp047349j'></div>
+
+<a href="http://dx.doi.org/10.1063/1.1737365">Modification of the surface electronic and chemical properties of Pt(111) by subsurface 3d transition metals</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1063/1.1737365'></div>
+
+<a href="http://dx.doi.org/10.1016/j.susc.2003.09.007">Elucidation of the active surface and origin of the weak metal-hydrogen bond on Ni/Pt(111) bimetallic surfaces: a surface science and density functional theory study</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/j.susc.2003.09.007'></div>
+
+<a href="http://dx.doi.org/10.1016/j.susc.2003.08.041">A four-point probe correlation of oxygen sensitivity to changes in surface resistivity of TiO2(001) and Pd-modified TiO2(001)</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/j.susc.2003.08.041'></div>
+
+<a href="http://dx.doi.org/10.1016/s0039-6028(02)02679-1">A comparison of gold and molybdenum nanoparticles on TiO2(110) 1 x 2 reconstructed single crystal surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/s0039-6028(02)02679-1'></div>
+
+<a href="http://dx.doi.org/10.1073/pnas.072514399">H3PW12O40-functionalized tip for scanning tunneling microscopy</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1073/pnas.072514399'></div>
+
+<a href="http://dx.doi.org/None">Preparation of paramagnetic ligands for coordination-complexes and networks with interesting magnetic properties</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/10.1021/jo00117a004">Preparation and Characterization of a Bis-Semiquinone: a Bidentate Dianion Biradical</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/jo00117a004'></div>
+
+<a href="http://dx.doi.org/None">SYNTHESIS AND CHARACTERIZATION OF TRISEMIQUINONE LIGANDS</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+#+END_HTML
+
+
 * DONE Drag images and files onto org-mode and insert a link to them
   CLOSED: [2015-07-10 Fri 16:11]
   :PROPERTIES:
@@ -56,7 +1436,6 @@ Here is the code to make those things happen. Or watch the video: https://www.yo
 
 #+RESULTS:
 : my-dnd-func
-[[attachfile:/Users/jkitchin/blogofile-jkitchin.github.com/_blog/Au-icosahedron-3.png]]
 
 [[/Users/jkitchin/blogofile-jkitchin.github.com/_blog/jkitchin.json]]
 [[attachfile:/Users/jkitchin/blogofile-jkitchin.github.com/_blog/jkitchin.json]]
@@ -1457,10 +2836,23 @@ I cannot figure out how to get the parsed results here.
 
 (peg-ex-recognize-int)
 #+END_SRC
-* A sudo org-link and sh block
+* DONE A sudo org-link and sh block
+  CLOSED: [2015-07-17 Fri 12:42]
+  :PROPERTIES:
+  :categories: emacs,babel,orgmode
+  :date:     2015/07/17 12:42:34
+  :updated:  2015/07/17 12:42:34
+  :END:
+Shell blocks in org-mode are pretty useful, but they are a little limited in that it is not obvious how to run a sudo command in them.
 
+So for example, this gives me a permission denied error.
+#+BEGIN_SRC sh
+ls /var/audit
+#+END_SRC
 
-#+BEGIN_SRC emacs-lisp
+One way to get around this is to create an org-mode link like this one:
+
+#+BEGIN_SRC emacs-lisp :results silent
 ;http://stackoverflow.com/questions/2472273/how-do-i-run-a-sudo-command-in-emacs
 (org-add-link-type
  "sudo"
@@ -1471,6 +2863,7 @@ I cannot figure out how to get the parsed results here.
 	    " | sudo -S " cmd))))
 #+END_SRC
 
+Now you can create a link like [[sudo:ls /var/audit]], and when you click on it you will be prompted for a password, and then you will see a buffer containing the output. To get an actual sudo code block, you need a new org babel library. Here is an example of what it might look like. Tangle this file to generate the library. Note: This is a lightly modified version of ob-emacs-lisp.el, and I have not tested it very thoroughly.
 
 
 #+BEGIN_SRC emacs-lisp :tangle ob-sudo.el
@@ -1513,8 +2906,9 @@ Let us add the current dir to our path so we can load it. If you use this a lot,
 (add-to-list 'load-path (expand-file-name "."))
 #+END_SRC
 
+Now, add the sudo "language" to org-babel-load-languages.
 
-#+BEGIN_SRC emacs-lisp
+#+BEGIN_SRC emacs-lisp :results silent
 (org-babel-do-load-languages
  'org-babel-load-languages
  '((emacs-lisp . t)
@@ -1533,12 +2927,70 @@ Let us add the current dir to our path so we can load it. If you use this a lot,
 
 #+RESULTS:
 
+And, here it is in action. Hopefully I am not giving away some important information here!
 
-#+BEGIN_SRC sudo :results silent
-du -hs .
+#+BEGIN_SRC sudo
+ls /var/audit
 #+END_SRC
 
+#+RESULTS:
+#+begin_example
+20141106003522.20141110021519
+20141110021548.crash_recovery
+20141112154126.crash_recovery
+20141119201541.20141122145259
+20141122145317.20141124214930
+20141124215000.crash_recovery
+20141126062011.20141202192451
+20141202192507.crash_recovery
+20141210133306.crash_recovery
+20141225181819.20150106015256
+20150106015325.20150111010018
+20150111010121.crash_recovery
+20150115195518.20150115200101
+20150115200110.crash_recovery
+20150123061227.20150215123411
+20150215123454.crash_recovery
+20150225004740.20150310201600
+20150310201633.20150314214730
+20150314214807.crash_recovery
+20150323145600.20150329170647
+20150329170721.crash_recovery
+20150407215846.20150413000423
+20150413000438.20150421122044
+20150421122104.20150518122545
+20150518122616.20150518124432
+20150518124432.20150518124513
+20150518124513.20150518125437
+20150518125437.20150518125935
+20150518125935.20150518132111
+20150518132111.20150531202621
+20150531202719.20150601123612
+20150601123612.20150601124932
+20150601124932.20150601125151
+20150601125151.20150601125555
+20150601125555.20150601131947
+20150601131947.20150601132421
+20150601132421.20150601133735
+20150601133735.20150601140740
+20150601140740.20150601154012
+20150601154012.20150601155125
+20150601155125.20150601155215
+20150601155215.20150601160937
+20150601160937.crash_recovery
+20150613061543.20150614054541
+20150614054541.20150625165357
+20150625165432.20150625200623
+20150625200623.20150628042242
+20150628042242.20150628103628
+20150628103628.20150630052100
+20150630052100.20150701232519
+20150702005345.20150710203212
+20150710203226.not_terminated
+current
+#+end_example
 
+Summary thoughts: I will reiterate again I have not tested this a lot, I was mostly interested in trying to make a new sh block with sudo support. Let me know if it has issues for you, and make sure you have backups of things it could mess up!
 * DONE Acronym minor mode for Emacs
   CLOSED: [2015-07-09 Thu 08:04]
   :PROPERTIES:
@@ -5133,6 +6585,7 @@ is matched by "\\[@annotate[^]]*\\]"
 #+END_SRC
 
 #+RESULTS:
+| #<overlay from 255369 to 255372 in blog.org> | #<overlay from 255352 to 255355 in blog.org> | #<overlay from 255342 to 255345 in blog.org> | #<overlay from 255307 to 255310 in blog.org> | #<overlay from 255165 to 255168 in blog.org> | #<overlay from 255044 to 255047 in blog.org> | #<overlay from 254702 to 254705 in blog.org> | #<overlay from 254681 to 254684 in blog.org> | #<overlay from 254601 to 254604 in blog.org> | #<overlay from 254593 to 254596 in blog.org> | #<overlay from 254492 to 254495 in blog.org> | #<overlay from 254378 to 254381 in blog.org> | #<overlay from 254249 to 254252 in blog.org> |
 
 
 

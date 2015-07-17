@@ -4,7 +4,7 @@
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
 <title>org-element-explorer</title>
-<!-- 2015-07-10 Fri 09:27 -->
+<!-- 2015-07-13 Mon 20:40 -->
 <meta  http-equiv="Content-Type" content="text/html;charset=utf-8" />
 <meta  name="generator" content="Org-mode" />
 <style type="text/css">
@@ -138,43 +138,183 @@ for the JavaScript code in this tag.
 <div id="content">
 <h1 class="title">org-element-explorer</h1>
 <div id="outline-container-sec-1" class="outline-2">
-<h2 id="sec-1"><span class="section-number-2">1</span> Drag images onto org-mode and insert link</h2>
+<h2 id="sec-1"><span class="section-number-2">1</span> A highlight annotation mode for Emacs</h2>
 <div class="outline-text-2" id="text-1">
 <p>
-I want to drag and drop an image onto an org mode file and get a link to that file. This would be used for finding images in Finder, and then dragging them to the Emacs buffer. There is <a href="http://orgmode.org/cgit.cgi/org-mode.git/plain/contrib/lisp/org-download.el">org-download.el</a> which looks like it should do something like this too, but it did not work out of the box for me, and I want to add a few wrinkles to it. I want to add an attr_org line to set the image size, add a caption line, insert the image at the beginning of the line where the mouse cursor is, put the cursor on the caption line and then refresh the inline images in org-mode so the image is immediately visible.
-</p>
-
-<p>
-Here is the code to make those things happen.
+One of my students asked about highlighting text in emacs for note-taking. For temporary use, this is pretty easy, you just set a property on a region. For example, we can do this:
 </p>
 
 <div class="org-src-container">
 
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-image-dnd</span> (uri action)
-  <span style="color: #036A07;">"Insert org link to file at beginning of the line where the mouse is."</span>
-  (goto-char (window-start))
-  (forward-line (cddr (mouse-position)))
-  (insert <span style="color: #008000;">"#+ATTR_ORG: :width 300\n"</span>)
-  (insert (concat  <span style="color: #008000;">"#+CAPTION: \n"</span>))
-  (insert (format <span style="color: #008000;">"[[%s]]\n"</span> uri))
-  (previous-line 2) (end-of-line)
-  (org-display-inline-images t t))
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">highlight-region</span> (beg end)
+ (<span style="color: #0000FF;">interactive</span> <span style="color: #008000;">"r"</span>)
+ (set-text-properties
+  beg end
+  '(font-lock-face (<span style="color: #006FE0;">:background</span> <span style="color: #008000;">"Light Salmon"</span>)
+                   highlighted t)))
+</pre>
+</div>
 
-(add-to-list 'dnd-protocol-alist '(<span style="color: #008000;">"^file:/.*\\.</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">(</span><span style="color: #008000;">png</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">)</span><span style="color: #008000;">"</span> . org-image-dnd))
+<p>
+This sets the background color, and another property "highlighted". The trouble is this is transient. When I close the file, the highlights are lost. We can save them to a file though, and reload them. As long as we are diligent about that, and updating them, we can store highlighted text, and have them for notes.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">eyedropper</span>)
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">highlight-save</span> ()
+  (<span style="color: #0000FF;">interactive</span>)
+  (<span style="color: #0000FF;">setq</span> *highlighted-regions* '())
+  (eyedropper-background)
+  (goto-char (point-min))
+  (<span style="color: #0000FF;">when</span> (get-text-property (point) 'highlighted)
+    (<span style="color: #0000FF;">let</span> ((start (point))
+          (end (next-single-property-change (point) 'highlighted))
+          (color eyedrop-picked-background))
+      (add-to-list '*highlighted-regions* (list start end color))))
+
+  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">now search forward for highlights</span>
+  (<span style="color: #0000FF;">let</span> (p result)
+    (<span style="color: #0000FF;">while</span> (<span style="color: #0000FF;">setq</span> p (next-single-property-change (point) 'highlighted))
+      (goto-char p)
+      (<span style="color: #0000FF;">setq</span> result (button-lock-find-extent (point) 'highlighted))
+      (eyedropper-background)
+      (add-to-list '*highlighted-regions* (list (car result)
+                                                (cdr result)
+                                                eyedrop-picked-background))
+      (goto-char (cdr result))))
+  (<span style="color: #0000FF;">let</span> ((fname (concat (buffer-file-name) <span style="color: #008000;">".highlights"</span>)))
+
+    (<span style="color: #0000FF;">if</span> *highlighted-regions*
+        (message-box <span style="color: #008000;">"Saving %s"</span> *highlighted-regions*)
+        (<span style="color: #0000FF;">with-temp-file</span> fname
+          (print *highlighted-regions* (current-buffer)))
+      <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">get rid of file if there are not highlights</span>
+      (<span style="color: #0000FF;">when</span> (file-exists-p fname)
+        (delete-file fname)))))
+
+(add-hook 'after-save-hook 'highlight-save)
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="left" />
+
+<col  class="left" />
+
+<col  class="left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="left">highlight-save</td>
+<td class="left">save-highlights</td>
+<td class="left">helm-swoop&#x2013;clear-cache</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Here, we can read the contents and apply the highlights. We set this up on a hook for org-mode, so it will apply them on when we open org-files.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">highlight-load</span> ()
+  (<span style="color: #0000FF;">interactive</span>)
+  (<span style="color: #0000FF;">let</span> ((fname (concat (buffer-file-name) <span style="color: #008000;">".highlights"</span>)))
+    (<span style="color: #0000FF;">when</span> (file-exists-p fname)
+      (mapcar
+       (<span style="color: #0000FF;">lambda</span> (entry)
+         (<span style="color: #0000FF;">let</span> ((beg (nth 0 entry))
+               (end (nth 1 entry))
+               (color (nth 2 entry)))
+           (set-text-properties
+            beg end
+            `(font-lock-face (<span style="color: #006FE0;">:background</span> ,color)
+                             highlighted t))))
+       (<span style="color: #0000FF;">with-temp-buffer</span> (insert-file-contents fname)
+                         (read (current-buffer)))))))
+
+(add-hook 'org-mode-hook 'highlight-load)
 </pre>
 </div>
 
 
-<div class="figure">
-<p><img src="file:///Users/jkitchin/Desktop/scopus/redone-next-10-publications.png" alt="redone-next-10-publications.png" />
+<p>
+Not bad. Now, let's outdo ourselves in ridiculosity. We will add a helm-colors selector to give you unprecedented highlighting capability.
 </p>
-<p><span class="figure-number">Figure 1:</span> fdasfdsa</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">highlight-region</span> (beg end)
+ (<span style="color: #0000FF;">interactive</span> <span style="color: #008000;">"r"</span>)
+ (set-text-properties
+  beg end
+  `(font-lock-face (<span style="color: #006FE0;">:background</span> ,(s-trim (helm-colors)))
+                   highlighted t)))
+</pre>
+</div>
+<pre class="example">
+highlight-region
+</pre>
+
+
+<p>
+what else can we do? Want to get rid of the highlights?
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">highlight-clear</span> ()
+  (<span style="color: #0000FF;">interactive</span>)
+  (<span style="color: #0000FF;">let</span> ((fname (concat (buffer-file-name) <span style="color: #008000;">".highlights"</span>)))
+    (<span style="color: #0000FF;">when</span> (file-exists-p fname)
+      (mapcar
+       (<span style="color: #0000FF;">lambda</span> (entry)
+         (<span style="color: #0000FF;">let</span> ((beg (nth 0 entry))
+               (end (nth 1 entry)))
+           (set-text-properties
+            beg end nil)))
+       (<span style="color: #0000FF;">with-temp-buffer</span> (insert-file-contents fname)
+                         (read (current-buffer)))))))
+</pre>
+</div>
+<pre class="example">
+highlight-clear
+</pre>
+
+<p>
+How about list your highlights?
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">highlight-list</span> ()
+  (<span style="color: #0000FF;">interactive</span>)
+  (highlight-save)
+  (<span style="color: #0000FF;">let</span> ((cb (current-buffer))
+        (hls (mapcar
+              (<span style="color: #0000FF;">lambda</span> (entry)
+                (list (nth 0 entry)
+                      (buffer-substring (nth 0 entry) (nth 1 entry))))
+              *highlighted-regions*)))
+    (switch-to-buffer-other-window <span style="color: #008000;">"*highlights*"</span>) (org-mode)
+    (erase-buffer)
+    (<span style="color: #0000FF;">dolist</span> (s hls)
+      (insert (format <span style="color: #008000;">"%s [[elisp:(progn (switch-to-buffer-other-window \"%s\")(goto-char %s))][link]]\n"</span> (nth 1 s) cb (nth 0 s))))))
+
+(highlight-list)
+</pre>
 </div>
 </div>
 </div>
 </div>
 <div id="postamble" class="status">
-<p class="date">Created: 2015-07-10 Fri 09:27</p>
+<p class="date">Created: 2015-07-13 Mon 20:40</p>
 <p class="creator"><a href="http://www.gnu.org/software/emacs/">Emacs</a> 25.0.50.1 (<a href="http://orgmode.org">Org</a> mode 8.2.10)</p>
 <p class="validation"><a href="http://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
