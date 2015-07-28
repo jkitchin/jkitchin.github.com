@@ -1,14 +1,56 @@
+* Displaying image overlays on image filenames
+It has always bothered me a little that I have to add a file image after code blocks in org-mode to see the results. That extra work... I also don't like having to explicitly print the figure in the code, since that is the extra work, just in a different place. Today I look into just putting overlays of image files right on the file name. The plus side of this is no extra work. The downside is they won't export; that will still take the extra work, but you needed that for the caption anyway ;)
+
+Here is a test.
+#+BEGIN_SRC python
+import matplotlib.pyplot as plt
+plt.plot([-0, 1, 2, 4, 16])
+plt.savefig("test-fig.png")
+#+END_SRC
+
+#+RESULTS:
+
+We make this so it only works for png files.
+
+#+BEGIN_SRC emacs-lisp
+(save-restriction
+  (goto-char (point-min))
+  (let ((re (concat  "\\(?:'\\|\"\\)\\(.*\\."
+		     (regexp-opt '("png" "PNG" "JPG" "jpeg"
+				   "jpg" "JPEG" "eps" "EPS"))
+		     "\\)\\(?:'\\|\"\\)"))
+	beg end imgfile img)
+    (while (re-search-forward re nil t)
+      (setq beg (match-beginning 0)
+	    end (match-end 0)
+	    imgfile (match-string 1))
+      (when (file-exists-p imgfile)
+	(setq img (create-image (expand-file-name imgfile) 'imagemagick nil :width 300))
+	(setq ov (make-overlay beg end))
+	(overlay-put ov 'display img)
+	(overlay-put ov 'face 'default)
+	(overlay-put ov 'org-image-overlay t)
+	(overlay-put ov 'modification-hooks
+		     (list 'org-display-inline-remove-overlay))))))
+
+#+END_SRC
+
+#+BEGIN_SRC emacs-lisp
+(ov-clear)
+#+END_SRC
+#+RESULTS:
+
+
+
 * Parsing sexps in plain text
 
-I am exploring a kind of richer markup here to put context into plain text using sexp notation instead of [[http://www.w3.org/TR/rdfa-lite/][RDF]] notation. RDF notation is just heavy for an author to write. Sexp notation, on the other hand, is lighter in my opinion. You can even imagine this relatively readable markup being code in addition to data (see this [[http://kitchingroup.cheme.cmu.edu/blog/2015/06/10/A-sexp-version-of-a-bibtex-entry/][post]] for example).
+I am exploring a kind of richer markup here to put context into plain text using sexp notation instead of [[http://www.w3.org/TR/rdfa-lite/][RDF]] notation. RDF notation is just heavy for an author to write. Sexp notation, on the other hand, is lighter in my opinion. You can even imagine this relatively readable markup being code in addition to data (see this [[http://kitchingroup.cheme.cmu.edu/blog/2015/06/10/A-sexp-version-of-a-bibtex-entry/][post]] on a sexp notation for bibtex for example).
 
 I will use Emacs overlays to hide the sexp and display the contents. For example, say we markup a "person" like this (:person "John Kitchin" :email "jkitchin@andrew.cmu.edu"). It seems in this approach it is necessary to put strings in quotes because we eventually read these sexps into lisp. I want Emacs to find these, and replace it with an overlay of a more human readable content, and some contextual tooltip about the real content.
 
-
 For fun, let us see if we can nest a sexp in the sexp, here to have some code that constructs an email address. For example, (:person "John" :email (concat "jkitchin" "@cmu.edu")) has code to build the email address. This works, but the code is not actually executed anywhere. You would have to do that somewhere else.
 
-Ok, here is a little code block that "renders" our buffer to show the person entries with an overlay. This is kind of like what a browser would do with html tags, but
-
+Ok, here is a little code block that "renders" our buffer to show the person entries with an overlay. This is kind of like what a browser would do with html tags, but with my lispy markup. Here we rely on a particular data structure that we know in advance. We could probably be smarter about it, and check that there is a :person in the sexp, but for now we keep it simple, and make that be the car of the sexp. We will make an overlay of the name in angle brackets with an underline to indicate it is not the original text, and make a tooltip of the contents.
 
 #+BEGIN_SRC emacs-lisp
 (require 'ov)
@@ -35,6 +77,7 @@ Ok, here is a little code block that "renders" our buffer to show the person ent
 
 #+RESULTS:
 
+That seems to work nicely. We can remove the overlays like this we can see the plain text.
 
 #+BEGIN_SRC emacs-lisp
 (ov-clear 'person)
@@ -42,6 +85,346 @@ Ok, here is a little code block that "renders" our buffer to show the person ent
 
 #+RESULTS:
 
+One reason for doing this, is the possibility of machine reading documents to extract data. Let's get the "people" out of this document. Here we go.
+
+#+BEGIN_SRC emacs-lisp
+(save-excursion
+  (goto-char (point-min))
+  (let ((beg)
+	(end)
+	(sexp)
+	(people '()))
+    (while (and  (re-search-forward "(" nil t)
+		 (sexp-at-point))
+      (backward-char)
+      (setq beg (point))
+      (setq sexp (read (current-buffer)))
+      (when (and (listp sexp)
+		 (eq :person (car (sexp-at-point))))
+	(add-to-list 'people sexp)))
+    people))
+#+END_SRC
+
+#+RESULTS:
+| :person | John         | :email | (concat jkitchin @cmu.edu) |
+| :person | John Kitchin | :email | jkitchin@andrew.cmu.edu    |
+
+Now, we have a nice list of "persons" we can do something with, e.g. add them to an org-contacts database, send a mail merge, etc... For sufficiently complex data structures, there might be some functions to help insert them. Let us do show a simple example to insert a "person" from a name in my org-contacts database.
+
+#+BEGIN_SRC emacs-lisp
+(defun insert-person (name)
+  "Insert a person sexp for the NAME entry in `org-contacts-db'."
+  (interactive "sName: ")
+  (let ((contact (assoc name (org-contacts-db)))
+	(p '()))
+    (when contact
+      (setq p (plist-put p :person (substring-no-properties(car contact))))
+      (setq p (plist-put p :email (cdr (assoc "EMAIL" (nth 2 contact)))))
+      (insert (format "%S" p)))))
+#+END_SRC
+
+#+RESULTS:
+: insert-person
+
+
+No doubt there are potential security issues with this. You would not want to do this with untrusted documents. But, with trusted documents, what an amazing opportunity to do something that is just not possible otherwise! This is like the best of both worlds in text, where you get easy authoring of some parts, the text part, and machine-readability in the data parts, which also look pretty readable, especially after the overlays.
+
+Now, obviously you would need some kind of way to know how to render any things marked up this way. These are usually called [[http://www.w3schools.com/schema/][schemas]], and somewhere in the document you would put some kind of information about that. This could range from code that loads the overlay library, e.g. (:schema 'person), or some kind of url that defines the schema, e.g. (:schema "http://kitchingroup.cheme.cmu/person"). I have not thought too much about this point yet.
+
+There are some related ideas around, e.g. [[http://racket-lang.org][racket]]. [[http://www.dexy.it][dexy]] is a project that lets you embed code in documents that can be rendered in different outputs. Over on oremacs there is a project called [[http://oremacs.com/2015/01/23/eltex/][eltex]] where a LaTeX document is written totally in emacs-lisp. We previously  wrote about [[http://kitchingroup.cheme.cmu.edu/blog/2015/02/05/Extending-the-org-mode-link-syntax-with-attributes/][org-mode links with attributes]]. There is also the linked text library [[http://www.emacswiki.org/emacs/linkd.el][linkd.el]] that provides a syntax for making sexps in text clickable. That package is especially interesting because, among many other things, it ties sexps into font-lock to automatically recognize them, and it provides some export support to other formats, making it possible to do some preprocessing to handle the sexps, and then to have an org-mode export. This package definitely needs more study!
+
+
+Why not use html/xml for this kind of markup? There are some strong opinions out there, including http://c2.com/cgi/wiki?LispVsXml and https://rwmj.wordpress.com/2009/10/30/xml-or-s-expressions/. Here the bottom line is we can integrate the sexp notation pretty well with the editor we are using; it natively speaks them.
+
+* Record audio and put link to it in org-mode
+
+#+BEGIN_SRC emacs-lisp
+(defun insert-voice-memo ()
+  "Record voice memo and insert an org-mode link to it.
+memos are stored by time-stamp in the current directory."
+  (interactive)
+
+  (let ((memo-name (replace-regexp-in-string "\\( \\|:\\)" "-"
+					     (concat (current-time-string)
+						     ".m4a"))))
+    (do-applescript
+     (format "tell application \"Finder\"
+        set savePath to \"%s\"
+        set savePath to POSIX file \"%s\" as text
+	tell application \"QuickTime Player\"
+		activate
+		set doku to new audio recording
+		start doku
+		set yn to (display dialog \"Press Stop to quit and save.\" buttons {\"Stop\"} giving up after 600)
+		stop doku
+		set newDoc to last item of (documents whose name contains \"Untitled\")
+		export newDoc in file savePath using settings preset \"Audio Only\"
+		quit saving no
+	end tell
+end tell" (expand-file-name memo-name ".") (expand-file-name memo-name ".")))
+ (insert (format
+	     "[[./%s][%s]]"
+	     memo-name (read-input "Description: " "voice memo")))))
+#+END_SRC
+
+#+RESULTS:
+: insert-voice-memo
+
+[[./Sun-Jul-26-08-45-09-2015.m4a]]   [[./Sun-Jul-26-09-00-55-2015.m4a][voice memo]]
+
+* Altmetrics meet my publications
+Exploration of Altmetrics.
+
+#+BEGIN_SRC emacs-lisp
+(defun doi-altmetrics (doi)
+  (interactive "sDOI: ")
+  (let ((url-request-method "GET")
+	(url (concat "http://api.altmetric.com/v1/doi/" doi))
+	(json-object-type 'plist)
+	(json-data))
+    (setq json-data
+	  (with-current-buffer
+	      (url-retrieve-synchronously url)
+
+	    (json-read-from-string
+	     (buffer-substring
+	      url-http-end-of-headers (point-max)))))
+    (browse-url
+     (plist-get json-data :details_url))))
+
+(doi-altmetrics "10.1021/jp511426q")
+#+END_SRC
+
+#+RESULTS:
+: #<process open http://www.altmetric.com/details.php?citation_id=3863449>
+
+#+BEGIN_HTML
+<script type='text/javascript' src='https://d1bxh8uas1mnw7.cloudfront.net/assets/embed.js'></script>
+#+END_HTML
+
+
+#+BEGIN_SRC python :results html
+import requests
+import json
+
+resp = requests.get("http://pub.orcid.org/0000-0003-2625-9232/orcid-works",
+                    headers={'Accept':'application/orcid+json'})
+results = resp.json()
+
+data = []
+TITLES, DOIs = [], []
+
+
+badge = "<div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='{doi}'></div>"
+
+html = '<a href="http://dx.doi.org/{doi}">{title}</a>'
+
+for i, result in enumerate( results['orcid-profile']['orcid-activities']
+                            ['orcid-works']['orcid-work']):
+    title = str(result['work-title']['title']['value'].encode('utf-8'))
+    doi = 'None'
+
+    for x in result.get('work-external-identifiers', []):
+        for eid in result['work-external-identifiers']['work-external-identifier']:
+            if eid['work-external-identifier-type'] == 'DOI':
+                doi = str(eid['work-external-identifier-id']['value'].encode('utf-8'))
+
+    # AIP journals tend to have a \n in the DOI, and the doi is the second line. we get
+    # that here.
+    if len(doi.split('\n')) == 2:
+        doi = doi.split('\n')[1]
+
+    pub_date = result.get('publication-date', None)
+    if pub_date:
+        year = pub_date.get('year', None).get('value').encode('utf-8')
+    else:
+        year = 'Unknown'
+
+    # Try to minimize duplicate entries that are found
+    dup = False
+    if title.lower() in TITLES:
+        dup = True
+    if (doi != 'None'
+        and doi.lower() in DOIs):
+        dup = True
+
+    if not dup:
+        # truncate title to first 50 characters
+        print(html.format(doi=doi, title=title) + badge.format(doi=doi) + '\n')
+
+    TITLES.append(title.lower())
+    DOIs.append(doi.lower())
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_HTML
+<a href="http://dx.doi.org/10.1021/jp511426q">A Linear Response DFT+ U Study of Trends in the Oxygen Evolution Activity of Transition Metal Rutile Dioxides</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/jp511426q'></div>
+
+<a href="http://dx.doi.org/10.1063/1.4914093">Relationships between the surface electronic and chemical properties of doped 4d and 5d late transition metal dioxides</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1063/1.4914093'></div>
+
+<a href="http://dx.doi.org/10.1016/j.susc.2015.02.011">Core level shifts in Cu–Pd alloys as a function of bulk composition and structure</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/j.susc.2015.02.011'></div>
+
+<a href="http://dx.doi.org/10.1021/cs501585k">Estimating bulk-composition-dependent H2 adsorption energies on CuxPd1- x alloy (111) surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/cs501585k'></div>
+
+<a href="http://dx.doi.org/10.1021/jp508805h">Probing the Coverage Dependence of Site and Adsorbate Configurational Correlations on (111) Surfaces of Late Transition Metals</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/jp508805h'></div>
+
+<a href="http://dx.doi.org/10.1016/j.catcom.2013.10.028">Relating the electronic structure and reactivity of the 3d transition metal monoxide surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/j.catcom.2013.10.028'></div>
+
+<a href="http://dx.doi.org/10.1021/ja5015986">Electrocatalytic Oxygen Evolution with an Immobilized TAML Activator</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/ja5015986'></div>
+
+<a href="http://dx.doi.org/10.1021/am4059149">Identifying Potential BO 2 Oxide Polymorphs for Epitaxial Growth Candidates</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/am4059149'></div>
+
+<a href="http://dx.doi.org/10.1007/s11244-013-0166-3">Simulating temperature programmed desorption of oxygen on Pt(111) using DFT derived coverage dependent desorption barriers</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1007/s11244-013-0166-3'></div>
+
+<a href="http://dx.doi.org/10.1039/c3ra47097k">Probing the effect of electron donation on CO2 absorbing 1,2,3-triazolide ionic liquids</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1039/c3ra47097k'></div>
+
+<a href="http://dx.doi.org/10.1021/jp507957n">Effects of concentration, crystal structure, magnetism, and electronic structure method on first-principles oxygen vacancy formation energy trends in perovskites</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/jp507957n'></div>
+
+<a href="http://dx.doi.org/10.1021/ie400582a">Effects of O 2 and SO 2 on the Capture Capacity of a Primary-Amine Based Polymeric CO 2 Sorbent</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/ie400582a'></div>
+
+<a href="http://dx.doi.org/None">Number of outer electrons as descriptor for adsorption processes on transition metals and their oxides</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/http://dx.doi.org/10.1016/j.molstruc.2013.01.046">Interactions in 1-ethyl-3-methyl imidazolium tetracyanoborate ion pair: Spectroscopic and density functional study</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='http://dx.doi.org/10.1016/j.molstruc.2013.01.046'></div>
+
+<a href="http://dx.doi.org/http://dx.doi.org/10.1016/j.ijggc.2013.06.020">Comparisons of amine solvents for post-combustion CO2 capture: A multi-objective analysis approach</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='http://dx.doi.org/10.1016/j.ijggc.2013.06.020'></div>
+
+<a href="http://dx.doi.org/10.1021/ie301419q">Chemical and Molecular Descriptors for the Reactivity of Amines with CO 2</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/ie301419q'></div>
+
+<a href="http://dx.doi.org/10.1021/cs3002644">Spectroscopic Characterization of Mixed Fe–Ni Oxide Electrocatalysts for the Oxygen Evolution Reaction in Alkaline Electrolytes</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/cs3002644'></div>
+
+<a href="http://dx.doi.org/10.2172/1149701">Modeling Coverage Dependence in Surface Reaction Networks</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.2172/1149701'></div>
+
+<a href="http://dx.doi.org/None">Vibrational spectroscopy characterization of CO2-ionic liquid systems for pre-combustion CO2</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/None">The role of electrolytes in the oxygen evolution reaction on IrO2</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/10.1016/j.pecs.2012.03.003">The outlook for improved carbon capture technology</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/j.pecs.2012.03.003'></div>
+
+<a href="http://dx.doi.org/10.1111/j.1551-2916.2012.05236.x">Structure and Relative Thermal Stability of Mesoporous (La,Sr)MnO3 Powders Prepared Using Evaporation-Induced Self-Assembly Methods</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1111/j.1551-2916.2012.05236.x'></div>
+
+<a href="http://dx.doi.org/10.1007/s11244-012-9808-0">Preface: Trends in computational catalysis</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1007/s11244-012-9808-0'></div>
+
+<a href="http://dx.doi.org/None">Exergetic analysis of chemical looping reforming</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/10.1021/ie300452c">Evaluation of a Primary Amine-Functionalized Ion-Exchange Resin for CO2 Capture</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/ie300452c'></div>
+
+<a href="http://dx.doi.org/None">Electrocatalytic water oxidation using iron-centered organometallic catalyst</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/10.1063/1.4746117">Effects of strain, d-band filling, and oxidation state on the surface electronic structure and reactivity of 3d perovskite surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1063/1.4746117'></div>
+
+<a href="http://dx.doi.org/10.1039/9781849734776-00083">Coverage dependent adsorption properties of atomic adsorbates on late transition metal surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1039/9781849734776-00083'></div>
+
+<a href="http://dx.doi.org/None">Comparisons of solvents for post-combustion CO2 capture using a multi-objective analysis approach</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/None">Characterization of an ion exchange resin for CO2 capture</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/None">Assessing the ability of using first principles to predict Fe-Ni-O bulk phase stability</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/10.1002/cctc.201000397">Universality in Oxygen Evolution Electrocatalysis on Oxide Surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1002/cctc.201000397'></div>
+
+<a href="http://dx.doi.org/None">The effect of CO 2 partial pressure on capture with ion exchange resins</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/10.1149/1.3570235">Preparation of Mesoporous La 0.8Sr 0.2MnO 3 infiltrated coatings in porous SOFC cathodes using evaporation-induced self-assembly methods</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1149/1.3570235'></div>
+
+<a href="http://dx.doi.org/10.1021/cs200039t">Identification of sulfur-tolerant bimetallic surfaces using dft parametrized models and atomistic thermodynamics</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/cs200039t'></div>
+
+<a href="http://dx.doi.org/10.1063/1.3631948">Effects of strain, d-band filling, and oxidation state on the bulk electronic structure of cubic 3d perovskites</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1063/1.3631948'></div>
+
+<a href="http://dx.doi.org/None">Determining the conditions necessary for optimal CO 2 capture of solid sorbents</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/10.1063/1.3561287">Configurational correlations in the coverage dependent adsorption energies of oxygen atoms on late transition metal fcc(111) surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1063/1.3561287'></div>
+
+<a href="http://dx.doi.org/None">An electronic structure based understanding of amine-carbon dioxide interactions for CO 2 capture</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/10.1002/cssc.201000056">CO2 Adsorption on Supported Molecular Amidine Systems on Activated Carbon</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1002/cssc.201000056'></div>
+
+<a href="http://dx.doi.org/10.1016/j.fuel.2009.11.036">Separation of CO2 from flue gas using electrochemical cells</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/j.fuel.2009.11.036'></div>
+
+<a href="http://dx.doi.org/10.1080/08927022.2010.481794">New solid-state table: estimating d-band characteristics for transition metal atoms</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1080/08927022.2010.481794'></div>
+
+<a href="http://dx.doi.org/10.1103/PhysRevB.82.045414">Simple model explaining and predicting coverage-dependent atomic adsorption energies on transition metal surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1103/PhysRevB.82.045414'></div>
+
+<a href="http://dx.doi.org/None">Intrinsic and extrinsic factors associated with CO 2 capture in a packed bed reactor</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/10.1149/1.3432440">Electrochemical concentration of carbon dioxide from an oxygen/carbon dioxide containing gas stream</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1149/1.3432440'></div>
+
+<a href="http://dx.doi.org/None">Catalyzing the catalyst: Hydrogen dissociation and spillover on individual isolated palladium atoms</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/10.1080/08927020902833137">Uncertainty and figure selection for DFT based cluster expansions for oxygen adsorption on Au and Pt (111) surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1080/08927020902833137'></div>
+
+<a href="http://dx.doi.org/10.1080/08927020902833129">Sulphur poisoning of water-gas shift catalysts: Site blocking and electronic structure modification</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1080/08927020902833129'></div>
+
+<a href="http://dx.doi.org/10.1063/1.3096964">Step decoration of chiral metal surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1063/1.3096964'></div>
+
+<a href="http://dx.doi.org/10.1016/j.susc.2009.01.021">Relating the coverage dependence of oxygen adsorption on Au and Pt fcc(111) surfaces through adsorbate-induced surface electronic structure effects</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/j.susc.2009.01.021'></div>
+
+<a href="http://dx.doi.org/10.1103/PhysRevLett.103.246102">Hydrogen Dissociation and Spillover on Individual Isolated Palladium Atoms</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1103/PhysRevLett.103.246102'></div>
+
+<a href="http://dx.doi.org/10.1103/PhysRevB.79.205412">Correlations in coverage-dependent atomic adsorption energies on Pd(111)</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1103/PhysRevB.79.205412'></div>
+
+<a href="http://dx.doi.org/None">Catalyzing the catalyst: Novel pathways to hydrogen dissociation and spillover on palladium alloys</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/10.1016/j.jcat.2008.11.020">Atomistic thermodynamics study of the adsorption and the effects of water-gas shift reactants on Cu catalysts under reaction conditions</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/j.jcat.2008.11.020'></div>
+
+<a href="http://dx.doi.org/None">Ancillary oxygen-fired combustion using electrochemical cells</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/None">Adsorbate Cu interactions and catalyst morphologies under reactive water gas shift environment: A first principle study</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/10.1117/12.776303"><title>Rotational isomeric state theory applied to the stiffness prediction of an anion polymer electrolyte membrane</title></a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1117/12.776303'></div>
+
+<a href="http://dx.doi.org/None">The effect of hydration on the adsorption of carbon dioxide with tertiary amidines on activated carbon</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/None">Pt-decorated electrocatalysts for direct alcohol fuel cells</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/None">PEM-based electrochemical separation of gases</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/None">First principles, atomistic thermodynamics for sulfur poisoning of Cu water gas shift catalysts</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/None">Evaluating uncertainty in Ab initio phase diagrams of oxygen on Pt and Au(111)</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/None">ENVR 1-Basic research needs to assure a secure energy future</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/10.1039/b608782p">Density functional theory studies of alloys in heterogeneous catalysis</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1039/b608782p'></div>
+
+<a href="http://dx.doi.org/10.1103/PhysRevB.77.075437">Alloy surface segregation in reactive environments: First-principles atomistic thermodynamics study of Ag3Pd(111) in oxygen atmospheres</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1103/PhysRevB.77.075437'></div>
+
+<a href="http://dx.doi.org/None">A first principles evaluation of the role of substituent effects on the interaction of carbon dioxide with tertiary amines</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/None">Pt nanoparticle electrocatalyst synthesis for direct alcohol fuel cells</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/None">Pt nanoparticle anode electrocatalysts for direct alcohol fuel cells</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/10.1149/1.2358292">Response to &quot;comment on 'Trends in the exchange current for hydrogen evolution' J. Electrochem. Soc., 152, J23 (2005) &quot;</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1149/1.2358292'></div>
+
+<a href="http://dx.doi.org/10.1149/1.1856988">Trends in the exchange current for hydrogen evolution</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1149/1.1856988'></div>
+
+<a href="http://dx.doi.org/10.1016/j.cattod.2005.04.008">Trends in the chemical properties of early transition metal carbide surfaces: A density functional study</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/j.cattod.2005.04.008'></div>
+
+<a href="http://dx.doi.org/None">Alloy surface segregation in reactive environments via density functional theory and atomistic thermodynamics</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/None">The role of adsorbate-adsorbate interactions in the rate controlling step and the most abundant reaction intermediate of NH3 decomposition on Ru</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/10.1103/PhysRevLett.93.156801">Role of strain and ligand effects in the modification of the electronic and chemical properties of bimetallic surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1103/PhysRevLett.93.156801'></div>
+
+<a href="http://dx.doi.org/10.1021/jp047349j">Origin of the overpotential for oxygen reduction at a fuel-cell cathode</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/jp047349j'></div>
+
+<a href="http://dx.doi.org/10.1063/1.1737365">Modification of the surface electronic and chemical properties of Pt(111) by subsurface 3d transition metals</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1063/1.1737365'></div>
+
+<a href="http://dx.doi.org/10.1016/j.susc.2003.09.007">Elucidation of the active surface and origin of the weak metal-hydrogen bond on Ni/Pt(111) bimetallic surfaces: a surface science and density functional theory study</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/j.susc.2003.09.007'></div>
+
+<a href="http://dx.doi.org/10.1016/j.susc.2003.08.041">A four-point probe correlation of oxygen sensitivity to changes in surface resistivity of TiO2(001) and Pd-modified TiO2(001)</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/j.susc.2003.08.041'></div>
+
+<a href="http://dx.doi.org/10.1016/s0039-6028(02)02679-1">A comparison of gold and molybdenum nanoparticles on TiO2(110) 1 x 2 reconstructed single crystal surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/s0039-6028(02)02679-1'></div>
+
+<a href="http://dx.doi.org/10.1073/pnas.072514399">H3PW12O40-functionalized tip for scanning tunneling microscopy</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1073/pnas.072514399'></div>
+
+<a href="http://dx.doi.org/None">Preparation of paramagnetic ligands for coordination-complexes and networks with interesting magnetic properties</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+<a href="http://dx.doi.org/10.1021/jo00117a004">Preparation and Characterization of a Bis-Semiquinone: a Bidentate Dianion Biradical</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/jo00117a004'></div>
+
+<a href="http://dx.doi.org/None">SYNTHESIS AND CHARACTERIZATION OF TRISEMIQUINONE LIGANDS</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
+
+#+END_HTML
 
 * DONE Running scientific instruments in Emacs and recording the results
   CLOSED: [2015-07-25 Sat 10:04]
@@ -204,19 +587,6 @@ if __name__ == '__main__':
 #+END_SRC
 
 #+RESULTS:
-
-* parsing sexp in text
-(re-search-forward "(" nil t)
-
-test (lambda (x) x) and more text
-
-#+BEGIN_SRC emacs-lisp
-(defun sp () (interactive) (message-box "%s"(scan-sexps (point) 1)) (end-of-sexp))
-#+END_SRC
-
-#+RESULTS:
-: sp
-
 * DONE Indexing text in screenshots so they are searchable
   CLOSED: [2015-07-24 Fri 07:43]
   :PROPERTIES:
@@ -354,7 +724,7 @@ Nevertheless, a program could pretty easily be developed to index a directory of
 
 The beauty of the screenshot is that it is what you saw at the time, and it captures things as they were. It doesn't capture anything "behind the scenes" or off-screen of course, so there is certainly room to lose information this way. A careful analysis of what information is captured and what is lost would be important to assess the long-term value of capturing the process this way as opposed to any other way. There certainly is a balance of how much effort it takes to capture it and the value of the information in the future, and cost to rerun it if it isn't found in the future.
 
-* Get bibtex entries from a PDF
+* Get bibtex entries from a PDF		 :ARCHIVE:
 
 Some reference managers like Zotero, Mendeley and Endnote can take a pdf and build a reference entry from it. There is a python project here: https://github.com/venthur/gscholar/blob/master/gscholar/gscholar.py that builds a google scholar query to get bibtex entries. We will build on this here, using emacs-lisp. The first step we need is to build the query. In gscholar.py they use [[http://www.foolabs.com/xpdf/download.html][pdftotext]] to get the pdf text and then select 20 words. The first 20 don't seem like the right choice to me since many pdfs have cover pages with nothing of substance on them. A really sophisticated tool would try to find the most relevant text, e.g. something that is clearly a title or doi, but there is so little structure in pdfs across the literature this does not seem worthwhile right now. So, we will take the last 20 words from the second page.
 
@@ -1118,8 +1488,7 @@ Some reference managers like Zotero, Mendeley and Endnote can take a pdf and bui
 (gscholar-bibtex-google-scholar-search-results " electrolyte  its flat base resting on a tablet of a mixture of metal A and its")
 #+END_SRC
 
-
-
+This sort of worked. I got blocked from google at one point, and I found it difficult to figure out how to get the bibtex entries from the code above (although it does do it). My doi-utils package seems better.
 
 
 
@@ -1479,261 +1848,6 @@ f   dsaf   das    fds (ov-all)
 |  160 |  179 | Light Salmon |
 
 
-* Altmetrics meet my publications
-Exploration of Altmetrics.
-
-#+BEGIN_SRC emacs-lisp
-(defun doi-altmetrics (doi)
-  (interactive "sDOI: ")
-  (let ((url-request-method "GET")
-	(url (concat "http://api.altmetric.com/v1/doi/" doi))
-	(json-object-type 'plist)
-	(json-data))
-    (setq json-data
-	  (with-current-buffer
-	      (url-retrieve-synchronously url)
-
-	    (json-read-from-string
-	     (buffer-substring
-	      url-http-end-of-headers (point-max)))))
-    (browse-url
-     (plist-get json-data :details_url))))
-
-(doi-altmetrics "10.1021/jp511426q")
-#+END_SRC
-
-#+RESULTS:
-: #<process open http://www.altmetric.com/details.php?citation_id=3863449>
-
-#+BEGIN_HTML
-<script type='text/javascript' src='https://d1bxh8uas1mnw7.cloudfront.net/assets/embed.js'></script>
-#+END_HTML
-
-
-#+BEGIN_SRC python :results html
-import requests
-import json
-
-resp = requests.get("http://pub.orcid.org/0000-0003-2625-9232/orcid-works",
-                    headers={'Accept':'application/orcid+json'})
-results = resp.json()
-
-data = []
-TITLES, DOIs = [], []
-
-
-badge = "<div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='{doi}'></div>"
-
-html = '<a href="http://dx.doi.org/{doi}">{title}</a>'
-
-for i, result in enumerate( results['orcid-profile']['orcid-activities']
-                            ['orcid-works']['orcid-work']):
-    title = str(result['work-title']['title']['value'].encode('utf-8'))
-    doi = 'None'
-
-    for x in result.get('work-external-identifiers', []):
-        for eid in result['work-external-identifiers']['work-external-identifier']:
-            if eid['work-external-identifier-type'] == 'DOI':
-                doi = str(eid['work-external-identifier-id']['value'].encode('utf-8'))
-
-    # AIP journals tend to have a \n in the DOI, and the doi is the second line. we get
-    # that here.
-    if len(doi.split('\n')) == 2:
-        doi = doi.split('\n')[1]
-
-    pub_date = result.get('publication-date', None)
-    if pub_date:
-        year = pub_date.get('year', None).get('value').encode('utf-8')
-    else:
-        year = 'Unknown'
-
-    # Try to minimize duplicate entries that are found
-    dup = False
-    if title.lower() in TITLES:
-        dup = True
-    if (doi != 'None'
-        and doi.lower() in DOIs):
-        dup = True
-
-    if not dup:
-        # truncate title to first 50 characters
-        print(html.format(doi=doi, title=title) + badge.format(doi=doi) + '\n')
-
-    TITLES.append(title.lower())
-    DOIs.append(doi.lower())
-#+END_SRC
-
-#+RESULTS:
-#+BEGIN_HTML
-<a href="http://dx.doi.org/10.1021/jp511426q">A Linear Response DFT+ U Study of Trends in the Oxygen Evolution Activity of Transition Metal Rutile Dioxides</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/jp511426q'></div>
-
-<a href="http://dx.doi.org/10.1063/1.4914093">Relationships between the surface electronic and chemical properties of doped 4d and 5d late transition metal dioxides</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1063/1.4914093'></div>
-
-<a href="http://dx.doi.org/10.1016/j.susc.2015.02.011">Core level shifts in Cu–Pd alloys as a function of bulk composition and structure</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/j.susc.2015.02.011'></div>
-
-<a href="http://dx.doi.org/10.1021/cs501585k">Estimating bulk-composition-dependent H2 adsorption energies on CuxPd1- x alloy (111) surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/cs501585k'></div>
-
-<a href="http://dx.doi.org/10.1021/jp508805h">Probing the Coverage Dependence of Site and Adsorbate Configurational Correlations on (111) Surfaces of Late Transition Metals</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/jp508805h'></div>
-
-<a href="http://dx.doi.org/10.1016/j.catcom.2013.10.028">Relating the electronic structure and reactivity of the 3d transition metal monoxide surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/j.catcom.2013.10.028'></div>
-
-<a href="http://dx.doi.org/10.1021/ja5015986">Electrocatalytic Oxygen Evolution with an Immobilized TAML Activator</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/ja5015986'></div>
-
-<a href="http://dx.doi.org/10.1021/am4059149">Identifying Potential BO 2 Oxide Polymorphs for Epitaxial Growth Candidates</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/am4059149'></div>
-
-<a href="http://dx.doi.org/10.1007/s11244-013-0166-3">Simulating temperature programmed desorption of oxygen on Pt(111) using DFT derived coverage dependent desorption barriers</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1007/s11244-013-0166-3'></div>
-
-<a href="http://dx.doi.org/10.1039/c3ra47097k">Probing the effect of electron donation on CO2 absorbing 1,2,3-triazolide ionic liquids</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1039/c3ra47097k'></div>
-
-<a href="http://dx.doi.org/10.1021/jp507957n">Effects of concentration, crystal structure, magnetism, and electronic structure method on first-principles oxygen vacancy formation energy trends in perovskites</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/jp507957n'></div>
-
-<a href="http://dx.doi.org/10.1021/ie400582a">Effects of O 2 and SO 2 on the Capture Capacity of a Primary-Amine Based Polymeric CO 2 Sorbent</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/ie400582a'></div>
-
-<a href="http://dx.doi.org/None">Number of outer electrons as descriptor for adsorption processes on transition metals and their oxides</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
-
-<a href="http://dx.doi.org/http://dx.doi.org/10.1016/j.molstruc.2013.01.046">Interactions in 1-ethyl-3-methyl imidazolium tetracyanoborate ion pair: Spectroscopic and density functional study</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='http://dx.doi.org/10.1016/j.molstruc.2013.01.046'></div>
-
-<a href="http://dx.doi.org/http://dx.doi.org/10.1016/j.ijggc.2013.06.020">Comparisons of amine solvents for post-combustion CO2 capture: A multi-objective analysis approach</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='http://dx.doi.org/10.1016/j.ijggc.2013.06.020'></div>
-
-<a href="http://dx.doi.org/10.1021/ie301419q">Chemical and Molecular Descriptors for the Reactivity of Amines with CO 2</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/ie301419q'></div>
-
-<a href="http://dx.doi.org/10.1021/cs3002644">Spectroscopic Characterization of Mixed Fe–Ni Oxide Electrocatalysts for the Oxygen Evolution Reaction in Alkaline Electrolytes</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/cs3002644'></div>
-
-<a href="http://dx.doi.org/10.2172/1149701">Modeling Coverage Dependence in Surface Reaction Networks</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.2172/1149701'></div>
-
-<a href="http://dx.doi.org/None">Vibrational spectroscopy characterization of CO2-ionic liquid systems for pre-combustion CO2</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
-
-<a href="http://dx.doi.org/None">The role of electrolytes in the oxygen evolution reaction on IrO2</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
-
-<a href="http://dx.doi.org/10.1016/j.pecs.2012.03.003">The outlook for improved carbon capture technology</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/j.pecs.2012.03.003'></div>
-
-<a href="http://dx.doi.org/10.1111/j.1551-2916.2012.05236.x">Structure and Relative Thermal Stability of Mesoporous (La,Sr)MnO3 Powders Prepared Using Evaporation-Induced Self-Assembly Methods</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1111/j.1551-2916.2012.05236.x'></div>
-
-<a href="http://dx.doi.org/10.1007/s11244-012-9808-0">Preface: Trends in computational catalysis</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1007/s11244-012-9808-0'></div>
-
-<a href="http://dx.doi.org/None">Exergetic analysis of chemical looping reforming</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
-
-<a href="http://dx.doi.org/10.1021/ie300452c">Evaluation of a Primary Amine-Functionalized Ion-Exchange Resin for CO2 Capture</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/ie300452c'></div>
-
-<a href="http://dx.doi.org/None">Electrocatalytic water oxidation using iron-centered organometallic catalyst</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
-
-<a href="http://dx.doi.org/10.1063/1.4746117">Effects of strain, d-band filling, and oxidation state on the surface electronic structure and reactivity of 3d perovskite surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1063/1.4746117'></div>
-
-<a href="http://dx.doi.org/10.1039/9781849734776-00083">Coverage dependent adsorption properties of atomic adsorbates on late transition metal surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1039/9781849734776-00083'></div>
-
-<a href="http://dx.doi.org/None">Comparisons of solvents for post-combustion CO2 capture using a multi-objective analysis approach</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
-
-<a href="http://dx.doi.org/None">Characterization of an ion exchange resin for CO2 capture</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
-
-<a href="http://dx.doi.org/None">Assessing the ability of using first principles to predict Fe-Ni-O bulk phase stability</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
-
-<a href="http://dx.doi.org/10.1002/cctc.201000397">Universality in Oxygen Evolution Electrocatalysis on Oxide Surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1002/cctc.201000397'></div>
-
-<a href="http://dx.doi.org/None">The effect of CO 2 partial pressure on capture with ion exchange resins</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
-
-<a href="http://dx.doi.org/10.1149/1.3570235">Preparation of Mesoporous La 0.8Sr 0.2MnO 3 infiltrated coatings in porous SOFC cathodes using evaporation-induced self-assembly methods</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1149/1.3570235'></div>
-
-<a href="http://dx.doi.org/10.1021/cs200039t">Identification of sulfur-tolerant bimetallic surfaces using dft parametrized models and atomistic thermodynamics</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/cs200039t'></div>
-
-<a href="http://dx.doi.org/10.1063/1.3631948">Effects of strain, d-band filling, and oxidation state on the bulk electronic structure of cubic 3d perovskites</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1063/1.3631948'></div>
-
-<a href="http://dx.doi.org/None">Determining the conditions necessary for optimal CO 2 capture of solid sorbents</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
-
-<a href="http://dx.doi.org/10.1063/1.3561287">Configurational correlations in the coverage dependent adsorption energies of oxygen atoms on late transition metal fcc(111) surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1063/1.3561287'></div>
-
-<a href="http://dx.doi.org/None">An electronic structure based understanding of amine-carbon dioxide interactions for CO 2 capture</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
-
-<a href="http://dx.doi.org/10.1002/cssc.201000056">CO2 Adsorption on Supported Molecular Amidine Systems on Activated Carbon</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1002/cssc.201000056'></div>
-
-<a href="http://dx.doi.org/10.1016/j.fuel.2009.11.036">Separation of CO2 from flue gas using electrochemical cells</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/j.fuel.2009.11.036'></div>
-
-<a href="http://dx.doi.org/10.1080/08927022.2010.481794">New solid-state table: estimating d-band characteristics for transition metal atoms</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1080/08927022.2010.481794'></div>
-
-<a href="http://dx.doi.org/10.1103/PhysRevB.82.045414">Simple model explaining and predicting coverage-dependent atomic adsorption energies on transition metal surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1103/PhysRevB.82.045414'></div>
-
-<a href="http://dx.doi.org/None">Intrinsic and extrinsic factors associated with CO 2 capture in a packed bed reactor</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
-
-<a href="http://dx.doi.org/10.1149/1.3432440">Electrochemical concentration of carbon dioxide from an oxygen/carbon dioxide containing gas stream</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1149/1.3432440'></div>
-
-<a href="http://dx.doi.org/None">Catalyzing the catalyst: Hydrogen dissociation and spillover on individual isolated palladium atoms</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
-
-<a href="http://dx.doi.org/10.1080/08927020902833137">Uncertainty and figure selection for DFT based cluster expansions for oxygen adsorption on Au and Pt (111) surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1080/08927020902833137'></div>
-
-<a href="http://dx.doi.org/10.1080/08927020902833129">Sulphur poisoning of water-gas shift catalysts: Site blocking and electronic structure modification</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1080/08927020902833129'></div>
-
-<a href="http://dx.doi.org/10.1063/1.3096964">Step decoration of chiral metal surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1063/1.3096964'></div>
-
-<a href="http://dx.doi.org/10.1016/j.susc.2009.01.021">Relating the coverage dependence of oxygen adsorption on Au and Pt fcc(111) surfaces through adsorbate-induced surface electronic structure effects</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/j.susc.2009.01.021'></div>
-
-<a href="http://dx.doi.org/10.1103/PhysRevLett.103.246102">Hydrogen Dissociation and Spillover on Individual Isolated Palladium Atoms</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1103/PhysRevLett.103.246102'></div>
-
-<a href="http://dx.doi.org/10.1103/PhysRevB.79.205412">Correlations in coverage-dependent atomic adsorption energies on Pd(111)</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1103/PhysRevB.79.205412'></div>
-
-<a href="http://dx.doi.org/None">Catalyzing the catalyst: Novel pathways to hydrogen dissociation and spillover on palladium alloys</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
-
-<a href="http://dx.doi.org/10.1016/j.jcat.2008.11.020">Atomistic thermodynamics study of the adsorption and the effects of water-gas shift reactants on Cu catalysts under reaction conditions</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/j.jcat.2008.11.020'></div>
-
-<a href="http://dx.doi.org/None">Ancillary oxygen-fired combustion using electrochemical cells</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
-
-<a href="http://dx.doi.org/None">Adsorbate Cu interactions and catalyst morphologies under reactive water gas shift environment: A first principle study</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
-
-<a href="http://dx.doi.org/10.1117/12.776303"><title>Rotational isomeric state theory applied to the stiffness prediction of an anion polymer electrolyte membrane</title></a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1117/12.776303'></div>
-
-<a href="http://dx.doi.org/None">The effect of hydration on the adsorption of carbon dioxide with tertiary amidines on activated carbon</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
-
-<a href="http://dx.doi.org/None">Pt-decorated electrocatalysts for direct alcohol fuel cells</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
-
-<a href="http://dx.doi.org/None">PEM-based electrochemical separation of gases</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
-
-<a href="http://dx.doi.org/None">First principles, atomistic thermodynamics for sulfur poisoning of Cu water gas shift catalysts</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
-
-<a href="http://dx.doi.org/None">Evaluating uncertainty in Ab initio phase diagrams of oxygen on Pt and Au(111)</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
-
-<a href="http://dx.doi.org/None">ENVR 1-Basic research needs to assure a secure energy future</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
-
-<a href="http://dx.doi.org/10.1039/b608782p">Density functional theory studies of alloys in heterogeneous catalysis</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1039/b608782p'></div>
-
-<a href="http://dx.doi.org/10.1103/PhysRevB.77.075437">Alloy surface segregation in reactive environments: First-principles atomistic thermodynamics study of Ag3Pd(111) in oxygen atmospheres</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1103/PhysRevB.77.075437'></div>
-
-<a href="http://dx.doi.org/None">A first principles evaluation of the role of substituent effects on the interaction of carbon dioxide with tertiary amines</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
-
-<a href="http://dx.doi.org/None">Pt nanoparticle electrocatalyst synthesis for direct alcohol fuel cells</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
-
-<a href="http://dx.doi.org/None">Pt nanoparticle anode electrocatalysts for direct alcohol fuel cells</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
-
-<a href="http://dx.doi.org/10.1149/1.2358292">Response to &quot;comment on 'Trends in the exchange current for hydrogen evolution' J. Electrochem. Soc., 152, J23 (2005) &quot;</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1149/1.2358292'></div>
-
-<a href="http://dx.doi.org/10.1149/1.1856988">Trends in the exchange current for hydrogen evolution</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1149/1.1856988'></div>
-
-<a href="http://dx.doi.org/10.1016/j.cattod.2005.04.008">Trends in the chemical properties of early transition metal carbide surfaces: A density functional study</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/j.cattod.2005.04.008'></div>
-
-<a href="http://dx.doi.org/None">Alloy surface segregation in reactive environments via density functional theory and atomistic thermodynamics</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
-
-<a href="http://dx.doi.org/None">The role of adsorbate-adsorbate interactions in the rate controlling step and the most abundant reaction intermediate of NH3 decomposition on Ru</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
-
-<a href="http://dx.doi.org/10.1103/PhysRevLett.93.156801">Role of strain and ligand effects in the modification of the electronic and chemical properties of bimetallic surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1103/PhysRevLett.93.156801'></div>
-
-<a href="http://dx.doi.org/10.1021/jp047349j">Origin of the overpotential for oxygen reduction at a fuel-cell cathode</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/jp047349j'></div>
-
-<a href="http://dx.doi.org/10.1063/1.1737365">Modification of the surface electronic and chemical properties of Pt(111) by subsurface 3d transition metals</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1063/1.1737365'></div>
-
-<a href="http://dx.doi.org/10.1016/j.susc.2003.09.007">Elucidation of the active surface and origin of the weak metal-hydrogen bond on Ni/Pt(111) bimetallic surfaces: a surface science and density functional theory study</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/j.susc.2003.09.007'></div>
-
-<a href="http://dx.doi.org/10.1016/j.susc.2003.08.041">A four-point probe correlation of oxygen sensitivity to changes in surface resistivity of TiO2(001) and Pd-modified TiO2(001)</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/j.susc.2003.08.041'></div>
-
-<a href="http://dx.doi.org/10.1016/s0039-6028(02)02679-1">A comparison of gold and molybdenum nanoparticles on TiO2(110) 1 x 2 reconstructed single crystal surfaces</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/s0039-6028(02)02679-1'></div>
-
-<a href="http://dx.doi.org/10.1073/pnas.072514399">H3PW12O40-functionalized tip for scanning tunneling microscopy</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1073/pnas.072514399'></div>
-
-<a href="http://dx.doi.org/None">Preparation of paramagnetic ligands for coordination-complexes and networks with interesting magnetic properties</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
-
-<a href="http://dx.doi.org/10.1021/jo00117a004">Preparation and Characterization of a Bis-Semiquinone: a Bidentate Dianion Biradical</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/jo00117a004'></div>
-
-<a href="http://dx.doi.org/None">SYNTHESIS AND CHARACTERIZATION OF TRISEMIQUINONE LIGANDS</a><div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='None'></div>
-
-#+END_HTML
-
-
 * DONE Drag images and files onto org-mode and insert a link to them
   CLOSED: [2015-07-10 Fri 16:11]
   :PROPERTIES:
@@ -2039,7 +2153,6 @@ ParserWarnLevel 9
 #+BEGIN_SRC sh
 swish-e -c ~/.swish-e/swish-pdf.conf
 #+END_SRC
-
 
 * The ultimate org indexer
 
@@ -3098,7 +3211,7 @@ I am working towards:
 #+RESULTS:
 : \(\<\(?:\(?:Cu\|[CH]\)[[:digit:]]*\)+\>\)
 
-* rdp
+* rdp a recursive descent parser in emacs
 Example from [[https://github.com/skeeto/rdp][skeeto/rdp]]
 
 #+BEGIN_SRC emacs-lisp
@@ -4980,48 +5093,6 @@ The file containing the definitions of the kpoint grid.
 
 See http://cms.mpi.univie.ac.at/vasp/vasp/KPOINTS_file.html
 
-* Record audio and put link to it in org-mode
-
-#+BEGIN_SRC emacs-lisp
-(defun insert-voice-memo ()
-  "Record voice memo and insert an org-mode link to it.
-memos are stored by time-stamp in the local directory audio."
-  (interactive)
-  (unless (file-exists-p "audio")
-    (make-directory "audio"))
-
-  (let ((memo-name (replace-regexp-in-string "\\( \\|:\\)" "-"
-					     (concat (current-time-string)
-						     ".m4a"))))
-    (do-applescript
-     (format "tell application \"Finder\"
-	set savePath to \"%s\"
-	delay 1
-	tell application \"QuickTime Player\"
-		activate
-		close every window
-		set recording to new audio recording
-
-		tell recording
-			start
-			set yn to (display dialog \"Press Stop to quit and save.\" buttons {\"Stop\"} giving up after 600)
-			stop
-			delay 1
-		end tell
-	end tell
-set newRecordingDoc to first document whose name = \"Untitled\"
-		export newRecordingDoc in savePath using settings preset \"Audio Only\"
-end tell"
-	     (expand-file-name memo-name "audio")))
-    (insert (format
-	     "[[./%s][voice memo]]"
-	     (expand-file-name memo-name "audio")))))
-#+END_SRC
-
-#+RESULTS:
-: insert-voice-memo
-
-
 * Indexing MS Office and PDF documents with swish-e :ARCHIVE:
   :PROPERTIES:
   :ID:       2444338F-B4A1-4F87-B98C-867F344EFDA8
@@ -6590,7 +6661,6 @@ foobar
 
 #+END_SRC
 
-
 * DONE Python data structures to lisp
   CLOSED: [2015-05-16 Sat 10:48]
   :PROPERTIES:
@@ -6744,7 +6814,6 @@ print ans.lisp()" myvar)))
 : 0.0
 
 Bottom line: we can write python code in lisp functions that are dynamically updated, execute them, and get lisp data structures back for simple data types. I think that could be useful in some applications, where it is easier to do parsing/analysis in Python, but you want to do something else that is easier in Lisp.
-
 
 * DONE Another approach to embedding org-source in html
   CLOSED: [2015-05-09 Sat 19:19]
@@ -7687,7 +7756,6 @@ The authors are linked to their Scopus page, the title linked to the Scopus abst
 ** Summary
 The XML format is not that intuitive to me. It takes some practice writing robust code, e.g. sometimes the find command does not find anything, and then there is not text attribute to get, so you should check for success on finding things. Also, some text is unicode, and you have to take care to encode it, which my library does not do uniformly. Finally, not all journals have things like volume or issue. My formatting code is not super flexible, so these bibliography entries show None in them occasionally. Still, it is not too bad, and this enables a lot of analysis of your publications, as well as displaying them in different ways. See the result of this page here: http://kitchingroup.cheme.cmu.edu/publications.html
 
-
 * DONE Making highly linked bibliographies from the Scopus API
   CLOSED: [2015-04-04 Sat 11:32]
   :PROPERTIES:
@@ -8347,7 +8415,6 @@ for sid in scopus_ids:
 I see a lot of potential here for analytics on publications, generation of bibliography files, etc... Instead of retrieving this data every time, it would make much more sense to cache it, e.g. writing each result to a file that could then be used locally, and much faster. The downside of that is, the citations would not be updated in those files. The upside is, you could fix the titles so they are properly marked up. I do not know what the issues with some of the json files was. Some of them were unicode issues. Some other day I will try to track down the other ones.
 
 The entries could be made a lot more functional than this. Each author could be turned into a link back to the scopus author page, for example, the title could be linked to the scopus abstract page, etc... The citations could be a button that automatically updates (like the one in this [[http://kitchingroup.cheme.cmu.edu/blog/2015/03/30/1000+-citations-for-fuel-cell-paper-on-the-oxygen-reduction-reaction/][post]]). That is another exercise, for another day!
-
 
 * miscellaneous scopus things I have used.
 ** author 1 - metrics view
@@ -10962,7 +11029,7 @@ https://www.youtube.com/analytics?o=U
 #+BEGIN_HTML
 <iframe width="420" height="315" src="https://www.youtube.com/embed/JyvpSVl4_dg" frameborder="0" allowfullscreen></iframe>
 #+END_HTML
-* Scientific writing
+* Scientific writing references
 
 
 cite:whitesides-2004-whites-group
@@ -11014,7 +11081,6 @@ This paper came out shortly after I spent three months at DTU with Jens Nørskov
 bibliography:../../Dropbox/bibliography/references.bib
 
 
-
 * Filtering subsets of a bibtex file
 
 I guess this is basically what bibtex-map-entries does.
@@ -11059,9 +11125,7 @@ I guess this is basically what bibtex-map-entries does.
 
 
 
-
 * Scientific researcher IDs
-
 ** ORCID
 "ORCID provides a persistent digital identifier that distinguishes you from every other researcher and, through integration in key research workflows such as manuscript and grant submission, supports automated linkages between you and your professional activities ensuring that your work is recognized."
 
@@ -11091,7 +11155,6 @@ https://scholar.google.com/citations?user=jD_4h7sAAAAJ
 ** ResearchGate
 One nice feature of ResearchGate is it provides a way to serve full text versions of your papers.
 https://www.researchgate.net/profile/John_Kitchin
-
 
 * DONE The orcid api and generating a bibtex file from it
   CLOSED: [2015-03-28 Sat 14:22]
@@ -11427,7 +11490,6 @@ outline-regexp
 #+RESULTS:
 : \*+
 
-
 * bibdesk links
 We guess that this base64 encoded, so we decode it (M-x base64-decode-region) This then gives us a binary plist (it starts with bplist) which we can turn into a readable form with M-: plutil -convert xml1 -o - - RET
 
@@ -11511,7 +11573,6 @@ So, we will just map over our entries looking for places where the same key is g
 
 #+RESULTS:
 [[elisp:(progn (switch-to-buffer "references.bib")(goto-char 627548))][1. "university-2012-factbook"]] [[elisp:(progn (switch-to-buffer "references.bib")(goto-char 627752))]["university-2012-factbook"]]
-
 
 
 * A new approach to extracting bibtex file from org
@@ -11679,20 +11740,6 @@ Well, that looks like it. All that is left is writing that string to a file.
 #+END_SRC
 #+RESULTS:
 : org-ref-create-bib-file-from-org
-
-
-
-* filename or file object
-
-#+BEGIN_SRC python
-with open('test.py', 'w') as fd:
-    print fd.name
-    print isinstance(fd, file)
-#+END_SRC
-
-#+RESULTS:
-: test.py
-: True
 
 
 * Clickable org-contacts in Emacs
@@ -12131,7 +12178,6 @@ The last little idea is to create an idle timer to launch the build whenever we 
 #+END_SRC
 #+RESULTS:
 
-
 * Writing emacs-lisp code with lentic
   :PROPERTIES:
   :categories: emacs
@@ -12510,7 +12556,6 @@ Based on John K's great post here:
 
 #+END_SRC
 
-
 * About face
 
 You have probably wondered why some words are colored in Emacs and wondered how some text behaves like a link. That happens from font locking. Here we look at some ways you can modify this behavior too.
@@ -12547,7 +12592,6 @@ How do you know what faces are available? M-x list-faces-display will give you a
 
 
  BROKEN  fdsafdFIXME
-
 
 
 
@@ -12864,50 +12908,9 @@ where itemCreators.itemID==3;
 : Eric|Schulte
 : Dan|Davison
 
-* test links
 
-#+caption: some text label:test3  cite:needs-1989-cal
-| a | b |
-| 1 | 3 |
-
- citenum:needs-1989-calcu
-
-#+BEGIN_SRC emacs-lisp :results code
-(org-element-map (org-element-parse-buffer) 'link
-  (lambda (link)
-    (cons
-     (org-element-property :path link)
-     (if (not (org-element-secondary-p link))
-	 (org-element-property :begin link)
-       "Secondary link")))
-  nil nil nil t)
-#+END_SRC
-#+RESULTS:
-#+BEGIN_SRC emacs-lisp
-(("test3" . 11)
- ("needs-1989-cal" . 24)
- ("needs-1989-calcu" . 91))
-#+END_SRC
-
-(goto-char 11) This goes into the headline
-
-(goto-char 24) This goes to the : in the caption
-
-(goto-char 91)  This goes exactly where I expect
-
-#+BEGIN_SRC emacs-lisp :results code
-(org-element-map (org-element-parse-buffer) 'link
-  (lambda (link)
-    (cons
-     (org-element-property :path link)
-     (org-element-property :parent link)))
-  nil nil nil t)
-#+END_SRC
-
-
-(org-version)
 * Revisiting tooltips on cite links
-This is not going to work permanently. maybe i could map over the links and put some proprties on though.
+This is not going to work permanently. maybe i could map over the links and put some properties on though.
 
 (insert (propertize "cite:kondratyuk-2013"
                           'help-echo "testing"))cite:kondratyuk-2013
@@ -14639,100 +14642,6 @@ Here is our inline image as a pdf file. We would like it to be converted to a pn
 
 
 
-* A helm interface to org-contacts
-
-#+BEGIN_SRC emacs-lisp
-(defun oc-email (_)
- (interactive)
- (message-box "%s"
-	      (mapconcat
-	       (lambda (x)
-		 (cdr (assoc "EMAIL" (elt x 1))))
-	       (helm-marked-candidates :with-wildcard t)
-	       ",")))
-
-
-(defun oc-open-entry (selection)
- (let ((mark (car selection)))
-   (switch-to-buffer (marker-buffer mark))
-   (goto-char (marker-position mark))
-   (show-subtree)))
-
-
-(defun oc-open-url (selection)
-  (let ((url (cdr (assoc "URL" (elt selection 1)))))
-    (when url
-      (browse-url url))))
-
-
-(defvar helm-source-org-contacts
-  '((name                            . "Contacts")
-    (candidates                      . org-contaqcts-db)
-    (action . (("Email"              . oc-email)
-	       ("web"                . oc-open-url)
-               ("Show entry"         . oc-open-entry))))
-  "Source for searching in org-contacts.")
-
-(defun helm-org-contacts ()
-  "Search BibTeX entries."
-  (interactive)
-  (helm :sources '(helm-source-org-contacts)
-        :candidate-number-limit 500))
-#+END_SRC
-
-#+RESULTS:
-: helm-org-contacts
-
-* org-ref-helm
-Inspired by [[https://github.com/tmalsburg/helm-bibtex][helm-bibtex]], here I explore a way to insert citations using some helm-bibtex machinery. The gist of helm-bibtex is it scans your bib files, offers spectacular search and select capability, and then your choice of actions on those. The default action is to open the pdf, but I want the default action to be to insert a link.
-
-#+BEGIN_SRC emacs-lisp
-(require 'helm-bibtex)
-
-(defun helm-bibtex-format-org-ref (keys)
-  "insert selected KEYS as cite link. Append KEYS if you are on a link."
-  (let ((el (org-element-context)))
-    (message "%s" el)
-    (if (eq 'link (car el))
-	(progn
-	  (goto-char (org-element-property :end el))
-	  (concat "," (s-join "," keys)))
-      (concat "cite:" (s-join "," keys)))))
-
-(setq helm-bibtex-format-citation-functions
-      '((org-mode . helm-bibtex-format-org-ref)))
-
-
-(defvar org-ref-helm-source-bibtex
-  '((name                                      . "BibTeX entries")
-    (init                                      . helm-bibtex-init)
-    (candidates                                . helm-bibtex-candidates)
-    (filtered-candidate-transformer            . helm-bibtex-candidates-formatter)
-    (action . (("Insert citation"              . helm-bibtex-insert-citation)
-	       ("Open PDF file (if present)"   . helm-bibtex-open-pdf)
-               ("Open URL or DOI in browser"   . helm-bibtex-open-url-or-doi)
-               ("Insert reference"             . helm-bibtex-insert-reference)
-               ("Insert BibTeX key"            . helm-bibtex-insert-key)
-               ("Insert BibTeX entry"          . helm-bibtex-insert-bibtex)
-               ("Attach PDF to email"          . helm-bibtex-add-PDF-attachment)
-               ("Edit notes"                   . helm-bibtex-edit-notes)
-               ("Show entry"                   . helm-bibtex-show-entry))))
-  "Source for searching in BibTeX files.")
-
-;;;###autoload
-(defun org-ref-helm-bibtex ()
-  "Search BibTeX entries."
-  (interactive)
-  (helm :sources '(org-ref-helm-source-bibtex helm-source-fallback-options)
-        :full-frame t
-        :candidate-number-limit 500))
-#+END_SRC
-
-#+RESULTS:
-: org-ref-helm-bibtex
-
-
-
 * A simple helm menu
 
 Helm is an interesting way to interactively select something, and perform an action on it.
@@ -14837,68 +14746,6 @@ The candidates must be a list of items, and the car of the list is what gets lis
 
 #+RESULTS:
 : helm-words
-
-
-* Find org-files that mention a citation
-
-
-
-
-I want to find all my org-files in some tree that cite this paper cite:kitchin-2004-role.
-
-#+BEGIN_SRC emacs-lisp
-(rgrep "kitchin-2004-role\\(;\\|:\\|.\\|,\\| \\)" "*.org" "~/Dropbox/CMU/manuscripts")
-#+END_SRC
-
-#+RESULTS:
-
-kitchin-2004-role-strain
-
-
-
-#+BEGIN_SRC emacs-lisp
-(switch-to-buffer (grep-find "find ~/Dropbox/CMU/manuscripts -type f -name \"*.org\" -exec grep -nH -e  \"kresse-1996-effic\\(;\\|:\\|.\\|,\\| \\)\" {} +"))
-#+END_SRC
-#+RESULTS:
-: #<buffer *grep*>
-
-cite:kresse-1996-effic
-
-
-#+BEGIN_SRC emacs-lisp
-(switch-to-buffer (grep-find "find ~/Dropbox/CMU/manuscripts -type f -name \"*.org\" -exec grep -nH -e  \"kitchin-\" {} +"))
-#+END_SRC
-#+RESULTS:
-: #<buffer *grep*>
-
-From techela
-#+BEGIN_SRC emacs-lisp
-(multi-occur (mapcar 'find-file-noselect
-		     (-filter
-		      'file-exists-p
-		      (files-in-below-directory
-		       "~/Dropbox/CMU/manuscripts")))
-	     "kitchin-2004-strain")
-#+END_SRC
-#+RESULTS:
-: t
-
-This returns t, it does not work!
-#+BEGIN_SRC emacs-lisp
-(multi-occur (mapcar 'find-file-noselect
-		     (f-entries "~/Dropbox/CMU/manuscripts"
-				(lambda (f) (string= (f-filename f) "manuscript.org")) t))
-	     "kitchin-2004-strain")
-#+END_SRC
-
-#+RESULTS:
-: t
-
-#+BEGIN_SRC emacs-lisp
-(helm-multi-occur (mapcar 'find-file-noselect
-		     (f-entries "~/Dropbox/CMU/manuscripts"
-				(lambda (f) (string= (f-filename f) "manuscript.org")) t)))
-#+END_SRC
 
 
 * make any org link a menu link
@@ -15942,94 +15789,6 @@ Suggestions:
 
 
 
-* More doi utility functions
-
-#+BEGIN_SRC emacs-lisp
-(defun doi-utils-google-scholar (doi)
- "DOI can be any query."
- (interactive "sDOI: ")
- (browse-url (format "http://scholar.google.com/scholar?hl=en&q=%s" (url-hexify-string doi))))
-
-(doi-utils-google-scholar "10.1021/jp047349j")
-#+END_SRC
-
-#+RESULTS:
-: #<process open http://scholar.google.com/scholar?hl=en&q=10.1021%2Fjp047349j>
-
-#+BEGIN_SRC emacs-lisp
-(defun doi-utils-crossref (doi)
- (interactive "sDOI: ")
- (browse-url (format "http://search.crossref.org/?q=%s" (url-hexify-string doi))))
-
-(doi-utils-crossref "10.1021/jp047349j")
-#+END_SRC
-
-#+RESULTS:
-: #<process open http://search.crossref.org/?q=10.1021%2Fjp047349j>
-
-http://wokinfo.com/products_tools/products/related/webservices/
-
-I requested access for this ip address: 128.2.54.215
-[[google:my ip address]]
-
-soap
-http://search.isiknowledge.com/esti/wokmws/ws/
-
-
-#+BEGIN_SRC emacs-lisp
-(defun doi-utils-ads (query)
- "run QUERY in the Harvard abstract simple search."
- (interactive "sQuery: ")
- (browse-url (format "http://adsabs.harvard.edu/cgi-bin/nph-basic_connect?qsearch=%s&version=1" (url-hexify-string doi))))
-
-(doi-utils-ads "kitchin and barteau")
-#+END_SRC
-
-#+RESULTS:
-: #<process open http://adsabs.harvard.edu/cgi-bin/nph-basic_connect?qsearch=kitchin%20and%20barteau&version=1>
-
-* crossref + doi
-
-[[http://www.crossref.org/][crossref.org]]
-
-#+BEGIN_SRC emacs-lisp
-(let ((url-request-method "GET")
-      (json-object-type 'plist)
-      (json-data))
-  (with-current-buffer
-      (url-retrieve-synchronously
-       "http://search.crossref.org/dois?q=john+kitchin+catalysis&&rows=3")
-      (setq json-data (buffer-substring url-http-end-of-headers (point-max)))
-      (json-read-from-string json-data)))
-#+END_SRC
-#+RESULTS:
-: [(:year "2012" :coins "ctx_ver=Z39.88-2004&amp;rft_id=info%3Adoi%2Fhttp%3A%2F%2Fdx.doi.org%2F10.1007%2Fs11244-012-9808-0&amp;rfr_id=info%3Asid%2Fcrossref.org%3Asearch&amp;rft.atitle=Preface%3A+Trends+in+Computational+Catalysis&amp;rft.jtitle=Topics+in+Catalysis&amp;rft.date=2012&amp;rft.volume=55&amp;rft.issue=5-6&amp;rft.spage=227&amp;rft.epage=228&amp;rft.aufirst=John&amp;rft.aulast=Kitchin&amp;rft_val_fmt=info%3Aofi%2Ffmt%3Akev%3Amtx%3Ajournal&amp;rft.genre=article&amp;rft.au=John+Kitchin" :fullCitation "John Kitchin, 2012, 'Preface: Trends in Computational Catalysis', <i>Topics in Catalysis</i>, vol. 55, no. 5-6, pp. 227-228" :title "Preface: Trends in Computational Catalysis" :normalizedScore 100 :score 3.5252514 :doi "http://dx.doi.org/10.1007/s11244-012-9808-0") (:year "2012" :coins "ctx_ver=Z39.88-2004&amp;rft_id=info%3Adoi%2Fhttp%3A%2F%2Fdx.doi.org%2F10.1039%2F9781849734776-00083&amp;rfr_id=info%3Asid%2Fcrossref.org%3Asearch&amp;rft.atitle=Coverage+dependent+adsorption+properties+of+atomic+adsorbates+on+late+transition+metal+surfaces&amp;rft.jtitle=Catalysis&amp;rft.date=2012&amp;rft.spage=83&amp;rft.epage=115&amp;rft.aufirst=Spencer&amp;rft.aulast=Miller&amp;rft_val_fmt=info%3Aofi%2Ffmt%3Akev%3Amtx%3Abook&amp;rft.genre=bookitem&amp;rft.au=Spencer+Miller&amp;rft.au=+Carmeline+Dsilva&amp;rft.au=+John+R.+Kitchin" :fullCitation "Spencer Miller, Carmeline Dsilva, John R. Kitchin, 2012, 'Coverage dependent adsorption properties of atomic adsorbates on late transition metal surfaces', <i>Catalysis</i>, pp. 83-115" :title "Coverage dependent adsorption properties of atomic adsorbates on late transition metal surfaces" :normalizedScore 85 :score 3.021644 :doi "http://dx.doi.org/10.1039/9781849734776-00083") (:year "2014" :coins "ctx_ver=Z39.88-2004&amp;rft_id=info%3Adoi%2Fhttp%3A%2F%2Fdx.doi.org%2F10.1016%2Fj.catcom.2013.10.028&amp;rfr_id=info%3Asid%2Fcrossref.org%3Asearch&amp;rft.atitle=Relating+the+electronic+structure+and+reactivity+of+the+3d+transition+metal+monoxide+surfaces&amp;rft.jtitle=Catalysis+Communications&amp;rft.date=2014&amp;rft.volume=52&amp;rft.spage=60&amp;rft.epage=64&amp;rft.aufirst=Zhongnan&amp;rft.aulast=Xu&amp;rft_val_fmt=info%3Aofi%2Ffmt%3Akev%3Amtx%3Ajournal&amp;rft.genre=article&amp;rft.au=Zhongnan+Xu&amp;rft.au=+John+R.+Kitchin" :fullCitation "Zhongnan Xu, John R. Kitchin, 2014, 'Relating the electronic structure and reactivity of the 3d transition metal monoxide surfaces', <i>Catalysis Communications</i>, vol. 52, pp. 60-64" :title "Relating the electronic structure and reactivity of the 3d transition metal monoxide surfaces" :normalizedScore 85 :score 3.021644 :doi "http://dx.doi.org/10.1016/j.catcom.2013.10.028")]
-
-#+BEGIN_SRC emacs-lisp
-(url-hexify-string "10.1016/j.catcom.2013.10.028")
-#+END_SRC
-#+RESULTS:
-: 10.1016%2Fj.catcom.2013.10.028
-
-#+BEGIN_SRC emacs-lisp
-(url-unhex-string "10.1016%2Fj.catcom.2013.10.028")
-#+END_SRC
-#+RESULTS:
-: 10.1016/j.catcom.2013.10.028
-
-#+BEGIN_SRC emacs-lisp
-(defun cross-ref-search ()
-  (interactive)
-  (browse-url
-   (format
-    "http://search.crossref.org/?q=%s"
-    (if (use-region-p)
-	(url-hexify-string (buffer-substring
-			    (region-beginning)
-			    (region-end)))
-      (read-string "string: ")))))
-#+END_SRC
-
 * Capturing stderr and stdout in org-mode
 
 It looks like you have to send these to files, and then read them.
@@ -16267,12 +16026,12 @@ There are a few options for saving and reading data in different structures and 
 
 
 
-* "live" graphics in org-mode
+* "live" graphics in org-mode on a timer
 
 #+tblname: tbldata
 |   x |   y |
 |-----+-----|
-|   1 |   1 |
+|  10 |   1 |
 |   1 |   0 |
 |   2 |   4 |
 |   3 |   5 |
@@ -16882,7 +16641,6 @@ Now, we can start building the logic to handle these. The goal of this block as 
 
 
 
-
 * Showing that Emacs is working
 
 
@@ -17017,7 +16775,6 @@ nil
 nil
 t
 t
-
 
 * Insert a timestamp that is one week older than the last timestamp found
 Someone on the maillist asked how to insert a new timestamp that is one week newer than the last timestamp found in the buffer. Here is an exploration of doing that.
@@ -17216,6 +16973,17 @@ os.system('cat silly-plot.png')
 
 It is not better if you have add the code at the end to output the image.
 
+
+#+BEGIN_SRC python :results value :return s
+import matplotlib.pyplot as plt
+plt.plot([1,2,3,4])
+plt.savefig('silly-plot.png')
+
+s = '[[./silly-plot.png]]'
+#+END_SRC
+
+#+RESULTS:
+| ./silly-plot.png |
 
 * org-rubric functions
 
@@ -17766,210 +17534,6 @@ we just turn on inheritance in the property get function.
 check out https://github.com/jwiegley/emacs-async/blob/master/async.el
 for asynchronous things.
 
-* Setting up gnus for email
-I have used gmail for a long time. There is a lot I like about it. Email for me is information that comes to me that I need to read, handle in some way, and then move on to the next thing. I do not store things in email, and I do not file or tag emails; I rely on gmail's search ability to find email if I ever need to (which I find is very rare). I aim for a zero-inbox with email, because that means there is nothing there I need to handle.
-
-My typical workflow is to open my inbox, and read the new mails. If I can delete them immediately, I do that. If I can respond immediately, I do that and archive the email. If I need some time to reply, I store a link to the email in my todo list with a deadline (in org-mode, of course), and archive the email. If it will only be a day or so until I can reply, I sometimes leave it in my inbox and reply later. This works pretty well, and I usually have less than one screen of emails at any given time.
-
-I have wanted to read email in emacs for a long time, because it would streamline the storing of links to emails, and I would not have to switch between firefox and emacs to do that. It would also make writing emails simpler for me. I already use gnus to read some newsgroups, so I want to also start reading email in it. gnus has some different ideas about mail, so I am trying to learn how to make it do what I want. By default, gnus only shows unread messages. I need it to show me all the messages in the inbox.
-
-I also want some communication between gnus and gmail. If I delete a mail in gnus, I want it deleted in gmail. If I archive it in gnus, I want it archived in gmail. And, I want the send+archive behavior I like in gmail to work in gnus.
-
-| open email               | RET     |
-| reply                    |         |
-| reply-all                |         |
-| forward                  |         |
-| send                     | C-c C-c |
-| send and archive         |         |
-| delete mail              |         |
-| archive mail             |         |
-| mark unread              | M-u     |
-| capture mail in org-mode | C-c c e |
-
-
-** Sending email
-
-[[file:~/Dropbox/kitchingroup/jmax/emacs-24.3/lisp/gnus/message.el::(defun%20message-send-and-exit%20(&optional%20arg)][file:~/Dropbox/kitchingroup/jmax/emacs-24.3/lisp/gnus/message.el::(defun message-send-and-exit (&optional arg)]]
-
-It looks like you can define these actions
-message-exit-actions [[file:~/Dropbox/kitchingroup/jmax/emacs-24.3/lisp/gnus/message.el::(defvar%20message-exit-actions%20nil][file:~/Dropbox/kitchingroup/jmax/emacs-24.3/lisp/gnus/message.el::(defvar message-exit-actions nil]]
-
-(defvar message-exit-actions nil
-  "A list of actions to be performed upon exiting after sending a message.")
-
-This looks like a list of functions that are called with no argument after the message is sent. see [[file:~/Dropbox/kitchingroup/jmax/emacs-24.3/lisp/gnus/message.el::(defun%20message-do-actions%20(actions)][file:~/Dropbox/kitchingroup/jmax/emacs-24.3/lisp/gnus/message.el::(defun message-do-actions (actions)]]
-
-see [[file:~/Dropbox/kitchingroup/jmax/emacs-24.3/lisp/simple.el::(defun%20compose-mail%20(&optional%20to%20subject%20other-headers%20continue][file:~/Dropbox/kitchingroup/jmax/emacs-24.3/lisp/simple.el::(defun compose-mail (&optional to subject other-headers continue]] to see how to specify actions from compose-mail.
-
-maybe it is possible to temporarily define a function to run. see http://www.gnu.org/software/emacs/manual/html_node/message/Message-Actions.html
-
-[[file:~/Dropbox/kitchingroup/jmax/emacs-24.3/lisp/gnus/message.el::(defun%20message-add-action%20(action%20&rest%20types)][file:~/Dropbox/kitchingroup/jmax/emacs-24.3/lisp/gnus/message.el::(defun message-add-action (action &rest types)]]
-[[file:~/Dropbox/kitchingroup/jmax/emacs-24.3/lisp/gnus/message.el::(defun%20message-delete-action%20(action%20&rest%20types)][file:~/Dropbox/kitchingroup/jmax/emacs-24.3/lisp/gnus/message.el::(defun message-delete-action (action &rest types)]]
-we need a temporary action! something like: http://www.chemie.fu-berlin.de/chemnet/use/info/elisp/elisp_13.html
-
-  (apply 'message-add-action 'gt (list 'exit))
-#+BEGIN_SRC emacs-lisp
-(defmacro with-temp-message-action (action types &rest body)
-  "temporarily have action for a message.
-action is the same as the message-add-action definition
-types is a list of 'exit 'postpone 'kill
-body is the code to use in the temporary definition.
-"
-  (apply 'message-add-action action types)
-  ,@body
-  (apply 'message-delete action types))
-
-(with-temp-message-action 'gt '(list 'exit)
-			  (message "we workd"))
-#+END_SRC
-
-#+BEGIN_SRC emacs-lisp
-
-(defun gt () (message "whoo"))
-(add-to-list 'message-exit-actions 'gt)
-
-(compose-mail "jkitchin@cmu.edu" "test")
-#+END_SRC
-
-#+RESULTS:
-: t
-
-we also have message-sent-hookand message-send-hook
-
-let us try a variation with that:
-
-#+BEGIN_SRC emacs-lisp
-(defun org-contacts-gnus-article-to-get-marker ()
-  "Return a marker for a contact based on From."
-  (let* ((address (mail-extract-address-components
-         (or (mail-fetch-field "To") "")))
-         (name (car address))
-         (email (cadr address)))
-    (when email
-    (cadar (or (org-contacts-filter
-                nil
-		nil
-                (cons org-contacts-email-property (concat "\\b" (regexp-quote email) "\\b")))
-               (when name
-                 (org-contacts-filter
-                  (concat "^" name "$"))))))))
-
-
-(defun org-contacts-gnus-store-last-sent-mail ()
-  "Store a link between mails and contacts.
-
-This function should be called from `message-send-hook'."
-(interactive)
-  (let ((marker (org-contacts-gnus-article-to-get-marker)))
-    (when marker
-      (with-current-buffer (marker-buffer marker)
-        (save-excursion
-          (goto-char marker)
-	  (org-set-property "LAST_SENT_MAIL" (current-time-string)))))))
-
-(add-hook 'message-send-hook 'org-contacts-gnus-store-last-sent-mail)
-#+END_SRC
-
-#+RESULTS:
-| org-contacts-gnus-store-last-sent-mail |
-
-* extracting an org-contact from a gnus message
-** getting it in the From field
-
-try to get name from mail
-#+BEGIN_SRC emacs-lisp
-(defun gne ()
-  (interactive)
-  (if (org-contacts-gnus-article-from-get-marker)
-      (message "you have that contact")
-    (message "%s" (org-contacts-gnus-get-name-email))))
-#+END_SRC
-
-#+RESULTS:
-: gne
-
-try sticking entry in. you run this from a gnus article. should this happen automatically? we should
-#+BEGIN_SRC emacs-lisp
-(defun hare ()
-  (interactive)
-(let ((org-contacts-files '("test-contacts.org")))
-
-  (let* ((r (org-contacts-gnus-get-name-email))
-	 (name (nth 0 r))
-	 (email (nth 1 r)))
-    (find-file "test-contacts.org")
-    (end-of-buffer)
-    (insert (format "\n* %s" name))
-    (org-entry-put (point) "EMAIL" email)
-    (org-entry-put (point) "CREATED" (current-time-string))
-    (save-buffer))))
-#+END_SRC
-
-#+RESULTS:
-: hare
-
-#+BEGIN_SRC emacs-lisp
-
-#+END_SRC
-
-* getting emails in org-contacts by tags
-#+BEGIN_SRC emacs-lisp
-(find-file "contacts-bbdb.org")
-(let ((todo-only nil))
-  (org-scan-tags
-   (lambda ()
-     (org-entry-get (point) "EMAIL")) ; action
-  (cdr (org-make-tags-matcher "group-ms")) ; matcher
-nil))
-#+END_SRC
-
-#+RESULTS:
-| jboes@cmu.edu | mehakc@andrew.cmu.edu | mcurnan@andrew.cmu.edu | qingqif@andrew.cmu.edu | ahallenb@andrew.cmu.edu | jdmichae@andrew.cmu.edu | zhongnanxu@cmu.edu |
-
-
-#+BEGIN_SRC emacs-lisp :results raw
-(find-file "contacts-bbdb.org")
-(let ((todo-only nil))
-   (cdr (org-make-tags-matcher "group-phd")))
-#+END_SRC
-
-#+RESULTS:
-(and (progn (setq org-cached-props nil) (and (not (member phd tags-list)) (member group tags-list))) t)
-
-
-#+BEGIN_SRC emacs-lisp
-(defun insert-emails-from-tags (tags)
-  (interactive "sTags: ")
-  (insert
-   (save-window-excursion
-     (find-file "contacts-bbdb.org")
-     (mapconcat
-      'identity
-      (let ((todo-only nil))
-	(org-scan-tags
-	 (lambda ()
-	   (org-entry-get (point) "EMAIL")) ; action
-	 (cdr (org-make-tags-matcher tags)) ; matcher
-	 nil)) ", "))))
-#+END_SRC
-
-#+RESULTS:
-: add-emails-from-tags
-
-ngovinda@andrew.cmu.edu,meihengl@andrew.cmu.edu,wenqiny@andrew.cmu.edu
-
-#+BEGIN_SRC emacs-lisp
-(insert-emails-from-tags "{^co.*}") ;no return
-#+END_SRC
-
-#+RESULTS:
-#+BEGIN_SRC emacs-lisp
-(insert-emails-from-tags "FIRSTNAME=\"John\"") ; no matches
-#+END_SRC
-
-#+RESULTS:
-
-
 * Calculating months since a date
 
 To calculate the number of months between two dates, we parse the dates to get the year for each date, and the month for each date. Then we calculate the number of months as:
@@ -18380,63 +17944,6 @@ eprint = {http://pubs.acs.org/doi/pdf/10.1021/jp109105g},
 
 
 
-* Cleaning a bibtex entry
-
-#+BEGIN_SRC emacs-lisp
-(defun org-ref-clean-bibtex-entry()
-  "clean and replace the key in a bibtex function"
-  (interactive)
-  (bibtex-beginning-of-entry)
-
-  ;; check for empty pages, and put eid or article id in its place
-  (let ((entry (bibtex-parse-entry))
-	(pages (bibtex-autokey-get-field "pages"))
-	(eid (bibtex-autokey-get-field "eid")))
-
-    ;; fix pages if they are empty
-    (cond
-     ((string= "-" pages)
-      (when eid
-	(bibtex-beginning-of-entry)
-	;; this seems like a clunky way to set the pages field.But I
-	;; cannot find a better way.
-	(goto-char (car (cdr (bibtex-search-forward-field "pages" t))))
-	(bibtex-kill-field)
-	(bibtex-make-field "pages")
-	(backward-char)
-	(insert eid))))
-
-    ;; generate a key, and if it duplicates an existing key, edit it.
-    (let ((key (bibtex-generate-autokey)))
-
-      ;; first we delete the existing key
-      (bibtex-beginning-of-entry)
-      (re-search-forward bibtex-entry-maybe-empty-head)
-      (if (match-beginning bibtex-key-in-head)
-	  (delete-region (match-beginning bibtex-key-in-head)
-			 (match-end bibtex-key-in-head)))
-      ;; check if the key is in the buffer
-      (when (save-excursion
-	      (bibtex-search-entry key))
-	  (setq key (bibtex-read-key "Duplicate Key found, edit: " key)))
-
-      (insert key)
-      (kill-new key)) ;; save key for pasting
-
-    (bibtex-fill-entry)  ; this realigns the entry
-    (bibtex-clean-entry) ; we do not replace our key
-
-    ;; check for non-ascii characters
-    (occur "[^[:ascii:]]")
-
-    ;; one day reorder and downcase the fields
-    ;; I can get all the fields like this
-    ;; (bibtex-parse-entry t)
-    ))
-#+END_SRC
-
-cite:daza-2014-carbon-dioxid
-
 * Querying the ase-db
   :PROPERTIES:
   :categories: ase, database
@@ -18533,11 +18040,6 @@ for row in  cur.execute('''select * from  systems
 
 [[./O_sv][test dir]]
 
-
-
-* latex snippets
-
-Sometimes you just need raw latex inline. Here is a chemical formula @@latex:\ce{ABO_{3-\delta}}@@ that is inline.
 
 
 * Using Matlab in org-mode
@@ -18765,235 +18267,6 @@ if __name__ == "__main__":
 ('p or q or r and False', '\n', (p | q | (r & False)), '=', True, '\n', 'PASS', '\n')
 ('(p or q or r) and False', '\n', ((p | q | r) & False), '=', False, '\n', 'PASS', '\n')
 #+end_example
-
-* Importing google contacts into bbdb
-
-I am giving bbdb a try in emacs. I installed it from ELPA, and I am not sure if it is version 2 or 3, but it seems to work ok. The main reason I want it is so I can use email address completion in emails from Emacs.
-
-The first thing I had to do was add this to my init files. Apparently the icicle-bbdb-complete-name function is not defined, so this takes care of that.
-#+BEGIN_SRC emacs-lisp
-;; This is not defined in my bbdb/icicles installation. This lets me use tab-completion.
-(defalias 'icicle-bbdb-complete-name 'bbdb-complete-mail)
-#+END_SRC
-
-Next, I wanted to get my google contacts into bbdb. I am only going to do this once, to get most of what I need in. In the future, I suppose I will just add new contacts manually.  So, first, I exported my google contacts to a csv file. Google does some crazy scraping, so there were nearly 4000 contacts in that list. Not all of them were emails. I used this little python script to write out the first 5 columns of that file to a new file, as long as there was something in the first column.
-
-#+BEGIN_SRC python
-import csv
-
-with open('contacts.csv', 'rb') as csvfile:
-    spamreader = csv.reader(csvfile, delimiter=',')
-
-    with open('new-contacts.csv', 'w') as f:
-        for row in spamreader:
-            if row[0]:
-                f.write(','.join(row[0:5])+'\n')
-                print ','.join(row[0:5])
-#+END_SRC
-
-Then, I manually went through the file deleting many obviously bad entries. It was just shy of interesting to see what was in there. I renamed the first line to have heading names with no spaces in them. So, the csv file eventually looked like this:
-
-#+BEGIN_EXAMPLE
-fname,mname,lname,email1,email2
-Jennifer,,blahlan,fda@andrew.cmu.edu,
-#+END_EXAMPLE
-
-
-From there, I found a csv elisp file (http://ulf.epplejasper.de/EmacsGeneralPurpose.html) that can import a csv file to a lisp data structure. So, I read in the csv file, and then applied a function to each entry that created a bbdb entry with the information in the csv entry like this:
-
-#+BEGIN_SRC emacs-lisp
-#+BEGIN_SRC emacs-lisp
-(let* ((b (find-file "new-contacts.csv"))
-       (bbdb-allow-duplicates t)
-       (contents (csv-parse-buffer t b)))
-  (mapcar (lambda (x)
-	    (let* ((fname (cdr (nth 0 x)))
-		   (mname (cdr (nth 1 x)))
-		   (lname (cdr (nth 2 x)))
-		   (email1 (cdr (nth 3 x)))
-		   (name (format "%s %s %s" fname mname lname)))
-	      (bbdb-create-internal name nil nil nil email1))) contents))
-#+END_SRC
-
-Setting =(bbdb-allow-duplicates t)= was probably a mistake, it would have been better to leave this a false, catch the errors, and continue. But, it is easy to find duplicates in bbdb, and then manually delete them. In the end, I have 2648 "contacts" in my bbdb
-
-* Sending email in emacs
-  :PROPERTIES:
-  :categories: emacs,email
-  :END:
-
-I would like to be able to regularly send email from emacs (one day I would like to read it too). The reason for this is simply that I have a lot of information stored in files I often read in Emacs, and I want to be able to select that information and quickly email it to someone. I need this to work smoothly on Windows and Linux.
-
-There are numerous blog posts on how to set this up, but many are out of date, or work on Linux only.  Here I am documenting what seems to work for me. In my emacs init files, I have this:
-
-
-#+BEGIN_SRC text :tangle ~/.authinfo
-machine smtp.andrew.cmu.edu login jkitchin port 587 password blahbity-blah
-#+END_SRC
-
-Note that this file has my actual password in it.
-
-Now, I can type C-x m to start an email, or use one my functions to email a selection or org-heading, and the emails get sent.
-- [X] home office
-- [ ] home tablet
-- [ ] office slate
-- [ ] office linux
-- [ ] office laptop
-
-** take 1
-
-Here I am following this post http://wideaperture.net/blog/?p=3343
-
-#+BEGIN_SRC emacs-lisp
-;;Configure Outbound Mail
-
-;;Tell the program who you are
-
-(setq user-full-name "John Kitchin")
-(setq user-mail-address "johnrkitchin@gmail.com")
-
-;;Tell Emacs to use GNUTLS instead of STARTTLS
-;;to authenticate when sending mail.
-
-(setq starttls-use-gnutls t)
-
-;;Tell Emacs about your mail server and credentials
-
-(setq send-mail-function 'smtpmail-send-it
-      message-send-mail-function 'smtpmail-send-it
-      smtpmail-starttls-credentials
-      '(("smtp.gmail.com" 587 nil nil))
-
-      smtpmail-default-smtp-server "smtp.gmail.com"
-      smtpmail-smtp-server "smtp.gmail.com"
-      smtpmail-smtp-service 587
-      smtpmail-debug-info t)
-(require 'smtpmail)
-#+END_SRC
-
-(require 'gnutls)
-(open-gnutls-stream "tls" "tls-buffer" "imap.aim.com" "imaps")
-
-ftp://ftp.gnutls.org/gcrypt/gnutls/w32/
-
-this needs a .authinfo file. it works on home-office computer, but not on home tablet.
-
-#+BEGIN_SRC text
-machine smtp.andrew.cmu.edu login jkitchin port 587 password jfkdlajfdkl;
-machine cyrus.andrew.cmu.edu login jkitchin password fjdkslafjsdkals
-
-#+END_SRC
-
-** Using msmtp
-this worked on my home tablet
-
-http://www.emacswiki.org/emacs/GnusMSMTP
-
-#+BEGIN_SRC emacs-lisp
-;; This is needed to allow msmtp to do its magic:
-(setq message-sendmail-f-is-evil 't)
-
-;;need to tell msmtp which account we're using
-(setq message-sendmail-extra-arguments '("--read-envelope-from"))
-
-;; with Emacs 23.1, you have to set this explicitly (in MS Windows)
-;; otherwise it tries to send through OS associated mail client
-(setq message-send-mail-function 'message-send-mail-with-sendmail)
-;; we substitute sendmail with msmtp
-(setq sendmail-program "c:/Users/jkitchin/Desktop/GetGnuWin32/bin/msmtp.exe")
-;;need to tell msmtp which account we're using
-(setq message-sendmail-extra-arguments '("-a" "gmail"))
-;; you might want to set the following too
-(setq mail-host-address "gmail.com")
-(setq user-full-name "John Kitchin")
-(setq user-mail-address "johnrkitchin@gmail.com")
-#+END_SRC
-#+RESULTS:
-: johnrkitchin@gmail.com
-
-
-It appears we have an msmtp installed from our git installation.
-
-
-#+BEGIN_SRC sh
-which msmtp
-#+END_SRC
-
-#+RESULTS:
-: C:\Program Files (x86)\Git\bin\msmtp.EXE
-
-We can check the version like this.
-
-#+BEGIN_SRC sh
-msmtp --version
-#+END_SRC
-
-#+RESULTS:
-#+begin_example
-msmtp version 1.4.17
-TLS/SSL library: OpenSSL
-Authentication library: GNU SASL
-Supported authentication methods:
-plain cram-md5 digest-md5 external login
-IDN support: disabled
-NLS: disabled
-Keyring support: none
-System configuration file name: C:\ProgramData\msmtprc.txt
-User configuration file name: c:/Users/jkitchin/\msmtprc.txt
-
-Copyright (C) 2008 Martin Lambers and others.
-This is free software.  You may redistribute copies of it under the terms of
-the GNU General Public License <http://www.gnu.org/licenses/gpl.html>.
-There is NO WARRANTY, to the extent permitted by law.
-#+end_example
-
-It is not the most recent version. Next, create c:/Users/jkitchin/\msmtprc.txt with contents that look like this. I have two accounts that I could send email from, and they are listed here.
-
-#+BEGIN_SRC text
-########################
-account default
-host smtp.andrew.cmu.edu
-tls on
-tls_certcheck off
-auth on
-from jkitchin@andrew.cmu.edu
-user jkitchin
-password tjkdjfkd
-port 587
-logfile c:\msmtplog.txt
-########################
-account gmail
-host smtp.gmail.com
-tls on
-tls_certcheck off
-auth on
-from johnrkitchin@gmail.com
-user johnrkitchin@gmail.com
-password fjdklafd
-port 587
-
-logfile c:\msmtplog.txt
-########################
-#+END_SRC
-
-Now we follow the suggestions at http://www.emacswiki.org/emacs/GnusMSMTP to configure emacs
-
-#+BEGIN_SRC emacs-lisp
-;; This is needed to allow msmtp to do its magic:
-(setq message-sendmail-f-is-evil 't)
-
-;;need to tell msmtp which account we're using
-(setq message-sendmail-extra-arguments '("--read-envelope-from"))
-
-(setq message-send-mail-function 'message-send-mail-with-sendmail)
-
-;; we substitute sendmail with msmtp
-(setq sendmail-program "C:/Program Files (x86)/Git/bin/msmtp.EXE")
-
-;;need to tell msmtp which account we're using
-(setq message-sendmail-extra-arguments '("-a" "andrew"))
-#+END_SRC
-
 
 * Is my cursor on a link
 
@@ -20899,7 +20172,6 @@ Ok, finally, our goal is consistency with Emacs. Now the entries are syntactical
 
 
 [[./ternary-alloys-exported.bib]]
-
 
 
 

@@ -1905,3 +1905,785 @@ Density Tunctional Theory (DTT)  DTT  DFT
 
 #+RESULTS:
 : t
+
+* A helm interface to org-contacts
+  :PROPERTIES:
+  :ARCHIVE_TIME: 2015-07-26 Sun 19:23
+  :ARCHIVE_FILE: ~/blogofile-jkitchin.github.com/_blog/blog.org
+  :ARCHIVE_CATEGORY: blog
+  :END:
+
+#+BEGIN_SRC emacs-lisp
+(defun oc-email (_)
+ (interactive)
+ (message-box "%s"
+	      (mapconcat
+	       (lambda (x)
+		 (cdr (assoc "EMAIL" (elt x 1))))
+	       (helm-marked-candidates :with-wildcard t)
+	       ",")))
+
+
+(defun oc-open-entry (selection)
+ (let ((mark (car selection)))
+   (switch-to-buffer (marker-buffer mark))
+   (goto-char (marker-position mark))
+   (show-subtree)))
+
+
+(defun oc-open-url (selection)
+  (let ((url (cdr (assoc "URL" (elt selection 1)))))
+    (when url
+      (browse-url url))))
+
+
+(defvar helm-source-org-contacts
+  '((name                            . "Contacts")
+    (candidates                      . org-contaqcts-db)
+    (action . (("Email"              . oc-email)
+	       ("web"                . oc-open-url)
+               ("Show entry"         . oc-open-entry))))
+  "Source for searching in org-contacts.")
+
+(defun helm-org-contacts ()
+  "Search BibTeX entries."
+  (interactive)
+  (helm :sources '(helm-source-org-contacts)
+        :candidate-number-limit 500))
+#+END_SRC
+
+#+RESULTS:
+: helm-org-contacts
+
+* org-ref-helm
+  :PROPERTIES:
+  :ARCHIVE_TIME: 2015-07-26 Sun 19:24
+  :ARCHIVE_FILE: ~/blogofile-jkitchin.github.com/_blog/blog.org
+  :ARCHIVE_CATEGORY: blog
+  :END:
+Inspired by [[https://github.com/tmalsburg/helm-bibtex][helm-bibtex]], here I explore a way to insert citations using some helm-bibtex machinery. The gist of helm-bibtex is it scans your bib files, offers spectacular search and select capability, and then your choice of actions on those. The default action is to open the pdf, but I want the default action to be to insert a link.
+
+#+BEGIN_SRC emacs-lisp
+(require 'helm-bibtex)
+
+(defun helm-bibtex-format-org-ref (keys)
+  "insert selected KEYS as cite link. Append KEYS if you are on a link."
+  (let ((el (org-element-context)))
+    (message "%s" el)
+    (if (eq 'link (car el))
+	(progn
+	  (goto-char (org-element-property :end el))
+	  (concat "," (s-join "," keys)))
+      (concat "cite:" (s-join "," keys)))))
+
+(setq helm-bibtex-format-citation-functions
+      '((org-mode . helm-bibtex-format-org-ref)))
+
+
+(defvar org-ref-helm-source-bibtex
+  '((name                                      . "BibTeX entries")
+    (init                                      . helm-bibtex-init)
+    (candidates                                . helm-bibtex-candidates)
+    (filtered-candidate-transformer            . helm-bibtex-candidates-formatter)
+    (action . (("Insert citation"              . helm-bibtex-insert-citation)
+	       ("Open PDF file (if present)"   . helm-bibtex-open-pdf)
+               ("Open URL or DOI in browser"   . helm-bibtex-open-url-or-doi)
+               ("Insert reference"             . helm-bibtex-insert-reference)
+               ("Insert BibTeX key"            . helm-bibtex-insert-key)
+               ("Insert BibTeX entry"          . helm-bibtex-insert-bibtex)
+               ("Attach PDF to email"          . helm-bibtex-add-PDF-attachment)
+               ("Edit notes"                   . helm-bibtex-edit-notes)
+               ("Show entry"                   . helm-bibtex-show-entry))))
+  "Source for searching in BibTeX files.")
+
+;;;###autoload
+(defun org-ref-helm-bibtex ()
+  "Search BibTeX entries."
+  (interactive)
+  (helm :sources '(org-ref-helm-source-bibtex helm-source-fallback-options)
+        :full-frame t
+        :candidate-number-limit 500))
+#+END_SRC
+
+#+RESULTS:
+: org-ref-helm-bibtex
+
+* Find org-files that mention a citation
+  :PROPERTIES:
+  :ARCHIVE_TIME: 2015-07-26 Sun 19:24
+  :ARCHIVE_FILE: ~/blogofile-jkitchin.github.com/_blog/blog.org
+  :ARCHIVE_CATEGORY: blog
+  :END:
+
+
+
+
+I want to find all my org-files in some tree that cite this paper cite:kitchin-2004-role.
+
+#+BEGIN_SRC emacs-lisp
+(rgrep "kitchin-2004-role\\(;\\|:\\|.\\|,\\| \\)" "*.org" "~/Dropbox/CMU/manuscripts")
+#+END_SRC
+
+#+RESULTS:
+
+kitchin-2004-role-strain
+
+
+
+#+BEGIN_SRC emacs-lisp
+(switch-to-buffer (grep-find "find ~/Dropbox/CMU/manuscripts -type f -name \"*.org\" -exec grep -nH -e  \"kresse-1996-effic\\(;\\|:\\|.\\|,\\| \\)\" {} +"))
+#+END_SRC
+#+RESULTS:
+: #<buffer *grep*>
+
+cite:kresse-1996-effic
+
+
+#+BEGIN_SRC emacs-lisp
+(switch-to-buffer (grep-find "find ~/Dropbox/CMU/manuscripts -type f -name \"*.org\" -exec grep -nH -e  \"kitchin-\" {} +"))
+#+END_SRC
+#+RESULTS:
+: #<buffer *grep*>
+
+From techela
+#+BEGIN_SRC emacs-lisp
+(multi-occur (mapcar 'find-file-noselect
+		     (-filter
+		      'file-exists-p
+		      (files-in-below-directory
+		       "~/Dropbox/CMU/manuscripts")))
+	     "kitchin-2004-strain")
+#+END_SRC
+#+RESULTS:
+: t
+
+This returns t, it does not work!
+#+BEGIN_SRC emacs-lisp
+(multi-occur (mapcar 'find-file-noselect
+		     (f-entries "~/Dropbox/CMU/manuscripts"
+				(lambda (f) (string= (f-filename f) "manuscript.org")) t))
+	     "kitchin-2004-strain")
+#+END_SRC
+
+#+RESULTS:
+: t
+
+#+BEGIN_SRC emacs-lisp
+(helm-multi-occur (mapcar 'find-file-noselect
+		     (f-entries "~/Dropbox/CMU/manuscripts"
+				(lambda (f) (string= (f-filename f) "manuscript.org")) t)))
+#+END_SRC
+
+* crossref + doi
+  :PROPERTIES:
+  :ARCHIVE_TIME: 2015-07-26 Sun 19:24
+  :ARCHIVE_FILE: ~/blogofile-jkitchin.github.com/_blog/blog.org
+  :ARCHIVE_CATEGORY: blog
+  :END:
+
+[[http://www.crossref.org/][crossref.org]]
+
+#+BEGIN_SRC emacs-lisp
+(let ((url-request-method "GET")
+      (json-object-type 'plist)
+      (json-data))
+  (with-current-buffer
+      (url-retrieve-synchronously
+       "http://search.crossref.org/dois?q=john+kitchin+catalysis&&rows=3")
+      (setq json-data (buffer-substring url-http-end-of-headers (point-max)))
+      (json-read-from-string json-data)))
+#+END_SRC
+#+RESULTS:
+: [(:year "2012" :coins "ctx_ver=Z39.88-2004&amp;rft_id=info%3Adoi%2Fhttp%3A%2F%2Fdx.doi.org%2F10.1007%2Fs11244-012-9808-0&amp;rfr_id=info%3Asid%2Fcrossref.org%3Asearch&amp;rft.atitle=Preface%3A+Trends+in+Computational+Catalysis&amp;rft.jtitle=Topics+in+Catalysis&amp;rft.date=2012&amp;rft.volume=55&amp;rft.issue=5-6&amp;rft.spage=227&amp;rft.epage=228&amp;rft.aufirst=John&amp;rft.aulast=Kitchin&amp;rft_val_fmt=info%3Aofi%2Ffmt%3Akev%3Amtx%3Ajournal&amp;rft.genre=article&amp;rft.au=John+Kitchin" :fullCitation "John Kitchin, 2012, 'Preface: Trends in Computational Catalysis', <i>Topics in Catalysis</i>, vol. 55, no. 5-6, pp. 227-228" :title "Preface: Trends in Computational Catalysis" :normalizedScore 100 :score 3.5252514 :doi "http://dx.doi.org/10.1007/s11244-012-9808-0") (:year "2012" :coins "ctx_ver=Z39.88-2004&amp;rft_id=info%3Adoi%2Fhttp%3A%2F%2Fdx.doi.org%2F10.1039%2F9781849734776-00083&amp;rfr_id=info%3Asid%2Fcrossref.org%3Asearch&amp;rft.atitle=Coverage+dependent+adsorption+properties+of+atomic+adsorbates+on+late+transition+metal+surfaces&amp;rft.jtitle=Catalysis&amp;rft.date=2012&amp;rft.spage=83&amp;rft.epage=115&amp;rft.aufirst=Spencer&amp;rft.aulast=Miller&amp;rft_val_fmt=info%3Aofi%2Ffmt%3Akev%3Amtx%3Abook&amp;rft.genre=bookitem&amp;rft.au=Spencer+Miller&amp;rft.au=+Carmeline+Dsilva&amp;rft.au=+John+R.+Kitchin" :fullCitation "Spencer Miller, Carmeline Dsilva, John R. Kitchin, 2012, 'Coverage dependent adsorption properties of atomic adsorbates on late transition metal surfaces', <i>Catalysis</i>, pp. 83-115" :title "Coverage dependent adsorption properties of atomic adsorbates on late transition metal surfaces" :normalizedScore 85 :score 3.021644 :doi "http://dx.doi.org/10.1039/9781849734776-00083") (:year "2014" :coins "ctx_ver=Z39.88-2004&amp;rft_id=info%3Adoi%2Fhttp%3A%2F%2Fdx.doi.org%2F10.1016%2Fj.catcom.2013.10.028&amp;rfr_id=info%3Asid%2Fcrossref.org%3Asearch&amp;rft.atitle=Relating+the+electronic+structure+and+reactivity+of+the+3d+transition+metal+monoxide+surfaces&amp;rft.jtitle=Catalysis+Communications&amp;rft.date=2014&amp;rft.volume=52&amp;rft.spage=60&amp;rft.epage=64&amp;rft.aufirst=Zhongnan&amp;rft.aulast=Xu&amp;rft_val_fmt=info%3Aofi%2Ffmt%3Akev%3Amtx%3Ajournal&amp;rft.genre=article&amp;rft.au=Zhongnan+Xu&amp;rft.au=+John+R.+Kitchin" :fullCitation "Zhongnan Xu, John R. Kitchin, 2014, 'Relating the electronic structure and reactivity of the 3d transition metal monoxide surfaces', <i>Catalysis Communications</i>, vol. 52, pp. 60-64" :title "Relating the electronic structure and reactivity of the 3d transition metal monoxide surfaces" :normalizedScore 85 :score 3.021644 :doi "http://dx.doi.org/10.1016/j.catcom.2013.10.028")]
+
+#+BEGIN_SRC emacs-lisp
+(url-hexify-string "10.1016/j.catcom.2013.10.028")
+#+END_SRC
+#+RESULTS:
+: 10.1016%2Fj.catcom.2013.10.028
+
+#+BEGIN_SRC emacs-lisp
+(url-unhex-string "10.1016%2Fj.catcom.2013.10.028")
+#+END_SRC
+#+RESULTS:
+: 10.1016/j.catcom.2013.10.028
+
+#+BEGIN_SRC emacs-lisp
+(defun cross-ref-search ()
+  (interactive)
+  (browse-url
+   (format
+    "http://search.crossref.org/?q=%s"
+    (if (use-region-p)
+	(url-hexify-string (buffer-substring
+			    (region-beginning)
+			    (region-end)))
+      (read-string "string: ")))))
+#+END_SRC
+
+* More doi utility functions
+  :PROPERTIES:
+  :ARCHIVE_TIME: 2015-07-26 Sun 19:25
+  :ARCHIVE_FILE: ~/blogofile-jkitchin.github.com/_blog/blog.org
+  :ARCHIVE_CATEGORY: blog
+  :END:
+
+#+BEGIN_SRC emacs-lisp
+(defun doi-utils-google-scholar (doi)
+ "DOI can be any query."
+ (interactive "sDOI: ")
+ (browse-url (format "http://scholar.google.com/scholar?hl=en&q=%s" (url-hexify-string doi))))
+
+(doi-utils-google-scholar "10.1021/jp047349j")
+#+END_SRC
+
+#+RESULTS:
+: #<process open http://scholar.google.com/scholar?hl=en&q=10.1021%2Fjp047349j>
+
+#+BEGIN_SRC emacs-lisp
+(defun doi-utils-crossref (doi)
+ (interactive "sDOI: ")
+ (browse-url (format "http://search.crossref.org/?q=%s" (url-hexify-string doi))))
+
+(doi-utils-crossref "10.1021/jp047349j")
+#+END_SRC
+
+#+RESULTS:
+: #<process open http://search.crossref.org/?q=10.1021%2Fjp047349j>
+
+http://wokinfo.com/products_tools/products/related/webservices/
+
+I requested access for this ip address: 128.2.54.215
+[[google:my ip address]]
+
+soap
+http://search.isiknowledge.com/esti/wokmws/ws/
+
+
+#+BEGIN_SRC emacs-lisp
+(defun doi-utils-ads (query)
+ "run QUERY in the Harvard abstract simple search."
+ (interactive "sQuery: ")
+ (browse-url (format "http://adsabs.harvard.edu/cgi-bin/nph-basic_connect?qsearch=%s&version=1" (url-hexify-string doi))))
+
+(doi-utils-ads "kitchin and barteau")
+#+END_SRC
+
+#+RESULTS:
+: #<process open http://adsabs.harvard.edu/cgi-bin/nph-basic_connect?qsearch=kitchin%20and%20barteau&version=1>
+
+* Setting up gnus for email
+  :PROPERTIES:
+  :ARCHIVE_TIME: 2015-07-26 Sun 19:27
+  :ARCHIVE_FILE: ~/blogofile-jkitchin.github.com/_blog/blog.org
+  :ARCHIVE_CATEGORY: blog
+  :END:
+I have used gmail for a long time. There is a lot I like about it. Email for me is information that comes to me that I need to read, handle in some way, and then move on to the next thing. I do not store things in email, and I do not file or tag emails; I rely on gmail's search ability to find email if I ever need to (which I find is very rare). I aim for a zero-inbox with email, because that means there is nothing there I need to handle.
+
+My typical workflow is to open my inbox, and read the new mails. If I can delete them immediately, I do that. If I can respond immediately, I do that and archive the email. If I need some time to reply, I store a link to the email in my todo list with a deadline (in org-mode, of course), and archive the email. If it will only be a day or so until I can reply, I sometimes leave it in my inbox and reply later. This works pretty well, and I usually have less than one screen of emails at any given time.
+
+I have wanted to read email in emacs for a long time, because it would streamline the storing of links to emails, and I would not have to switch between firefox and emacs to do that. It would also make writing emails simpler for me. I already use gnus to read some newsgroups, so I want to also start reading email in it. gnus has some different ideas about mail, so I am trying to learn how to make it do what I want. By default, gnus only shows unread messages. I need it to show me all the messages in the inbox.
+
+I also want some communication between gnus and gmail. If I delete a mail in gnus, I want it deleted in gmail. If I archive it in gnus, I want it archived in gmail. And, I want the send+archive behavior I like in gmail to work in gnus.
+
+| open email               | RET     |
+| reply                    |         |
+| reply-all                |         |
+| forward                  |         |
+| send                     | C-c C-c |
+| send and archive         |         |
+| delete mail              |         |
+| archive mail             |         |
+| mark unread              | M-u     |
+| capture mail in org-mode | C-c c e |
+
+
+** Sending email
+
+[[file:~/Dropbox/kitchingroup/jmax/emacs-24.3/lisp/gnus/message.el::(defun%20message-send-and-exit%20(&optional%20arg)][file:~/Dropbox/kitchingroup/jmax/emacs-24.3/lisp/gnus/message.el::(defun message-send-and-exit (&optional arg)]]
+
+It looks like you can define these actions
+message-exit-actions [[file:~/Dropbox/kitchingroup/jmax/emacs-24.3/lisp/gnus/message.el::(defvar%20message-exit-actions%20nil][file:~/Dropbox/kitchingroup/jmax/emacs-24.3/lisp/gnus/message.el::(defvar message-exit-actions nil]]
+
+(defvar message-exit-actions nil
+  "A list of actions to be performed upon exiting after sending a message.")
+
+This looks like a list of functions that are called with no argument after the message is sent. see [[file:~/Dropbox/kitchingroup/jmax/emacs-24.3/lisp/gnus/message.el::(defun%20message-do-actions%20(actions)][file:~/Dropbox/kitchingroup/jmax/emacs-24.3/lisp/gnus/message.el::(defun message-do-actions (actions)]]
+
+see [[file:~/Dropbox/kitchingroup/jmax/emacs-24.3/lisp/simple.el::(defun%20compose-mail%20(&optional%20to%20subject%20other-headers%20continue][file:~/Dropbox/kitchingroup/jmax/emacs-24.3/lisp/simple.el::(defun compose-mail (&optional to subject other-headers continue]] to see how to specify actions from compose-mail.
+
+maybe it is possible to temporarily define a function to run. see http://www.gnu.org/software/emacs/manual/html_node/message/Message-Actions.html
+
+[[file:~/Dropbox/kitchingroup/jmax/emacs-24.3/lisp/gnus/message.el::(defun%20message-add-action%20(action%20&rest%20types)][file:~/Dropbox/kitchingroup/jmax/emacs-24.3/lisp/gnus/message.el::(defun message-add-action (action &rest types)]]
+[[file:~/Dropbox/kitchingroup/jmax/emacs-24.3/lisp/gnus/message.el::(defun%20message-delete-action%20(action%20&rest%20types)][file:~/Dropbox/kitchingroup/jmax/emacs-24.3/lisp/gnus/message.el::(defun message-delete-action (action &rest types)]]
+we need a temporary action! something like: http://www.chemie.fu-berlin.de/chemnet/use/info/elisp/elisp_13.html
+
+  (apply 'message-add-action 'gt (list 'exit))
+#+BEGIN_SRC emacs-lisp
+(defmacro with-temp-message-action (action types &rest body)
+  "temporarily have action for a message.
+action is the same as the message-add-action definition
+types is a list of 'exit 'postpone 'kill
+body is the code to use in the temporary definition.
+"
+  (apply 'message-add-action action types)
+  ,@body
+  (apply 'message-delete action types))
+
+(with-temp-message-action 'gt '(list 'exit)
+			  (message "we workd"))
+#+END_SRC
+
+#+BEGIN_SRC emacs-lisp
+
+(defun gt () (message "whoo"))
+(add-to-list 'message-exit-actions 'gt)
+
+(compose-mail "jkitchin@cmu.edu" "test")
+#+END_SRC
+
+#+RESULTS:
+: t
+
+we also have message-sent-hookand message-send-hook
+
+let us try a variation with that:
+
+#+BEGIN_SRC emacs-lisp
+(defun org-contacts-gnus-article-to-get-marker ()
+  "Return a marker for a contact based on From."
+  (let* ((address (mail-extract-address-components
+         (or (mail-fetch-field "To") "")))
+         (name (car address))
+         (email (cadr address)))
+    (when email
+    (cadar (or (org-contacts-filter
+                nil
+		nil
+                (cons org-contacts-email-property (concat "\\b" (regexp-quote email) "\\b")))
+               (when name
+                 (org-contacts-filter
+                  (concat "^" name "$"))))))))
+
+
+(defun org-contacts-gnus-store-last-sent-mail ()
+  "Store a link between mails and contacts.
+
+This function should be called from `message-send-hook'."
+(interactive)
+  (let ((marker (org-contacts-gnus-article-to-get-marker)))
+    (when marker
+      (with-current-buffer (marker-buffer marker)
+        (save-excursion
+          (goto-char marker)
+	  (org-set-property "LAST_SENT_MAIL" (current-time-string)))))))
+
+(add-hook 'message-send-hook 'org-contacts-gnus-store-last-sent-mail)
+#+END_SRC
+
+#+RESULTS:
+| org-contacts-gnus-store-last-sent-mail |
+
+* extracting an org-contact from a gnus message
+  :PROPERTIES:
+  :ARCHIVE_TIME: 2015-07-26 Sun 19:27
+  :ARCHIVE_FILE: ~/blogofile-jkitchin.github.com/_blog/blog.org
+  :ARCHIVE_CATEGORY: blog
+  :END:
+** getting it in the From field
+
+try to get name from mail
+#+BEGIN_SRC emacs-lisp
+(defun gne ()
+  (interactive)
+  (if (org-contacts-gnus-article-from-get-marker)
+      (message "you have that contact")
+    (message "%s" (org-contacts-gnus-get-name-email))))
+#+END_SRC
+
+#+RESULTS:
+: gne
+
+try sticking entry in. you run this from a gnus article. should this happen automatically? we should
+#+BEGIN_SRC emacs-lisp
+(defun hare ()
+  (interactive)
+(let ((org-contacts-files '("test-contacts.org")))
+
+  (let* ((r (org-contacts-gnus-get-name-email))
+	 (name (nth 0 r))
+	 (email (nth 1 r)))
+    (find-file "test-contacts.org")
+    (end-of-buffer)
+    (insert (format "\n* %s" name))
+    (org-entry-put (point) "EMAIL" email)
+    (org-entry-put (point) "CREATED" (current-time-string))
+    (save-buffer))))
+#+END_SRC
+
+#+RESULTS:
+: hare
+
+#+BEGIN_SRC emacs-lisp
+
+#+END_SRC
+
+* getting emails in org-contacts by tags
+  :PROPERTIES:
+  :ARCHIVE_TIME: 2015-07-26 Sun 19:28
+  :ARCHIVE_FILE: ~/blogofile-jkitchin.github.com/_blog/blog.org
+  :ARCHIVE_CATEGORY: blog
+  :END:
+#+BEGIN_SRC emacs-lisp
+(find-file "contacts-bbdb.org")
+(let ((todo-only nil))
+  (org-scan-tags
+   (lambda ()
+     (org-entry-get (point) "EMAIL")) ; action
+  (cdr (org-make-tags-matcher "group-ms")) ; matcher
+nil))
+#+END_SRC
+
+#+RESULTS:
+| jboes@cmu.edu | mehakc@andrew.cmu.edu | mcurnan@andrew.cmu.edu | qingqif@andrew.cmu.edu | ahallenb@andrew.cmu.edu | jdmichae@andrew.cmu.edu | zhongnanxu@cmu.edu |
+
+
+#+BEGIN_SRC emacs-lisp :results raw
+(find-file "contacts-bbdb.org")
+(let ((todo-only nil))
+   (cdr (org-make-tags-matcher "group-phd")))
+#+END_SRC
+
+#+RESULTS:
+(and (progn (setq org-cached-props nil) (and (not (member phd tags-list)) (member group tags-list))) t)
+
+
+#+BEGIN_SRC emacs-lisp
+(defun insert-emails-from-tags (tags)
+  (interactive "sTags: ")
+  (insert
+   (save-window-excursion
+     (find-file "contacts-bbdb.org")
+     (mapconcat
+      'identity
+      (let ((todo-only nil))
+	(org-scan-tags
+	 (lambda ()
+	   (org-entry-get (point) "EMAIL")) ; action
+	 (cdr (org-make-tags-matcher tags)) ; matcher
+	 nil)) ", "))))
+#+END_SRC
+
+#+RESULTS:
+: add-emails-from-tags
+
+ngovinda@andrew.cmu.edu,meihengl@andrew.cmu.edu,wenqiny@andrew.cmu.edu
+
+#+BEGIN_SRC emacs-lisp
+(insert-emails-from-tags "{^co.*}") ;no return
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC emacs-lisp
+(insert-emails-from-tags "FIRSTNAME=\"John\"") ; no matches
+#+END_SRC
+
+#+RESULTS:
+
+* Cleaning a bibtex entry
+  :PROPERTIES:
+  :ARCHIVE_TIME: 2015-07-26 Sun 19:28
+  :ARCHIVE_FILE: ~/blogofile-jkitchin.github.com/_blog/blog.org
+  :ARCHIVE_CATEGORY: blog
+  :END:
+
+#+BEGIN_SRC emacs-lisp
+(defun org-ref-clean-bibtex-entry()
+  "clean and replace the key in a bibtex function"
+  (interactive)
+  (bibtex-beginning-of-entry)
+
+  ;; check for empty pages, and put eid or article id in its place
+  (let ((entry (bibtex-parse-entry))
+	(pages (bibtex-autokey-get-field "pages"))
+	(eid (bibtex-autokey-get-field "eid")))
+
+    ;; fix pages if they are empty
+    (cond
+     ((string= "-" pages)
+      (when eid
+	(bibtex-beginning-of-entry)
+	;; this seems like a clunky way to set the pages field.But I
+	;; cannot find a better way.
+	(goto-char (car (cdr (bibtex-search-forward-field "pages" t))))
+	(bibtex-kill-field)
+	(bibtex-make-field "pages")
+	(backward-char)
+	(insert eid))))
+
+    ;; generate a key, and if it duplicates an existing key, edit it.
+    (let ((key (bibtex-generate-autokey)))
+
+      ;; first we delete the existing key
+      (bibtex-beginning-of-entry)
+      (re-search-forward bibtex-entry-maybe-empty-head)
+      (if (match-beginning bibtex-key-in-head)
+	  (delete-region (match-beginning bibtex-key-in-head)
+			 (match-end bibtex-key-in-head)))
+      ;; check if the key is in the buffer
+      (when (save-excursion
+	      (bibtex-search-entry key))
+	  (setq key (bibtex-read-key "Duplicate Key found, edit: " key)))
+
+      (insert key)
+      (kill-new key)) ;; save key for pasting
+
+    (bibtex-fill-entry)  ; this realigns the entry
+    (bibtex-clean-entry) ; we do not replace our key
+
+    ;; check for non-ascii characters
+    (occur "[^[:ascii:]]")
+
+    ;; one day reorder and downcase the fields
+    ;; I can get all the fields like this
+    ;; (bibtex-parse-entry t)
+    ))
+#+END_SRC
+
+cite:daza-2014-carbon-dioxid
+
+* Importing google contacts into bbdb
+  :PROPERTIES:
+  :ARCHIVE_TIME: 2015-07-26 Sun 19:30
+  :ARCHIVE_FILE: ~/blogofile-jkitchin.github.com/_blog/blog.org
+  :ARCHIVE_CATEGORY: blog
+  :END:
+
+I am giving bbdb a try in emacs. I installed it from ELPA, and I am not sure if it is version 2 or 3, but it seems to work ok. The main reason I want it is so I can use email address completion in emails from Emacs.
+
+The first thing I had to do was add this to my init files. Apparently the icicle-bbdb-complete-name function is not defined, so this takes care of that.
+#+BEGIN_SRC emacs-lisp
+;; This is not defined in my bbdb/icicles installation. This lets me use tab-completion.
+(defalias 'icicle-bbdb-complete-name 'bbdb-complete-mail)
+#+END_SRC
+
+Next, I wanted to get my google contacts into bbdb. I am only going to do this once, to get most of what I need in. In the future, I suppose I will just add new contacts manually.  So, first, I exported my google contacts to a csv file. Google does some crazy scraping, so there were nearly 4000 contacts in that list. Not all of them were emails. I used this little python script to write out the first 5 columns of that file to a new file, as long as there was something in the first column.
+
+#+BEGIN_SRC python
+import csv
+
+with open('contacts.csv', 'rb') as csvfile:
+    spamreader = csv.reader(csvfile, delimiter=',')
+
+    with open('new-contacts.csv', 'w') as f:
+        for row in spamreader:
+            if row[0]:
+                f.write(','.join(row[0:5])+'\n')
+                print ','.join(row[0:5])
+#+END_SRC
+
+Then, I manually went through the file deleting many obviously bad entries. It was just shy of interesting to see what was in there. I renamed the first line to have heading names with no spaces in them. So, the csv file eventually looked like this:
+
+#+BEGIN_EXAMPLE
+fname,mname,lname,email1,email2
+Jennifer,,blahlan,fda@andrew.cmu.edu,
+#+END_EXAMPLE
+
+
+From there, I found a csv elisp file (http://ulf.epplejasper.de/EmacsGeneralPurpose.html) that can import a csv file to a lisp data structure. So, I read in the csv file, and then applied a function to each entry that created a bbdb entry with the information in the csv entry like this:
+
+#+BEGIN_SRC emacs-lisp
+#+BEGIN_SRC emacs-lisp
+(let* ((b (find-file "new-contacts.csv"))
+       (bbdb-allow-duplicates t)
+       (contents (csv-parse-buffer t b)))
+  (mapcar (lambda (x)
+	    (let* ((fname (cdr (nth 0 x)))
+		   (mname (cdr (nth 1 x)))
+		   (lname (cdr (nth 2 x)))
+		   (email1 (cdr (nth 3 x)))
+		   (name (format "%s %s %s" fname mname lname)))
+	      (bbdb-create-internal name nil nil nil email1))) contents))
+#+END_SRC
+
+Setting =(bbdb-allow-duplicates t)= was probably a mistake, it would have been better to leave this a false, catch the errors, and continue. But, it is easy to find duplicates in bbdb, and then manually delete them. In the end, I have 2648 "contacts" in my bbdb
+
+* Sending email in emacs
+  :PROPERTIES:
+  :categories: emacs,email
+  :ARCHIVE_TIME: 2015-07-26 Sun 19:31
+  :ARCHIVE_FILE: ~/blogofile-jkitchin.github.com/_blog/blog.org
+  :ARCHIVE_CATEGORY: blog
+  :END:
+
+I would like to be able to regularly send email from emacs (one day I would like to read it too). The reason for this is simply that I have a lot of information stored in files I often read in Emacs, and I want to be able to select that information and quickly email it to someone. I need this to work smoothly on Windows and Linux.
+
+There are numerous blog posts on how to set this up, but many are out of date, or work on Linux only.  Here I am documenting what seems to work for me. In my emacs init files, I have this:
+
+
+#+BEGIN_SRC text :tangle ~/.authinfo
+machine smtp.andrew.cmu.edu login jkitchin port 587 password blahbity-blah
+#+END_SRC
+
+Note that this file has my actual password in it.
+
+Now, I can type C-x m to start an email, or use one my functions to email a selection or org-heading, and the emails get sent.
+- [X] home office
+- [ ] home tablet
+- [ ] office slate
+- [ ] office linux
+- [ ] office laptop
+
+** take 1
+
+Here I am following this post http://wideaperture.net/blog/?p=3343
+
+#+BEGIN_SRC emacs-lisp
+;;Configure Outbound Mail
+
+;;Tell the program who you are
+
+(setq user-full-name "John Kitchin")
+(setq user-mail-address "johnrkitchin@gmail.com")
+
+;;Tell Emacs to use GNUTLS instead of STARTTLS
+;;to authenticate when sending mail.
+
+(setq starttls-use-gnutls t)
+
+;;Tell Emacs about your mail server and credentials
+
+(setq send-mail-function 'smtpmail-send-it
+      message-send-mail-function 'smtpmail-send-it
+      smtpmail-starttls-credentials
+      '(("smtp.gmail.com" 587 nil nil))
+
+      smtpmail-default-smtp-server "smtp.gmail.com"
+      smtpmail-smtp-server "smtp.gmail.com"
+      smtpmail-smtp-service 587
+      smtpmail-debug-info t)
+(require 'smtpmail)
+#+END_SRC
+
+(require 'gnutls)
+(open-gnutls-stream "tls" "tls-buffer" "imap.aim.com" "imaps")
+
+ftp://ftp.gnutls.org/gcrypt/gnutls/w32/
+
+this needs a .authinfo file. it works on home-office computer, but not on home tablet.
+
+#+BEGIN_SRC text
+machine smtp.andrew.cmu.edu login jkitchin port 587 password jfkdlajfdkl;
+machine cyrus.andrew.cmu.edu login jkitchin password fjdkslafjsdkals
+
+#+END_SRC
+
+** Using msmtp
+this worked on my home tablet
+
+http://www.emacswiki.org/emacs/GnusMSMTP
+
+#+BEGIN_SRC emacs-lisp
+;; This is needed to allow msmtp to do its magic:
+(setq message-sendmail-f-is-evil 't)
+
+;;need to tell msmtp which account we're using
+(setq message-sendmail-extra-arguments '("--read-envelope-from"))
+
+;; with Emacs 23.1, you have to set this explicitly (in MS Windows)
+;; otherwise it tries to send through OS associated mail client
+(setq message-send-mail-function 'message-send-mail-with-sendmail)
+;; we substitute sendmail with msmtp
+(setq sendmail-program "c:/Users/jkitchin/Desktop/GetGnuWin32/bin/msmtp.exe")
+;;need to tell msmtp which account we're using
+(setq message-sendmail-extra-arguments '("-a" "gmail"))
+;; you might want to set the following too
+(setq mail-host-address "gmail.com")
+(setq user-full-name "John Kitchin")
+(setq user-mail-address "johnrkitchin@gmail.com")
+#+END_SRC
+#+RESULTS:
+: johnrkitchin@gmail.com
+
+
+It appears we have an msmtp installed from our git installation.
+
+
+#+BEGIN_SRC sh
+which msmtp
+#+END_SRC
+
+#+RESULTS:
+: C:\Program Files (x86)\Git\bin\msmtp.EXE
+
+We can check the version like this.
+
+#+BEGIN_SRC sh
+msmtp --version
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+msmtp version 1.4.17
+TLS/SSL library: OpenSSL
+Authentication library: GNU SASL
+Supported authentication methods:
+plain cram-md5 digest-md5 external login
+IDN support: disabled
+NLS: disabled
+Keyring support: none
+System configuration file name: C:\ProgramData\msmtprc.txt
+User configuration file name: c:/Users/jkitchin/\msmtprc.txt
+
+Copyright (C) 2008 Martin Lambers and others.
+This is free software.  You may redistribute copies of it under the terms of
+the GNU General Public License <http://www.gnu.org/licenses/gpl.html>.
+There is NO WARRANTY, to the extent permitted by law.
+#+end_example
+
+It is not the most recent version. Next, create c:/Users/jkitchin/\msmtprc.txt with contents that look like this. I have two accounts that I could send email from, and they are listed here.
+
+#+BEGIN_SRC text
+########################
+account default
+host smtp.andrew.cmu.edu
+tls on
+tls_certcheck off
+auth on
+from jkitchin@andrew.cmu.edu
+user jkitchin
+password tjkdjfkd
+port 587
+logfile c:\msmtplog.txt
+########################
+account gmail
+host smtp.gmail.com
+tls on
+tls_certcheck off
+auth on
+from johnrkitchin@gmail.com
+user johnrkitchin@gmail.com
+password fjdklafd
+port 587
+
+logfile c:\msmtplog.txt
+########################
+#+END_SRC
+
+Now we follow the suggestions at http://www.emacswiki.org/emacs/GnusMSMTP to configure emacs
+
+#+BEGIN_SRC emacs-lisp
+;; This is needed to allow msmtp to do its magic:
+(setq message-sendmail-f-is-evil 't)
+
+;;need to tell msmtp which account we're using
+(setq message-sendmail-extra-arguments '("--read-envelope-from"))
+
+(setq message-send-mail-function 'message-send-mail-with-sendmail)
+
+;; we substitute sendmail with msmtp
+(setq sendmail-program "C:/Program Files (x86)/Git/bin/msmtp.EXE")
+
+;;need to tell msmtp which account we're using
+(setq message-sendmail-extra-arguments '("-a" "andrew"))
+#+END_SRC
