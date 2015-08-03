@@ -1,39 +1,8 @@
-* DONE A highlight annotation mode for Emacs using font-lock
-  CLOSED: [2015-07-28 Tue 10:57]
-  :PROPERTIES:
-  :categories: emacs,annotation
-  :date:     2015/07/28 10:57:17
-  :updated:  2015/07/31 09:17:40
-  :END:
-One of my students asked about highlighting text in emacs for note-taking. I can see some advantages for doing it while teaching, for example, and for students studying, so here we we work it out.
+;;; highlights.el --- Highlight text in emacs
 
-You will definitely want to see the video on this one, the highlights do not show up in the published html. https://www.youtube.com/watch?v=Cvz2tiT12-I
+;;; Commentary:
+;;
 
-For temporary use, highlighting is pretty easy, you just set a property on a region, e.g. the background color. For example, we can do this:
-
-#+BEGIN_SRC emacs-lisp
-; this seems to be necessary to get the tooltips to work.
-(setq font-lock-extra-managed-props (delq 'help-echo font-lock-extra-managed-props))
-
-(defun highlight-region (beg end)
- (interactive "r")
- (set-text-properties
-  beg end
-  '(font-lock-face (:background "Light Salmon")
-		   highlighted t
-		   help-echo "highlighted")))
-
-(global-set-key (kbd "s-h") 'highlight-region)
-#+END_SRC
-
-#+RESULTS:
-: highlight-region
-
-This sets the background color, and another property "highlighted" that we will use later. The trouble is this is transient. When I close the file, the highlights are lost. We can save them to a file though, and reload them later. As long as we are diligent about that we should be able to provide persistent highlights.
-
-First we need a function to get all the highlights, their start and end, their color, and if there is a help-echo which provides a tooltip. We will see why later. Here we loop through the buffer collecting highlights, and return a list of them.
-
-#+BEGIN_SRC emacs-lisp
 (defun highlight-get-highlights ()
   "Scan buffer for list of highlighted regions.
 These are defined only by the highlighted property. That means
@@ -72,17 +41,6 @@ the color of the first one."
 	  (goto-char end)))
       highlights)))
 
-(highlight-get-highlights)
-#+END_SRC
-
-#+RESULTS:
-|  438 |  454 | Light Salmon | highlighted |
-| 1014 | 1031 | Light Salmon | highlighted |
-
-
-Next, we generate a filename, and a function to save the highlights to disk. We make it a hook function that runs every time we save the buffer.
-
-#+BEGIN_SRC emacs-lisp
 (defun highlight-save-filename ()
   "Return name of file to save overlays in."
   (when (buffer-file-name)
@@ -103,23 +61,7 @@ first character of the region. Delete highlight file if it is empty."
 	  (delete-file fname)))))
 
 (add-hook 'after-save-hook 'highlight-save)
-#+END_SRC
 
-#+RESULTS:
-| highlight-save | helm-swoop--clear-cache |
-
-
-#+BEGIN_SRC sh
-cat .highlights.org.highlights
-#+END_SRC
-
-#+RESULTS:
-:
-: ((438 454 "Light Salmon" "highlighted") (1014 1031 "Light Salmon" "highlighted"))
-
-Here, we can read the contents and apply the highlights. We set this up on a hook for org-mode, so it will apply them on when we open org-files. You could make this more general if you plan to highlight in code files, for example.
-
-#+BEGIN_SRC emacs-lisp :results silent
 (defun highlight-load ()
   "Load and apply highlights."
   (interactive)
@@ -142,12 +84,7 @@ Here, we can read the contents and apply the highlights. We set this up on a hoo
 
 
 (add-hook 'org-mode-hook 'highlight-load)
-#+END_SRC
 
-
-Now, let's outdo ourselves in ridiculosity. We will add a helm-colors selector to give you unprecedented highlighting capability in multicolor magnificence. This function will highlight selected text, or update the color of an existing highlight.
-
-#+BEGIN_SRC emacs-lisp
 (defun highlight (beg end &optional color)
   "Highlight region from BEG to END with COLOR.
 COLOR is selected from `helm-colors' when run interactively."
@@ -170,16 +107,6 @@ COLOR is selected from `helm-colors' when run interactively."
    `(font-lock-face (:background ,color)
 		    highlighted t))))
 
-;; For convenience
-(global-set-key (kbd "s-h") 'highlight)
-#+END_SRC
-#+RESULTS:
-: highlight
-
-
-Now, we can conveniently highlight text in whatever color we want. How about list your highlights? After we have highlighted a lot, it might be nice to see a list of these we can click on to find our highlights more quickly.
-
-#+BEGIN_SRC emacs-lisp
 (defun highlight-list ()
   "Make a list of highlighted text in another buffer. "
   (interactive)
@@ -210,18 +137,26 @@ Now, we can conveniently highlight text in whatever color we want. How about lis
 		       'local-map map))))
 	  (setq buffer-read-only t))
       (message "No highlights found."))))
-#+END_SRC
 
-#+RESULTS:
-: highlight-list
-
-You probably would like to just select some text with your mouse, and have it highlighted. That requires us to advise the mouse-set-region function.
-
-#+BEGIN_SRC emacs-lisp
 (defun highlight-green ()
   "Highlight region in green."
   (interactive)
   (highlight (region-beginning) (region-end) "Darkolivegreen1"))
+
+(defun highlight-yellow ()
+  "Highlight region in yellow."
+  (interactive)
+  (highlight (region-beginning) (region-end) "Yellow"))
+
+(defun highlight-blue ()
+  "Highlight region in blue."
+  (interactive)
+  (highlight (region-beginning) (region-end) "LightBlue"))
+
+(defun highlight-pink ()
+  "Highlight region in pink."
+  (interactive)
+  (highlight (region-beginning) (region-end) "Pink"))
 
 ;; create the advice for use later
 (defadvice mouse-set-region (after my-highlight () disable)
@@ -238,12 +173,7 @@ You probably would like to just select some text with your mouse, and have it hi
   (interactive)
   (ad-disable-advice 'mouse-set-region 'after 'my-highlight)
   (ad-deactivate 'mouse-set-region))
-#+END_SRC
 
-#+RESULTS:
-: highlight-mouse-off
-
-#+BEGIN_SRC emacs-lisp
 (defun highlight-picasso-blues ()
  (interactive)
  (save-excursion
@@ -277,15 +207,7 @@ You probably would like to just select some text with your mouse, and have it hi
        (highlight (point) (+ 1 (point))
 		  (nth (mod (- (point) (region-beginning)) (length colors)) colors))
        (forward-char)))))
-#+END_SRC
 
-#+RESULTS:
-
-=These look cool, but they don't get properly saved. The code that finds the highlights finds the region, but only saves the first color. That means that adjacent highlights of different color will also not be saved correctly.
-
-How about a highlight with your own tooltip? In theory we can set the help-echo property to some text. In practice I have found this tricky because font-lock occasionally erases help-echo properties on re-fontifying. We remove help-echo from a list of properties that are affected by this, but another library may add it back, and there might be some unintended consequences of that. Here we design a function to highlight with a user-defined tooltip.
-
-#+BEGIN_SRC emacs-lisp
 (defun highlight-note (beg end color &optional note)
   "Highlight selected text and add NOTE to it as a tooltip."
   (interactive
@@ -309,17 +231,7 @@ How about a highlight with your own tooltip? In theory we can set the help-echo 
 	 (beg (car region))
 	 (end (cdr region)))
     (put-text-property beg end 'help-echo new-note)))
-#+END_SRC
 
-#+RESULTS:
-=highlight-note-edit
-==highlight-note-edit
-==highlight-note-edit
-==highlight-note-edit
-=C
-Want to get rid of the highlights? We may want to delete one or all. We make a function for each.
-
-#+BEGIN_SRC emacs-lisp
 (defun highlight-clear ()
   "Clear highlight at point."
   (interactive)
@@ -343,33 +255,6 @@ They are really deleted when you save the buffer."
    (highlight-get-highlights))
   (when (get-buffer "*highlights*")
     (kill-buffer "*highlights*")))
-#+END_SRC
-#+RESULTS:
-: highlight-clear-all
-
-Let's define a few convenience functions for common colors, a hydra to quickly select them and bind it to a key for convenience.  While we are at it, we add a menu to Org too.
-
-#+BEGIN_SRC emacs-lisp
-(defun highlight-yellow ()
-  "Highlight region in yellow."
-  (interactive)
-  (highlight (region-beginning) (region-end) "Yellow"))
-
-(defun highlight-blue ()
-  "Highlight region in blue."
-  (interactive)
-  (highlight (region-beginning) (region-end) "LightBlue"))
-
-(defun highlight-pink ()
-  "Highlight region in pink."
-  (interactive)
-  (highlight (region-beginning) (region-end) "Pink"))
-
-(defun highlight-green ()
-  "Highlight region in green."
-  (interactive)
-  (highlight (region-beginning) (region-end) "Darkolivegreen1"))
-
 
 (defhydra highlighter (:color blue) "highlighter"
   ("b" highlight-blue "blue")
@@ -403,17 +288,6 @@ Let's define a few convenience functions for common colors, a hydra to quickly s
    ["Delete highlights" highlight-clear-all])
  "Show/Hide")
 
+(provide 'highlights)
 
-(global-set-key (kbd "s-h") 'highlighter/body)
-#+END_SRC
-
-#+RESULTS:
-: highlighter/body
-
-
-** Known limitations
-The tooltips seem especially fragile, and if there is code that undoes the removal of help-echo from font-lock-extra-managed-props, it seems possible they would easily get lost. I wouldn't use them a lot without a lot of testing. You /have/ to rely on the hook functions defined to keep the highlights synchronized between the buffer and the external highlight file. If you were to rename a file externally, e.g. in the OS, or with a shell command, then the highlights will be lost unless you also rename the external file.
-
-Highlights are not robust enough to survive refiling an org-mode section from one file to another.  Personally I don't see these as too big a problem; I don't put a lot of value of highlights, but I can see it being pretty annoying to lose them!
-
-Still, if you want to give this a try, you can use the code here: [[./highlights.el]]. You should bind the functions to whatever keys you want. Also, it is setup to only work for org-mode. I am not sure what the best hook to use for any file might be. Maybe find-file-hook.
+;;; highlights.el ends here
