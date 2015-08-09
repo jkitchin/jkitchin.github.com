@@ -6,7 +6,7 @@ About us
 
 The Kitchin research group is run by Associate professor [John Kitchin](kitchin.html) in the Chemical Engineering Department at Carnegie Mellon University.
 
-Our group combines experimental and computational research to work on problems in electrochemistry, CO<sub>2</sub> capture, and materials design.
+Our group combines experimental and computational research to work on problems in electrochemistry, CO<sub>2</sub> capture, and catalytic materials design.
 
 I use this site to test concepts in using Python in engineering education and  materials modeling as well as in the integration of code and narrative text.
 
@@ -35,13 +35,9 @@ Current postdocs
 
 Current PhD students
 --------------------
--    Alex Hallenbeck (expected graduation: May 2016)
--    Matt Curnan (expected graduation: Summer 2015)   <span id='badgeCont798143' style='width:26px'><script src='http://labs.researcherid.com/mashlets?el=badgeCont798143&mashlet=badge&showTitle=false&className=a&rid=C-7870-2015&size=small'></script></span>
--    Zhongnan Xu (expected graduation: May 2016)
--    Jacob Boes (expected graduation: May 2017)
--    John Michael (expected graduation: May 2018)
--    Mehak Chawla (expected graduation: May 2018)
-
+-    [Alex Hallenbeck](http://orcid.org/0000-0002-1085-6553) (expected graduation: May 2016)
+-    [Zhongnan Xu](http://orcid.org/0000-0002-6930-2360) (expected graduation: May 2016)
+-    [Jacob Boes](http://orcid.org/0000-0002-7303-7782) (expected graduation: May 2017)
 
 Current Master's students
 -------------------------
@@ -54,7 +50,7 @@ Current Master's students
 Current Undergraduates
 -----------------------
 
-    No positions available
+-    Matt Palmer (Summer 2015)
 
 Former Group members
 ------------------------
@@ -64,7 +60,7 @@ Former Group members
   - Frank DeCarlo (M.S. 2010)
   - Sneha Akhade (M.S. 2011, Penn State)
   - Spencer Miller (PhD 2011, Combinatorics)
-  - James Landon (PhD 2011, CAER)
+  - James Landon (PhD 2011, CAER) <span id='badgeCont452283' style='width:26px'><script src='http://labs.researcherid.com/mashlets?el=badgeCont452283&mashlet=badge&showTitle=false&className=a&rid=C-6437-2013&size=small'></script></span>
   - Nilay Inoglu (PhD 2011, Exxon)
   - Rich Alesi (PhD 2012, Intel)
   - Robin Chao (PhD 2012, IBM)
@@ -78,6 +74,9 @@ Former Group members
   - Nitish Govindarajan (M.S. Dec 2014)
   - Meiheng Lu (M.S. Dec 2014)
   - Wenqin You (M.S. Dec 2014)
+  - [John Michael](http://orcid.org/0000-0002-1261-4910) (M.S. May 2015)
+  - [Mehak Chawla](http://orcid.org/0000-0002-5925-7527) (M.S. May 2015)
+  - [Matt Curnan](http://orcid.org/0000-0001-7999-9272) (PhD Summer 2015)   <span id='badgeCont798143' style='width:26px'><script src='http://labs.researcherid.com/mashlets?el=badgeCont798143&mashlet=badge&showTitle=false&className=a&rid=C-7870-2015&size=small'></script></span>
 
 </%self:filter>
 </article>

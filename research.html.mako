@@ -15,6 +15,9 @@ Metal oxide reactivity
 We are generally interested in understanding the reactivity of metal oxides towards oxygen and fuels. We use computational tools to model the electronic structure and reactivity of metal oxides for applications in water splitting and chemical looping.
 
 
+Alloy catalysis
+===============
+Alloy catalysts
 
 </%self:filter>
 </article>
