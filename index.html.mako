@@ -2,10 +2,10 @@
 <article class="page_box">
 <%self:filter chain="markdown">
 
-Welcome to the Kitchin Group Research
-=====================================
+Welcome to the Kitchin Group
+============================
 
-Our group utilizes chemistry, catalysis and engineering to develop solutions to energy and environment related problems such as CO<sub>2</sub> capture and chemical energy storage. We use experimental and computational methods in electrochemistry, sorbent development and electrocatalyst design.
+Our group utilizes chemistry, catalysis and engineering to develop solutions to energy and environment related problems such as CO<sub>2</sub> capture, catalyis and chemical energy storage. We use experimental and computational methods in electrochemistry, sorbent development and electro/catalyst design.
 
 <a href="/blog/category/news/">News</a>
 ====
@@ -39,9 +39,6 @@ ${date}  ${excerpt}
 <a href="${post.path}">click here for more</a>
 <br>
 
-
-
-<script src="http://syndic8.scopus.com/getMessage?registrationId=HAGDHBGEOCGMJAGIJAHIHEJDHJGGLIMGIIIKOHGJKD"></script>
 
 </%self:filter>
 </article>
