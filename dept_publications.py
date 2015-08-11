@@ -3,7 +3,12 @@ from scopus.my_scopus import MY_API_KEY
 from scopus.scopus_search import ScopusSearch
 from scopus.scopus_api import ScopusAbstract
 
-for YEAR in ['2010',
+for YEAR in ['2005',
+             '2006',
+             '2007',
+             '2008',
+             '2009',
+             '2010',
              '2011',
              '2012',
              '2013',
