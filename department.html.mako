@@ -7,6 +7,7 @@
 <li><a href="#sec-3">3. Department publications</a></li>
 <li><a href="#sec-4">4. Department on ResearchGate</a></li>
 <li><a href="#sec-5">5. CMU alumni in academia</a></li>
+<li><a href="#sec-6">6. Where do our PhD students come from?</a></li>
 </ul>
 </div>
 </div>
@@ -70,5 +71,12 @@ These publications were  derived from Scopus.
 <h2 id="sec-5"><span class="section-number-2">5</span> CMU alumni in academia</h2>
 <div class="outline-text-2" id="text-5">
 <iframe src="https://www.google.com/maps/d/embed?mid=zDNHhN3lg2P0.kKYunRBQeH6A" width="640" height="480"></iframe>
+</div>
+</div>
+
+<div id="outline-container-sec-6" class="outline-2">
+<h2 id="sec-6"><span class="section-number-2">6</span> Where do our PhD students come from?</h2>
+<div class="outline-text-2" id="text-6">
+<iframe width="100%" height="400" frameborder="0" scrolling="no" allowtransparency="true" src="https://mapalist.com/Public/pm.aspx?mapid=543490" ></iframe>
 </div>
 </div>
