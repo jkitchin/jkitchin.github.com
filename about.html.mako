@@ -4,7 +4,7 @@
 About us
 ========
 
-The Kitchin research group is run by Associate professor [John Kitchin](kitchin.html) in the Chemical Engineering Department at Carnegie Mellon University.
+The Kitchin research group is run by Professor [John Kitchin](kitchin.html) in the Chemical Engineering Department at Carnegie Mellon University.
 
 Our group combines experimental and computational research to work on problems in electrochemistry, CO<sub>2</sub> capture, and catalytic materials design.
 
