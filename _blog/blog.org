@@ -1,3 +1,323 @@
+* DONE Checking for email attachments before you send email
+  CLOSED: [2015-09-04 Fri 19:03]
+  :PROPERTIES:
+  :categories: emacs,email
+  :date:     2015/09/04 19:03:53
+  :updated:  2015/09/04 19:04:15
+  :END:
+Does this comic (http://www.phdcomics.com/comics/archive.php?comicid=1817) apply to you? Do you miss the Gmail feature that will alert you that it seems like you mention an attachment but there isn't one attached before it lets you send it? Let's make Emacs help us here. We will scan our emails for the word "attach", and if we see it, scan the email for evidence of an attachment. Then create a hook function that will prompt us if it appears we mention an attachment, but don't have one.
+
+An attachment looks like this in my messages:
+#+BEGIN_EXAMPLE
+<#part type="image/png" filename="~/Desktop/wordcloud.png" disposition=attachment>
+<#/part>
+#+END_EXAMPLE
+
+So, probably finding "<#part" in the buffer means I probably have an attachment. We will use the message-send-hook to run this function. Here is the code. Some brief testing from me seems to work fine! It is pretty simple, but probably good enough to save me from sending messages with no attachment, and not too intrusive for when no attachment is actually needed, e.g. in replies. Let me know if you have ideas for improvements.
+
+#+BEGIN_SRC emacs-lisp
+(defun email-says-attach-p ()
+  "Return t if email suggests there could be an attachment."
+  (save-excursion
+    (goto-char (point-min))
+    (re-search-forward "attach" nil t)))
+
+(defun email-has-attachment-p ()
+  "Return t if the currently open email has an attachment"
+  (save-excursion
+    (goto-char (point-min))
+    (re-search-forward "<#part" nil t)))
+
+(defun email-pre-send-check-attachment ()
+  (when (and (email-says-attach-p)
+	     (not (email-has-attachment-p)))
+    (unless
+	(y-or-n-p "Your email suggests you need an attachment, but no attachment was found. Send anyway?")
+      (error "It seems an attachment is needed, but none was found. Aborting send."))))
+
+(add-hook 'message-send-hook 'email-pre-send-check-attachment)
+#+END_SRC
+
+* dynamic yasnippet
+#+BEGIN_SRC emacs-lisp
+(yas-global-mode)
+(with-temp-buffer
+  (insert "# name : my-fortune
+# key: myf
+# expand-env: ((yas-indent-line nil)
+# --
+
+#+BEGIN_QUOTE:
+${1:`(shell-command-to-string \"fortune\")`}
+#END_QUOTE
+
+$0
+")
+  (yas-load-snippet-buffer-and-close 'org-mode))
+#+END_SRC
+
+#+RESULTS:
+
+
+* Dates in headers and sorting
+
+
+** [2013-09-02 Mon]
+** [2014-09-02 Tue]
+** [2015-09-02 Wed]
+
+* Python tutor
+  :PROPERTIES:
+  :ID:       198C4A99-8C35-4AC5-A487-6A82334603CC
+  :END:
+
+** Example requests to get hints.
+This is code to explore using the Python tutor That Kelly Rivers has developed. Below is an example that shows how to do it in Python.
+#+BEGIN_SRC python
+import json
+
+payload = {'needsReturn': True,
+           'code': '''def canDrinkAlcohol(age, isDriving):
+    return age >= 21 and not isDrivin
+''',
+           'userId': 'jkitchin',
+           'problemId': 'canDrinkAlcohol'}
+
+url = 'http://www.krivers.net/feedback/gethint.php'
+headers = {'Content-type': 'application/json'}
+
+import requests
+
+print requests.post(url, data=json.dumps(payload)).json()
+#+END_SRC
+
+#+RESULTS:
+: {u'hint': u"In line 2 replace <b>isDrivin</b> with something in the value of the unary operation.<br>If you're still stuck, ask for the next level of hint!"}
+
+
+Here is the equivalent code In Emacs Lisp
+
+
+#+BEGIN_SRC emacs-lisp
+(require 'json)
+
+(let ((url-request-method "POST")
+      (url "http://www.krivers.net/feedback/gethint.php")
+      (url-request-data (json-encode-alist `((needsReturn . t)
+					     (userId . "jkitchin")
+					     (problemId . "canDrinkAlcohol")
+					     (code . "def canDrinkAlcohol(age, isDriving):
+    return age >= 21 and not isDriving")))))
+    (with-current-buffer  (url-retrieve-synchronously url)
+      (message-box
+       (buffer-substring url-http-end-of-headers (point-max)))))
+#+END_SRC
+
+#+RESULTS:
+:
+: {"hint":"Your solution is already correct! Press 'Submit' to get credit for solving the problem."}
+
+** Get hint for a code block
+Function to get a hint from a code block:
+
+#+BEGIN_SRC emacs-lisp
+(require 'json)
+
+(defvar cloudcoder-userid "jkitchin")
+
+(defun cloudcoder-check-answer (&optional debug)
+  "With your cursor in a Python source block, send code to the
+hint server to get a hint. Use a prefix arg for DEBUG."
+  (interactive "P")
+  ;;  first get code block
+  (let* ((src-block (org-element-context))
+	 (url-request-method "POST")
+	 (url "http://www.krivers.net/feedback/gethint.php")
+	 (url-request-data
+	  (json-encode-alist `((needsReturn . t)
+			       (userId . cloudcoder-userid)
+			       (problemId . ,(org-element-property :name src-block))
+			       (code . ,(org-element-property :value src-block)))))
+	 json-response)
+    (when debug
+      (message "%s" url-request-data))
+    (with-current-buffer  (url-retrieve-synchronously url)
+      (let ((response (s-trim
+		       (buffer-substring url-http-end-of-headers (point-max)))))
+	(when debug
+	  (message response))
+	(setq json-response
+	      (json-read-from-string
+	       response))
+	(message "%S"
+		 (replace-regexp-in-string
+		  "<br>" "\n" (cdr (assoc 'hint json-response))))))))
+#+END_SRC
+
+#+RESULTS:
+: cloudcoder-check-answer
+
+Here are some example code blocks.
+
+It looks like for this to work, you need use a function the server can evaluate, and the function has to have a name the server knows. There needs to be a userID stored in a variable for this. The org src-block needs a name that is the problemID.
+
+It might be nice to show model solutions and pep8 style feedback. I can get the hints, but I am not sure about submitting this.
+
+For engineering, if we can use Enthought or Continuum we can get numpy, scipy, and matplotlib. I would also want some other packages installed. Synchronization between local installations and the server could be a challenge.
+
+***  canDrinkAlcohol
+#+name: canDrinkAlcohol
+#+BEGIN_SRC python
+def canDrinkAlcohol(age, isDriving):
+    return age >= 21 and not isDriving
+#+END_SRC
+
+*** overNineThousand
+#+name: overNineThousand
+#+BEGIN_SRC python
+def overNineThousand(N):
+    return N > 9000
+#+END_SRC
+
+
+*** findRoot
+there seems to be some security manager issue.
+
+#+name: findRoot
+#+BEGIN_SRC python
+import math
+def findRoot(a, b, c):
+    return max([(-b + math.sqrt(b**2 - 4 * a * c)) / (2 * a), (-b - math.sqrt(b**2 - 4 * a * c)) / (2 * a)])
+
+print findRoot(1, -7, 12)
+#+END_SRC
+
+#+RESULTS:
+: 4.0
+
+
+#+name: findRoot
+#+BEGIN_SRC python
+def findRoot(a, b, c):
+    s1 = (-b + (b**2 - 4 * a * c)**0.5) / (2 * a)
+    s2 = (-b - (b**2 - 4 * a * c)**0.5) / (2 * a)
+    if s1 > s2:
+        return s1
+    else:
+        return s2
+#+END_SRC
+
+*** kthDigit
+Given two integers, x and k, return the kth digit of x, counting from the right. So:
+kthDigit(789, 0) returns 9
+kthDigit(789, 1) returns 8
+kthDigit(789, 2) returns 7
+kthDigit(789, 3) returns 0
+Negative numbers should work, too, so:
+kthDigit(-789, 0) returns 9
+
+#+name: kthDigit
+#+BEGIN_SRC python
+def kthDigit(x, k):
+    s = str(abs(x))[::-1]
+    return int(s[k]) if k < len(s) else 0
+#+END_SRC
+
+*** isEvenPositiveInt
+
+Given an arbitrary value x, return True if it is an integer, and it is positive, and it is even (all 3 must be True), or False otherwise. Do not crash if the value is not an integer. So, isEvenPositiveInt("yikes!") returns False (rather than crashing), and isEvenPositiveInt(123456) returns True.
+
+#+name: isEvenPositiveInt
+#+BEGIN_SRC python
+def isEvenPositiveInt(x):
+    return isinstance(x, int) and x > 0 and (x % 2 == 0)
+
+print isEvenPositiveInt('yikes')
+print isEvenPositiveInt(1)
+print isEvenPositiveInt(-1)
+print isEvenPositiveInt(1.0)
+#+END_SRC
+
+#+RESULTS: isEvenPositiveInt
+: False
+: False
+: False
+: False
+
+*** nearestBusStop
+Write a function that takes a non-negative street number, and returns the nearest bus stop to the given street, where buses stop every 8th street, including street 0, and ties go to the lower street, so the nearest bus stop to 12th street is 8th street, and the nearest bus stop to 13 street is 16th street.
+
+#+name: nearestBusStop
+#+BEGIN_SRC python
+def nearestBusStop(street):
+    a = street % 8
+    if a <= 4:
+        return street - a
+    else:
+        return street + (8 - a)
+
+print nearestBusStop(12)
+print nearestBusStop(13)
+#+END_SRC
+
+#+RESULTS: nearestBusStop
+: 4
+: 5
+
+
+*** circleArea
+This seems to have some security issues. failed_by_security_manager
+
+Given the radius of a circle, calculate its area (pi r^2). Note that you'll need to get the built-in value of pi from the math module.
+
+#+name: circleArea
+#+BEGIN_SRC python
+import math
+def circleArea(radius):
+    return math.pi * radius**2
+#+END_SRC
+
+* transposed table
+
+#+name: my-data
+| 1 | 2 | 3 | 4 |
+| a | b | c | d |
+
+#+BEGIN_SRC emacs-lisp
+(defun get-transposed-table (tblname)
+  (save-excursion
+    (org-open-link-from-string (format  "[[%s]]" tblname))
+    (while (not (org-table-p))
+      (forward-line))
+    (let* ((table (delete 'hline (org-table-to-lisp)))
+	   (contents (mapcar (lambda (p)
+			       (let ((tp table))
+				 (mapcar
+				  (lambda (rown)
+				    (prog1
+					(pop (car tp))
+				      (setq tp (cdr tp))))
+				  table)))
+			     (car table))))
+      (mapconcat (lambda(x) (concat "| " (mapconcat 'identity x " | " ) "  |\n" ))
+		 contents ""))))
+#+END_SRC
+
+#+RESULTS:
+: get-transposed-table
+
+#+BEGIN_SRC python :var data=(get-transposed-table "my-data")
+print data
+#+END_SRC
+
+#+RESULTS:
+: | 1 | a  |
+: | 2 | b  |
+: | 3 | c  |
+: | 4 | d  |
+:
+
+[[my-data]]
 * AIF
 
 #+BEGIN_SRC python
@@ -434,6 +754,8 @@ plt.show()
 #+END_SRC
 
 #+RESULTS:
+==
+
 ** pygame doesn't quite work for large tag clouds
 [[http://blog.matt-swain.com/post/87112978897/fixing-matplotlib-png-output-on-mac-os-x][Fixing matplotlib png output on Mac OS X | Matt Swain]]
 [[https://bitbucket.org/pygame/pygame/issues/82/homebrew-on-leopard-fails-to-install][pygame / pygame / issues / #82 - homebrew on Leopard fails to install —
