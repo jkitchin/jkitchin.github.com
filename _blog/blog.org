@@ -1,3 +1,332 @@
+* Customizing mu4e
+[[http://www.djcbsoftware.nl/code/mu/mu4e/HV-Custom-headers.html#HV-Custom-headers][mu4e 0.9.12 user manual: HV Custom headers]]
+
+#+BEGIN_SRC emacs-lisp
+(add-to-list 'mu4e-header-info-custom
+  '(:recipnum .
+    ( :name "Number of recipients"  ;; long name, as seen in the message-view
+      :shortname "Recip#"           ;; short name, as seen in the headers view
+      :help "Number of recipients for this message" ;; tooltip
+      :function
+      (lambda (msg)
+	(format "%d"
+	  (+ (length (mu4e-message-field msg :to))
+	    (length (mu4e-message-field msg :cc))))))))
+
+(add-to-list 'mu4e-headers-fields (cons :recipnum nil) t)
+(setq mu4e-headers-fields (-remove-item '(:recipnum) mu4e-headers-fields))
+#+END_SRC
+
+#+RESULTS:
+| :recipnum | :name | Number of recipients | :shortname | Recip# | :help | Number of recipients for this message | :function | (lambda (msg) (format %d (+ (length (mu4e-message-field msg :to)) (length (mu4e-message-field msg :cc))))) |
+
+mu4e:msgid:m2egi9np93.fsf@andrew.cmu.edu
+
+
+Message-ID: <BLUPR0401MB177812963CF71FD54C291D93AB530@BLUPR0401MB1778.namprd04.prod.outlook.com>
+References: <m2a8syxu48.fsf@andrew.cmu.edu>
+ <BLUPR0401MB1778F500DA3CBA3C3B1B0B29AB530@BLUPR0401MB1778.namprd04.prod.outlook.com>
+ <m2egi9np93.fsf@andrew.cmu.edu>
+In-Reply-To: <m2egi9np93.fsf@andrew.cmu.edu>
+
+
+#+BEGIN_SRC emacs-lisp
+(defun open-msgid ()
+  "get msg-id at point and open it."
+  (interactive)
+  (save-excursion
+    (re-search-backward "<")
+    (re-search-forward "<\\([^>]*\\)>")
+    (org-open-link-from-string (format "[[mu4e:msgid:%s]]" (match-string 1)))))
+#+END_SRC
+
+#+RESULTS:
+: open-msgid
+
+** custom view header to org-headings
+mu4e-view-fields
+
+#+BEGIN_SRC emacs-lisp
+(defun org-ref-ids (msg)
+  (let ((matches '()))
+    (when (mu4e-message-field msg :body-txt)
+      (with-temp-buffer
+	(insert (mu4e-message-field msg :body-txt))
+	(goto-char (point-min))
+	(while (re-search-forward
+		"\\[\\[id:\\(.*\\)\\]\\]"
+		nil t)
+	  (add-to-list 'matches
+		       (match-string 0)))
+	(when matches
+	  (mapconcat 'identity matches "\n"))))))
+
+(setq mu4e-org-refs
+      '(:orgrefs . (:name "Org references"
+			   :shortname "orgrefs"
+			   :help "List of links to org headings by ID"
+			   :function org-ref-ids)))
+(setq mu4e-header-info-custom '())
+(add-to-list 'mu4e-header-info-custom mu4e-org-refs)
+(add-to-list 'mu4e-view-fields :orgrefs t)
+#+END_SRC
+
+#+RESULTS:
+| :from | :to | :cc | :subject | :flags | :date | :maildir | :mailing-list | :tags | :attachments | :signature | :decryption | :orgrefs |
+
+** Custom view header with links to in reply to and references
+
+#+BEGIN_SRC emacs-lisp
+(defun mu4e-get-subject-from-msgid (msgid)
+  (car
+   (s-split
+    "\n"
+    (shell-command-to-string
+     (format  "mu find msgid:%s -f s" msgid)))))
+
+(defun mu4e-reference-links (msg)
+  (interactive)
+  (let ((references (mu4e-message-field msg :references)))
+    (when references
+	 (mapconcat
+	  'identity
+	  (loop for i from 1
+		for reference in references
+		collect (format "%s. [[mu4e:msgid:%s]]" i reference))
+	  "\n"))))
+
+(defun mu4e-reply-to-links (msg)
+  (interactive)
+  (let ((reply-to (mu4e-message-field msg :in-reply-to)))
+    (when (not (string= "" reply-to))
+     (format
+      "[[mu4e:msgid:%s]]"
+      (replace-regexp-in-string "<\\|>" "" reply-to)))))
+
+(setq mu4e-message-refs
+      '(:mrefs . (:name "References:"
+			   :shortname "mrefs"
+			   :help "List of links to messages by ID"
+			   :function mu4e-reference-links)))
+
+(setq mu4e-reply-to-refs
+      '(:repref . (:name "In-Reply-To:"
+			   :shortname "rrefs"
+			   :help "Link to reply to message"
+			   :function mu4e-reply-to-links)))
+
+(add-to-list 'mu4e-header-info-custom mu4e-message-refs)
+(add-to-list 'mu4e-view-fields :mrefs t)
+
+(add-to-list 'mu4e-header-info-custom mu4e-reply-to-refs)
+(add-to-list 'mu4e-view-fields :repref t)
+
+(setq mu4e-view-fields (-remove-item :reprefs mu4e-view-fields))
+
+(button-lock-set-button
+ "\\[\\[mu4e:msgid:.*\\]\\]"
+ (lambda ()
+   (org-open-link-from-string
+    (get-surrounding-text-with-property 'mu4e-msgid)))
+ :face '((:foreground "Blue")
+	 (:underline t))
+ :additional-property 'mu4e-msgid)
+
+#+END_SRC
+
+#+RESULTS:
+| \[\[mu4e:msgid:.*\]\] | (0 (quote (face ((:foreground Blue) (:underline t)) keymap (keymap (mouse-1 lambda nil (org-open-link-from-string (get-surrounding-text-with-property (quote mu4e-msgid))))) button-lock t mu4e-msgid t mouse-face button-lock-mouse-face rear-nonsticky t)) append) |
+
+** Add note to headline from a message
+
+I want to scan the current message for an id link, open the headline, and put a link in it.
+
+#+BEGIN_SRC emacs-lisp
+(defun activate-on-id ()
+  (interactive)
+  (save-excursion
+    (goto-char (point-min))
+    (while (re-search-forward "\\[\\[id:\\(.*\\)\\]\\]" nil t)
+      (let ((cb (current-buffer))
+	    (msgid (mu4e-message-field (mu4e-message-at-point) :message-id))
+	    (subject (mu4e-message-field (mu4e-message-at-point) :subject))
+	    (id (match-string 1))
+	    file
+	    values)
+	(setq file (org-id-find id))
+        (find-file (car file))
+        (goto-char (cdr file))
+	(if (org-entry-get (point) "Message-IDs")
+	    (setq values (read (org-entry-get (point) "Message-IDs")))
+	  (setq values '()))
+	(add-to-list 'values (format "[[mu4e:msgid:%s][%s]]" msgid subject))
+	(org-entry-put (point) "Message-IDs" (format "%S" values))
+        (save-buffer)
+	(switch-to-buffer cb)))))
+
+(add-hook 'mu4e-view-mode-hook 'activate-on-id)
+#+END_SRC
+
+#+RESULTS:
+| activate-on-id | email-fontify | on-view | #[nil \301\300!\210\302\211\207 [bookmark-make-record-function make-local-variable mu4e-view-bookmark-make-record] 2] |
+
+* test fortune
+
+
+#+BEGIN_SRC emacs-lisp :exports results :results org
+(format "#+BEGIN_QUOTE:
+%s
+,#+END_QUOTE
+" (shell-command-to-string "fortune"))
+#+END_SRC
+
+#+BEGIN_SRC emacs-lisp :exports none
+(let ((org-export-babel-evaluate t))
+  (browse-url (org-html-export-to-html nil t)))
+#+END_SRC
+#+RESULTS:
+: #<process open ./blog.html>
+
+
+* a tblfm
+
+| Student | Assgn Points | Points Earned | Possible | Achieved | Percentage |
+|---------+--------------+---------------+----------+----------+------------|
+| Barney  |           40 |           35. |       16 |       14 |       87.5 |
+| Barney  |           40 |           35. |       16 |       14 |       87.5 |
+| Betty   |           40 |           30. |       16 |       12 |        75. |
+| Fred    |           40 |           25. |       16 |       10 |       62.5 |
+| Wilma   |           40 |          17.5 |       16 |        7 |      43.75 |
+#+TBLFM: $6 = ($5 / $4) * 100 ::  $3 = ($6 / 100) * $2
+
+#+BEGIN_SRC emacs-lisp
+(/ 14.0 16.0)
+#+END_SRC
+
+#+RESULTS:
+: 0.875
+
+* Using functions in font-lock
+I am still looking at ways to add functionality to text dynamically in Emacs. Here I examine functions in font-lock mode. This puts an overlay on the text.
+#+BEGIN_SRC emacs-lisp
+(require 'ov)
+(setq font-lock-extra-managed-props (delq 'help-echo font-lock-extra-managed-props))
+
+(defun fn-match (bound)
+  (when
+      (re-search-forward "crazy fox" bound t)
+    (ov (match-beginning 0)
+	(match-end 0)
+	'face '(:background "Darkolivegreen1")
+        'mouse-face 'highlight
+        'help-echo (lambda (a b c) (message-box "Aw yeah. That's what I'm talkin about"))
+	'highlighted t)
+    t))
+
+(defun my-action (x) (message-box "%s\ndone" x))
+
+(defun fn-match (bound)
+  (when
+      (re-search-forward "crazy fox" bound t)
+    (make-button
+     (match-beginning 0)
+     (match-end 0)
+     'face '(:background "Darkolivegreen1")
+     'action (lambda (x) (message-box "%s" x))
+     'follow-link t
+     'help-echo (lambda (a b c) (format "On %s in %s at %s" a b c))
+     )))
+
+;;(font-lock-add-keywords nil '((fn-match 0 'font-lock-warning-face prepend)))
+;;(font-lock-remove-keywords nil '((fn-match 0 'font-lock-warning-face prepend)))
+
+(font-lock-add-keywords nil '(fn-match))
+;; (font-lock-remove-keywords nil '(fn-match))
+
+;; (ov-clear)
+#+END_SRC
+
+The crazy fox crazy fox  and the tree but not the graph
+
+#+BEGIN_SRC emacs-lisp
+(font-lock-add-keywords nil
+  '(("\\<\\(FIXME\\):" 1 'font-lock-warning-face prepend)
+    ("\\<\\(and\\|or\\|not\\)\\>" . 'font-lock-keyword-face)))
+#+END_SRC
+
+#+BEGIN_SRC emacs-lisp
+(require 'button)
+(re-search-forward "foo")
+(make-button
+ (match-beginning 0)
+ (match-end 0)
+ 'follow-link t  ;; make mouse-1 work
+ 'action (lambda (x) (find-file user-init-file)))
+#+END_SRC
+
+#+RESULTS:
+: #<overlay from 1461 to 1464 in blog.org>
+
+foo
+
+
+
+* Asynchronous functions to modify buffers
+
+I wrote some code to make clickable org-contacts in org-mode buffers. The code works by generating a regular expression for every name in your contact, and using button-lock to add properties to matches. I discovered that if you have a few thousand contacts though, the regular expression is "too big" for Emacs! I could try to figure out how to breakup the contacts into reasonable sized groups, say 100 names at a time, but I want to try something else today. Today I want to explore an alternative approach to font-lock. The idea is to write a function that will scan through the buffer for names, and fontify them when they are found. This will usually block Emacs while running, so I want to see if I can run it asynchronously.
+
+It does not appear possible. I cannot figure out how to pass the buffer to the asynchronous function.
+
+#+BEGIN_SRC emacs-lisp
+(require 'ov)
+(defun hl-phrases ()
+  (let ((phrases '("tree" "crazy fox" "animal")))
+    (loop for phrase in phrases
+	  do
+	  (sleep-for 2)
+	  (save-excursion
+	    (goto-char (point-min))
+	    (while (re-search-forward phrase nil t)
+	      (ov (match-beginning 0)
+		  (match-end 0)
+		  'face '(:background "Darkolivegreen1")
+		  'highlighted t)))))
+  0)
+
+(setq *hl-buffer* (current-buffer))
+(async-start
+ (lambda ()
+   (require 'cl)
+   (let ((phrases '("tree" "crazy fox" "animal"))
+	 (found '()))
+     (loop for phrase in phrases
+	   do
+	   (sleep-for 2)
+	   (save-excursion
+	     (goto-char (point-min))
+	     (while (re-search-forward phrase nil t)
+	       (add-to-list
+		'found
+		(list (match-beginning 0) (match-end 0))))))
+     found))
+ (lambda (result)
+   (message-box "Done in %s" result)))
+#+END_SRC
+
+#+RESULTS:
+: #<overlay from 1648 to 1651 in blog.org>
+
+
+#+BEGIN_SRC emacs-lisp
+(ov-clear 'highlighted t)
+#+END_SRC
+
+#+RESULTS:
+
+
+The crazy fox jumped over the tree because it is an animal.
+
+
 * DONE Checking for email attachments before you send email
   CLOSED: [2015-09-04 Fri 19:03]
   :PROPERTIES:
@@ -39,6 +368,9 @@ So, probably finding "<#part" in the buffer means I probably have an attachment.
 #+END_SRC
 
 * dynamic yasnippet
+  :PROPERTIES:
+  :ID:       393D5FC5-90EB-48E2-B804-20FA735C6402
+  :END:
 #+BEGIN_SRC emacs-lisp
 (yas-global-mode)
 (with-temp-buffer
@@ -57,7 +389,56 @@ $0
 #+END_SRC
 
 #+RESULTS:
+#+BEGIN_SRC emacs-lisp
+(yas-global-mode)
+(with-temp-buffer
+  (insert "# -*- mode: snippet -*-
+# key: sc
+# name: Source Block
+# group: HELP
+# contributor: gcr@wisdomandwonder.com
+# --
+,#+NAME: ${1:`(org-id-new)`}
+,#+BEGIN_SRC ${2:$$(yas-choose-value '(\"emacs-lisp\" \"python\" \"org\"))}${2:$(when (-contains? '(\"ditaa\" \"dot\"
+\"plantuml\") yas-text) (concat \" :file \\\"./image/\" (yas-field-value 1)
+\".png\\\"\"))} $3
+$0
+,#+END_SRC")
+  (yas-load-snippet-buffer-and-close 'org-mode))
+#+END_SRC
 
+#+NAME: 77C740DF-C6E6-4A99-885E-9C7D0E3B145A
+#+BEGIN_SRC emacs-lisp
+(+ 2 4)
+#+END_SRC
+
+#+RESULTS: 77C740DF-C6E6-4A99-885E-9C7D0E3B145A
+: 6
+
+#+BEGIN_SRC emacs-lisp
+(defun org-src-block-store-link ()
+  (let* ((object (org-element-context)))
+    (when (equal (org-element-type object) 'src-block)
+      (org-store-link-props
+       :type "src-block"
+       :link (concat "src-block:" (org-element-property :name object))))))
+
+(add-hook 'org-store-link-functions 'org-src-block-store-link)
+
+(org-add-link-type
+ "src-block"
+ (lambda (label)
+   (org-mark-ring-push)
+   (widen)
+   (goto-char (point-min))
+   (re-search-forward (regexp-quote (format "#+NAME: %s" label)))
+   (beginning-of-line)))
+#+END_SRC
+
+#+RESULTS:
+| lambda | (label) | (org-mark-ring-push) | (widen) | (goto-char (point-min)) | (re-search-forward (regexp-quote (format #+NAME: %s label))) | (beginning-of-line) |
+
+[[src-block:77C740DF-C6E6-4A99-885E-9C7D0E3B145A]]
 
 * Dates in headers and sorting
 
@@ -165,12 +546,17 @@ It might be nice to show model solutions and pep8 style feedback. I can get the 
 
 For engineering, if we can use Enthought or Continuum we can get numpy, scipy, and matplotlib. I would also want some other packages installed. Synchronization between local installations and the server could be a challenge.
 
-***  canDrinkAlcohol
+*** canDrinkAlcohol
 #+name: canDrinkAlcohol
 #+BEGIN_SRC python
 def canDrinkAlcohol(age, isDriving):
-    return age >= 21 and not isDriving
+    return age == 21 and not isDriving
+
+print canDrinkAlcohol(20, True)
 #+END_SRC
+
+#+RESULTS: canDrinkAlcohol
+: False
 
 *** overNineThousand
 #+name: overNineThousand
@@ -276,6 +662,19 @@ import math
 def circleArea(radius):
     return math.pi * radius**2
 #+END_SRC
+
+
+This example seems to return no hint
+#+BEGIN_SRC python
+def circleArea(radius):
+    return 3.141 / radius**2
+
+print circleArea(1.00)
+#+END_SRC
+
+#+RESULTS:
+: 3.141
+
 
 * transposed table
 
