@@ -83,6 +83,266 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="A-git-status-Emacs-modeline"></div>
+      <h2 class="blog_post_title"><a href="/blog/2014/09/19/A-git-status-Emacs-modeline/" rel="bookmark" title="Permanent Link to A git status Emacs modeline">A git status Emacs modeline</a></h2>
+      <p><small><span class="blog_post_date">Posted September 19, 2014 at 09:36 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/git/'>git</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2014/09/19/A-git-status-Emacs-modeline#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+I am using git more and more in Emacs, and I would like a way to know the status of the git repo I am working in by looking at the modeline. I know about <a href="https://github.com/magit/magit">magit</a> , and other git modes, but none of them provide something as easy as useful as say <a href="https://github.com/magicmonty/bash-git-prompt">bash-git-prompt</a> in the bash shell, which is to say I do not want to run a command to see the status (I might as well be in the shell then). Part of this need comes from a project with hundreds of git repos in it, and I want convenient status when I open any one of them.
+</p>
+
+<p>
+Here, I want to emulate the bash-git-prompt feature in the Emacs modeline where it will show you when you are in a git repo, and then some basic information like what branch you are on, the number of untracked, modified files, and the commit status with respect to a remote. First, we only want this when we are in a git repo. We can check for that like this. The command in this block returns a string that starts with fatal when not in a git repo.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(not (string-match <span style="color: #228b22;">"^fatal"</span> (shell-command-to-string <span style="color: #228b22;">"git rev-parse --git-dir"</span>)))
+</pre>
+</div>
+
+<pre class="example">
+t
+</pre>
+
+<p>
+Let us wrap that in a nice function so we can use it later..
+</p>
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">in-git-p</span> ()
+  (not (string-match <span style="color: #228b22;">"^fatal"</span> (shell-command-to-string <span style="color: #228b22;">"git rev-parse --git-dir"</span>))))
+
+(in-git-p)
+</pre>
+</div>
+
+<pre class="example">
+t
+</pre>
+
+<p>
+Next, we would like to know how many untracked, modified and other (e.g. unmerged, deleted, etc&#x2026;) files we have. We can get this from  <code>git status --porcelain</code>. I am going to set these to be red if they are not zero, so they stand out, and be green otherwise. We will also store a list of each file type so we can make a tooltip on the counter to see what is there.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">git-parse-status</span> ()
+  (interactive)
+  (<span style="color: #8b0000;">let</span> ((U 0)   ; <span style="color: #ff0000; font-weight: bold;">untracked files</span>
+        (M 0)   ; <span style="color: #ff0000; font-weight: bold;">modified files</span>
+        (O 0)   ; <span style="color: #ff0000; font-weight: bold;">other files</span>
+        (U-files <span style="color: #228b22;">""</span>)
+        (M-files <span style="color: #228b22;">""</span>)
+        (O-files <span style="color: #228b22;">""</span>))
+    (<span style="color: #8b0000;">dolist</span> (line (split-string
+                   (shell-command-to-string <span style="color: #228b22;">"git status --porcelain"</span>)
+                   <span style="color: #228b22;">"\n"</span>))
+      (<span style="color: #8b0000;">cond</span>
+
+       ;; <span style="color: #ff0000; font-weight: bold;">ignore empty line at end</span>
+       ((string= <span style="color: #228b22;">""</span> line) nil)
+
+       ((string-match <span style="color: #228b22;">"^\\?\\?"</span> line)
+        (setq U (+ 1 U))
+        (setq U-files (concat U-files <span style="color: #228b22;">"\n"</span> line)))
+
+       ((string-match <span style="color: #228b22;">"^ M"</span> line)
+        (setq M (+ 1 M))
+        (setq M-files (concat M-files <span style="color: #228b22;">"\n"</span> line))
+        )
+
+       (t
+        (message <span style="color: #228b22;">"detected other in %s"</span> line)
+        (setq O (+ 1 O))
+        (setq O-files (concat O-files <span style="color: #228b22;">"\n"</span> line)))))
+      
+    ;; <span style="color: #ff0000; font-weight: bold;">construct propertized string</span>
+    (concat
+     <span style="color: #228b22;">"("</span>
+     (propertize 
+      (format <span style="color: #228b22;">"M:%d"</span> M)
+      'face (list '<span style="color: #cd0000;">:foreground</span> (<span style="color: #8b0000;">if</span> (&gt; M 0)
+                                   <span style="color: #228b22;">"red"</span>
+                                 <span style="color: #228b22;">"forest green"</span>))
+      'help-echo M-files)
+     <span style="color: #228b22;">"|"</span>
+     (propertize 
+      (format <span style="color: #228b22;">"U:%d"</span> U)
+      'face (list '<span style="color: #cd0000;">:foreground</span> (<span style="color: #8b0000;">if</span> (&gt; U 0)
+                                   <span style="color: #228b22;">"red"</span>
+                                 <span style="color: #228b22;">"forest green"</span>))
+      'help-echo U-files)
+     <span style="color: #228b22;">"|"</span>
+     (propertize 
+      (format <span style="color: #228b22;">"O:%d"</span> O)
+      'face (list '<span style="color: #cd0000;">:foreground</span> (<span style="color: #8b0000;">if</span> (&gt; O 0)
+                                   <span style="color: #228b22;">"red"</span>
+                                 <span style="color: #228b22;">"forest green"</span>))
+      'help-echo O-files)                   
+      <span style="color: #228b22;">") "</span>)))
+
+(git-parse-status)
+</pre>
+</div>
+
+<pre class="example">
+(M:1|U:2|O:0) 
+</pre>
+
+<p>
+Finally, let us get the branch we are on, and the commits with respect to a remote. We can do that like this. We use some unicode characters to indicate what direction things go, e.g. an up arrow to indicate you need to push, and a down arrow to indicate you should pull.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">git-remote-status</span> ()
+  (interactive)
+  (<span style="color: #8b0000;">let*</span> (;; <span style="color: #ff0000; font-weight: bold;">get the branch we are on.</span>
+         (branch (s-trim
+                  (shell-command-to-string
+                   <span style="color: #228b22;">"git rev-parse --abbrev-ref HEAD"</span>)))
+         ;; <span style="color: #ff0000; font-weight: bold;">get the remote the branch points to.</span>
+         (remote (s-trim
+                  (shell-command-to-string
+                   (format <span style="color: #228b22;">"git config branch.%s.remote"</span> branch))))
+         (remote-branch (s-trim
+                         (shell-command-to-string
+                          <span style="color: #228b22;">"git for-each-ref --format='%(upstream:short)' $(git symbolic-ref -q HEAD)"</span>)))
+         (commits (split-string
+                   (s-trim
+                    (shell-command-to-string
+                     (format
+                      <span style="color: #228b22;">"git rev-list --count --left-right HEAD...%s"</span>
+                      remote-branch)))))
+         (local (nth 0 commits))
+         (remotes (nth 1 commits)))
+    (concat
+     <span style="color: #228b22;">"["</span>
+     (propertize
+      (format <span style="color: #228b22;">"%s"</span> branch)
+      'face (list <span style="color: #cd0000;">:foreground</span> <span style="color: #228b22;">"magenta"</span>))
+     <span style="color: #228b22;">"|"</span>
+     (format <span style="color: #228b22;">"&#8593;%s|&#8595;%s"</span> local remotes)
+     <span style="color: #228b22;">"]"</span>))) 
+
+(git-remote-status)
+</pre>
+</div>
+
+<pre class="example">
+[source|↑0|↓0]
+</pre>
+
+<p>
+Now, we can finally put this together in a little minor mode. We add an element to the mode-line-format variable that evaluates those functions. When we turn off the minor mode, we remove the element from the modeline.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">define-minor-mode</span> <span style="color: #8b2323;">git-mode</span>
+  <span style="color: #228b22;">"minor mode to put git repo status in modeline"</span>
+  nil nil nil
+  (<span style="color: #8b0000;">let</span> ((git-modeline '(<span style="color: #cd0000;">:eval</span> (<span style="color: #8b0000;">if</span> (not (in-git-p))
+                                  <span style="color: #228b22;">""</span>
+                                (concat 
+                                 (git-remote-status)
+                                 (git-parse-status))))))
+    (<span style="color: #8b0000;">if</span> git-mode
+        ;; <span style="color: #ff0000; font-weight: bold;">put in modeline</span>
+        (push git-modeline mode-line-format)
+      ;; <span style="color: #ff0000; font-weight: bold;">remove from modeline</span>
+      (setq mode-line-format
+            (-remove (<span style="color: #8b0000;">lambda</span> (x)
+                       (equal x git-modeline))                                  
+                     mode-line-format)))))
+</pre>
+</div>
+
+<p>
+This leads to a modeline that looks like this (when my mouse is hovered over the M):
+</p>
+
+
+<div class="figure">
+<p><img src="/media/2014-09-19-A-git-status-Emacs-modeline/git-modeline.png"> 
+</p>
+</div>
+
+<p>
+This seems to have some performance issue, since pretty much everytime I type a key, it updates the modeline, and runs git. That is too often. Let us redefine the mode here so we have a minimum time between updates, say 15 seconds. We will store the last time updated, and the last value of the mode-line. Then each time the modeline updates, if the time since the last update is greater than our interval, then we will run the git commands. Otherwise, we just use the old modeline value.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">defvar</span> <span style="color: #8b008b;">git-modeline-last-update</span> (float-time) <span style="color: #228b22;">"Last time we updated"</span>)
+(<span style="color: #8b0000;">defvar</span> <span style="color: #8b008b;">git-modeline-update-interval</span> 15 <span style="color: #228b22;">"Minimum time between update in seconds"</span>)
+(<span style="color: #8b0000;">defvar</span> <span style="color: #8b008b;">git-modeline</span> <span style="color: #228b22;">""</span> <span style="color: #228b22;">"Last value of the modeline"</span>)
+
+(<span style="color: #8b0000;">define-minor-mode</span> <span style="color: #8b2323;">git-mode</span>
+  <span style="color: #228b22;">"minor mode to put git repo status in modeline"</span>
+  nil nil nil
+  (<span style="color: #8b0000;">let</span> ((git-modeline '(<span style="color: #cd0000;">:eval</span> (<span style="color: #8b0000;">if</span>
+                                  (&gt; (- (float-time) git-modeline-last-update)
+                                     git-modeline-update-interval)
+                                  ;; <span style="color: #ff0000; font-weight: bold;">we are updating                              </span>
+                                  (setq git-modeline
+                                        (<span style="color: #8b0000;">if</span> (not (in-git-p))
+                                            <span style="color: #228b22;">""</span>                                   
+                                          (setq  git-modeline-last-update (float-time))
+                                          (concat 
+                                           (git-remote-status)
+                                           (git-parse-status))))
+                                
+                              ;; <span style="color: #ff0000; font-weight: bold;">use last value of the modeline</span>
+                              git-modeline))))
+    (<span style="color: #8b0000;">if</span> git-mode
+        ;; <span style="color: #ff0000; font-weight: bold;">put in modeline</span>
+        (push git-modeline mode-line-format)
+      ;; <span style="color: #ff0000; font-weight: bold;">remove from modeline</span>
+      (setq mode-line-format
+            (-remove (<span style="color: #8b0000;">lambda</span> (x)
+                       (equal x git-modeline))                                  
+                     mode-line-format)))))
+</pre>
+</div>
+
+<p>
+That does it I think. I don't have any performance issues here now. I have not tested this super thoroughly on many git repos, but it seems to be pretty consistent and correct so far. The remote status code is where there is the most probability for issues. I still do not know that part of git very well.  I wonder if there is a more elegant solution than this, perhaps an idle timer. I notice a little lag in updating the data when I switch to another git repo. That might be a little confusing one day.
+</p>
+
+
+<p>
+Otherwise, this seems like a pretty nice solution so far. There are still some things that would be nice to see on here. For example, a pop-up menu on the modeline to switch branches, push or pull, and with actions for the files, e.g. add/commit, etc&#x2026; Those do not seem to hard to </p>
+<p>Copyright (C) 2014 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2014/09/19/A-git-status-Emacs-modeline.org">org-mode source</a><p><p>Org-mode version = 8.2.7c</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2014/09/19/A-git-status-Emacs-modeline#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Colorized-text-in-Emacs"></div>
       <h2 class="blog_post_title"><a href="/blog/2014/09/14/Colorized-text-in-Emacs/" rel="bookmark" title="Permanent Link to Colorized text in Emacs">Colorized text in Emacs</a></h2>
       <p><small><span class="blog_post_date">Posted September 14, 2014 at 02:23 PM</span> | categories:
@@ -864,222 +1124,6 @@ Note I reversed the left/right order. It seems that swiping left triggers the tr
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2014/08/31/Using-Mac-gestures-in-Emacs#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Collecting-entries-from-files-in-a-directory"></div>
-      <h2 class="blog_post_title"><a href="/blog/2014/08/25/Collecting-entries-from-files-in-a-directory/" rel="bookmark" title="Permanent Link to Collecting entries from files in a directory">Collecting entries from files in a directory</a></h2>
-      <p><small><span class="blog_post_date">Posted August 25, 2014 at 09:42 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs-lisp/'>emacs-lisp</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2014/08/25/Collecting-entries-from-files-in-a-directory#disqus_thread">View Comments</a>
-      <p><small><span class="blog_post_date">Updated August 25, 2014 at 09:44 PM</span>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-
-<p>
-I am running a class where students will be generating files that contain their answers. I want to quickly get a list of counts of all the answers. For example, six students will create a file called animal.dat in a directory called example/&lt;studentid&gt;, and that file will contain their favorite animal. I made some example files to test this idea out. Here are the contents.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-sh">cat example/*/animal.dat
-</pre>
-</div>
-
-<pre class="example">
-dog
-cat
-dog
-bird
-dog
-bird
-</pre>
-
-<p>
-You can see there are three dogs, two birds and a cat. I want code to do this counting, because in my real application there will be 58 of these files, and lots of times I need to aggregate them. Let us start with a simple example that counts the elements in a list.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">let</span> ((animals '(dog cat dog bird dog bird))
-      (counts '())
-      place)
-  (<span style="color: #8b0000;">dolist</span> (animal animals)
-    (setq place (assoc animal counts))
-    (message <span style="color: #228b22;">"place = %s"</span> place)
-    (<span style="color: #8b0000;">if</span> place
-        (setf (cdr place) (+ 1 (cdr place)))
-      (setq counts (cons `(,animal . 1) counts))))
-  counts)
-</pre>
-</div>
-
-<p>
-((bird . 2) (cat . 1) (dog . 3))
-</p>
-
-<p>
-Let us turn that into a function.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">counts</span> (list)
-  (<span style="color: #8b0000;">let</span> ((counts '())
-        place)
-    (<span style="color: #8b0000;">dolist</span> (el list)   
-      (setq place (assoc el  counts))
-    (message <span style="color: #228b22;">"place = %s"</span> place)
-    (<span style="color: #8b0000;">if</span> place
-        (setf (cdr place) (+ 1 (cdr place)))
-      (setq counts (cons `(,el . 1) counts))))
-    counts))
-
-(counts '(dog cat dog bird dog bird))
-</pre>
-</div>
-
-<p>
-((bird . 2) (cat . 1) (dog . 3))
-</p>
-
-<p>
-Nice. Now we need a simple way to get that list. We need to glob the files to find them, then open them and read the value. Here is a way to get the files.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(f-entries <span style="color: #228b22;">"example"</span>
-           (<span style="color: #8b0000;">lambda</span> (f)
-             (string= (file-name-nondirectory f) <span style="color: #228b22;">"animal.dat"</span>))
-           t)
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="left" />
-
-<col  class="left" />
-
-<col  class="left" />
-
-<col  class="left" />
-
-<col  class="left" />
-
-<col  class="left" />
-</colgroup>
-<tbody>
-<tr>
-<td class="left">/Users/jkitchin/blogofile-jkitchin.github.com/<sub>blog</sub>/collect-entries/example/s1/animal.dat</td>
-<td class="left">/Users/jkitchin/blogofile-jkitchin.github.com/<sub>blog</sub>/collect-entries/example/s2/animal.dat</td>
-<td class="left">/Users/jkitchin/blogofile-jkitchin.github.com/<sub>blog</sub>/collect-entries/example/s3/animal.dat</td>
-<td class="left">/Users/jkitchin/blogofile-jkitchin.github.com/<sub>blog</sub>/collect-entries/example/s4/animal.dat</td>
-<td class="left">/Users/jkitchin/blogofile-jkitchin.github.com/<sub>blog</sub>/collect-entries/example/s5/animal.dat</td>
-<td class="left">/Users/jkitchin/blogofile-jkitchin.github.com/<sub>blog</sub>/collect-entries/example/s6/animal.dat</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-Now we just need to run a mapcar over this list of files.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(mapcar
- (<span style="color: #8b0000;">lambda</span> (f)
-   (<span style="color: #8b0000;">with-temp-buffer</span>
-     (insert-file-contents f)
-     (s-trim (buffer-string))))
- (f-entries <span style="color: #228b22;">"example"</span>
-            (<span style="color: #8b0000;">lambda</span> (f)
-              (string= (file-name-nondirectory f) <span style="color: #228b22;">"animal.dat"</span>))
-            t))
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="left" />
-
-<col  class="left" />
-
-<col  class="left" />
-
-<col  class="left" />
-
-<col  class="left" />
-
-<col  class="left" />
-</colgroup>
-<tbody>
-<tr>
-<td class="left">dog</td>
-<td class="left">cat</td>
-<td class="left">dog</td>
-<td class="left">bird</td>
-<td class="left">dog</td>
-<td class="left">bird</td>
-</tr>
-</tbody>
-</table>
-
-
-<p>
-Finally, putting this together, we have some code that maps over the files, and counts the entries.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(counts
- (mapcar
-  (<span style="color: #8b0000;">lambda</span> (f)
-    (<span style="color: #8b0000;">with-temp-buffer</span>
-      (insert-file-contents f)
-      (s-trim (buffer-string))))
-  (f-entries <span style="color: #228b22;">"example"</span>
-             (<span style="color: #8b0000;">lambda</span> (f)
-               (string= (file-name-nondirectory f) <span style="color: #228b22;">"animal.dat"</span>))
-             t)))
-</pre>
-</div>
-
-<p>
-((bird . 2) (cat . 1) (dog . 3))
-</p>
-
-<p>
-This will be helpful in dealing with 58 entries during my class!
-</p>
-<p>Copyright (C) 2014 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2014/08/25/Collecting-entries-from-files-in-a-directory.org">org-mode source</a><p><p>Org-mode version = 8.2.7c</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2014/08/25/Collecting-entries-from-files-in-a-directory#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="../21">« Previous Page</a>
   --  
  <a href="../23">Next Page »</a>
@@ -1121,11 +1165,11 @@ This will be helpful in dealing with 58 entries during my class!
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2015/09/27/Upping-my-Emacs-navigation-game/">Upping my Emacs navigation game</a></li>
       <li><a href="/blog/2015/09/16/Jacob-Boes-wins-Graduate-Student-Association-Travel-Funding/">Jacob Boes wins Graduate Student Association Travel Funding</a></li>
       <li><a href="/blog/2015/09/13/Zhongnan-Xu-wins-AIChE-CRE-Division-Travel-Award/">Zhongnan Xu wins AIChE CRE Division Travel Award</a></li>
       <li><a href="/blog/2015/09/04/Checking-for-email-attachments-before-you-send-email/">Checking for email attachments before you send email</a></li>
       <li><a href="/blog/2015/08/24/New-publication-in-J-Phys-Chem-C/">New publication in J. Phys. Chem. C</a></li>
-      <li><a href="/blog/2015/08/11/Author-impact-factors/">Author impact factors</a></li>
     </ul>
   </section>
 
