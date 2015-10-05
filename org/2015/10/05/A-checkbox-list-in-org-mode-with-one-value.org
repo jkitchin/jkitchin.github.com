@@ -1,0 +1,88 @@
+* A checkbox list in org-mode with one value
+  :PROPERTIES:
+  :categories: emacs,orgmode
+  :date:     2015/10/05 19:15:25
+  :updated:  2015/10/05 19:15:25
+  :END:
+
+A while ago I had a need for a checklist in org-mode where only one value would be checked at a time. Like a radio button in a browser form. That isn't as far as I know a feature yet, but it was not hard to achieve thanks to the org-element api.  My simple idea is to make a function that will be added to the org-checkbox-statistics-hook. The function will uncheck all the boxes, and recheck the one you just clicked with a hybrid of manipulating the cursor and inserting characters with org-element code. We will use an attribute on the checklist to indicate it is a "radio" list. This seems like a feature that might already exist, but I couldn't find it.
+
+Here is the code we run. First, we make sure we are on a plain list that has an attr_org property of ":radio", that way this won't apply to all lists, just the radio lists. Then, we loop through each element in the structure, and if it is checked, we replace [X] with [ ]. Then, we reinsert the X and delete a space, which puts [X] where we originally clicked, or used C-c C-c. Finally, we add it to the hook, so it only gets run when a checkbox is changed via clicking with org-mouse, or C-c C-c. Of course, this doesn't work if you type X in the box.
+
+#+BEGIN_SRC emacs-lisp
+(require 'dash)
+(defun check-hook-fn ()
+  (when (-contains? (org-element-property
+		     :attr_org
+		     (org-element-property :parent (org-element-context)))
+		    ":radio")
+    (save-excursion
+      (loop for el in (org-element-property :structure (org-element-context))
+	    do
+	    (goto-char (car el))
+	    (when (re-search-forward "\\[X\\]" (line-end-position) t)
+	      (replace-match "[ ]"))))
+    (forward-char)
+    (insert "X")
+    (delete-char 1)))
+
+(add-hook 'org-checkbox-statistics-hook 'check-hook-fn)
+#+END_SRC
+
+#+RESULTS:
+| check-hook-fn |
+
+Here is a regular checklist. You can check as many as you want.
+- [X] one
+- [X] two
+- [ ] three
+
+Now, here is a radio checklist. Only one item at a time can be checked. Nice!
+
+#+attr_org: :radio
+#+name: test
+- [ ] a
+- [ ] b
+- [X] c
+
+It is worth noting here that if we put a name on the list, it becomes an addressable data source. First we need this convenient function to get the data associated with a named list.
+
+#+BEGIN_SRC emacs-lisp
+(defun org-get-plain-list (name)
+  "Get the org-element representation of a plain-list with NAME."
+  (catch 'found
+    (org-element-map
+	(org-element-parse-buffer)
+	'plain-list
+      (lambda (plain-list)
+	(when
+	    (string= name (org-element-property :name plain-list))
+	  (throw 'found plain-list))))))
+#+END_SRC
+
+#+RESULTS:
+: org-get-plain-list
+
+Now, let's use that to get the value of the checked item in the "test" list. We define the item as everything after the [X] and get it from a regular expression match.
+
+#+BEGIN_SRC emacs-lisp
+(defun get-radio-list-value (list-name)
+  "Return the value of the checked item in a radio list."
+  (save-excursion
+    (loop for el in (org-element-property
+		     :structure
+		     (org-jump-to-plain-list list-name))
+	  if (string= (nth 4 el) "[X]")
+	  return (progn
+		   (let ((item (buffer-substring (car el) (car (last el)))))
+		     (string-match "\\[X\\]\\(.*\\)$" item)
+		     (match-string 1 item))))))
+
+(get-radio-list-value "test")
+#+END_SRC
+
+#+RESULTS:
+:  c
+
+Perfect. This has lots of potential applications. Data collection and quizzes come to mind, with associated ability to autograde and aggregate the data!
+
