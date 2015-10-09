@@ -1,7 +1,173 @@
+* DONE Automatic latex image toggling when cursor is on a fragment
+  CLOSED: [2015-10-09 Fri 11:54]
+  :PROPERTIES:
+  :categories: orgmode
+  :date:     2015/10/09 11:54:50
+  :updated:  2015/10/09 11:54:50
+  :END:
+
+There was a recent suggestion on the org-mode mailing list to make it possible to toggle individual equations in org-mode when the cursor is on them, and have them toggle back when the mouse is off. Presumably, this would let you edit the equation and see the result very easily.
+
+The strategy to enable this is to use add a function to the post-command function hook. The function will store the last fragment/environment you were on, and compare it to where you are now.  If they are different the function will put the overlay back on the previous point, and do something appropriate at the current point, e.g. nothing if you are not on a fragment, or remove the overlay of the fragment you are on. The function will get run after every command, so we make sure we are in org-mode first!
+
+Here are some example equations.
+
+Here is a sentence with an equation $f^{2x}=3$ and another form \(e^x = 20\) in it.
+
+Here is a standalone equation environment.
+
+\begin{equation}
+a + b \sqrt{5o}
+\end{equation}
+
+And now, \[15 + 7 = 12\],
+
+It is easiest to see this in a video here: https://www.youtube.com/watch?v=E0s3PDBqsEc
+
+#+BEGIN_SRC emacs-lisp
+(defvar org-latex-fragment-last nil
+  "Holds last fragment/environment you were on.")
+
+(defun org-latex-fragment-toggle ()
+  "Toggle a latex fragment image "
+  (and (eq 'org-mode major-mode)
+       (let* ((el (org-element-context))
+	      (el-type (car el)))
+	 (cond
+	  ;; were on a fragment and now on a new fragment
+	  ((and
+	    ;; fragment we were on
+	    org-latex-fragment-last
+	    ;; and are on a fragment now
+	    (or
+	     (eq 'latex-fragment el-type)
+	     (eq 'latex-environment el-type))
+	    ;; but not on the last one this is a little tricky. as you edit the
+	    ;; fragment, it is not equal to the last one. We use the begin
+	    ;; property which is less likely to change for the comparison.
+	    (not (= (org-element-property :begin el)
+		    (org-element-property :begin org-latex-fragment-last))))
+	   ;; go back to last one and put image back
+	   (save-excursion
+	     (goto-char (org-element-property :begin org-latex-fragment-last))
+	     (org-preview-latex-fragment))
+	   ;; now remove current image
+           (goto-char (org-element-property :begin el))
+	   (let ((ov (loop for ov in org-latex-fragment-image-overlays
+			   if
+			   (and
+			    (<= (overlay-start ov) (point))
+			    (>= (overlay-end ov) (point)))
+			   return ov)))
+	     (when ov
+	       (delete-overlay ov)))
+	   ;; and save new fragment
+	   (setq org-latex-fragment-last el))
+
+	  ;; were on a fragment and now are not on a fragment
+	  ((and
+	    ;; not on a fragment now
+	    (not (or
+		  (eq 'latex-fragment el-type)
+		  (eq 'latex-environment el-type)))
+	    ;; but we were on one
+	    org-latex-fragment-last)
+	   ;; put image back on
+	   (save-excursion
+	     (goto-char (org-element-property :begin org-latex-fragment-last))
+	     (org-preview-latex-fragment))
+	   ;; unset last fragment
+	   (setq org-latex-fragment-last nil))
+
+	  ;; were not on a fragment, and now are
+	  ((and
+	    ;; we were not one one
+	    (not org-latex-fragment-last)
+	    ;; but now we are
+	    (or
+	     (eq 'latex-fragment el-type)
+	     (eq 'latex-environment el-type)))
+	   (goto-char (org-element-property :begin el))
+           ;; remove image
+	   (let ((ov (loop for ov in org-latex-fragment-image-overlays
+			   if
+			   (and
+			    (<= (overlay-start ov) (point))
+			    (>= (overlay-end ov) (point)))
+			   return ov)))
+	     (when ov
+	       (delete-overlay ov)))
+	   (setq org-latex-fragment-last el))))))
 
 
-* COMPLETED A checkbox list in org-mode with one value
-  CLOSED: [2015-10-05 Mon 19:15]
+(add-hook 'post-command-hook 'org-latex-fragment-toggle)
+#+END_SRC
+
+#+RESULTS:
+| org-latex-fragment-toggle | matlab-start-block-highlight-timer | eldoc-schedule-timer |
+
+
+I think there could be another way to do this with text properties, e.g. point-left and point-entered, but that would require those properties to be set on the fragments. I might try that approach another day.
+
+
+* Exploring the Python AST
+[[http://stackoverflow.com/questions/1515357/simple-example-of-how-to-use-ast-nodevisitor][python - Simple example of how to use ast.NodeVisitor? - Stack Overflow]]
+
+#+BEGIN_SRC python
+import ast
+def str_node(node):
+    if isinstance(node, ast.AST):
+        fields = [(name, str_node(val)) for name, val in ast.iter_fields(node) if name not in ('left', 'right')]
+        rv = '%s(%s' % (node.__class__.__name__, ', '.join('%s=%s' % field for field in fields))
+        return rv + ')'
+    else:
+        return repr(node)
+def ast_visit(node, level=0):
+    print('  ' * level + str_node(node))
+    for field, value in ast.iter_fields(node):
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, ast.AST):
+                    ast_visit(item, level=level+1)
+        elif isinstance(value, ast.AST):
+            ast_visit(value, level=level+1)
+
+
+# ast_visit(ast.parse('a=5; b=a+1; a+b'))
+print
+ast_visit(ast.parse('''
+def f(a, b):
+    return a + b
+f(5, 4)'''))
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+
+Module(body=[<_ast.FunctionDef object at 0x1004c0f50>, <_ast.Expr object at 0x1004c5190>])
+  FunctionDef(name='f', args=arguments(args=[<_ast.Name object at 0x1004c0fd0>, <_ast.Name object at 0x1004c5050>], vararg=None, kwarg=None, defaults=[]), body=[<_ast.Return object at 0x1004c5090>], decorator_list=[])
+    arguments(args=[<_ast.Name object at 0x1004c0fd0>, <_ast.Name object at 0x1004c5050>], vararg=None, kwarg=None, defaults=[])
+      Name(id='a', ctx=Param())
+        Param()
+      Name(id='b', ctx=Param())
+        Param()
+    Return(value=BinOp(op=Add()))
+      BinOp(op=Add())
+        Name(id='a', ctx=Load())
+          Load()
+        Add()
+        Name(id='b', ctx=Load())
+          Load()
+  Expr(value=Call(func=Name(id='f', ctx=Load()), args=[<_ast.Num object at 0x1004c5250>, <_ast.Num object at 0x1004c5290>], keywords=[], starargs=None, kwargs=None))
+    Call(func=Name(id='f', ctx=Load()), args=[<_ast.Num object at 0x1004c5250>, <_ast.Num object at 0x1004c5290>], keywords=[], starargs=None, kwargs=None)
+      Name(id='f', ctx=Load())
+        Load()
+      Num(n=5)
+      Num(n=4)
+#+end_example
+
+* DONE COMPLETED A checkbox list in org-mode with one value
+  CLOSED: [2015-10-07 Wed 11:56]
   :PROPERTIES:
   :categories: emacs,orgmode
   :date:     2015/10/05 19:15:25
