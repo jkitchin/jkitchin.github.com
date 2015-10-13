@@ -10,10 +10,172 @@
     <title>The Kitchin Research Group</title>
     <link>http://jkitchin.github.io/blog</link>
     <description>Chemical Engineering at Carnegie Mellon University</description>
-    <pubDate>Sun, 11 Oct 2015 18:18:09 GMT</pubDate>
+    <pubDate>Tue, 13 Oct 2015 12:59:05 GMT</pubDate>
     <generator>Blogofile</generator>
     <sy:updatePeriod>hourly</sy:updatePeriod>
     <sy:updateFrequency>1</sy:updateFrequency>
+    <item>
+      <title>Line numbers in org-mode code blocks</title>
+      <link>http://jkitchin.github.io/blog/2015/10/13/Line-numbers-in-org-mode-code-blocks</link>
+      <pubDate>Tue, 13 Oct 2015 08:58:34 EDT</pubDate>
+      <category><![CDATA[orgmode]]></category>
+      <category><![CDATA[emacs]]></category>
+      <guid isPermaLink="false">uiVEeY3zbYDjvvhyKVdNcK5To3s=</guid>
+      <description>Line numbers in org-mode code blocks</description>
+      <content:encoded><![CDATA[
+
+
+
+<p>
+Some of my students have wanted to show line numbers in code blocks. This is especially useful for when you run a Python block, and you get an error message with a line number in it. Right now, to figure out which line that is, you have to into the code block, type C-c ' to get into edit mode, and turn line numbers on. We look into how to achieve that here.
+</p>
+
+<p>
+You may want to see the video here: <a href="https://www.youtube.com/watch?v=kinWijGzXms">https://www.youtube.com/watch?v=kinWijGzXms</a> .
+</p>
+
+<p>
+First, we need to get the region that is the code block. We can find some info in the org-element, but, the :begin and :end include lines we don't want, like the header lines, and the results. But, we can get the beginning, and maybe from there search forward to the block. Run this code block to see where the point goes.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp" id="boring-example"><span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">a boring comment</span>
+
+(<span style="color: #0000FF;">progn</span>
+  (+ 40 2))
+
+(goto-char (org-element-property <span style="color: #006FE0;">:begin</span> (org-element-context)))
+(re-search-forward (regexp-quote (org-element-property <span style="color: #006FE0;">:value</span> (org-element-context))))
+(goto-char (match-beginning 0))
+<span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">number of lines in block. The last carriage return doesn't count.</span>
+(1- (length (s-split <span style="color: #008000;">"\n"</span> (org-element-property <span style="color: #006FE0;">:value</span> (org-element-context)))))
+</pre>
+</div>
+
+<pre class="example">
+9
+</pre>
+
+<p>
+So, we can get the number of lines, and move the point to the first line. For numbers, we will use overlays. Here is a simple way to put a number at the beginning of a line.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> (ov)
+  (beginning-of-line)
+  (<span style="color: #0000FF;">setq</span> ov (make-overlay (point) (point)))
+  (overlay-put ov 'before-string <span style="color: #008000;">"1"</span>))
+</pre>
+</div>
+
+<pre class="example">
+1
+</pre>
+
+<p>
+The next thing to do is make a function that puts a number at the beginning of a line. We might as well store these overlays in a variable, so they are easy to remove later. This is just for exploration of how to do it. Later we combine all these pieces together.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">number-line-overlays</span> '()
+  <span style="color: #036A07;">"List of overlays for line numbers."</span>)
+
+(make-variable-buffer-local 'number-line-overlays)
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">number-line</span> (N)
+ <span style="color: #036A07;">"Put an overlay at the beginning of a line."</span>
+  (beginning-of-line)
+  (<span style="color: #0000FF;">let</span> (ov)
+    (<span style="color: #0000FF;">setq</span> ov (make-overlay (point) (point)))
+    (overlay-put ov 'before-string (format <span style="color: #008000;">"%3s"</span> (number-to-string N)))
+    (add-to-list 'number-line-overlays ov)))
+
+(number-line 4)
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="left">#&lt;overlay from 1782 to 1782 in blog.org&gt;</td>
+</tr>
+</tbody>
+</table>
+
+
+<p>
+That looks promising. Let's make a function to clear those overlays. It is so easy it may not even be worth writing.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">number-line-clear</span> ()
+  (mapc 'delete-overlay number-line-overlays)
+  (<span style="color: #0000FF;">setq</span> number-line-overlays '()))
+
+(number-line-clear)
+</pre>
+</div>
+
+<p>
+Finally, we are ready to hack up the code block numbering code. The numbers will not automatically update, so we will write a function that numbers the block, but only temporarily. Any key press will get rid of the numbers so we can get back to work.  I am going to go ahead and make this a stand-alone function and block.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">number-line-overlays</span> '()
+  <span style="color: #036A07;">"List of overlays for line numbers."</span>)
+
+(make-variable-buffer-local 'number-line-overlays)
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">number-line-src-block</span> ()
+  (<span style="color: #0000FF;">interactive</span>)
+  (<span style="color: #0000FF;">save-excursion</span>
+    (<span style="color: #0000FF;">let*</span> ((src-block (org-element-context))
+           (nlines (- (length
+                       (s-split
+                        <span style="color: #008000;">"\n"</span>
+                        (org-element-property <span style="color: #006FE0;">:value</span> src-block)))
+                      1)))
+      (goto-char (org-element-property <span style="color: #006FE0;">:begin</span> src-block))
+      (re-search-forward (regexp-quote (org-element-property <span style="color: #006FE0;">:value</span> src-block)))
+      (goto-char (match-beginning 0))
+
+      (<span style="color: #0000FF;">loop</span> for i from 1 to nlines
+            do
+            (beginning-of-line)
+            (<span style="color: #0000FF;">let</span> (ov)
+              (<span style="color: #0000FF;">setq</span> ov (make-overlay (point) (point)))
+              (overlay-put ov 'before-string (format <span style="color: #008000;">"%3s"</span> (number-to-string i)))
+              (add-to-list 'number-line-overlays ov))
+            (next-line))))
+
+  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">now read a char to clear them</span>
+  (read-key <span style="color: #008000;">"Press a key to clear numbers."</span>)
+  (mapc 'delete-overlay number-line-overlays)
+  (<span style="color: #0000FF;">setq</span> number-line-overlays '()))
+
+(number-line-src-block)
+</pre>
+</div>
+
+<p>
+I am not sure how to get the numbers to automatically update smoothly like they do in linum-mode. That code uses a lot of hooks to make updates work, and embeds them in a minor mode to get rid of them. It also puts them in the fringe I think, but it is not clear how that is done.
+</p>
+
+<p>
+We could modify what happens after the numbers are put on, e.g. pressing numbers might jump to a line, or some other kind of functionality. I don't have a critical need for this right now, so I didn't explore it more. Let me know if you have any good ideas for it!
+</p>
+<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/10/13/Line-numbers-in-org-mode-code-blocks.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>]]></content:encoded>
+    </item>
     <item>
       <title>A checkbox list in org-mode with one value</title>
       <link>http://jkitchin.github.io/blog/2015/10/05/A-checkbox-list-in-org-mode-with-one-value</link>
@@ -1741,102 +1903,6 @@ my-dnd-func
 <p>
 <img src="/media/2015-07-10-Drag-images-and-files-onto-org-mode-and-insert-a-link-to-them/Au-icosahedron-3.png"> </p>
 <p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/07/10/Drag-images-and-files-onto-org-mode-and-insert-a-link-to-them.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>]]></content:encoded>
-    </item>
-    <item>
-      <title>Acronym minor mode for Emacs</title>
-      <link>http://jkitchin.github.io/blog/2015/07/09/Acronym-minor-mode-for-Emacs</link>
-      <pubDate>Thu, 09 Jul 2015 08:04:40 EDT</pubDate>
-      <category><![CDATA[video]]></category>
-      <category><![CDATA[emacs]]></category>
-      <category><![CDATA[tooltip]]></category>
-      <guid isPermaLink="false">vt7mEa2on8CD1Tjm4o_qa0Q0LKY=</guid>
-      <description>Acronym minor mode for Emacs</description>
-      <content:encoded><![CDATA[
-
-
-
-<p>
-Three letter acronyms (TLA) are pretty common, as are other kinds of acronyms, e.g. ferromagnetic (FM), anti-ferromagnetic (AFM), National Security Agency (NSA), even <a href="https://www.gnu.org/fun/jokes/gnuemacs.acro.exp.html">Escape-Meta-Alt-Control-Shift</a> (EMACS) etc&#x2026; in technical documents. As you get away from the definition, it can get hard to remember what they are, so here we develop a minor mode that will put a tooltip over acronyms that hopefully shows what they mean.
-</p>
-
-<p>
-You can see this in action here: <a href="https://www.youtube.com/watch?v=2G2isMO6E2c">https://www.youtube.com/watch?v=2G2isMO6E2c</a> 
-</p>
-
-<p>
-When we turn the mode on, it will scan the buffer looking for an acronym pattern, deduce its likely meaning, and put tooltips on every subsequent use of the acronym. The pattern we will look for is a sequence of uppercase letters surrounded by parentheses. We will assume that if we find N uppercase letters, that the previous N words contain the definition of the acronym. This is pretty approximate, but it is not likely to be that wrong. Then, we will use button-lock to put the tooltips on all subsequent instances of acronyms. We don't want flyspell interfering with the tooltips, so we remove the overlays if they are there.
-</p>
-
-<p>
-Unlike previous examples where we just use button-lock, here we wrap the feature into a minor mode that you can turn on and off. Note, you cannot add new acronyms and have them have tooltips. You have to refresh the buttons.
-</p>
-
-<p>
-Here is the minor mode code. We use the interesting rx package to build the regular expression. It is more verbose, but a little easier to read than a straight regexp like (concat "\\&lt;" (match-string 1) "\\&gt;") in my opinion.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(make-variable-buffer-local
-  (<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">*acronym-buttons*</span> '() <span style="color: #036A07;">"list of acronym buttons"</span>))
-
-(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">rx</span>)
-
-(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">highlight-acronyms</span> ()
-  (<span style="color: #0000FF;">save-excursion</span>
-    (<span style="color: #0000FF;">let</span> ((case-fold-search nil))
-      (goto-char (point-min))
-      (<span style="color: #0000FF;">while</span> (re-search-forward <span style="color: #008000;">"(</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">(</span><span style="color: #008000;">[A-Z]+</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">)</span><span style="color: #008000;">)"</span> nil t)
-        (<span style="color: #0000FF;">when</span> flyspell-mode
-          (flyspell-delete-region-overlays (match-beginning 1)
-                                           (match-end 1)))
-        (<span style="color: #0000FF;">let*</span> ((acronym (match-string 1))
-               (p (point))
-               (definition (<span style="color: #0000FF;">save-excursion</span>
-                             (goto-char (match-beginning 1))
-                             (backward-word (length acronym))
-                             (buffer-substring (point) p))))
-          (add-to-list '*acronym-buttons*
-                       (button-lock-set-button
-                        (<span style="color: #0000FF;">rx</span> word-start (eval (match-string 1)) word-end)
-                        nil
-                        <span style="color: #006FE0;">:help-echo</span> definition)))))))
-
-
-(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">remove-acronym-buttons</span> ()
-  (<span style="color: #0000FF;">dolist</span> (button *acronym-buttons*)
-      (button-lock-unset-button button))
-  (<span style="color: #0000FF;">setq</span> *acronym-buttons* '()))
-
-
-(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">refresh-acronyms</span> ()
-  <span style="color: #036A07;">"Refresh acronym tooltips in buffer."</span>
-  (<span style="color: #0000FF;">interactive</span>)
-  (remove-acronym-buttons)
-  (highlight-acronyms))
-
-
-<span style="color: #8D8D84;">;;;</span><span style="color: #8D8D84; font-style: italic;">###</span><span style="color: #ff0000; font-weight: bold; font-style: italic;">autoload</span>
-(<span style="color: #0000FF;">define-minor-mode</span> <span style="color: #006699;">acronym-mode</span>
-  <span style="color: #036A07;">"Put definitions on acronyms."</span>
-  <span style="color: #006FE0;">:lighter</span> <span style="color: #008000;">" AM"</span>
-  (<span style="color: #0000FF;">if</span> acronym-mode
-      (highlight-acronyms)
-    (remove-acronym-buttons)))
-
-
-(<span style="color: #0000FF;">provide</span> '<span style="color: #D0372D;">acronym-mode</span>)
-</pre>
-</div>
-
-<pre class="example">
-acronym-mode
-</pre>
-
-<p>
-There it is. Now any time we have an acronym like EMACS we can mouse over it, or type C-h . on the acronym to see how it was previously defined. If you don't like it, you can turn it off!
-</p>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/07/09/Acronym-minor-mode-for-Emacs.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>]]></content:encoded>
     </item>
   </channel>
 </rss>
