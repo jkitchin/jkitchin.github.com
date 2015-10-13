@@ -1,3 +1,127 @@
+* DONE Line numbers in org-mode code blocks
+  CLOSED: [2015-10-13 Tue 08:58]
+  :PROPERTIES:
+  :categories: emacs,orgmode
+  :date:     2015/10/13 08:58:34
+  :updated:  2015/10/13 08:58:34
+  :END:
+
+Some of my students have wanted to show line numbers in code blocks. This is especially useful for when you run a Python block, and you get an error message with a line number in it. Right now, to figure out which line that is, you have to into the code block, type C-c ' to get into edit mode, and turn line numbers on. We look into how to achieve that here.
+
+You may want to see the video here: https://www.youtube.com/watch?v=kinWijGzXms.
+
+First, we need to get the region that is the code block. We can find some info in the org-element, but, the :begin and :end include lines we don't want, like the header lines, and the results. But, we can get the beginning, and maybe from there search forward to the block. Run this code block to see where the point goes.
+
+#+name: boring-example
+#+BEGIN_SRC emacs-lisp
+;; a boring comment
+
+(progn
+  (+ 40 2))
+
+(goto-char (org-element-property :begin (org-element-context)))
+(re-search-forward (regexp-quote (org-element-property :value (org-element-context))))
+(goto-char (match-beginning 0))
+;; number of lines in block. The last carriage return doesn't count.
+(1- (length (s-split "\n" (org-element-property :value (org-element-context)))))
+#+END_SRC
+
+#+RESULTS: boring-example
+: 9
+
+So, we can get the number of lines, and move the point to the first line. For numbers, we will use overlays. Here is a simple way to put a number at the beginning of a line.
+
+#+BEGIN_SRC emacs-lisp
+(let (ov)
+  (beginning-of-line)
+  (setq ov (make-overlay (point) (point)))
+  (overlay-put ov 'before-string "1"))
+#+END_SRC
+
+#+RESULTS:
+: 1
+
+The next thing to do is make a function that puts a number at the beginning of a line. We might as well store these overlays in a variable, so they are easy to remove later. This is just for exploration of how to do it. Later we combine all these pieces together.
+
+#+BEGIN_SRC emacs-lisp
+(defvar number-line-overlays '()
+  "List of overlays for line numbers.")
+
+(make-variable-buffer-local 'number-line-overlays)
+
+(defun number-line (N)
+ "Put an overlay at the beginning of a line."
+  (beginning-of-line)
+  (let (ov)
+    (setq ov (make-overlay (point) (point)))
+    (overlay-put ov 'before-string (format "%3s" (number-to-string N)))
+    (add-to-list 'number-line-overlays ov)))
+
+(number-line 4)
+#+END_SRC
+
+#+RESULTS:
+| #<overlay from 1782 to 1782 in blog.org> |
+
+
+That looks promising. Let's make a function to clear those overlays. It is so easy it may not even be worth writing.
+
+#+BEGIN_SRC emacs-lisp
+(defun number-line-clear ()
+  (mapc 'delete-overlay number-line-overlays)
+  (setq number-line-overlays '()))
+
+(number-line-clear)
+#+END_SRC
+
+#+RESULTS:
+
+Finally, we are ready to hack up the code block numbering code. The numbers will not automatically update, so we will write a function that numbers the block, but only temporarily. Any key press will get rid of the numbers so we can get back to work.  I am going to go ahead and make this a stand-alone function and block.
+
+#+BEGIN_SRC emacs-lisp
+(defvar number-line-overlays '()
+  "List of overlays for line numbers.")
+
+(make-variable-buffer-local 'number-line-overlays)
+
+(defun number-line-src-block ()
+  (interactive)
+  (save-excursion
+    (let* ((src-block (org-element-context))
+	   (nlines (- (length
+		       (s-split
+			"\n"
+			(org-element-property :value src-block)))
+		      1)))
+      (goto-char (org-element-property :begin src-block))
+      (re-search-forward (regexp-quote (org-element-property :value src-block)))
+      (goto-char (match-beginning 0))
+
+      (loop for i from 1 to nlines
+	    do
+	    (beginning-of-line)
+	    (let (ov)
+	      (setq ov (make-overlay (point) (point)))
+	      (overlay-put ov 'before-string (format "%3s" (number-to-string i)))
+	      (add-to-list 'number-line-overlays ov))
+	    (next-line))))
+
+  ;; now read a char to clear them
+  (read-key "Press a key to clear numbers.")
+  (mapc 'delete-overlay number-line-overlays)
+  (setq number-line-overlays '()))
+
+(number-line-src-block)
+#+END_SRC
+
+#+RESULTS:
+
+I am not sure how to get the numbers to automatically update smoothly like they do in linum-mode. That code uses a lot of hooks to make updates work, and embeds them in a minor mode to get rid of them. It also puts them in the fringe I think, but it is not clear how that is done.
+
+We could modify what happens after the numbers are put on, e.g. pressing numbers might jump to a line, or some other kind of functionality. I don't have a critical need for this right now, so I didn't explore it more. Let me know if you have any good ideas for it!
+
+
+
 * Using functions in font lock
 
 If you want to get past simple regular expressions in font-lock, you can use functions for search-based fontification.

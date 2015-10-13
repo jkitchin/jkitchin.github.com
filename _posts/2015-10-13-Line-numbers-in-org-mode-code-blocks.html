@@ -1,0 +1,159 @@
+---
+title: Line numbers in org-mode code blocks
+date: 2015/10/13 08:58:34
+updated: 2015/10/13 08:58:34
+categories: emacs,orgmode
+tags: 
+---
+
+
+
+<p>
+Some of my students have wanted to show line numbers in code blocks. This is especially useful for when you run a Python block, and you get an error message with a line number in it. Right now, to figure out which line that is, you have to into the code block, type C-c ' to get into edit mode, and turn line numbers on. We look into how to achieve that here.
+</p>
+
+<p>
+You may want to see the video here: <a href="https://www.youtube.com/watch?v=kinWijGzXms">https://www.youtube.com/watch?v=kinWijGzXms</a> .
+</p>
+
+<p>
+First, we need to get the region that is the code block. We can find some info in the org-element, but, the :begin and :end include lines we don't want, like the header lines, and the results. But, we can get the beginning, and maybe from there search forward to the block. Run this code block to see where the point goes.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp" id="boring-example"><span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">a boring comment</span>
+
+(<span style="color: #0000FF;">progn</span>
+  (+ 40 2))
+
+(goto-char (org-element-property <span style="color: #006FE0;">:begin</span> (org-element-context)))
+(re-search-forward (regexp-quote (org-element-property <span style="color: #006FE0;">:value</span> (org-element-context))))
+(goto-char (match-beginning 0))
+<span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">number of lines in block. The last carriage return doesn't count.</span>
+(1- (length (s-split <span style="color: #008000;">"\n"</span> (org-element-property <span style="color: #006FE0;">:value</span> (org-element-context)))))
+</pre>
+</div>
+
+<pre class="example">
+9
+</pre>
+
+<p>
+So, we can get the number of lines, and move the point to the first line. For numbers, we will use overlays. Here is a simple way to put a number at the beginning of a line.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> (ov)
+  (beginning-of-line)
+  (<span style="color: #0000FF;">setq</span> ov (make-overlay (point) (point)))
+  (overlay-put ov 'before-string <span style="color: #008000;">"1"</span>))
+</pre>
+</div>
+
+<pre class="example">
+1
+</pre>
+
+<p>
+The next thing to do is make a function that puts a number at the beginning of a line. We might as well store these overlays in a variable, so they are easy to remove later. This is just for exploration of how to do it. Later we combine all these pieces together.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">number-line-overlays</span> '()
+  <span style="color: #036A07;">"List of overlays for line numbers."</span>)
+
+(make-variable-buffer-local 'number-line-overlays)
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">number-line</span> (N)
+ <span style="color: #036A07;">"Put an overlay at the beginning of a line."</span>
+  (beginning-of-line)
+  (<span style="color: #0000FF;">let</span> (ov)
+    (<span style="color: #0000FF;">setq</span> ov (make-overlay (point) (point)))
+    (overlay-put ov 'before-string (format <span style="color: #008000;">"%3s"</span> (number-to-string N)))
+    (add-to-list 'number-line-overlays ov)))
+
+(number-line 4)
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="left">#&lt;overlay from 1782 to 1782 in blog.org&gt;</td>
+</tr>
+</tbody>
+</table>
+
+
+<p>
+That looks promising. Let's make a function to clear those overlays. It is so easy it may not even be worth writing.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">number-line-clear</span> ()
+  (mapc 'delete-overlay number-line-overlays)
+  (<span style="color: #0000FF;">setq</span> number-line-overlays '()))
+
+(number-line-clear)
+</pre>
+</div>
+
+<p>
+Finally, we are ready to hack up the code block numbering code. The numbers will not automatically update, so we will write a function that numbers the block, but only temporarily. Any key press will get rid of the numbers so we can get back to work.  I am going to go ahead and make this a stand-alone function and block.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">number-line-overlays</span> '()
+  <span style="color: #036A07;">"List of overlays for line numbers."</span>)
+
+(make-variable-buffer-local 'number-line-overlays)
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">number-line-src-block</span> ()
+  (<span style="color: #0000FF;">interactive</span>)
+  (<span style="color: #0000FF;">save-excursion</span>
+    (<span style="color: #0000FF;">let*</span> ((src-block (org-element-context))
+           (nlines (- (length
+                       (s-split
+                        <span style="color: #008000;">"\n"</span>
+                        (org-element-property <span style="color: #006FE0;">:value</span> src-block)))
+                      1)))
+      (goto-char (org-element-property <span style="color: #006FE0;">:begin</span> src-block))
+      (re-search-forward (regexp-quote (org-element-property <span style="color: #006FE0;">:value</span> src-block)))
+      (goto-char (match-beginning 0))
+
+      (<span style="color: #0000FF;">loop</span> for i from 1 to nlines
+            do
+            (beginning-of-line)
+            (<span style="color: #0000FF;">let</span> (ov)
+              (<span style="color: #0000FF;">setq</span> ov (make-overlay (point) (point)))
+              (overlay-put ov 'before-string (format <span style="color: #008000;">"%3s"</span> (number-to-string i)))
+              (add-to-list 'number-line-overlays ov))
+            (next-line))))
+
+  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">now read a char to clear them</span>
+  (read-key <span style="color: #008000;">"Press a key to clear numbers."</span>)
+  (mapc 'delete-overlay number-line-overlays)
+  (<span style="color: #0000FF;">setq</span> number-line-overlays '()))
+
+(number-line-src-block)
+</pre>
+</div>
+
+<p>
+I am not sure how to get the numbers to automatically update smoothly like they do in linum-mode. That code uses a lot of hooks to make updates work, and embeds them in a minor mode to get rid of them. It also puts them in the fringe I think, but it is not clear how that is done.
+</p>
+
+<p>
+We could modify what happens after the numbers are put on, e.g. pressing numbers might jump to a line, or some other kind of functionality. I don't have a critical need for this right now, so I didn't explore it more. Let me know if you have any good ideas for it!
+</p>
+<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/10/13/Line-numbers-in-org-mode-code-blocks.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
