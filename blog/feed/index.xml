@@ -10,10 +10,97 @@
     <title>The Kitchin Research Group</title>
     <link>http://jkitchin.github.io/blog</link>
     <description>Chemical Engineering at Carnegie Mellon University</description>
-    <pubDate>Tue, 13 Oct 2015 12:59:06 GMT</pubDate>
+    <pubDate>Sat, 24 Oct 2015 17:42:28 GMT</pubDate>
     <generator>Blogofile</generator>
     <sy:updatePeriod>hourly</sy:updatePeriod>
     <sy:updateFrequency>1</sy:updateFrequency>
+    <item>
+      <title>Saving the current restriction and restoring it while following links</title>
+      <link>http://jkitchin.github.io/blog/2015/10/24/Saving-the-current-restriction-and-restoring-it-while-following-links</link>
+      <pubDate>Sat, 24 Oct 2015 13:41:45 EDT</pubDate>
+      <category><![CDATA[orgmode]]></category>
+      <category><![CDATA[emacs]]></category>
+      <guid isPermaLink="false">YT9lKIGC8EOMKRbm2EP4wgSTpz0=</guid>
+      <description>Saving the current restriction and restoring it while following links</description>
+      <content:encoded><![CDATA[
+
+
+
+<p>
+On the org-mode mailing list there has been some discussion about following id links. The issue is that if your buffer is narrowed, clicking on the link does not change the restriction to actually take you to the entry. This is debatably desirable. If I click on a link, I want it to go where it points. But, I might also like to go back to my narrowed view. So here consider how to save the state of narrowing, and restore it. We modify the function that opens an id link to save the restriction, and widen the buffer if necessary.
+</p>
+
+<p>
+Saving the restriction seems easy, we just save a marker to point, and the point-min and point-max. We save the marker for a convenient way to get the buffer, and perhaps the actual point. We advise the C-c &amp; function to restore the restriction after we leave it. This should fix the restriction in whatever buffer we undid it in.
+</p>
+
+<p>
+Here is the code that seems to work for me. Thanks to Rasmus for the idea on saving the restriction data.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">*saved-restriction*</span> nil
+ <span style="color: #036A07;">"A global var containing the current restriction. Returns (point-marker point-min point-max"</span>)
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">save-current-restriction</span> ()
+  <span style="color: #036A07;">"Save the current restriction at point."</span>
+  (<span style="color: #0000FF;">setq</span> *saved-restriction*
+        (<span style="color: #0000FF;">if</span> (buffer-narrowed-p)
+            (list (point-marker) (point-min) (point-max))
+          nil)))
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">restore-saved-restriction</span> ()
+  <span style="color: #036A07;">"Restore the last saved restriction."</span>
+  (<span style="color: #0000FF;">when</span> *saved-restriction*
+    (set-buffer (marker-buffer (car *saved-restriction*)))
+    (narrow-to-region (nth 1 *saved-restriction*)
+                      (nth 2 *saved-restriction*)))
+  (<span style="color: #0000FF;">setq</span> *saved-restriction* nil))
+
+<span style="color: #8D8D84;">;</span><span style="color: #8D8D84; font-style: italic;">' actually modify this function to save the restriction, and widen if needed.</span>
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-id-open</span> (id)
+  <span style="color: #036A07;">"Go to the entry with id ID."</span>
+  (org-mark-ring-push)
+  (<span style="color: #0000FF;">let</span> ((m (org-id-find id 'marker))
+        cmd)
+    (<span style="color: #0000FF;">unless</span> m
+      (<span style="color: #ff0000; font-weight: bold;">error</span> <span style="color: #008000;">"Cannot find entry with ID \"%s\""</span> id))
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Use a buffer-switching command in analogy to finding files</span>
+    (<span style="color: #0000FF;">setq</span> cmd
+          (<span style="color: #0000FF;">or</span>
+           (cdr
+            (assq
+             (cdr (assq 'file org-link-frame-setup))
+             '((find-file . switch-to-buffer)
+               (find-file-other-window . switch-to-buffer-other-window)
+               (find-file-other-frame . switch-to-buffer-other-frame))))
+           'switch-to-buffer-other-window))
+    (<span style="color: #0000FF;">if</span> (not (equal (current-buffer) (marker-buffer m)))
+        (funcall cmd (marker-buffer m)))
+    (save-current-restriction)
+    (<span style="color: #0000FF;">when</span> (&gt; m (point-max))
+      (widen))
+    (goto-char m)
+    (move-marker m nil)
+    (org-show-context)))
+
+
+<span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">And we advise the function going back to restore the restriction.</span>
+(<span style="color: #0000FF;">defadvice</span> <span style="color: #006699;">org-mark-ring-goto</span> (after restore-my-restriction () activate)
+  <span style="color: #036A07;">"Restore narrowing."</span>
+  (restore-saved-restriction))
+</pre>
+</div>
+
+<pre class="example">
+org-mark-ring-goto
+</pre>
+
+<p>
+This seems to preserve restrictions in the current buffer and in other buffers, as long as I use C-c &amp; to invoke org-mark-ring goto. I am not sure how easy it would be to make this work for all links. Each link has its own function for following so I am not sure we can easily get them all to do this unless there is some high level function to advise like org-mouse-down-mouse or something similar. It also has the limitation that the restoration only occurs using org-mark-ring-goto, unless you specifically run the  (restore-saved-restriction) function yourself. That could be made an interactive function for that purpose. Otherwise, this seems like a reasonable approach.</p>
+<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/10/24/Saving-the-current-restriction-and-restoring-it-while-following-links.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>]]></content:encoded>
+    </item>
     <item>
       <title>Line numbers in org-mode code blocks</title>
       <link>http://jkitchin.github.io/blog/2015/10/13/Line-numbers-in-org-mode-code-blocks</link>
@@ -1094,47 +1181,6 @@ Tuesday, November 10, 2015: 4:45 PM
 <p>
 <a href="https://aiche.confex.com/aiche/2015/webprogram/Paper429027.html">https://aiche.confex.com/aiche/2015/webprogram/Paper429027.html</a> </p>
 <p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/09/16/Jacob-Boes-wins-Graduate-Student-Association-Travel-Funding.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>]]></content:encoded>
-    </item>
-    <item>
-      <title>Zhongnan Xu wins AIChE CRE Division Travel Award</title>
-      <link>http://jkitchin.github.io/blog/2015/09/13/Zhongnan-Xu-wins-AIChE-CRE-Division-Travel-Award</link>
-      <pubDate>Sun, 13 Sep 2015 11:13:00 EDT</pubDate>
-      <category><![CDATA[news]]></category>
-      <category><![CDATA[award]]></category>
-      <guid isPermaLink="false">J4xf5FDwf4PytP1Gwcpqij28tB8=</guid>
-      <description>Zhongnan Xu wins AIChE CRE Division Travel Award</description>
-      <content:encoded><![CDATA[
-
-
-
-<p>
-Zhongnan Xu has been selected to receive a travel award from the AIChE Catalysis and Reaction Engineering Division to attend the annual meeting that will be held November 8-13 in Salt Lake City, Utah.
-</p>
-
-<p>
-Zhongnan has three presenations at the AICHE meeting.
-</p>
-
-<p>
-430759 Towards Accurate and Fast Discovery of Compound Materials As Catalysts: Lessons Learned from Oxides
-Sunday, November 8, 2015
-Exhibit Hall 1 (Salt Palace Convention Center) <a href="https://aiche.confex.com/aiche/2015/webprogram/Paper430759.html">https://aiche.confex.com/aiche/2015/webprogram/Paper430759.html</a> 
-</p>
-
-<p>
-415101 Tuning Oxide Activity through Modification of the Crystal and Electronic Structure: From Strain to Potential Polymorphs
-Tuesday, November 10, 2015: 3:15 PM. <a href="https://aiche.confex.com/aiche/2015/webprogram/Paper415101.html">https://aiche.confex.com/aiche/2015/webprogram/Paper415101.html</a> 
-</p>
-
-<p>
-410339 Relationships Between the Surface Electronic and Chemical Properties of Doped 4d and 5d Late Transition Metal Dioxide Tuesday, November 10, 2015: 5:15 PM
-355B (Salt Palace Convention Center) <a href="https://aiche.confex.com/aiche/2015/webprogram/Paper410339.html">https://aiche.confex.com/aiche/2015/webprogram/Paper410339.html</a> 
-</p>
-
-<p>
-Congratulations Zhongnan!
-</p>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/09/13/Zhongnan-Xu-wins-AIChE-CRE-Division-Travel-Award.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>]]></content:encoded>
     </item>
   </channel>
 </rss>
