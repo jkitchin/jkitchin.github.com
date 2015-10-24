@@ -1,3 +1,935 @@
+* DONE Saving the current restriction and restoring it while following links
+  CLOSED: [2015-10-24 Sat 13:41]
+  :PROPERTIES:
+  :ID:       881AD1B6-E4F3-4860-8734-BFB9BE613ABF
+  :categories: emacs,orgmode
+  :date:     2015/10/24 13:41:45
+  :updated:  2015/10/24 13:41:45
+  :END:
+
+On the org-mode mailing list there has been some discussion about following id links. The issue is that if your buffer is narrowed, clicking on the link does not change the restriction to actually take you to the entry. This is debatably desirable. If I click on a link, I want it to go where it points. But, I might also like to go back to my narrowed view. So here consider how to save the state of narrowing, and restore it. We modify the function that opens an id link to save the restriction, and widen the buffer if necessary.
+
+Saving the restriction seems easy, we just save a marker to point, and the point-min and point-max. We save the marker for a convenient way to get the buffer, and perhaps the actual point. We advise the C-c & function to restore the restriction after we leave it. This should fix the restriction in whatever buffer we undid it in.
+
+Here is the code that seems to work for me. Thanks to Rasmus for the idea on saving the restriction data.
+
+#+BEGIN_SRC emacs-lisp
+(defvar *saved-restriction* nil
+ "A global var containing the current restriction. Returns (point-marker point-min point-max")
+
+(defun save-current-restriction ()
+  "Save the current restriction at point."
+  (setq *saved-restriction*
+	(if (buffer-narrowed-p)
+	    (list (point-marker) (point-min) (point-max))
+	  nil)))
+
+(defun restore-saved-restriction ()
+  "Restore the last saved restriction."
+  (when *saved-restriction*
+    (set-buffer (marker-buffer (car *saved-restriction*)))
+    (narrow-to-region (nth 1 *saved-restriction*)
+		      (nth 2 *saved-restriction*)))
+  (setq *saved-restriction* nil))
+
+;' actually modify this function to save the restriction, and widen if needed.
+(defun org-id-open (id)
+  "Go to the entry with id ID."
+  (org-mark-ring-push)
+  (let ((m (org-id-find id 'marker))
+	cmd)
+    (unless m
+      (error "Cannot find entry with ID \"%s\"" id))
+    ;; Use a buffer-switching command in analogy to finding files
+    (setq cmd
+	  (or
+	   (cdr
+	    (assq
+	     (cdr (assq 'file org-link-frame-setup))
+	     '((find-file . switch-to-buffer)
+	       (find-file-other-window . switch-to-buffer-other-window)
+	       (find-file-other-frame . switch-to-buffer-other-frame))))
+	   'switch-to-buffer-other-window))
+    (if (not (equal (current-buffer) (marker-buffer m)))
+	(funcall cmd (marker-buffer m)))
+    (save-current-restriction)
+    (when (> m (point-max))
+      (widen))
+    (goto-char m)
+    (move-marker m nil)
+    (org-show-context)))
+
+
+;; And we advise the function going back to restore the restriction.
+(defadvice org-mark-ring-goto (after restore-my-restriction () activate)
+  "Restore narrowing."
+  (restore-saved-restriction))
+
+#+END_SRC
+
+#+RESULTS:
+: org-mark-ring-goto
+
+This seems to preserve restrictions in the current buffer and in other buffers, as long as I use C-c & to invoke org-mark-ring goto. I am not sure how easy it would be to make this work for all links. Each link has its own function for following so I am not sure we can easily get them all to do this unless there is some high level function to advise like org-mouse-down-mouse or something similar. It also has the limitation that the restoration only occurs using org-mark-ring-goto, unless you specifically run the  (restore-saved-restriction) function yourself. That could be made an interactive function for that purpose. Otherwise, this seems like a reasonable approach.
+* TODO coupling org-mode and code	    :test:
+  DEADLINE: <2015-10-20 Tue>
+  :PROPERTIES:
+  :TEST:     tree
+  :ID:       2FD9A4E4-74F9-43E7-B42F-8DF4F979C668
+  :END:
+
+This is a generic idea that I am using org-headlines as containers for data, and frequently want some way to interact with collections, to add new headlines, etc... I find it awkward to use org-entry-get all the time. I am thinking of a generic function that would return a data structure.
+
+#+BEGIN_SRC emacs-lisp
+(defclass Contact ()
+  ((email :initarg :email
+	  :documentation "The email address")
+   (birthday :initarg :birthday
+	     :documentation "An org-timestamp for the birthdate."))
+  "A contact")
+
+(defmethod get-email ((contact Contact))
+  (oref contact email))
+
+(let ((c (Contact nil :email "jkitchin@andrew.cmu.edu" :birthday [2015-10-20 Tue])))
+  (oref c birthday))
+#+END_SRC
+
+#+RESULTS:
+: [2015-10-20 Tue]
+
+
+
+
+#+BEGIN_SRC emacs-lisp
+(cl-defstruct Contact name marker properties)
+
+(let ((contacts (org-map-entries
+		 (lambda ()
+		   (make-Contact
+		    :name (org-get-heading t t)
+		    :marker (point-marker)
+		    :properties (org-entry-properties (point) 'all)))
+		 "BIRTHDAY<>\"\"")))
+  (mapcar 'Contact-name contacts))
+#+END_SRC
+
+#+RESULTS:
+| John | Jane |
+
+#+BEGIN_SRC emacs-lisp
+(defun org-headline-to-alist ()
+  (append
+   (list
+    (org-get-heading t t)
+    (cons "MARKER" (point-marker))
+
+    )
+   (org-entry-properties (point) 'all))
+  )
+
+(org-headline-to-alist)
+#+END_SRC
+
+#+RESULTS:
+| coupling org-mode and code | (MARKER . #<marker at 1409 in blog.org>) | (TODO . TODO) | (FILE . /Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org) | (TAGS . :test:) | (ALLTAGS . :test:) | (BLOCKED . ) | (DEADLINE . 2015-10-20 Tue) | (TIMESTAMP_IA . 2015-10-20 Tue) | (TEST . tree) | (CATEGORY . blog) |
+
+** John
+   :PROPERTIES:
+   :BIRTHDAY: [2012-10-20 Sat]
+   :TYPE:    contact
+   :END:
+
+** Jane
+   :PROPERTIES:
+   :BIRTHDAY: [2014-10-20 Mon]
+   :TYPE:    contact
+   :END:
+
+
+* org-element contextual help
+
+headline
+ - at beginning, speed commands
+ - cycle
+ - TODO
+ - priority
+ - tag
+ - archive
+ - refile
+
+table [[info:org#Tables]]
+ - sort
+ - add column
+ - add row
+ - move tables and rows
+
+| a | b |
+| 3 | 4 |
+
+list (plain/numbered)
+ - add element
+ - move elements (up/down indent/outdent)
+
+
+1. item 1
+2. item 2
+3. item 3
+
+checkbox
+- [ ] check it
+
+links
+
+[[./11-eos.png]]
+
+[[info:org#External links]]
+
+$latex_fragment$
+
+\(latex fragment\)
+
+\begin{equation}
+2-3
+\end{equation}
+
+#+BEGIN_SRC emacs-lisp
+(+ 3 4 5)
+#+END_SRC
+
+#+RESULTS:
+: 12
+
+#+BEGIN_SRC emacs-lisp
+(defun ore-latex (element)
+  "doc for latex fragment."
+  (substitute-command-keys "You are on a LaTeX fragment or environment.
+\\[org-toggle-latex-overlays] org-toggle-latex-overlays to toggle LaTeX images on it.
+
+"))
+
+
+(defun ore-link (element)
+  "link doc."
+  (substitute-command-keys "You are on a link. Click on it or press Enter to follow the link.
+
+You can toggle the link display with `org-toggle-link-display'.
+
+If you are on an image link, you can toggle it with \\[org-toggle-inline-images] or `org-toggle-inline-images'.
+
+See Info node `(org) Hyperlinks'.
+\n\n"))
+
+
+(defun ore-src-block-header-p (element)
+  (and (eq 'src-block (car element))
+       (save-excursion
+	 (let ((cp (point))
+	       (lp (line-number-at-pos)))
+	   (goto-char (org-element-property :begin element))
+	   (= lp (line-number-at-pos))))))
+
+
+(defun ore-src-block-header (element)
+  "doc for header"
+  (concat
+   "You are in a src-block header. This line tells org-mode that
+   it is a src-block, and language of the src-block. There are
+   also optional header arguments. See Info node `(org) Header arguments'
+
+"
+   (format "The default headers are described here: `org-babel-default-header-args:%s'
+
+" (org-element-property :language element))))
+
+
+(defun ore-src-block (element)
+  "doc for src-block."
+  (concat
+   (substitute-command-keys "You are in a src-block.
+
+C-c C-c to execute this block.
+\\[org-babel-tangle]  org-babel-tangle
+
+See Info node `(org) Working with source code' for more details.\n\n")))
+
+
+(defun ore-headline (element)
+  "headline doc"
+  (if (bolp)
+      (format  "You are at the beginning of a headline.
+TAB to cycle Info node `(org) Global and local cycling'.
+
+`org-use-speed-commands'\n\n")
+    ;; in a headline
+    (substitute-command-keys
+     "You are in a headline. You can change:
+ visibility with [TAB]
+ TODO state \\[org-shiftleft] and \\[org-shiftright] or `org-todo'.
+ Priority \\[org-shiftup] (`org-priority-up') and \\[org-shiftdown] (`org-priority-down')
+ Tags  \\[org-ctrl-c-ctrl-c] or `org-set-tags'
+
+ Set a property with \\[org-set-property] `org-set-property'.
+ Delete a property with \\[org-delete-property] or `org-delete-property'.
+
+
+")))
+
+;; timestamp
+(defun ore-timestamp ()
+ "ts doc"
+ (substitute-command-keys "You are on a timestamp.
+If you click on it, you will see the date in the agenda.
+With the cursor on the <> or [] \\[org-shiftup] and \\[org-shiftdown] will switch from active to inactive timestamps.
+
+You can change the date by putting the cursor on a date part and using \\[org-shiftup] and \\[org-shiftdown] or \\[org-shiftleft] and \\[org-shiftright]
+
+See Info node `(org) Dates and times'."))
+
+;; keyword
+;; example-block
+;; item, plain-list
+
+
+
+;; table table-row table-cell
+(defun ore-table (element)
+  "table doc"
+  "You are in a table.
+
+Move cell to cell with [TAB]. When you are in the last cell, TAB adds a new row.
+
+Move rows up and down with \\[org-metaup] and \\[org-metadown].
+Move columns left and right with \\[org-metaleft] and \\[org-metaright].
+
+Sort a column with \\[org-sort] `org-sort'.
+
+Insert a row with `org-table-insert-row'.
+Delete a row with `org-table-kill-row'.
+
+Insert a column with `org-table-insert-column'.
+Delete a column with `org-table-delete-column'.
+
+`C-c -     (`org-table-insert-hline')'
+     Insert a horizontal line below current row.  With a prefix
+     argument, the line is created above the current line.
+
+`C-c <RET>     (`org-table-hline-and-move')'
+     Insert a horizontal line below current row, and move the cursor
+     into the row below that line.
+
+You can transpose a table with `org-table-transpose-table-at-point'.
+
+Info node `(org) Tables'.
+")
+
+(defun ore ()
+ (interactive)
+ (with-help-window (help-buffer)
+   (let ((oeap (org-element-context))
+	 (s "No doc found.\n\n"))
+     (cond
+
+      ((and  (eq 'src-block (car oeap))
+	     (ore-src-block-header-p oeap))
+       (setq s (ore-src-block-header oeap)))
+
+      ((or (eq 'table (car oeap))
+	   (eq 'table-row (car oeap))
+	   (eq 'table-cell (car oeap)))
+       (setq s (ore-table oeap)))
+
+      ((eq 'src-block (car oeap))
+       (setq s (ore-src-block oeap)))
+
+      ((or (eq 'latex-fragment (car oeap))
+	   (eq 'latex-environment (car oeap)))
+       (setq s (ore-latex oeap)))
+
+      ((eq 'headline (car oeap))
+       (setq s (ore-headline oeap)))
+
+      ((eq 'timestamp (car oeap))
+       (setq s (ore-timestamp)))
+
+      ((eq 'link (car oeap))
+       (setq s (ore-link oeap)))
+
+      (t
+       (setq s "No documentation found.\n\n")))
+
+     (princ s)
+     (princ "\n\nHere is how org-mode sees the element.\n\n")
+     (pp oeap))))
+
+#+END_SRC
+
+#+RESULTS:
+: ore
+
+<2015-10-18 Sun>
+
+
+* Cycling through a list of files      :tets:tree:
+
+#+BEGIN_SRC emacs-lisp
+(setq my-files '("a.org" "b.org" "c.org"))
+
+(defun my-next-file ()
+ (interactive)
+ (let ((f (pop my-files)))
+   (add-to-list 'my-files f t)
+   (find-file f)))
+
+(defun my-previous-file ()
+  (interactive)
+  (let* ((r-my-files (reverse my-files))
+	 (f (pop r-my-files)))
+    (add-to-list 'r-my-files f t)
+    (setq my-files (reverse r-my-files))
+    (find-file f)))
+
+(global-set-key (kbd "s-<right>") 'my-next-file)
+(global-set-key (kbd "s-<left>") 'my-previous-file)
+#+END_SRC
+
+#+RESULTS:
+: my-previous-file
+
+* Exploring elpy
+
+`M-: (setq elpy-rpc-backend "jedi")` and `M-x (elpy-rpc-restart)` t
+
+#+BEGIN_SRC python
+from numpy import array
+
+from pycse import nlinfit
+
+nlinfit(
+#+END_SRC
+* Using the python ast module to figure out what node a cursor is on
+
+** parser
+
+#+BEGIN_SRC python
+import parser
+
+source = '''import numpy as np
+
+def func(x):
+    return x
+
+a = np.array([5, 6, 7])
+b = np.array([5, 6, 7])
+
+print(np.dot(a, b))'''
+
+print parser.expr(source)
+#+END_SRC
+
+#+RESULTS:
+
+** symtable
+
+we can get a list of identifiers and symbols like this.
+
+#+BEGIN_SRC python
+import symtable
+
+source = '''import numpy as np
+
+def func(x):
+    return x
+
+a = np.array([5, 6, 7])
+b = np.array([5, 6, 7])
+
+print(np.dot(a, b))'''
+
+table = symtable.symtable(source, "string", "exec")
+print table.get_symbols()
+print table.get_identifiers()
+
+print dir(table.get_symbols()[0])
+print table.get_symbols()[0].is_imported()
+#+END_SRC
+
+#+RESULTS:
+: [<symbol 'np'>, <symbol 'a'>, <symbol 'b'>, <symbol 'func'>]
+: ['np', 'a', 'b', 'func']
+: ['_Symbol__flags', '_Symbol__name', '_Symbol__namespaces', '_Symbol__scope', '__class__', '__delattr__', '__dict__', '__doc__', '__format__', '__getattribute__', '__hash__', '__init__', '__module__', '__new__', '__reduce__', '__reduce_ex__', '__repr__', '__setattr__', '__sizeof__', '__str__', '__subclasshook__', '__weakref__', 'get_name', 'get_namespace', 'get_namespaces', 'is_assigned', 'is_declared_global', 'is_free', 'is_global', 'is_imported', 'is_local', 'is_namespace', 'is_parameter', 'is_referenced']
+: False
+
+** jedi
+#+BEGIN_SRC python
+import jedi
+import pydoc
+
+source = '''import numpy as np
+
+a = np.array([5, 6, 7])
+b = np.array([5, 6, 7])
+
+print(np.dot(a, b))'''
+
+script = jedi.Script(source, 6, 13)
+
+print dir(script)
+print script.usages()[0]
+print script.call_signatures()[0].params
+print dir(script.call_signatures()[0])
+
+#+END_SRC
+
+#+RESULTS:
+: [<CallSignature: dot index 0>, <CallSignature: dot index 0>]
+
+
+** ast
+I want to connect Emacs, org-mode and python to get help about the symbol a cursor is on. I am not sure this will work, but I am going to explore it here. First, I want to figure out what node of the ast.tree the cursor is on. Statements and expressions in the ast have a lineno and col_offset specified in them.
+
+#+BEGIN_SRC python
+import ast
+
+tree = ast.parse('''import numpy as np
+
+a = np.array([5, 6, 7])
+b = np.array([5, 6, 7])
+
+print(np.dot(a, b))''')
+
+for node in ast.walk(tree):
+    if isinstance(node, ast.expr) or isinstance(node, ast.stmt):
+        a = (node.lineno, node.col_offset)
+    else:
+        a = ''
+
+    print str(a) + ast.dump(node) + '\n'
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+Module(body=[Import(names=[alias(name='numpy', asname='np')]), Assign(targets=[Name(id='a', ctx=Store())], value=Call(func=Attribute(value=Name(id='np', ctx=Load()), attr='array', ctx=Load()), args=[List(elts=[Num(n=5), Num(n=6), Num(n=7)], ctx=Load())], keywords=[], starargs=None, kwargs=None)), Assign(targets=[Name(id='b', ctx=Store())], value=Call(func=Attribute(value=Name(id='np', ctx=Load()), attr='array', ctx=Load()), args=[List(elts=[Num(n=5), Num(n=6), Num(n=7)], ctx=Load())], keywords=[], starargs=None, kwargs=None)), Print(dest=None, values=[Call(func=Attribute(value=Name(id='np', ctx=Load()), attr='dot', ctx=Load()), args=[Name(id='a', ctx=Load()), Name(id='b', ctx=Load())], keywords=[], starargs=None, kwargs=None)], nl=True)])
+
+(1, 0)Import(names=[alias(name='numpy', asname='np')])
+
+(3, 0)Assign(targets=[Name(id='a', ctx=Store())], value=Call(func=Attribute(value=Name(id='np', ctx=Load()), attr='array', ctx=Load()), args=[List(elts=[Num(n=5), Num(n=6), Num(n=7)], ctx=Load())], keywords=[], starargs=None, kwargs=None))
+
+(4, 0)Assign(targets=[Name(id='b', ctx=Store())], value=Call(func=Attribute(value=Name(id='np', ctx=Load()), attr='array', ctx=Load()), args=[List(elts=[Num(n=5), Num(n=6), Num(n=7)], ctx=Load())], keywords=[], starargs=None, kwargs=None))
+
+(6, 0)Print(dest=None, values=[Call(func=Attribute(value=Name(id='np', ctx=Load()), attr='dot', ctx=Load()), args=[Name(id='a', ctx=Load()), Name(id='b', ctx=Load())], keywords=[], starargs=None, kwargs=None)], nl=True)
+
+alias(name='numpy', asname='np')
+
+(3, 0)Name(id='a', ctx=Store())
+
+(3, 4)Call(func=Attribute(value=Name(id='np', ctx=Load()), attr='array', ctx=Load()), args=[List(elts=[Num(n=5), Num(n=6), Num(n=7)], ctx=Load())], keywords=[], starargs=None, kwargs=None)
+
+(4, 0)Name(id='b', ctx=Store())
+
+(4, 4)Call(func=Attribute(value=Name(id='np', ctx=Load()), attr='array', ctx=Load()), args=[List(elts=[Num(n=5), Num(n=6), Num(n=7)], ctx=Load())], keywords=[], starargs=None, kwargs=None)
+
+(6, 6)Call(func=Attribute(value=Name(id='np', ctx=Load()), attr='dot', ctx=Load()), args=[Name(id='a', ctx=Load()), Name(id='b', ctx=Load())], keywords=[], starargs=None, kwargs=None)
+
+Store()
+
+(3, 4)Attribute(value=Name(id='np', ctx=Load()), attr='array', ctx=Load())
+
+(3, 13)List(elts=[Num(n=5), Num(n=6), Num(n=7)], ctx=Load())
+
+Store()
+
+(4, 4)Attribute(value=Name(id='np', ctx=Load()), attr='array', ctx=Load())
+
+(4, 13)List(elts=[Num(n=5), Num(n=6), Num(n=7)], ctx=Load())
+
+(6, 6)Attribute(value=Name(id='np', ctx=Load()), attr='dot', ctx=Load())
+
+(6, 13)Name(id='a', ctx=Load())
+
+(6, 16)Name(id='b', ctx=Load())
+
+(3, 4)Name(id='np', ctx=Load())
+
+Load()
+
+(3, 14)Num(n=5)
+
+(3, 17)Num(n=6)
+
+(3, 20)Num(n=7)
+
+Load()
+
+(4, 4)Name(id='np', ctx=Load())
+
+Load()
+
+(4, 14)Num(n=5)
+
+(4, 17)Num(n=6)
+
+(4, 20)Num(n=7)
+
+Load()
+
+(6, 6)Name(id='np', ctx=Load())
+
+Load()
+
+Load()
+
+Load()
+
+Load()
+
+Load()
+
+Load()
+
+#+end_example
+
+Now which node covers line 6 column 4
+#+BEGIN_SRC python
+import ast
+
+tree = ast.parse('''import numpy as np
+
+a=np.array([5, 6, 7])
+b=np.array([5,6,7])
+
+print(np.dot(a, b))''')
+
+exprs = [node for node in ast.walk(tree)
+         if isinstance(node, ast.expr) or isinstance(node, ast.stmt)]
+
+# nodes in line 6
+for x in sorted([x for x in exprs if x.lineno == 6], key=lambda x: x.col_offset):
+    print (x.lineno, x.col_offset), ast.dump(x) + '\n'
+
+
+N = None
+
+for x in sorted([x for x in exprs if x.lineno == 6], key=lambda x: x.col_offset):
+    if x.col_offset <= 16:
+        N = x
+        continue
+    else:
+        break
+
+print "N = ", (N.lineno, N.col_offset), ast.dump(N)
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+(6, 0) Print(dest=None, values=[Call(func=Attribute(value=Name(id='np', ctx=Load()), attr='dot', ctx=Load()), args=[Name(id='a', ctx=Load()), Name(id='b', ctx=Load())], keywords=[], starargs=None, kwargs=None)], nl=True)
+
+(6, 6) Call(func=Attribute(value=Name(id='np', ctx=Load()), attr='dot', ctx=Load()), args=[Name(id='a', ctx=Load()), Name(id='b', ctx=Load())], keywords=[], starargs=None, kwargs=None)
+
+(6, 6) Attribute(value=Name(id='np', ctx=Load()), attr='dot', ctx=Load())
+
+(6, 6) Name(id='np', ctx=Load())
+
+(6, 13) Name(id='a', ctx=Load())
+
+(6, 16) Name(id='b', ctx=Load())
+
+N =  (6, 16) Name(id='b', ctx=Load())
+#+end_example
+
+* A quick example with Racket
+
+#+BEGIN_SRC emacs-lisp
+(defun org-babel-execute:racket (body params)
+  (let* ((tangle (cdr (assoc :tangle params)))
+         (script-file
+          (if (string-equal tangle "no")
+              (org-babel-temp-file "org-babel-" ".rkt")
+            tangle)))
+    (with-temp-file script-file
+      (insert body))
+    (let* ((pn (org-babel-process-file-name script-file))
+           (cmd (format "racket -u %s" pn)))
+      (message cmd)
+      (shell-command-to-string cmd))))
+#+END_SRC
+
+#+RESULTS:
+: org-babel-execute:racket
+
+#+BEGIN_SRC racket
+#lang racket
+(printf "Hello world and John!")
+#+END_SRC
+
+#+RESULTS:
+: Hello world and John!
+
+It works!
+
+#+BEGIN_SRC racket
+#lang racket
+;; Finds org-files in all subdirs
+(for ([path (in-directory)]
+      #:when (regexp-match? #rx"[.]org$" path))
+  (printf "source file: ~a\n" path))
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+source file: acs-cat-data/acs-cat-manuscript.org
+source file: acs-cat-manuscript.org
+source file: add-new-unique-heading.org
+source file: add-properties-to-headings.org
+source file: add-subheadings-to-headings.org
+source file: an-interesting-article.org
+source file: ase-db.org
+source file: attaching-code-blocks-to-a-pdf.org
+source file: bbdb conversion/import_bbdb.org
+source file: blog-2014.org
+source file: blog-references.org
+source file: blog.org
+source file: blog.org.org
+source file: blogofile.org
+source file: cheat-sheets.org
+source file: cmd-line-section-export.org
+source file: collect-entries/collect-entries.org
+source file: colored-block.org
+source file: constrained-fit.org
+source file: controlling-latex-export.org
+source file: course/syllabus.org
+source file: custom-export.org
+source file: custom_latex.org
+source file: dynamic-menus/dynamic-menus.org
+source file: emacs-jasp/emacs-jasp.org
+source file: emacs-jasp/using-jasp-el.org
+source file: emacs-scripts/emacs-scripts.org
+source file: embedded-source.org
+source file: estimating-intersections-from-data.org
+source file: exam.org
+source file: export-csv.org
+source file: exporting-accented-characters.org
+source file: exporting-with-biblatex.org
+source file: file-options.org
+source file: file-upload-blog.org
+source file: for-else.org
+source file: gaussian-fitting.org
+source file: gibbs.org
+source file: highlights.org
+source file: html-citations.org
+source file: interactive-qdel.org
+source file: jmax-bibtex-doc.org
+source file: json-export.org
+source file: links.org
+source file: lisp-data-structures.org
+source file: lisp-link-to-content.org
+source file: literate/literate.org
+source file: load-lisp-org.org
+source file: make-project-dir.org
+source file: matlab-org-mode/using-matlab-orgmode.org
+source file: memoizing-functions-with-file.org
+source file: memos/memos.org
+source file: modeling-data-with-splines.org
+source file: molecules/molecules.org
+source file: multi-exports/multi-exports.org
+source file: my-table.org
+source file: new-file.org
+source file: news.org
+source file: odelay-multiple-equations.org
+source file: org-contacts/make-contacts.org
+source file: org-contacts/referee-contacts.org
+source file: org-db.org
+source file: org-index/file-1.org
+source file: org-index/file-2.org
+source file: org-index/org-index.org
+source file: org-notebook/f1.org
+source file: org-notebook/f2.org
+source file: org-outside-emacs.org
+source file: org-ref-other-bibliographies.org
+source file: org-ref-show.org
+source file: org-report/Ellen-Donnte-HW1.org
+source file: org-report/Jim-Vicious-HW1.org
+source file: org-report/John-Doe-HW1.org
+source file: org-report/org-report.org
+source file: org-report/Slim-Shady-HW1.org
+source file: org-to-docx-export.org
+source file: org-to-docx-pandoc.org
+source file: org-to-org.org
+source file: org-to-word.org
+source file: org.org
+source file: pdfsync.org
+source file: plotting-uncertainty.org
+source file: posting-to-citeulike.org
+source file: prediction-intervals.org
+source file: problem-selection/exam.org
+source file: problem-selection/p1.org
+source file: problem-selection/p2.org
+source file: problem-selection/problem-selection.org
+source file: processes/processes.org
+source file: publishing/acs-iecr.org
+source file: publishing/elsevier.org
+source file: publishing/springer.org
+source file: python-and-or-tricks.org
+source file: python-dates.org
+source file: python-sessions.org
+source file: read-write-pdf-metadata.org
+source file: readding-data-from-figures.org
+source file: scripting-git/scripting-git.org
+source file: separate-bib-references.org
+source file: separate-bib.org
+source file: serializing-jasp-as-json.org
+source file: sessions.org
+source file: set-reftex-formats.org
+source file: sin.org
+source file: some-filename.org
+source file: ss-manuscript.org
+source file: stackoverflow.org
+source file: super-super-cells.org
+source file: supporting-information.org
+source file: surface-science-data/manuscript.org
+source file: swish-email/index-email.org
+source file: swish-org/index-org-as-html.org
+source file: sympy-printing.org
+source file: test-archive-2015-06-26/test-archive.org
+source file: test-archive.org
+source file: test-bibtex.org
+source file: test.org
+source file: tests.org
+source file: uncertainties-eos.org
+source file: uncertainty-in-ode-solutions.org
+source file: unertainty-in-polynomial-roots.org
+source file: using-org-ref.org
+source file: using-temp-buffers.org
+source file: why-org-mode.org
+source file: writing-exams-in-orgmode.org
+#+end_example
+
+
+* Working with org-contacts
+Rather than dig through org-contacts, here is a different approach to finding contacts. It is surprisingly fast, using org-map-entries with a list of contacts files.
+
+Here I get my email addresses at CMU, with last names starting with K.
+#+BEGIN_SRC emacs-lisp
+(org-map-entries
+ (lambda ()
+   (org-entry-get (point) "EMAIL"))
+ "EMAIL={cmu}+LASTNAME={^K}"
+ org-contacts-files)
+#+END_SRC
+
+#+RESULTS:
+| okonkwo@andrew.cmu.edu | yaesunk@andrew.cmu.edu | jelenak@cmu.edu | Aditya Khair <akhair@andrew.cmu.edu> | jkitchin@andrew.cmu.edu |
+
+Here, I get current phd students. They are tagged with :phd: and a TODO state of "CURRENT".
+
+#+BEGIN_SRC emacs-lisp
+(org-map-entries
+ (lambda ()
+   (format "%s %s"
+	   (org-entry-get (point) "FIRSTNAME")
+	   (org-entry-get (point) "LASTNAME")))
+ "EMAIL<>\"\"+phd+TODO=\"CURRENT\""
+ org-contacts-files)
+#+END_SRC
+
+#+RESULTS:
+| Jacob Boes | Zhongnan Xu | Alex Hallenbeck |
+
+#+BEGIN_SRC emacs-lisp
+(org-map-entries
+ (lambda ()
+   (nth 4 (org-heading-components)))
+ "EMAIL<>\"\"+GENDER=\"F\""
+ org-contacts-files)
+#+END_SRC
+
+#+RESULTS:
+| Elizabeth Biddinger | Cathy Chin | Maria Curet-Arana | Carrie Farberow | Maria Flytzani-Stephanopoulos | Rachael Getman | Helena Hagelin-Weaver | Preeti Kamakoti | Heather Kulik | Cynthia Lo | Surya Mallapragada | Maria Martinez | Eranda Nikolla | Bihter Padak | Susan Stagg-Williams | Maureen Tang | Judith Yang | Perla B Balbuena | Sumathy Raman | Rachel Getman | Eranda Nikolla | Y-H. Cathy Chin | Aleksandra Vojvodic | Heather Mayes | Maria Curet-Arana | Gabriella Farnham | Susanna Scott | Lashonda Korley | Marianthi Ierapetritou | Heather Kulik | Lydia Contreras | Kathleen Schwarz | Carol Frieze | Ty Walton | Justine Cassell | Amy Burkert | Susan Polansky | Anna Fisher | Alissa Park |
+
+#+BEGIN_SRC emacs-lisp
+(org-map-entries
+ (lambda ()
+   (nth 4 (org-heading-components)))
+ "EMAIL<>\"\"+cheme+assistant|associate"
+ org-contacts-files)
+#+END_SRC
+
+#+RESULTS:
+| Kris Dahl | Chrysanthos Gounaris | Aditya Khair | Kathryn Whitehead |
+
+** org-contacts
+#+BEGIN_SRC emacs-lisp
+(assoc "John Kitchin" org-contacts-db)
+#+END_SRC
+
+#+RESULTS:
+| John Kitchin | #<marker at 9292 in department-contacts.org> | ((FILE . /Users/jkitchin/Dropbox/org-mode/contacts/department-contacts.org) (TAGS . :cheme:faculty:full:hiring:css:teqie:cfs:bias:) (ALLTAGS . :cheme:faculty:full:hiring:css:teqie:cfs:bias:) (BLOCKED . ) (scopus-id . 7004212771) (PHD . 2004) (FIRSTNAME . John) (LASTNAME . Kitchin) (EMAIL . jkitchin@andrew.cmu.edu) (LAST_SENT_EMAIL . [[mu4e:msgid:m2d1wfzpu8.fsf@andrew.cmu.edu][(search) application 623566 review (Thu Oct 15 19:14:57 2015)]]) (LAST-EMAIL-READ . mu4e:msgid:m2h9lrzq1v.fsf@andrew.cmu.edu) (CATEGORY . department-contacts)) |
+
+
+#+BEGIN_SRC emacs-lisp
+(let ((lexical-binding nil)
+      (todo-only nil))
+  (loop for contact in org-contac
+ts-db
+	for tags = (cdr (assoc "TAGS" (nth 2 contact)))
+	for tags-list = (split-string
+			 (substring
+			  (or tags "  ")
+			  1 -1)
+			 ":")
+	for tag-expression = (or (org-make-tags-matcher "group-phd") nil)
+	if (and
+	    ;; A name match
+	    (string-match-p "h" (car contact))
+	    ;; a property match
+	    (string-match-p "cmu\\.edu" (org-contacts-get-property "EMAIL" contact))
+	    ;; a tag match.
+	    (eval (cdr tag-expression)))
+	collect contact))
+#+END_SRC
+
+#+RESULTS:
+| CURRENT Venkatesh Naik      | #<marker at 11335 in group-contacts.org> | ((TODO . CURRENT) (FILE . /Users/jkitchin/Dropbox/org-mode/contacts/group-contacts.org) (TAGS . :ms:group:current:) (ALLTAGS . :ms:group:current:) (BLOCKED . ) (EMAIL . vnaik@andrew.cmu.edu) (CATEGORY . group-contacts))    |
+| CURRENT Siddharth Deshpande | #<marker at 11437 in group-contacts.org> | ((TODO . CURRENT) (FILE . /Users/jkitchin/Dropbox/org-mode/contacts/group-contacts.org) (TAGS . :ms:group:current:) (ALLTAGS . :ms:group:current:) (BLOCKED . ) (EMAIL . siddhard@andrew.cmu.edu) (CATEGORY . group-contacts)) |
+| CURRENT Zhaofeng Chen       | #<marker at 11547 in group-contacts.org> | ((TODO . CURRENT) (FILE . /Users/jkitchin/Dropbox/org-mode/contacts/group-contacts.org) (TAGS . :ms:group:current:) (ALLTAGS . :ms:group:current:) (BLOCKED . ) (EMAIL . zhaofenc@andrew.cmu.edu) (CATEGORY . group-contacts)) |
+| CURRENT Hari Thirumalai     | #<marker at 11651 in group-contacts.org> | ((TODO . CURRENT) (FILE . /Users/jkitchin/Dropbox/org-mode/contacts/group-contacts.org) (TAGS . :ms:group:current:) (ALLTAGS . :ms:group:current:) (BLOCKED . ) (EMAIL . hthiruma@andrew.cmu.edu) (CATEGORY . group-contacts)) |
+
+#+BEGIN_SRC emacs-lisp
+(defun org-contacts-match-tag-expression-p (contact tag-expression)
+  "Test if a CONTACT matches a TAG-EXPRESSION."
+  (let* ((lexical-binding nil)
+	 (todo-only nil)
+	 (tags-list (org-contacts-get-tag-list contact)))
+    (eval (cdr (org-make-tags-matcher tag-expression)))))
+
+(org-contacts-match-tag-expression-p
+ (assoc "John Kitchin" org-contacts-db)
+  "faculty")
+#+END_SRC
+
+#+RESULTS:
+: t
+
+
+#+BEGIN_SRC emacs-lisp
+(org-contacts-filter-tags "group-phd+undergrad")
+#+END_SRC
+
+#+RESULTS:
+| CURRENT Matt Palmer | #<marker at 11757 in group-contacts.org> | ((TODO . CURRENT) (FILE . /Users/jkitchin/Dropbox/org-mode/contacts/group-contacts.org) (TAGS . :group:undergrad:) (ALLTAGS . :group:undergrad:) (BLOCKED . ) (EMAIL . Matthew Palmer <mjpalmer@andrew.cmu.edu>) (CATEGORY . group-contacts)) |
+
+
+#+BEGIN_SRC emacs-lisp
+(org-map-entries
+ (lambda ()
+   (org-entry-get (point) "EMAIL"))
+ "EMAIL<>\"\"+group-undergrad"
+ org-contacts-files)
+#+END_SRC
+
+#+RESULTS:
+| mcurnan@andrew.cmu.edu | jboes@cmu.edu | zhongnanxu@cmu.edu | Alexander Hallenbeck <ahallenb@andrew.cmu.edu> | vnaik@andrew.cmu.edu | siddhard@andrew.cmu.edu | zhaofenc@andrew.cmu.edu | hthiruma@andrew.cmu.edu |
+
 * DONE Line numbers in org-mode code blocks
   CLOSED: [2015-10-13 Tue 08:58]
   :PROPERTIES:
@@ -120,6 +1052,49 @@ I am not sure how to get the numbers to automatically update smoothly like they 
 
 We could modify what happens after the numbers are put on, e.g. pressing numbers might jump to a line, or some other kind of functionality. I don't have a critical need for this right now, so I didn't explore it more. Let me know if you have any good ideas for it!
 
+
+Let's try a variation of that code that allows us to type a number to jump to a line, or quit it.
+
+#+BEGIN_SRC emacs-lisp
+(defvar number-line-overlays '()
+  "List of overlays for line numbers.")
+
+(make-variable-buffer-local 'number-line-overlays)
+
+(defun number-line-src-block ()
+  (interactive)
+  (save-excursion
+    (let* ((src-block (org-element-context))
+	   (nlines (- (length
+		       (s-split
+			"\n"
+			(org-element-property :value src-block)))
+		      1)))
+      (goto-char (org-element-property :begin src-block))
+      (re-search-forward (regexp-quote (org-element-property :value src-block)))
+      (goto-char (match-beginning 0))
+
+      (loop for i from 1 to nlines
+	    do
+	    (beginning-of-line)
+	    (let (ov)
+	      (setq ov (make-overlay (point) (point)))
+	      (overlay-put ov 'before-string (format "%3s" (number-to-string i)))
+	      (add-to-list 'number-line-overlays ov))
+	    (next-line))))
+
+  (let ((entry (read-string "Jump to line number (enter to quit):")))
+    (cond
+     ((string-match "[0-9*]" entry)
+      (progn
+          (goto-char (org-element-property :begin (org-element-context)))
+       (forward-line (string-to-number entry)))))
+    (mapc 'delete-overlay number-line-overlays)
+    (setq number-line-overlays '())))
+
+(number-line-src-block)
+#+END_SRC
+#+RESULTS:
 
 
 * Using functions in font lock
@@ -331,6 +1306,7 @@ I think there could be another way to do this with text properties, e.g. point-l
 
 #+BEGIN_SRC python
 import ast
+
 def str_node(node):
     if isinstance(node, ast.AST):
         fields = [(name, str_node(val)) for name, val in ast.iter_fields(node) if name not in ('left', 'right')]
@@ -338,6 +1314,7 @@ def str_node(node):
         return rv + ')'
     else:
         return repr(node)
+
 def ast_visit(node, level=0):
     print('  ' * level + str_node(node))
     for field, value in ast.iter_fields(node):
@@ -381,6 +1358,123 @@ Module(body=[<_ast.FunctionDef object at 0x1004c0f50>, <_ast.Expr object at 0x10
       Num(n=5)
       Num(n=4)
 #+end_example
+
+
+
+#+BEGIN_SRC python
+import ast
+
+def str_node(node):
+    if isinstance(node, ast.AST):
+        fields = [(name, str_node(val)) for name, val in ast.iter_fields(node) if name not in ('left', 'right')]
+        rv = '%s(%s' % (node.__class__.__name__, ', '.join('%s=%s' % field for field in fields)) + ')'
+        if isinstance(node, ast.expr):
+            rv += '\nline {0} col {1}'.format(node.lineno, node.col_offset)
+        return rv
+    else:
+        return repr(node)
+
+def ast_visit(node, level=0):
+    print('  ' * level + str_node(node))
+    for field, value in ast.iter_fields(node):
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, ast.AST):
+                    ast_visit(item, level=level+1)
+        elif isinstance(value, ast.AST):
+            ast_visit(value, level=level+1)
+
+
+# ast_visit(ast.parse('a=5; b=a+1; a+b'))
+print
+ast_visit(ast.parse('''import numpy as np
+
+a = np.array([5, 6, 7])
+b = np.array([5, 6, 7])
+
+print(np.dot(a, b))'''))
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+
+Module(body=[<_ast.Import object at 0x1004c0f50>, <_ast.Assign object at 0x1004c0fd0>, <_ast.Assign object at 0x1004c5250>, <_ast.Print object at 0x1004c5490>])
+  Import(names=[<_ast.alias object at 0x1004c0f90>])
+    alias(name='numpy', asname='np')
+  Assign(targets=[<_ast.Name object at 0x1004c5050>], value=Call(func=Attribute(value=Name(id='np', ctx=Load())
+line 3 col 4, attr='array', ctx=Load())
+line 3 col 4, args=[<_ast.List object at 0x1004c5150>], keywords=[], starargs=None, kwargs=None)
+line 3 col 4)
+    Name(id='a', ctx=Store())
+line 3 col 0
+      Store()
+    Call(func=Attribute(value=Name(id='np', ctx=Load())
+line 3 col 4, attr='array', ctx=Load())
+line 3 col 4, args=[<_ast.List object at 0x1004c5150>], keywords=[], starargs=None, kwargs=None)
+line 3 col 4
+      Attribute(value=Name(id='np', ctx=Load())
+line 3 col 4, attr='array', ctx=Load())
+line 3 col 4
+        Name(id='np', ctx=Load())
+line 3 col 4
+          Load()
+        Load()
+      List(elts=[<_ast.Num object at 0x1004c5190>, <_ast.Num object at 0x1004c51d0>, <_ast.Num object at 0x1004c5210>], ctx=Load())
+line 3 col 13
+        Num(n=5)
+line 3 col 14
+        Num(n=6)
+line 3 col 17
+        Num(n=7)
+line 3 col 20
+        Load()
+  Assign(targets=[<_ast.Name object at 0x1004c5290>], value=Call(func=Attribute(value=Name(id='np', ctx=Load())
+line 4 col 4, attr='array', ctx=Load())
+line 4 col 4, args=[<_ast.List object at 0x1004c5390>], keywords=[], starargs=None, kwargs=None)
+line 4 col 4)
+    Name(id='b', ctx=Store())
+line 4 col 0
+      Store()
+    Call(func=Attribute(value=Name(id='np', ctx=Load())
+line 4 col 4, attr='array', ctx=Load())
+line 4 col 4, args=[<_ast.List object at 0x1004c5390>], keywords=[], starargs=None, kwargs=None)
+line 4 col 4
+      Attribute(value=Name(id='np', ctx=Load())
+line 4 col 4, attr='array', ctx=Load())
+line 4 col 4
+        Name(id='np', ctx=Load())
+line 4 col 4
+          Load()
+        Load()
+      List(elts=[<_ast.Num object at 0x1004c53d0>, <_ast.Num object at 0x1004c5410>, <_ast.Num object at 0x1004c5450>], ctx=Load())
+line 4 col 13
+        Num(n=5)
+line 4 col 14
+        Num(n=6)
+line 4 col 17
+        Num(n=7)
+line 4 col 20
+        Load()
+  Print(dest=None, values=[<_ast.Call object at 0x1004c54d0>], nl=True)
+    Call(func=Attribute(value=Name(id='np', ctx=Load())
+line 6 col 6, attr='dot', ctx=Load())
+line 6 col 6, args=[<_ast.Name object at 0x1004c5590>, <_ast.Name object at 0x1004c55d0>], keywords=[], starargs=None, kwargs=None)
+line 6 col 6
+      Attribute(value=Name(id='np', ctx=Load())
+line 6 col 6, attr='dot', ctx=Load())
+line 6 col 6
+        Name(id='np', ctx=Load())
+line 6 col 6
+          Load()
+        Load()
+      Name(id='a', ctx=Load())
+line 6 col 13
+        Load()
+      Name(id='b', ctx=Load())
+line 6 col 16
+        Load()
+#+end_example
+
 
 * DONE COMPLETED A checkbox list in org-mode with one value
   CLOSED: [2015-10-07 Wed 11:56]
