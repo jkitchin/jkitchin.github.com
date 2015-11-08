@@ -1,6 +1,434 @@
-* org pre-processor
 
-@(some sexp)
+
+
+* Adding emacs command key-bindings and help functionality to org-mode
+  :PROPERTIES:
+  :categories: emacs,orgmode
+  :ID:       1B122428-E8FF-476B-B07B-79A7541003DC
+  :END:
+The documentation of functions in emacs allows you to put some light markup that will render as the key sequence required to run the command. I would like to have something like that in org-mode. You can look up the key-binding to a command like this:
+#+BEGIN_SRC emacs-lisp
+(substitute-command-keys "\\[org-toggle-latex-overlays]")
+#+END_SRC
+
+#+RESULTS:
+: C-c C-x C-l
+
+We are going to explore a way to recognize the syntax shown above, change its appearance to alert us that we are looking at an emacs command, add a tooltip, and make it clickable to open the documentation, and s (super) clickable to find the function code. Font lock is the tool we will use for this. Basically, we need a regular expression to match the syntax, and a function to find the next instance, and put some properties on the matched text.
+
+Here we use the `rx' library to build up a regular expression for this. It is a bit easier to document than a raw regexp. Since we are matching \ in the pattern, there are some obligatory escaping \ characters in there too. Here is how to set it up, and use it on a string.
+
+#+BEGIN_SRC emacs-lisp
+(require 'rx)
+(let ((rex (rx
+	    (and
+	     "\\\\["
+	     (group (one-or-more (not (any "]"))))
+	     "]"))))
+      (string-match rex "\\\\[org-toggle-latex-overlays]")
+      (list (match-string 0 "\\\\[org-toggle-latex-overlays]")
+	    (match-string 1 "\\\\[org-toggle-latex-overlays]")))
+#+END_SRC
+
+#+RESULTS:
+| \\[org-toggle-latex-overlays] | org-toggle-latex-overlays |
+
+So, we can find these, and all we need is to integrate this into font-lock. We define a function that will move the point to the end of the next match, and put properties on the match. We will go ahead and make the text clickable so we can access documentation and code easily. The tooltip will show the key-binding to run the command.
+
+#+BEGIN_SRC emacs-lisp :results silent
+(require 'rx)
+
+(defvar elisp-symbol-keybinding-re
+  (rx
+   ;; opening \\[
+   "\\\\["
+   ;; one or more characters that are not ]
+   (group (one-or-more (not (any "]"))))
+   ;; The closing ]
+   "]")
+"Regexp for an elisp command keybinding syntax. \\[some-command]
+Regexp group 1 matches `some-command'.")
+
+(defun match-next-keybinding (&optional limit)
+  "Move point to the end of the next expression matching
+`elisp-symbol-keybinding-re', and put an overlay on the match
+that shows the key sequence. Non-bound commands are not
+fontified."
+  (when (and (re-search-forward elisp-symbol-keybinding-re limit t)
+	     (fboundp (intern (match-string 1))))
+    (let* ((beg (match-beginning 0))
+	   (end (match-end 0))
+	   (s (match-string 0))
+	   (command (match-string 1))
+	   (func `(lambda ()
+		    (interactive)
+		    (describe-function (intern ,command))))
+	   (func2 `(lambda ()
+		     (interactive)
+		     (find-function (intern ,command))))
+	   (map (make-sparse-keymap)))
+
+      ;; this is what gets run when you click on it.
+      (define-key map [mouse-1] func)
+      (define-key map [s-mouse-1] func2)
+      ;; Here we define the overlay
+      (add-text-properties
+       beg end
+       `(local-map ,map
+	 mouse-face highlight
+	 help-echo ,(format
+		     "%s\nClick for documentation\ns-mouse-1 to find function."
+		     (substitute-command-keys s))
+	 keybinding t)))))
+#+END_SRC
+
+Now we need a way to turn them on and off. We do that here with a minor mode.
+
+#+BEGIN_SRC emacs-lisp
+(define-minor-mode emacs-keybinding-overlay-mode
+  "Fontify on emacs keybinding syntax. Adds a tooltip for
+keybinding, and make the command clickable to get to the
+documentation."
+  :lighter " KB"
+  (if emacs-keybinding-overlay-mode
+      ;; turn them on
+      (font-lock-add-keywords
+       nil
+       '((match-next-keybinding 1 font-lock-constant-face)))
+    ;; turn them off
+    (font-lock-remove-keywords
+     nil
+     '((match-next-keybinding 1 font-lock-constant-face)))))
+#+END_SRC
+
+#+RESULTS:
+
+You can use \\[org-toggle-latex-overlays] to toggle latex overlays.
+
+You can use \\[org-ref-helm-insert-cite-link]  to insert citations. \\[helm]
+
+That more or less does it! I don't know if this is the canonical way to do this, but it works nicely here. You can also use overlays, but I found them a little confusing because they are not editable, and you have to toggle the minor mode to see them. Here we have unobtrusive tooltips. One downside is these won't export in any fashion in org-mode since it is not part of the syntax.
+
+Maybe it would make sense to do this for this syntax too: `helm', which is also commonly used
+
+* alternative solutions to [[id:1B122428-E8FF-476B-B07B-79A7541003DC][Adding emacs command key-bindings and help functionality to org-mode]]
+** font lock solution
+
+#+BEGIN_SRC emacs-lisp :results silent
+(defvar elisp-symbol-keybinding-re "\\\\\\\\\\[\\([^]]*\\)]"
+  "Regexp for an elisp command keybinding syntax.")
+
+(defun match-next-keybinding (&optional limit)
+  (when (re-search-forward elisp-symbol-keybinding-re limit t)
+    (put-text-property (match-beginning 0) (match-end 0)
+		       'face 'font-lock-constant-face)
+    (put-text-property (match-beginning 0) (match-end 0)
+		       'lisp-symbol t)
+    (put-text-property
+     (match-beginning 0) (match-end 0)
+     'help-echo (lambda (window object position)
+		  "Tooltip of the keybinding"
+		  (save-excursion
+		    (goto-char position)
+		    (let ((s (get-surrounding-text-with-property 'lisp-symbol)))
+		      (string-match elisp-symbol-keybinding-re s)
+		      (substitute-command-keys (match-string 0 s))))))))
+
+(font-lock-add-keywords nil
+ '((match-next-keybinding 0 'font-lock-constant-face)))
+
+(defvar elisp-symbol-syntax-re "`\\([^']*\\)'"
+  "Regexp for an `elisp' command syntax.")
+
+;; make clickable syntax
+(defun match-next-symbol (&optional limit)
+  (when (re-search-forward elisp-symbol-syntax-re limit t)
+    ;; set face
+    (put-text-property (match-beginning 1) (match-end 1)
+		       'face 'font-lock-constant-face)
+    ;; add property
+    (put-text-property (match-beginning 0) (match-end 0)
+		       'lisp-symbol (match-string 1))
+    ;; clickable text
+    (let ((map (make-sparse-keymap)))
+      (define-key map [mouse-1]
+	(lambda ()
+	  (interactive)
+	  (let ((s (get-surrounding-text-with-property 'lisp-symbol)))
+	    (string-match elisp-symbol-syntax-re s)
+	    (describe-function (intern (match-string 1 s))))))
+      (put-text-property (match-beginning 0) (match-end 0)
+			 'mouse-face 'highlight)
+      (put-text-property (match-beginning 0) (match-end 0)
+			 'local-map map))
+
+    ;; tooltip
+    (put-text-property
+     (match-beginning 0) (match-end 0)
+     'help-echo (lambda (window object position)
+		  "Tooltip of the keybinding"
+		  (save-excursion
+		    (goto-char position)
+		    (let ((s (get-surrounding-text-with-property 'lisp-symbol)))
+		      (string-match elisp-symbol-syntax-re s)
+		      (save-window-excursion
+			(describe-function (intern (match-string 1 s))))))))))
+
+(font-lock-add-keywords nil
+ '((match-next-symbol 0 'font-lock-constant-face)))
+#+END_SRC
+
+
+
+   `put-text-property'
+
+** button-lock
+#+BEGIN_SRC emacs-lisp
+(defvar elisp-symbol-keybinding-re "\\\\\\\\\\[\\([^]]*\\)]"
+  "Regexp for an elisp command keybinding syntax.")
+
+(defvar elisp-symbol-syntax-re "`\\([^']*\\)'"
+  "Regexp for an elisp command syntax.")
+
+;; make clickable syntax
+(button-lock-set-button
+ elisp-symbol-keybinding-re
+ (lambda ()
+   (interactive)
+   (let ((s (get-surrounding-text-with-property 'lisp-symbol)))
+     (string-match elisp-symbol-keybinding-re s)
+     (message (substitute-command-keys (match-string 0 s)))))
+ :face font-lock-constant-face
+ :help-echo (lambda (window object position)
+		(save-excursion
+		  (goto-char position)
+		  (let ((s (get-surrounding-text-with-property 'lisp-symbol)))
+		    (string-match elisp-symbol-keybinding-re s)
+		    (substitute-command-keys (match-string 0 s)))))
+ :keyboard-binding (kbd "RET")
+ :additional-property 'lisp-symbol)
+
+
+(button-lock-set-button
+ elisp-symbol-syntax-re
+ (lambda ()
+   (interactive)
+   (let ((s (get-surrounding-text-with-property 'lisp-symbol)))
+     (string-match elisp-symbol-syntax-re s)
+     (describe-function (intern (match-string 1 s)))))
+ :face '((:background "Lightsteelblue1"))
+ :help-echo "click for help"
+ :keyboard-binding (kbd "RET")
+ :additional-property 'lisp-symbol)
+
+
+#+END_SRC
+
+#+RESULTS:
+| `\([^']*\)' | (0 (quote (face ((:background Lightsteelblue1)) keymap (keymap (13 lambda nil (interactive) (let ((s (get-surrounding-text-with-property (quote lisp-symbol)))) (string-match elisp-symbol-syntax-re s) (describe-function (intern (match-string 1 s))))) (mouse-1 lambda nil (interactive) (let ((s (get-surrounding-text-with-property (quote lisp-symbol)))) (string-match elisp-symbol-syntax-re s) (describe-function (intern (match-string 1 s)))))) button-lock t lisp-symbol t mouse-face button-lock-mouse-face help-echo click for help rear-nonsticky t)) append) |
+* TODO Improving cite link context with text properties
+Getting mouse-over tool tips for org-ref so we don't need timers.
+
+cite:tree,kitchin,bartok-2015-gauss-approx-poten
+
+cite:bartok-2015-gauss-approx-poten
+
+#+BEGIN_SRC emacs-lisp
+(defun match-next-cite-link (&optional limit)
+ (when (re-search-forward org-ref-cite-re limit)
+   (put-text-property
+    (match-beginning 0) (match-end 0)
+    'org-cite t)
+   (put-text-property
+    (match-beginning 0) (match-end 0)
+    'help-echo (lambda (window object position)
+		 (save-excursion
+		   (goto-char position)
+                   (org-ref-get-citation-string-at-point))))))
+
+(font-lock-add-keywords nil
+ '((match-next-cite-link 0 'org-ref-cite-face)))
+#+END_SRC
+
+
+
+bibliography:~/Dropbox/bibliography/references.bib
+
+* Modifying link export
+
+#+BEGIN_SRC emacs-lisp
+(setf (elt  (assoc "info" org-link-protocols) 2)
+      (lambda (keyword desc format)
+	(cond
+	 ((eq format 'html)
+	  (format
+	   "<a href=\"https://www.gnu.org/software/emacs/manual/html_node/%s/%s.html\">%s</a>"
+	   (car (s-split "#" keyword))
+	   (car (last (s-split "#" keyword)))
+	   keyword)))))
+#+END_SRC
+
+
+info:emacs#Packages
+
+
+end
+
+
+* DONE Clickable telephone numbers in mu4e messages
+  CLOSED: [2015-11-04 Wed 12:45]
+  :PROPERTIES:
+  :categories: emacs
+  :date:     2015/11/04 12:45:12
+  :updated:  2015/11/04 12:45:12
+  :END:
+We recently updated our university phone system to a VoIP system that uses Cisco Jabber. I am excited about that because finally I can make phone calls from Emacs with a little applescript automation! So, spoiler alert, this post mostly only applies to Macs, unless you know how to automate a Jabber client to make calls. How to make the telephone numbers clickable is general though, and could be used to do other things as well.
+
+#+BEGIN_SRC emacs-lisp
+(defun cisco-call (phone-number)
+  (interactive "sPhone number: ")
+  (do-applescript
+   (format "tell application \"Cisco Jabber\"
+	activate
+	tell application \"System Events\" to keystroke \"n\" using {shift down, command down}
+	tell application \"System Events\" to keystroke \"%s\"
+	tell application \"System Events\" to key code 36 #return
+end tell" phone-number)))
+#+END_SRC
+
+#+RESULTS:
+: cisco-call
+
+I would like to go a step further, and make clickable phone numbers in my Emacs buffers. Let's take a look at some options.
+
+** org-mode phone link
+This is a no-brainer approach. We can define an org-mode link that runs the cisco-call function.
+
+#+BEGIN_SRC emacs-lisp
+(org-add-link-type
+ "phone"
+ (lambda (phone-number)
+   (cisco-call phone-number)))
+#+END_SRC
+
+#+RESULTS:
+| lambda | (phone-number) | (cisco-call phone-number) |
+
+This makes simple link that just calls the number in the path of the link.
+
+** Clickable text with button-lock
+I have used the button-lock package very often to make clickable text. Here we use it to highlight phone numbers matching a regular expression that seems to match most US numbers. This seems to work great in org-mode buffers.
+
+#+BEGIN_SRC emacs-lisp
+(require 'rx)
+
+(defvar highlight-phone-numbers nil
+ "Button for `highlight-phone-numbers'")
+
+(defun highlight-phone-numbers ()
+  "Make phone numbers of the following types clickable:
+  (xxx) xxx-xxxx
+  xxx.xxx.xxx
+  xxxxxxxxxx
+  xxx-xxx-xxxx"
+  (interactive)
+  (let ((inhibit-read-only t))
+    (setq highlight-phone-numbers
+	  (button-lock-set-button
+	   (rx
+	    ;; optional () around area code
+	    (optional "(")
+	    (= 3 digit)
+	    (optional ")")
+	    ;; delimiters
+	    (or (optional "-")
+		(optional ".")
+		(optional " "))
+	    (= 3 digit)
+	    (or (optional "-")
+		(optional ".")
+		(optional " "))
+	    (= 4 digit))
+	   (lambda ()
+	     (interactive)
+	     (cisco-call (get-surrounding-text-with-property 'phone-number)))
+	   :face '((:background "Darkolivegreen2")
+		   (:underline t))
+	   :help-echo "click to call"
+	   :keyboard-binding (kbd "RET")
+	   :additional-property 'phone-number))))
+
+(add-hook 'text-mode 'highlight-phone-numbers)
+#+END_SRC
+
+#+RESULTS:
+| highlight-phone-numbers |
+
+** Phone numbers in mu4e messages
+For some reason, the button-lock package doesn't seem to work in mu4e message buffers, Maybe it is because . The highlight-regexp package does work though, so for these special buffers we use a new approach. We will just put text properties where we want them, and use those properties to make the text clickable.
+
+The messages are in read-only buffers, but we can inhibit that so we can modify the properties. All we need to do is create a little key map as a copy of the existing map, define some keys on it, then search through the buffer adding properties to every phone number we find. I wrote a function that does that, and put that function in a hook to run each time I open a message. Whammo, now I have clickable phone numbers in email! It works pretty well for me.
+
+#+BEGIN_SRC emacs-lisp
+(defface mu4e-phone-face
+  '((t (:foreground "SteelBlue4" :background "Darkolivegreen2" :underline t)))
+  "Phone number directive face.")
+
+(defun mu4e-highlight-phone-numbers ()
+  "Make phone numbers clickable in mu4e-view buffers."
+  (interactive)
+  (let ((phone-regex (rx
+		      ;; optional () around area code
+		      (optional "(")
+		      (= 3 digit)
+		      (optional ")")
+		      ;; delimiters
+		      (or (optional "-")
+			  (optional ".")
+			  (optional " "))
+		      (= 3 digit)
+		      (or (optional "-")
+			  (optional ".")
+			  (optional " "))
+		      (= 4 digit))))
+    (save-excursion
+      (let ((inhibit-read-only t))
+	(goto-char (point-min))
+	(while (re-search-forward phone-regex nil t)
+	  (let ((map (copy-keymap mu4e-view-mode-map))
+		(start (match-beginning 0))
+		(end (match-end 0)))
+
+	    ;; set file to be clickable to open the source
+	    (define-key map [mouse-1]
+	      `(lambda ()
+		 (interactive)
+		 (cisco-call ,(match-string 0))))
+
+	    ;; let letter c also make the call
+	    (define-key map "c"
+	       `(lambda ()
+		 (interactive)
+		 (cisco-call ,(match-string 0))))
+
+	    (set-text-properties
+	     start end
+	     `(local-map, map
+			  face mu4e-phone-face
+			  mouse-face highlight
+			  help-echo "mouse-1: click to call"))))))))
+
+(add-hook 'mu4e-view-mode-hook 'mu4e-highlight-phone-numbers)
+#+END_SRC
+
+** Summary
+That works pretty well for me overall. The phone number regex is not perfect, e.g. it makes any 10 digit number clickable, and it doesn't recognize international numbers. I am not sure I can call those through the Jabber client anyway. This is purely convenience for me to easily make calls from emails, or other kinds of documents I might read in Emacs.
+
+I don't use phone calls very often, but an interesting thing might be to open a phone log in org-mode, or open the contact that has that phone number to log that you called them, and provide some notes for them. Alternatively, open a new capture for a phone log that could be refiled later.
+
+
+* org pre-processor
+This would be code that replaces syntax like: @(some sexp) with what ever the sexp evals to.
 
 
 * indirect buffer
@@ -212,35 +640,6 @@ I modified this a little. It seems switching back and forth between org-mode is 
 
 
 
-
-
-
-
-* problem solve coin saving
-
-#+BEGIN_SRC emacs-lisp
-(loop for N from 1
-      if (= 0 (mod (* N 36) 100))
-      return N)
-#+END_SRC
-
-#+RESULTS:
-: 25
-
-we know the ones position must be X*6 ends in 0, so X is 5.
-
-then, we know the ones position of Y*6 plus the 10 position of X *36 must equal 10. So,
-
-ones(Y * 6) + 8 = 10 or the ones position of Y * 6 = 2, so Y = 2.
-
-The solution is Y = 25.
-
-#+BEGIN_SRC python
-print 5 * 36
-#+END_SRC
-
-#+RESULTS:
-: 180
 
 
 
@@ -1404,29 +1803,6 @@ Let's try a variation of that code that allows us to type a number to jump to a 
 (number-line-src-block)
 #+END_SRC
 #+RESULTS:
-
-
-* Fontifying links in comments
-  :PROPERTIES:
-  :ID:       943D9489-43AC-4289-9741-93546274E5EA
-  :END:
-Org-mode has a comment syntax. Anything commented out is largely ignored by org-mode during export and presumably other things too. However, it turns out that links are still active and clickable in comments, but they are hard to identify from regular text. If you mouse over them you may see some indication of clickable text due to a mouse face on the link, but the text is not colored or underlined, and is otherwise shown in a font-lock-comment-face. Here we attempt to see if we can fontify links in comments.
-
-I thought I would be able to use a function with font-lock, but this seems to work the easiest.
-
-#+BEGIN_EXAMPLE
-(highlight-regexp org-any-link-re 'org-link)
-#+END_EXAMPLE
-# [[id:943D9489-43AC-4289-9741-93546274E5EA][Fontifying links in comments]]
-
-
-
-(require 'ov)
-
-
-
-
-
 
 
 * Using functions in font lock
@@ -4166,13 +4542,7 @@ You just type C-x C-f select the file, and then use the new actions. Note, there
                            'helm-attach-to-email helm-source-find-files)
 #+END_SRC
 
-#+RESULTS:
-
-/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org
-
-blog.org
-
-* org src blocks
+* org src blocks hydra
 [[https://github.com/abo-abo/hydra/wiki/Org-mode-block-templates][Org mode block templates Â· abo-abo/hydra Wiki]]
 
 
@@ -4249,11 +4619,11 @@ We make this so it only works for png files.
 #+RESULTS:
 
 
-* Parsing sexps in plain text
+* Parsing sexps in plain text and putting overlays on them
 
 I am exploring a kind of richer markup here to put context into plain text using sexp notation instead of [[http://www.w3.org/TR/rdfa-lite/][RDF]] notation. RDF notation is just heavy for an author to write. Sexp notation, on the other hand, is lighter in my opinion. You can even imagine this relatively readable markup being code in addition to data (see this [[http://kitchingroup.cheme.cmu.edu/blog/2015/06/10/A-sexp-version-of-a-bibtex-entry/][post]] on a sexp notation for bibtex for example).
 
-I will use Emacs overlays to hide the sexp and display the contents. For example, say we markup a "person" like this (:person "John Kitchin" :email "jkitchin@andrew.cmu.edu"). It seems in this approach it is necessary to put strings in quotes because we eventually read these sexps into lisp. I want Emacs to find these, and replace it with an overlay of a more human readable content, and some contextual tooltip about the real content.
+I will use Emacs overlays to hide the sexp and display the contents. For example, say we markup a "person" like this @(:person "John Kitchin" :email "jkitchin@andrew.cmu.edu"). It seems in this approach it is necessary to put strings in quotes because we eventually read these sexps into lisp. I want Emacs to find these, and replace it with an overlay of a more human readable content, and some contextual tooltip about the real content.
 
 For fun, let us see if we can nest a sexp in the sexp, here to have some code that constructs an email address. For example, (:person "John" :email (concat "jkitchin" "@cmu.edu")) has code to build the email address. This works, but the code is not actually executed anywhere. You would have to do that somewhere else.
 
@@ -4264,7 +4634,7 @@ Ok, here is a little code block that "renders" our buffer to show the person ent
 
 (save-excursion
   (goto-char (point-min))
-  (while (and  (re-search-forward "(" nil t)
+  (while (and  (re-search-forward "@(" nil t)
 	       (sexp-at-point))
     (let ((beg)
 	  (end)
@@ -10718,40 +11088,6 @@ from sklearn.externals import joblib
 
 #+RESULTS:
 
-* An experiment in navigation with a  hydra
-
-#+BEGIN_SRC emacs-lisp
-(defhydra nav (:color red)
-  "navigation"
-  ("f" forward-char "forward char")
-  ("j" backward-char "backward char")
-  ("d" forward-word  "forward word")
-  ("k" backward-word "backward word")
-  ("l" previous-line "previous line")
-  ("s" forward-line "next line")
-  (";" scroll-up  "scroll up")
-  ("a" scroll-down "scroll down"))
-
-#+END_SRC
-
-#+RESULTS:
-: nav/body
-
-
-
-#+BEGIN_SRC emacs-lisp
-(defhydra hydra-goto-line (goto-map ""
-                           :pre (linum-mode 1)
-                           :post (linum-mode -1))
-  "goto-line"
-  ("g" goto-line "go")
-  ("m" set-mark-command "mark" :bind nil)
-  ("q" nil "quit"))
-#+END_SRC
-
-#+RESULTS:
-: hydra-goto-line/body
-
 * enumerate and zip in emacs lisp using the loop
 here are hand-rolled functions.
 
@@ -11335,20 +11671,6 @@ Test 1: [[comment:test comment]]
 
 That is it. I could see a few other enhancements that might be very useful, e.g. a command to list all the comments, remove all the comments, etc... I am pretty satisfied with this for now though.
 
-* insert code block
-#+BEGIN_SRC emacs-lisp
-(defun pec ()
-  (interactive)
-  (kill-region (region-beginning) (region-end))
-  (insert "#+BEGIN_EXAMPLE\n")
-  (yank)
-  (insert "\n#+END_EXAMPLE")
-  (previous-line 1)
-  (org-edit-special)
-  (fill-region (point-min) (point-max))
-  (org-edit-src-exit))
-#+END_SRC
-
 * DONE Extending the org-mode link syntax with attributes
   CLOSED: [2015-04-20 Mon 12:55]
   :PROPERTIES:
@@ -11428,16 +11750,6 @@ And, the generic export of this link is:
 #+END_EXAMPLE
 
 Is this a good idea? I am not using this for anything right now. Sometimes my version of org-mode has trouble recognizing that is a link. It is strange, as I am typing, sometimes it flashes in and out of being recognized as a link. Anyway, it is an interesting idea!
-* equations in html
-
-See ref:eq-1.
-
-
-label:eq-1
-\begin{equation}
-e^x = 4
-\end{equation}
-
 * sweet new babel things
 
 Thanks to William Henney for sharing this on the orgmode mailing list. specify return value
@@ -15223,43 +15535,6 @@ https://medium.com/@write4research/why-do-academics-and-phders-carefully-choose-
 http://pubs.acs.org/isbn/9780841239999
 
 cite:2006-acs-style-guide
-* DONE 1000+ citations for fuel cell paper on the oxygen reduction reaction!
-  CLOSED: [2015-03-30 Mon 20:02]
-  :PROPERTIES:
-  :categories: news
-  :date:     2015/03/30 20:02:58
-  :updated:  2015/03/30 20:11:41
-  :END:
-
-This landmark paper cite:norskov-2004-origin recently hit 1000+ citations! In this paper we lay out a framework using density functional theory to calculate the stabilities of intermediates in electrochemical processes such as fuel cells and electrolyzers. This was a very early use of electrochemical atomistic thermodynamics in which the electric potential and pH were both accounted for in the electrochemical reaction energies. We showed how the volcano plots frequently observed arise from trends in adsorption energies that are easily calculated. This paper also shows one of the earliest scaling relations between O and OH adsorption energies!
-
-This paper came out shortly after I spent three months at DTU with Jens NÃ¸rskov when I was a PhD student. I still remember talking to him about the work that led to this paper one day at their regular afternoon department tea time. He suggested some DFT calculations that I knew how to do, and I went back to the office and worked on them the rest of the night. He wrote this amazing paper afterwards that has been cited over and over. Congratulations Jens! I am proud to have had a part in it.
-
-#+BEGIN_SRC bibtex
-@article{norskov-2004-origin,
-  author =	 {N{\o}rskov, J. K. and Rossmeisl, J. and Logadottir, A. and
-                  Lindqvist, L. and Kitchin, J. R. and Bligaard, T. and J{\'o}nsson,
-                  H.},
-  title =	 {Origin of the overpotential for oxygen reduction at a
-                  fuel-cell cathode},
-  journal =	 {Journal of Physical Chemistry B},
-  year =	 2004,
-  volume =	 108,
-  pages =	 {17886-17892},
-  number =	 46,
-  doi =		 {10.1021/jp047349j},
-  url = {http://dx.doi.org/10.1021/jp047349j},
-  issn =	 {1520-6106},
-  type =	 {Journal Article},
-}
-#+END_SRC
-
-
-#+BEGIN_HTML
-<img src="http://api.elsevier.com/content/abstract/citation-count?doi=10.1021/jp047349j &httpAccept=image/jpeg&apiKey=5cd06d8a7df3de986bf3d0cd9971a47c"></img>
-#+END_HTML
-
-bibliography:../../Dropbox/bibliography/references.bib
 
 
 * Filtering subsets of a bibtex file
@@ -15671,34 +15946,6 @@ outline-regexp
 #+RESULTS:
 : \*+
 
-* bibdesk links
-We guess that this base64 encoded, so we decode it (M-x base64-decode-region) This then gives us a binary plist (it starts with bplist) which we can turn into a readable form with M-: plutil -convert xml1 -o - - RET
-
-#+BEGIN_SRC emacs-lisp
-(defun convert-bindata (beg end)
-  (interactive "r")
-  (let ((content (buffer-substring beg end)))
-    (with-temp-buffer
-      (insert
-       (with-temp-buffer
-	 (insert content)
-	 (base64-decode-region (point-min) (point-max))
-	 (shell-command-on-region (point-min) (point-max) "plutil -convert xml1 -o - -")
-	 (set-buffer "*Shell Command Output*")
-	 (buffer-string)))
-      (message "%s"(xml-parse-region (point-min) (point-max))))))
-#+END_SRC
-
-#+RESULTS:
-: convert-bindata
-
-YnBsaXN0MDDUAQIDBAUGJCVYJHZlcnNpb25YJG9iamVjdHNZJGFyY2hpdmVyVCR0b3ASAAGGoKgHCBMUFRYaIVUkbnVsbNMJCgsMDxJXTlMua2V5c1pOUy5vYmplY3RzViRjbGFzc6INDoACgAOiEBGABIAFgAdccmVsYXRpdmVQYXRoWWFsaWFzRGF0YV8QLi4uLy4uLy4uLy4uLy4uL0RvY3VtZW50cy9QYXBlcnMvQWxiaW4vMjAwNi5wZGbSFwsYGVdOUy5kYXRhTxEBigAAAAABigACAAAMTWFjaW50b3NoIEhEAAAAAAAAAAAAAAAAAAAAzJJLUEgrAAAJ9GrLCDIwMDYucGRmAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAn0a4DQ8zSXAAAAAAAAAAAABQAEAAAJIAAAAAAAAAAAAAAAAAAAAAVBbGJpbgAAEAAIAADMkq3AAAAAEQAIAADQ86UXAAAAAQAUCfRqywDX3BkABcoiAAXKIQACEEoAAgA/TWFjaW50b3NoIEhEOlVzZXJzOgBzdGFudG9uOgBEb2N1bWVudHM6AFBhcGVyczoAQWxiaW46ADIwMDYucGRmAAAOABIACAAyADAAMAA2AC4AcABkAGYADwAaAAwATQBhAGMAaQBuAHQAbwBzAGgAIABIAEQAEgAtVXNlcnMvc3RhbnRvbi9Eb2N1bWVudHMvUGFwZXJzL0FsYmluLzIwMDYucGRmAAATAAEvAAAVAAIADv//AACABtIbHB0eWiRjbGFzc25hbWVYJGNsYXNzZXNdTlNNdXRhYmxlRGF0YaMdHyBWTlNEYXRhWE5TT2JqZWN00hscIiNcTlNEaWN0aW9uYXJ5oiIgXxAPTlNLZXllZEFyY2hpdmVy0SYnVHJvb3SAAQAIABEAGgAjAC0AMgA3AEAARgBNAFUAYABnAGoAbABuAHEAcwB1AHcAhACOAL8AxADMAloCXAJhAmwCdQKDAocCjgKXApwCqQKsAr4CwQLGAAAAAAAAAgEAAAAAAAAAKAAAAAAAAAAAAAAAAAAAAsg=
-
-../../../../../Documents/Papers/Albin/2006.pdf
-
-bplist00Ô$%X$versionX$objectsY$archiverT$top † ¨!U$nullÓ
-WNS.keysZNS.objectsV$class¢€€¢€€€\relativePathYaliasData_.../../../../../Documents/Papers/Albin/2006.pdfÒWNS.dataOŠ    Š   Macintosh HD               Ì’KPH+  	ôjË2006.pdf                                                       	ôk€Ðó4—            	                Albin     Ì’­À      Ðó¥    	ôjË ×Ü Ê" Ê! J  ?Macintosh HD:Users: stanton: Documents: Papers: Albin: 2006.pdf     2 0 0 6 . p d f    M a c i n t o s h   H D  -Users/stanton/Documents/Papers/Albin/2006.pdf   /    ÿÿ  €ÒZ$classnameX$classes]NSMutableData£ VNSDataXNSObjectÒ"#\NSDictionary¢" _NSKeyedArchiverÑ&'Troot€    # - 2 7 @ F M U ` g j l n q s u w „ Ž ¿ Ä ÌZ\aluƒ‡Ž—œ©¬¾ÁÆ             (              È
-
 * Finding and handling duplicate bibtex entries
 Duplicate bibtex entries in your bibtex file is a problem. Finding them is tricky because minor spelling differences, differences in capitalization, etc... make it difficult to use code to find duplicates. I find it good practice to keep your bibtex file sorted, so that duplicates tend to be near each other, and hence easier to spot. But with a large number of entries, this is still tedious to do.
 
@@ -15753,7 +16000,7 @@ So, we will just map over our entries looking for places where the same key is g
 #+END_SRC
 
 #+RESULTS:
-[[elisp:(progn (switch-to-buffer "references.bib")(goto-char 627548))][1. "university-2012-factbook"]] [[elisp:(progn (switch-to-buffer "references.bib")(goto-char 627752))]["university-2012-factbook"]]
+[[elisp:(progn (switch-to-buffer "references.bib")(goto-char 339249))][1. "jayaramanhillier-2001-construction-reactivity-mapping-platinum-catalyst-gradient-using-scanning-electrochemical-microscope"]] [[elisp:(progn (switch-to-buffer "references.bib")(goto-char 339881))]["jayaramanhillier-2001-construction-reactivity-mapping-platinum-catalyst-gradient-using-scanning-electrochemical-microscope"]]
 
 
 * A new approach to extracting bibtex file from org
@@ -15922,51 +16169,6 @@ Well, that looks like it. All that is left is writing that string to a file.
 #+RESULTS:
 : org-ref-create-bib-file-from-org
 
-
-* Clickable org-contacts in Emacs
-
-In exploring dynamic clickable text in Emacs, it occurred to me it might be interesting if your org-contact headings were clickable links.
-
-#+BEGIN_SRC emacs-lisp :results silent
-(require 'button-lock)
-(global-button-lock-mode)
-
-(setq org-contacts-cons
-      (mapcar (lambda (entry)
-		(let ((contact (with-temp-buffer
-				 (insert (car entry))
-				 (buffer-substring-no-properties
-				  (point-min) (point-max)))))
-		  (cons (s-trim contact) contact)))
-	      (org-contacts-db)))
-
-
-(setq org-contacts-regex (mapconcat 'identity
-	   (mapcar 'car org-contacts-cons)
-	   "\\|"))
-
-(button-lock-set-button
- org-contacts-regex
- (lambda ()
-   (interactive)
-   ;; move point back to a non-matched link, based on face property
-   (while (equal
-	   (car (get-text-property (point) 'face))
-	   'org-link)
-     (backward-char))
-   ;; search forward to find the match
-   (re-search-forward org-contacts-regex)
-   (let* ((contact-string (cdr (assoc (match-string 0) org-contacts-cons)))
-	  (contact (assoc contact-string (org-contacts-db)))
-	  (marker (elt contact 1)))
-     (switch-to-buffer (marker-buffer marker))
-     (goto-char (marker-position marker))))
- :face (list 'org-link))
-#+END_SRC
-
-  @johnkitchin
-
-  Billy Bardin
 
 * DONE Restarting org-babel sessions in org-mode more effectively
   CLOSED: [2015-03-19 Thu 18:53]
@@ -16635,108 +16837,6 @@ Some words and a table:
 :  of 2015-01-18 on vpn-128-237-146-193.library.vpn.cmu.edu"
 :
 : "I did it. you passed in (arg1 arg2 arg3)"
-* test Rasmus link code
-from [[mu4e:msgid:87bnlcdj7d.fsf@gmx.us][Re: {O} Citations, continued]]
-
-#+BEGIN_SRC emacs-lisp
-
-(with-eval-after-load 'org
-  (require 'reftex-cite)
-
-  (defmacro rasmus/org-bib-add-type (type)
-    ;; TODO: maybe this can be made more effective?
-    ;; Seems to work OK...
-    `(org-add-link-type
-      ,type
-      'rasmus/org-bib-follow
-      ,(lambda (path description backend)
-	 (funcall 'rasmus/org-bib-format path description backend
-                  ;; cite defaults to textcite
-		  (if (equal type "cite") "textcite" type)))))
-
-  (mapc (lambda (type) (funcall 'rasmus/org-bib-add-type type))
-        '("cite" "textcite" "parentcite" "citeyear" "citeauthor"))
-
-  (defun rasmus/org-bib-follow (path)
-    "Find the pdf version of citation."
-    (let* ((stream (read (format "(%s)" path))))
-      (rasmus/find-lit (car head))))
-
-  (defun rasmus/find-lit (key)
-    "Open pdf file associated with KEY from `reftex-default-bibliography'."
-    (let* ((bib (file-name-directory (car reftex-default-bibliography)))
-           (file (concat bib path (concat "/" key ".pdf"))))
-      (when (file-exists-p file) (find-file file))))
-
-  (defun rasmus/org-bib-format (path description backend &optional type*)
-    "Format a org-link citation.
-
- Support links of the type
-
- [[type*:key :pre PRE :post POST :type TYPE**]]
-
- Or
-
- [[Key*:key][POST;PRE]]
-
-Based on John K's great post here:
-    http://permalink.gmane.org/gmane.emacs.orgmode/94575"
-    (let* ((key
-            ;; key is a single symbol by assumption
-            (and (string-match "\\` *\\([^ ]+\\) *" path)
-                 (prog1 (match-string 1 path)
-                   (setq path (replace-match "" nil nil path)))))
-           ;; generate plist
-           (data (read (format "(%s)"
-                               (replace-regexp-in-string
-                                "\\(:\\w+\\) \\([^:]+\\) ?" "\\1 \"\\2\" "
-                                path))))
-           (type (or (plist-get data :type) type* "textcite"))
-           (pre  (org-trim (or (plist-get data :pre)
-			       ;; support my "old" syntax
-			       (and description
-				    (cadr (split-string description ";"))) "")))
-	   (post (org-trim
-		  (or (funcall (lambda (txt)
-				 (and txt
-				      (let ((res (string-to-number txt)))
-					(if (zerop res) txt
-					  (concat (if (> (length txt) 1)  "pp." "p.") " " txt)))))
-			       (plist-get data :post))
-		      (and description
-			   (car (split-string description ";")))
-		      "")))
-	   (entry (or (save-window-excursion
-                        (bibtex-search-entry key t 0)
-                        (bibtex-parse-entry))
-                      (error (format "unknown key: %s" key))))
-           (author (or (reftex-format-citation entry "%2a") ""))
-           (year (or  (reftex-format-citation entry "%y") "")))
-      (if (org-export-derived-backend-p backend 'latex)
-          (format "\\%s[%s][%s]{%s}" type pre post key)
-        ;; TODO: This should probably be wrapped in <cite>.</cite> with html...
-        (cl-case (intern type)
-          (parencite
-           (format "(%s %s %s %s)"
-                   pre author
-                   (or (and (org-string-nw-p year) (concat year ", ")) "")
-                   post))
-          (citeyear
-           (format "%s %s %s" pre year post))
-          (citeauthor
-           (format "%s %s %s" pre author post))
-          (fullcite
-           (reftex-format-citation entry reftex-cite-view-format))
-          (t ;; textcite
-           (format "%s (%s%s%s)"
-                   author
-                   (and (org-string-nw-p pre) (concat pre " "))
-                   year
-                   (and (org-string-nw-p post) (concat ", " post)))))))))
-
-
-#+END_SRC
-
 * About face
 
 You have probably wondered why some words are colored in Emacs and wondered how some text behaves like a link. That happens from font locking. Here we look at some ways you can modify this behavior too.

@@ -4,7 +4,7 @@
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
 <title>org-element-explorer</title>
-<!-- 2015-09-21 Mon 15:12 -->
+<!-- 2015-11-07 Sat 19:03 -->
 <meta  http-equiv="Content-Type" content="text/html;charset=utf-8" />
 <meta  name="generator" content="Org-mode" />
 <style type="text/css">
@@ -133,31 +133,338 @@ for the JavaScript code in this tag.
  }
 /*]]>*///-->
 </script>
+<script type="text/javascript" src="http://orgmode.org/mathjax/MathJax.js"></script>
+<script type="text/javascript">
+<!--/*--><![CDATA[/*><!--*/
+    MathJax.Hub.Config({
+        // Only one of the two following lines, depending on user settings
+        // First allows browser-native MathML display, second forces HTML/CSS
+        //  config: ["MMLorHTML.js"], jax: ["input/TeX"],
+            jax: ["input/TeX", "output/HTML-CSS"],
+        extensions: ["tex2jax.js","TeX/AMSmath.js","TeX/AMSsymbols.js",
+                     "TeX/noUndefined.js"],
+        tex2jax: {
+            inlineMath: [ ["\\(","\\)"] ],
+            displayMath: [ ['$$','$$'], ["\\[","\\]"], ["\\begin{displaymath}","\\end{displaymath}"] ],
+            skipTags: ["script","noscript","style","textarea","pre","code"],
+            ignoreClass: "tex2jax_ignore",
+            processEscapes: false,
+            processEnvironments: true,
+            preview: "TeX"
+        },
+        showProcessingMessages: true,
+        displayAlign: "center",
+        displayIndent: "2em",
+
+        "HTML-CSS": {
+             scale: 100,
+             availableFonts: ["STIX","TeX"],
+             preferredFont: "TeX",
+             webFont: "TeX",
+             imageFont: "TeX",
+             showMathMenu: true,
+        },
+        MMLorHTML: {
+             prefer: {
+                 MSIE:    "MML",
+                 Firefox: "MML",
+                 Opera:   "HTML",
+                 other:   "HTML"
+             }
+        }
+    });
+/*]]>*///-->
+</script>
 </head>
 <body>
 <div id="content">
 <h1 class="title">org-element-explorer</h1>
 <div id="outline-container-sec-1" class="outline-2">
-<h2 id="sec-1"><span class="section-number-2">1</span> time stamp in code block</h2>
+<h2 id="sec-1"><span class="section-number-2">1</span> Adding emacs command key-bindings and help functionality to org-mode</h2>
 <div class="outline-text-2" id="text-1">
+<p>
+The documentation of functions in emacs allows you to put some light markup that will render as the key sequence required to run the command. I would like to have something like that in org-mode. You can look up the key-binding to a command like this:
+</p>
 <div class="org-src-container">
 
-<pre class="src src-emacs-lisp" id="update-timestamp">(concat
- <span style="color: #008000;">"Last run: "</span>
- (format-time-string <span style="color: #008000;">"[%Y-%m-%d %a %H:%M:%S]"</span> (current-time))
- <span style="color: #008000;">"\n"</span> data)
+<pre class="src src-emacs-lisp">(substitute-command-keys <span style="color: #008000;">"\\[</span><span style="color: #D0372D;">org-toggle-latex-overlays</span><span style="color: #008000;">]"</span>)
 </pre>
 </div>
 
 <pre class="example">
-Last run: [2015-09-21 Mon 11:09:18]
-hello
+C-c C-x C-l
 </pre>
+
+<p>
+We are going to explore a way to recognize the syntax shown above, change its appearance to alert us that we are looking at an emacs command, add a tooltip, and make it clickable to open the documentation. Font lock is the tool we will use for this. Basically, we need a regular expression to match the syntax, and a function to find the next instance, and put some properties on the matched text.
+</p>
+
+<p>
+Here we use the `rx' library to build up a regular expression for this. It is a bit easier to document than a raw regexp. Since we are matching \ in the pattern, there are some obligatory escaping \ characters in there too. Here is how to set it up, and use it on a string.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">rx</span>)
+(<span style="color: #0000FF;">let</span> ((rex (<span style="color: #0000FF;">rx</span>
+            <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">opening \\[</span>
+            <span style="color: #008000;">"\\\\["</span>
+            <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">one or more characters that are not ]</span>
+            (group (one-or-more (not (any <span style="color: #008000;">"]"</span>))))
+            <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">The closing ]</span>
+            <span style="color: #008000;">"]"</span>)))
+      (string-match rex <span style="color: #008000;">"\\\\[</span><span style="color: #D0372D;">org-toggle-latex-overlays</span><span style="color: #008000;">]"</span>)
+      (list (match-string 0 <span style="color: #008000;">"\\\\[org-toggle-latex-overlays\\]"</span>)
+            (match-string 1 <span style="color: #008000;">"\\\\[org-toggle-latex-overlays\\]"</span>)))
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="left" />
+
+<col  class="left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="left">\\[org-toggle-latex-overlays\</td>
+<td class="left">org-toggle-latex-overlays</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+So, we can find these, and all we need is to integrate this into font-lock. We define a function that will move the point to the end of the next match, and put an overlay and face on the match. We will go ahead and make the text clickable so we can access documentation easily. The overlay will show the key-binding to run the command.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">ov</span>)
+(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">rx</span>)
+
+(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">elisp-symbol-keybinding-re</span>
+  (<span style="color: #0000FF;">rx</span>
+   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">opening \\[</span>
+   <span style="color: #008000;">"\\\\["</span>
+   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">one or more characters that are not ]</span>
+   (group (one-or-more (not (any <span style="color: #008000;">"]"</span>))))
+   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">The closing ]</span>
+   <span style="color: #008000;">"]"</span>)
+<span style="color: #036A07;">"Regexp for an elisp command keybinding syntax. \\[</span><span style="color: #D0372D;">some-command</span><span style="color: #036A07;">]</span>
+<span style="color: #036A07;">Regexp group 1 matches `</span><span style="color: #D0372D;">some-command</span><span style="color: #036A07;">'."</span>)
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">match-next-keybinding</span> (<span style="color: #6434A3;">&amp;optional</span> limit)
+  <span style="color: #036A07;">"Move point to the end of the next expression matching</span>
+<span style="color: #036A07;">`</span><span style="color: #D0372D;">elisp-symbol-keybinding-re</span><span style="color: #036A07;">', and put an overlay on the match</span>
+<span style="color: #036A07;">that shows the key sequence. Non-bound commands are not</span>
+<span style="color: #036A07;">fontified."</span>
+  (<span style="color: #0000FF;">when</span> (<span style="color: #0000FF;">and</span> (re-search-forward elisp-symbol-keybinding-re limit t)
+             (fboundp (intern (match-string 1))))
+    (<span style="color: #0000FF;">let*</span> ((beg (match-beginning 0))
+           (end (match-end 0))
+           (s (match-string 0))
+           (command (match-string 1))
+           (func `(<span style="color: #0000FF;">lambda</span> ()
+                   (<span style="color: #0000FF;">interactive</span>)
+                   (describe-function (intern ,command))))
+           (map (make-sparse-keymap)))
+
+      <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">this is what gets run when you click on it.</span>
+      (define-key map [mouse-1] func)
+
+      <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Here we define the overlay</span>
+      (add-text-properties
+       beg end
+       `(local-map ,map
+         mouse-face highlight
+         help-echo ,(format
+                     <span style="color: #008000;">"%s"</span>
+                     (substitute-command-keys s))
+         keybinding t)))))
+</pre>
+</div>
+
+<p>
+Now we need a way to turn them on and off. We do that here with a minor mode.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">define-minor-mode</span> <span style="color: #006699;">emacs-keybinding-overlay-mode</span>
+  <span style="color: #036A07;">"Create overlays on emacs keybinding syntax. The overlays show</span>
+<span style="color: #036A07;">the keybinding for a command, and make the command clickable to</span>
+<span style="color: #036A07;">get to the documentation."</span>
+  <span style="color: #006FE0;">:lighter</span> <span style="color: #008000;">" KB"</span>
+  (<span style="color: #0000FF;">if</span> emacs-keybinding-overlay-mode
+      <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">turn them on</span>
+      (font-lock-add-keywords
+       nil
+       '((match-next-keybinding 1 font-lock-constant-face)))
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">turn them off</span>
+    (font-lock-remove-keywords
+     nil
+     '((match-next-keybinding 1 font-lock-constant-face)))))
+</pre>
+</div>
+
+<p>
+You can use \\[org-toggle-latex-overlays] to toggle latex overlays.
+</p>
+
+<p>
+You can use \\[org-ref-helm-insert-cite-link] to insert citations. \\[helm]
+</p>
+
+<p>
+That more or less does it! I don't know if this is the canonical way to do this, but it works nicely here. You can also use overlays, but I found them a little confusing because they are not editable, and you have to toggle the minor mode to see them. Here we have unobtrusive tooltips. One downside is these won't export in any fashion in org-mode since it is not part of the syntax.
+</p>
+</div>
+
+
+<div id="outline-container-sec-1-1" class="outline-3">
+<h3 id="sec-1-1"><span class="section-number-3">1.1</span> font lock solution</h3>
+<div class="outline-text-3" id="text-1-1">
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">elisp-symbol-keybinding-re</span> <span style="color: #008000;">"\\\\\\\\\\[</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">(</span><span style="color: #008000;">[</span><span style="color: #008000;">^</span><span style="color: #008000;">]]*</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">)</span><span style="color: #008000;">]"</span>
+  <span style="color: #036A07;">"Regexp for an elisp command keybinding syntax."</span>)
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">match-next-keybinding</span> (<span style="color: #6434A3;">&amp;optional</span> limit)
+  (<span style="color: #0000FF;">when</span> (re-search-forward elisp-symbol-keybinding-re limit t)
+    (put-text-property (match-beginning 0) (match-end 0)
+                       'face 'font-lock-constant-face)
+    (put-text-property (match-beginning 0) (match-end 0)
+                       'lisp-symbol t)
+    (put-text-property
+     (match-beginning 0) (match-end 0)
+     'help-echo (<span style="color: #0000FF;">lambda</span> (window object position)
+                  <span style="color: #036A07;">"Tooltip of the keybinding"</span>
+                  (<span style="color: #0000FF;">save-excursion</span>
+                    (goto-char position)
+                    (<span style="color: #0000FF;">let</span> ((s (get-surrounding-text-with-property 'lisp-symbol)))
+                      (string-match elisp-symbol-keybinding-re s)
+                      (substitute-command-keys (match-string 0 s))))))))
+
+(font-lock-add-keywords nil
+ '((match-next-keybinding 0 'font-lock-constant-face)))
+
+(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">elisp-symbol-syntax-re</span> <span style="color: #008000;">"`</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">(</span><span style="color: #008000;">[</span><span style="color: #008000;">^</span><span style="color: #008000;">']*</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">)</span><span style="color: #008000;">'"</span>
+  <span style="color: #036A07;">"Regexp for an `</span><span style="color: #D0372D;">elisp</span><span style="color: #036A07;">' command syntax."</span>)
+
+<span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">make clickable syntax</span>
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">match-next-symbol</span> (<span style="color: #6434A3;">&amp;optional</span> limit)
+  (<span style="color: #0000FF;">when</span> (re-search-forward elisp-symbol-syntax-re limit t)
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">set face</span>
+    (put-text-property (match-beginning 1) (match-end 1)
+                       'face 'font-lock-constant-face)
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">add property</span>
+    (put-text-property (match-beginning 0) (match-end 0)
+                       'lisp-symbol (match-string 1))
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">clickable text</span>
+    (<span style="color: #0000FF;">let</span> ((map (make-sparse-keymap)))
+      (define-key map [mouse-1]
+        (<span style="color: #0000FF;">lambda</span> ()
+          (<span style="color: #0000FF;">interactive</span>)
+          (<span style="color: #0000FF;">let</span> ((s (get-surrounding-text-with-property 'lisp-symbol)))
+            (string-match elisp-symbol-syntax-re s)
+            (describe-function (intern (match-string 1 s))))))
+      (put-text-property (match-beginning 0) (match-end 0)
+                         'mouse-face 'highlight)
+      (put-text-property (match-beginning 0) (match-end 0)
+                         'local-map map))
+
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">tooltip</span>
+    (put-text-property
+     (match-beginning 0) (match-end 0)
+     'help-echo (<span style="color: #0000FF;">lambda</span> (window object position)
+                  <span style="color: #036A07;">"Tooltip of the keybinding"</span>
+                  (<span style="color: #0000FF;">save-excursion</span>
+                    (goto-char position)
+                    (<span style="color: #0000FF;">let</span> ((s (get-surrounding-text-with-property 'lisp-symbol)))
+                      (string-match elisp-symbol-syntax-re s)
+                      (<span style="color: #0000FF;">save-window-excursion</span>
+                        (describe-function (intern (match-string 1 s))))))))))
+
+(font-lock-add-keywords nil
+ '((match-next-symbol 0 'font-lock-constant-face)))
+</pre>
+</div>
+
+
+
+<p>
+`put-text-property'
+</p>
+</div>
+</div>
+
+<div id="outline-container-sec-1-2" class="outline-3">
+<h3 id="sec-1-2"><span class="section-number-3">1.2</span> button-lock</h3>
+<div class="outline-text-3" id="text-1-2">
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">elisp-symbol-keybinding-re</span> <span style="color: #008000;">"\\\\\\\\\\[</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">(</span><span style="color: #008000;">[</span><span style="color: #008000;">^</span><span style="color: #008000;">]]*</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">)</span><span style="color: #008000;">]"</span>
+  <span style="color: #036A07;">"Regexp for an elisp command keybinding syntax."</span>)
+
+(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">elisp-symbol-syntax-re</span> <span style="color: #008000;">"`</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">(</span><span style="color: #008000;">[</span><span style="color: #008000;">^</span><span style="color: #008000;">']*</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">)</span><span style="color: #008000;">'"</span>
+  <span style="color: #036A07;">"Regexp for an elisp command syntax."</span>)
+
+<span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">make clickable syntax</span>
+(button-lock-set-button
+ elisp-symbol-keybinding-re
+ (<span style="color: #0000FF;">lambda</span> ()
+   (<span style="color: #0000FF;">interactive</span>)
+   (<span style="color: #0000FF;">let</span> ((s (get-surrounding-text-with-property 'lisp-symbol)))
+     (string-match elisp-symbol-keybinding-re s)
+     (message (substitute-command-keys (match-string 0 s)))))
+ <span style="color: #006FE0;">:face</span> font-lock-constant-face
+ <span style="color: #006FE0;">:help-echo</span> (<span style="color: #0000FF;">lambda</span> (window object position)
+                (<span style="color: #0000FF;">save-excursion</span>
+                  (goto-char position)
+                  (<span style="color: #0000FF;">let</span> ((s (get-surrounding-text-with-property 'lisp-symbol)))
+                    (string-match elisp-symbol-keybinding-re s)
+                    (substitute-command-keys (match-string 0 s)))))
+ <span style="color: #006FE0;">:keyboard-binding</span> (kbd <span style="color: #008000;">"RET"</span>)
+ <span style="color: #006FE0;">:additional-property</span> 'lisp-symbol)
+
+
+(button-lock-set-button
+ elisp-symbol-syntax-re
+ (<span style="color: #0000FF;">lambda</span> ()
+   (<span style="color: #0000FF;">interactive</span>)
+   (<span style="color: #0000FF;">let</span> ((s (get-surrounding-text-with-property 'lisp-symbol)))
+     (string-match elisp-symbol-syntax-re s)
+     (describe-function (intern (match-string 1 s)))))
+ <span style="color: #006FE0;">:face</span> '((<span style="color: #006FE0;">:background</span> <span style="color: #008000;">"Lightsteelblue1"</span>))
+ <span style="color: #006FE0;">:help-echo</span> <span style="color: #008000;">"click for help"</span>
+ <span style="color: #006FE0;">:keyboard-binding</span> (kbd <span style="color: #008000;">"RET"</span>)
+ <span style="color: #006FE0;">:additional-property</span> 'lisp-symbol)
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="left" />
+
+<col  class="left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="left">`\([^']*\)'</td>
+<td class="left">(0 (quote (face ((:background Lightsteelblue1)) keymap (keymap (13 lambda nil (interactive) (let ((s (get-surrounding-text-with-property (quote lisp-symbol)))) (string-match elisp-symbol-syntax-re s) (describe-function (intern (match-string 1 s))))) (mouse-1 lambda nil (interactive) (let ((s (get-surrounding-text-with-property (quote lisp-symbol)))) (string-match elisp-symbol-syntax-re s) (describe-function (intern (match-string 1 s)))))) button-lock t lisp-symbol t mouse-face button-lock-mouse-face help-echo click for help rear-nonsticky t)) append)</td>
+</tr>
+</tbody>
+</table>
+</div>
 </div>
 </div>
 </div>
 <div id="postamble" class="status">
-<p class="date">Created: 2015-09-21 Mon 15:12</p>
+<p class="date">Created: 2015-11-07 Sat 19:03</p>
 <p class="creator"><a href="http://www.gnu.org/software/emacs/">Emacs</a> 25.0.50.1 (<a href="http://orgmode.org">Org</a> mode 8.2.10)</p>
 <p class="validation"><a href="http://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
