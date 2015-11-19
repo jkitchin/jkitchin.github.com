@@ -12172,7 +12172,7 @@ foo
   :PROPERTIES:
   :categories: org
   :date:     2015/04/24 12:41:39
-  :updated:  2015/04/24 12:41:39
+  :updated:  2015/11/19 09:18:04
   :END:
 There was an interesting discussion on the org-mode mail list about putting comments in org files. Eric Fraga suggested using inline tasks, and customizing the export of them so they make a footnote, or use the todonotes package (suggested by Marcin Borkowski). Here is Eric's export. A big advantage of this is integration with the Agenda, so you can see what there is todo in your document.
 
@@ -12234,6 +12234,80 @@ Test 1: [[comment:test comment]]
 [[comment:You seem to have forgotten Test 2][Test 2]]
 
 That is it. I could see a few other enhancements that might be very useful, e.g. a command to list all the comments, remove all the comments, etc... I am pretty satisfied with this for now though.
+
+** An updated approach to comments.
+Rainer asked about making some comments inline. It would be nice if a single link syntax could accommodate both styles of comments. I previously developed an approach to extend links with attributes (http://kitchingroup.cheme.cmu.edu/blog/2015/02/05/Extending-the-org-mode-link-syntax-with-attributes/), which I will reuse here for that purpose. The idea is to add an ":inline" attribute to change the export behavior. We only modify the LaTeX export here.
+
+#+BEGIN_SRC emacs-lisp
+(org-add-link-type
+ "comment"
+ ;;  follow function
+(lambda (linkstring)
+   (let ((elm (org-element-context))
+         (use-dialog-box nil))
+     (when (y-or-n-p "Delete comment? ")
+       (setf (buffer-substring
+	      (org-element-property :begin elm)
+	      (org-element-property :end elm))
+	     (cond
+	      ((org-element-property :contents-begin elm)
+	       (buffer-substring
+		(org-element-property :contents-begin elm)
+		(org-element-property :contents-end elm)))
+	      (t
+	       ""))))))
+ ;; format function
+ (lambda (path description format)
+   (let* ((data (read (concat "(" path ")")))
+	  (head (car data))
+	  (plist (cdr data)))
+     (cond
+      ((eq format 'html)
+       (format "<font color=\"red\"><abbr title=\"%s\" color=\"red\">COMMENT</abbr></font> %s" path (or description "")))
+      ((eq format 'latex)
+       (format "\\todo%s{%s}%s"
+	       (if (-contains? data :inline) "[inline]" "")
+	       (mapconcat #'symbol-name (-remove-item :inline data) " ")
+	       (if description (format "{%s}" description) "")))))))
+#+END_SRC
+
+Here are some examples of the syntax:
+#+BEGIN_EXAMPLE
+[[comment: :inline the rest of your text]]
+
+[[comment:Some text you want to highlight]]
+
+[[comment:Some text you want to highlight :inline]]
+#+END_EXAMPLE
+
+It doesn't matter where the :inline attribute is added. This seems to work pretty well.
+
+We can modify our convenience function to allow us to use a prefix arg to make the comment inline. Here is one way to do it.
+
+#+BEGIN_SRC emacs-lisp
+(defun add-comment (begin end &optional arg)
+  "Comment the region. With a prefix ARG, make the comment inline."
+  (interactive (list (region-beginning)
+		     (region-end)
+		     current-prefix-arg))
+  (let ((inline (if arg ":inline " "")))
+	(if (region-active-p)
+	    (let ((selected-text (buffer-substring begin end)))
+	      (setf (buffer-substring begin end)
+		    (format
+		     "[[comment:%s%s][%s]]"
+		     inline
+		     (read-input "Comment: ") selected-text)))
+	  (insert (format
+		   "[[comment:%s%s]]"
+		   inline
+		   (read-input "Comment: "))))))
+#+END_SRC
+
+#+RESULTS:
+: add-comment
+
+Test [[comment:a new regular comment][text]] to  [[comment::inline an inline comment][comment]] on.
 
 * DONE Extending the org-mode link syntax with attributes
   CLOSED: [2015-04-20 Mon 12:55]
