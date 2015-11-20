@@ -83,6 +83,180 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Integrating-swish-e-and-Emacs"></div>
+      <h2 class="blog_post_title"><a href="/blog/2015/06/25/Integrating-swish-e-and-Emacs/" rel="bookmark" title="Permanent Link to Integrating swish-e and Emacs">Integrating swish-e and Emacs</a></h2>
+      <p><small><span class="blog_post_date">Posted June 25, 2015 at 10:37 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2015/06/25/Integrating-swish-e-and-Emacs#disqus_thread">View Comments</a>
+      <p><small><span class="blog_post_date">Updated June 25, 2015 at 11:10 AM</span>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+
+<p>
+<a href="http://swish-e.org">swish-e</a> is a software package that indexes files on your computer, and then allows you to search the index. Spotlight on my Mac is not working too well (sometimes not at all), and I want some more flexibility so today we try getting swish-e up and running and integrated with Emacs. I don't know that swish-e is the best tool for this available, but it has been on my radar a <i>long</i> time (probably since 2003 from this <a href="http://joshr.com/src/docs/HowToIndexAnything.pdf">article</a> ), and it was easy to setup and use.
+</p>
+
+<p>
+I use homebrew, so installation was this simple:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-sh">brew install swish-e
+</pre>
+</div>
+
+<p>
+To test things out, I will only index org-files. I have these all over the place, and they are not all in my org-mode agenda. So, finding them quickly would be awesome.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-text"># Example configuration file
+
+# Tell Swish-e what to directories to index
+IndexDir /Users/jkitchin/Dropbox
+IndexDir "/Users/jkitchin/Box Sync"
+IndexDir /Users/jkitchin/blogofile-jkitchin.github.com
+
+# where to save the index
+IndexFile /Users/jkitchin/.swish-e/index.swish-e
+
+# What to index
+IndexOnly .org
+
+# Tell Swish-e that .txt files are to use the text parser.
+IndexContents TXT* .org
+
+# Otherwise, use the HTML parser
+DefaultContents HTML*
+
+# Ask libxml2 to report any parsing errors and warnings or
+# any UTF-8 to 8859-1 conversion errors
+ParserWarnLevel 9
+</pre>
+</div>
+
+<p>
+Now, we create our index.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-sh">swish-e -c ~/.swish-e/swish.conf
+</pre>
+</div>
+
+<pre class="example">
+Indexing Data Source: "File-System"
+Indexing "/Users/jkitchin/Dropbox"
+Indexing "/Users/jkitchin/Box Sync"
+Indexing "/Users/jkitchin/blogofile-jkitchin.github.com"
+Removing very common words...
+no words removed.
+Writing main index...
+Sorting words ...
+Sorting 130,109 words alphabetically
+Writing header ...
+Writing index entries ...
+  Writing word text: ...  Writing word text:  10%  Writing word text:  20%  Writing word text:  30%  Writing word text:  40%  Writing word text:  50%  Writing word text:  60%  Writing word text:  70%  Writing word text:  80%  Writing word text:  90%  Writing word text: 100%  Writing word text: Complete
+  Writing word hash: ...  Writing word hash:  10%  Writing word hash:  20%  Writing word hash:  30%  Writing word hash:  40%  Writing word hash:  50%  Writing word hash:  60%  Writing word hash:  70%  Writing word hash:  80%  Writing word hash:  90%  Writing word hash: 100%  Writing word hash: Complete
+  Writing word data: ...  Writing word data:   9%  Writing word data:  19%  Writing word data:  29%  Writing word data:  39%  Writing word data:  49%  Writing word data:  59%  Writing word data:  69%  Writing word data:  79%  Writing word data:  89%  Writing word data:  99%  Writing word data: Complete
+130,109 unique words indexed.
+Sorting property: swishdocpath                            Sorting property: swishtitle                              Sorting property: swishdocsize                            Sorting property: swishlastmodified                       4 properties sorted.
+3,208 files indexed.  54,104,974 total bytes.  8,038,594 total words.
+Elapsed time: 00:00:16 CPU time: 00:00:13
+Indexing done!
+</pre>
+
+
+<p>
+Now an example search. I have been looking into the Energy frontier research centers, and I want to find my notes on it. Here is a little query. I use a special output format to keep things simple for the parsing later, just the rank and path, separated by a tab.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-sh">swish-e -f ~/.swish-e/index.swish-e -x <span style="color: #008000;">'%r\t%p\n'</span> -w efrc
+</pre>
+</div>
+<pre class="example">
+# SWISH format: 2.4.7
+# Search words: efrc
+# Removed stopwords:
+# Number of hits: 2
+# Search time: 0.000 seconds
+# Run time: 0.008 seconds
+1000	/Users/jkitchin/Dropbox/org-mode/journal.org
+471	/Users/jkitchin/Dropbox/org-mode/proposals.org
+.
+</pre>
+
+<p>
+Now, for the integration with Emacs. We just get that output in a string, split it, and get the parts we want.  I think I will use helm to provide a selection buffer to these results. We need a list of cons cells (string . candidate). Then we write an interactive helm function. We provide two sources. One for the initial query, and another to start a new search, in case you don't find what you want.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">helm-swish-e-candidates</span> (query)
+  <span style="color: #036A07;">"Generate a list of cons cells (swish-e result . path)."</span>
+  (<span style="color: #0000FF;">let*</span> ((result (shell-command-to-string
+                  (format <span style="color: #008000;">"swish-e -f ~/.swish-e/index.swish-e -x \"%%r\t%%p\n\" -w %s"</span>
+                          (shell-quote-argument query))))
+         (lines (s-split <span style="color: #008000;">"\n"</span> result t))
+         (candidates '()))
+    (<span style="color: #0000FF;">loop</span> for line in lines
+          unless (<span style="color: #0000FF;">or</span>  (s-starts-with? <span style="color: #008000;">"#"</span> line)
+                      (s-starts-with? <span style="color: #008000;">"."</span> line))
+          collect (cons line (cdr (s-split <span style="color: #008000;">"\t"</span> line))))))
+
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">helm-swish-e</span> (query)
+  <span style="color: #036A07;">"Run a swish-e query and provide helm selection buffer of the results."</span>
+  (<span style="color: #0000FF;">interactive</span> <span style="color: #008000;">"sQuery: "</span>)
+  (helm <span style="color: #006FE0;">:sources</span> `(((name . ,(format <span style="color: #008000;">"swish-e: %s"</span> query))
+                    (candidates . ,(helm-swish-e-candidates query))
+                    (action . ((<span style="color: #008000;">"open"</span> . (<span style="color: #0000FF;">lambda</span> (f)
+                                           (find-file (car f)))))))
+                   ((name . <span style="color: #008000;">"New search"</span>)
+                    (dummy)
+                    (action . ((<span style="color: #008000;">"search"</span> . (<span style="color: #0000FF;">lambda</span> (f)
+                                             (helm-swish-e helm-pattern)))))))))
+</pre>
+</div>
+
+<pre class="example">
+helm-swish-e
+</pre>
+
+<p>
+Now I can run M-x helm-swish-e and enter "efrc AND computing infrastructure" to find org files containing those words, then press enter to find the file. Nice and easy. I have not tested the query syntax very fully, but so far it is working fine!
+</p>
+<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/06/25/Integrating-swish-e-and-Emacs.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/06/25/Integrating-swish-e-and-Emacs#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Clickable-org-contacts-in-text-files"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/06/22/Clickable-org-contacts-in-text-files/" rel="bookmark" title="Permanent Link to Clickable org-contacts in text files">Clickable org-contacts in text files</a></h2>
       <p><small><span class="blog_post_date">Posted June 22, 2015 at 01:07 PM</span> | categories:
@@ -675,256 +849,6 @@ That might turn out to be handy at some point.
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/06/08/Getting-a-WOS-Accession-number-from-a-DOI#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Getting-a-Scopus-EID-from-a-DOI"></div>
-      <h2 class="blog_post_title"><a href="/blog/2015/06/07/Getting-a-Scopus-EID-from-a-DOI/" rel="bookmark" title="Permanent Link to Getting a Scopus EID from a DOI">Getting a Scopus EID from a DOI</a></h2>
-      <p><small><span class="blog_post_date">Posted June 07, 2015 at 04:29 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/ref/'>ref</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2015/06/07/Getting-a-Scopus-EID-from-a-DOI#disqus_thread">View Comments</a>
-      <p><small><span class="blog_post_date">Updated June 07, 2015 at 04:54 PM</span>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-<a href="http://www.scopus.com">Scopus</a> is a scientific literature indexing and search engine service run by Elsevier. I have been integrating Scopus workflows into Emacs  and org-ref. Scopus seems to work with their own digital identifiers, known as an EID. I usually have a DOI to work with. Here, we develop a way to get an EID from a DOI using the Scopus API. You need to get your own Scopus API key here: <a href="http://dev.elsevier.com/myapikey.html">http://dev.elsevier.com/myapikey.html</a> and set <b>scopus-api-key</b> in Emacs to use this code.
-</p>
-
-<p>
-Once we have an EID, here are a few interesting things we can do with them. This is an EID: 2-s2.0-84881394200, for this reference:
-</p>
-
-<p>
-Hallenbeck, Alexander P. and Kitchin, John R., "Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a  primary-amine based polymeric \ce{CO_2} sorbent", Industrial &amp; Engineering Chemistry Research, 52:10788-10794 (2013)
-</p>
-
-<p>
-With the EID, we can construct a URL to the Scopus document page:
-</p>
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((eid <span style="color: #008000;">"2-s2.0-84881394200"</span>))
-  (format <span style="color: #008000;">"http://www.scopus.com/record/display.url?eid=%s&amp;origin=resultslist"</span> eid))
-</pre>
-</div>
-
-<pre class="example">
-http://www.scopus.com/record/display.url?eid=2-s2.0-84881394200&amp;origin=resultslist
-</pre>
-
-<p>
-We can construct a URL to citing documents:
-</p>
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((eid <span style="color: #008000;">"2-s2.0-84881394200"</span>))
-  (format <span style="color: #008000;">"http://www.scopus.com/results/citedbyresults.url?sort=plf-f&amp;cite=%s&amp;src=s&amp;imp=t&amp;sot=cite&amp;sdt=a&amp;sl=0&amp;origin=recordpage"</span> eid))
-</pre>
-</div>
-
-<pre class="example">
-http://www.scopus.com/results/citedbyresults.url?sort=plf-f&amp;cite=2-s2.0-84881394200&amp;src=s&amp;imp=t&amp;sot=cite&amp;sdt=a&amp;sl=0&amp;origin=recordpage
-</pre>
-
-<p>
-And there are three types of related document urls we can create: by author, keyword or references.
-</p>
-
-<p>
-By authors:
-</p>
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((eid <span style="color: #008000;">"2-s2.0-84881394200"</span>))
-  (format (concat <span style="color: #008000;">"http://www.scopus.com/search/submit/mlt.url"</span>
-                  <span style="color: #008000;">"?eid=%s&amp;src=s&amp;all=true&amp;origin=recordpage"</span>
-                  <span style="color: #008000;">"&amp;method=aut&amp;zone=relatedDocuments"</span>)
-            eid))
-</pre>
-</div>
-
-<p>
-<a href="http://www.scopus.com/search/submit/mlt.url?eid=2-s2.0-84881394200&src=s&all=true&origin=recordpage&method=aut&zone=relatedDocuments">http://www.scopus.com/search/submit/mlt.url?eid=2-s2.0-84881394200&src=s&all=true&origin=recordpage&method=aut&zone=relatedDocuments</a> 
-</p>
-
-<p>
-By keywords:
-</p>
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((eid <span style="color: #008000;">"2-s2.0-84881394200"</span>))
-  (format (concat <span style="color: #008000;">"http://www.scopus.com/search/submit/mlt.url"</span>
-                  <span style="color: #008000;">"?eid=%s&amp;src=s&amp;all=true&amp;origin=recordpage"</span>
-                  <span style="color: #008000;">"&amp;method=key&amp;zone=relatedDocuments"</span>)
-          eid))
-</pre>
-</div>
-
-<p>
-<a href="http://www.scopus.com/search/submit/mlt.url?eid=2-s2.0-84881394200&src=s&all=true&origin=recordpage&method=key&zone=relatedDocuments">http://www.scopus.com/search/submit/mlt.url?eid=2-s2.0-84881394200&src=s&all=true&origin=recordpage&method=key&zone=relatedDocuments</a> 
-</p>
-
-<p>
-And by references:
-</p>
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((eid <span style="color: #008000;">"2-s2.0-84881394200"</span>))
-  (format (concat  <span style="color: #008000;">"http://www.scopus.com/search/submit/mlt.url?"</span>
-                   <span style="color: #008000;">"eid=%s&amp;src=s&amp;all=true&amp;origin=recordpage"</span>
-                   <span style="color: #008000;">"&amp;method=ref&amp;zone=relatedDocuments"</span>)
-           eid))
-</pre>
-</div>
-
-<p>
-<a href="http://www.scopus.com/search/submit/mlt.url?eid=2-s2.0-84881394200&src=s&all=true&origin=recordpage&method=ref&zone=relatedDocuments">http://www.scopus.com/search/submit/mlt.url?eid=2-s2.0-84881394200&src=s&all=true&origin=recordpage&method=ref&zone=relatedDocuments</a> 
-</p>
-
-<p>
-We can generate all those on the fly if we have an EID. The problem is that we usually have the DOI, <i>not</i> the EID. So, here we use the Scopus API to retrieve that. Basically, we just do a search on the DOI, assume one and only one is found, and get the EID from the results. The DOI we have for the reference considered here is <a href="http://dx.doi.org/10.1021/ie400582a">doi:10.1021/ie400582a</a>.
-</p>
-
-<p>
-The gist of what we will do is send an http request to Scopus with our API key, and data specifying what to get. Scopus will return data to us in either json or xml, depending on what we ask for.
-</p>
-
-<p>
-I find json easiest to deal with, so we first work it out in json. We use the Scopus search API and query on the doi here. We get back json data which we read as an emacs-lisp plist, and extract the eid from it.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let*</span> ((doi <span style="color: #008000;">"10.1021/ie400582a"</span>)
-       (url-request-method <span style="color: #008000;">"GET"</span>)
-       (url-mime-accept-string <span style="color: #008000;">"application/json"</span>)
-       (url-request-extra-headers  (list (cons <span style="color: #008000;">"X-ELS-APIKey"</span> *scopus-api-key*)
-                                         '(<span style="color: #008000;">"field"</span> . <span style="color: #008000;">"eid"</span>)))
-       (url (format  <span style="color: #008000;">"http://api.elsevier.com/content/search/scopus?query=doi(%s)"</span> doi))
-       (json-object-type 'plist)
-       (json-data (<span style="color: #0000FF;">with-current-buffer</span>  (url-retrieve-synchronously url)
-                    (json-read-from-string
-                     (buffer-substring url-http-end-of-headers (point-max))))))
- (plist-get (elt (plist-get (plist-get json-data <span style="color: #006FE0;">:search-results</span>) <span style="color: #006FE0;">:entry</span>) 0) <span style="color: #006FE0;">:eid</span>))
-</pre>
-</div>
-
-<pre class="example">
-2-s2.0-84881394200
-</pre>
-
-<p>
-That is the EID we were looking for. Here, we just wrap that code in a function so it is easier to reuse.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">scopus-doi-to-eid-json</span> (doi)
-  <span style="color: #036A07;">"Return a parsed xml from the Scopus article retrieval api for DOI.</span>
-<span style="color: #036A07;">This does not always seem to work for the most recent DOIs."</span>
-  (<span style="color: #0000FF;">let*</span> ((url-request-method <span style="color: #008000;">"GET"</span>)
-         (url-mime-accept-string <span style="color: #008000;">"application/json"</span>)
-         (url-request-extra-headers  (list (cons <span style="color: #008000;">"X-ELS-APIKey"</span> *scopus-api-key*)
-                                           '(<span style="color: #008000;">"field"</span> . <span style="color: #008000;">"eid"</span>)))
-         (url (format  <span style="color: #008000;">"http://api.elsevier.com/content/search/scopus?query=doi(%s)"</span> doi))
-         (json-object-type 'plist)
-         (json-data (<span style="color: #0000FF;">with-current-buffer</span>  (url-retrieve-synchronously url)
-                      (json-read-from-string
-                       (buffer-substring url-http-end-of-headers (point-max))))))
-    (plist-get (elt (plist-get (plist-get json-data <span style="color: #006FE0;">:search-results</span>) <span style="color: #006FE0;">:entry</span>) 0) <span style="color: #006FE0;">:eid</span>)))
-
-(scopus-doi-to-eid <span style="color: #008000;">"10.1021/ie400582a"</span>)
-</pre>
-</div>
-
-<p>
-XML is the native format in the Scopus API. They say that json works most of the time, but some XML cannot be rendered as json. Here we use the XML returned to get the EID. It is less intuitive to me, but mostly because I have used it less. I don't think you can specify and XPATH like you can in Python.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let*</span> ((doi <span style="color: #008000;">"10.1021/ie400582a"</span>)
-       (url-request-method <span style="color: #008000;">"GET"</span>)
-       (url-mime-accept-string <span style="color: #008000;">"application/xml"</span>)
-       (url-request-extra-headers  (list (cons <span style="color: #008000;">"X-ELS-APIKey"</span> *scopus-api-key*)
-                                         '(<span style="color: #008000;">"field"</span> . <span style="color: #008000;">"eid"</span>)))
-       (url (format  <span style="color: #008000;">"http://api.elsevier.com/content/search/scopus?query=doi(%s)"</span> doi))
-       (xml (<span style="color: #0000FF;">with-current-buffer</span>  (url-retrieve-synchronously url)
-              (xml-parse-region url-http-end-of-headers (point-max))))
-       (results (car xml))
-       (entry (car (xml-get-children results 'entry))))
-  (car (xml-node-children (car (xml-get-children entry 'eid)))))
-</pre>
-</div>
-
-<pre class="example">
-2-s2.0-84881394200
-</pre>
-
-<p>
-Now we wrap this in a function for reusability.
-</p>
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">scopus-doi-to-eid</span> (doi)
-  <span style="color: #036A07;">"Get a Scopus eid from a DOI."</span>
-  (<span style="color: #0000FF;">let*</span> ((url-request-method <span style="color: #008000;">"GET"</span>)
-         (url-mime-accept-string <span style="color: #008000;">"application/xml"</span>)
-         (url-request-extra-headers  (list (cons <span style="color: #008000;">"X-ELS-APIKey"</span> *scopus-api-key*)
-                                           '(<span style="color: #008000;">"field"</span> . <span style="color: #008000;">"eid"</span>)))
-         (url (format  <span style="color: #008000;">"http://api.elsevier.com/content/search/scopus?query=doi(%s)"</span> doi))
-         (xml (<span style="color: #0000FF;">with-current-buffer</span>  (url-retrieve-synchronously url)
-                (xml-parse-region url-http-end-of-headers (point-max))))
-         (results (car xml))
-         (entry (car (xml-get-children results 'entry))))
-    (car (xml-node-children (car (xml-get-children entry 'eid))))))
-
-(scopus-doi-to-eid <span style="color: #008000;">"10.1021/ie400582a"</span>)
-</pre>
-</div>
-
-<pre class="example">
-2-s2.0-84881394200
-</pre>
-
-<p>
-This code is wrapped up in <a href="https://github.com/jkitchin/org-ref/blob/master/scopus.el">org-ref/scopus.el</a> . It provides a new org-mode eid link, e.g. <a href=" http://www.scopus.com/record/display.url?eid=2-s2.0-84881394200&origin=resultslist">eid:2-s2.0-84881394200</a> which is functional and provides access to the citing and related article Scopus pages for that eid.
-</p>
-
-<p>
-There are also new links and functions for a <a href="http://www.scopus.com/results/results.url?sort=plf-f&src=s&sot=b&sdt=b&sl=35&s=TITLE-ABS-KEY%28alloy%20Au%20segregation%29&origin=searchbasic">alloy Au segregation</a> and <a href="http://www.scopus.com/results/results.url?sort=plf-f&src=s&sot=a&sdt=a&sl=48&s=auth%28kitchin%29%20and%20title%28segregation%29&origin=searchadvanced">auth(kitchin) and title(segregation)</a>.
-</p>
-
-<p>
-Let's not forget the <a href="http://www.scopus.com/authid/detail.url?origin=AuthorProfile&authorId=7004212771">scopusid:7004212771</a> link to Scopus Author pages.
-</p>
-
-<p>
-Now you can use org-mode for reproducible scientific literature searching in Scopus!
-</p>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/06/07/Getting-a-Scopus-EID-from-a-DOI.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/06/07/Getting-a-Scopus-EID-from-a-DOI#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="/blog/category/orgmode/2">« Previous Page</a>
   --  
  <a href="/blog/category/orgmode/4">Next Page »</a>
@@ -966,11 +890,11 @@ Now you can use org-mode for reproducible scientific literature searching in Sco
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2015/11/20/Asynchronously-running-python-blocks-in-org-mode/">Asynchronously running python blocks in org-mode</a></li>
       <li><a href="/blog/2015/11/19/Functional-and-display-math-in-technical-documents/">Functional and display math in technical documents</a></li>
       <li><a href="/blog/2015/11/17/New-publication-in-Surface-Science/">New publication in Surface Science</a></li>
       <li><a href="/blog/2015/11/17/New-Publication-in-International-Journal-of-Greenhouse-Gas-Control/">New Publication in International Journal of Greenhouse Gas Control</a></li>
       <li><a href="/blog/2015/11/04/Clickable-telephone-numbers-in-mu4e-messages/">Clickable telephone numbers in mu4e messages</a></li>
-      <li><a href="/blog/2015/11/01/YAT-yet-another-template-strategy/">YAT - yet another template strategy</a></li>
     </ul>
   </section>
 

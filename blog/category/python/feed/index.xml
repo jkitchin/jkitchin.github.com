@@ -10,10 +10,334 @@
     <title>The Kitchin Research Group</title>
     <link>http://jkitchin.github.io/blog</link>
     <description>Chemical Engineering at Carnegie Mellon University</description>
-    <pubDate>Thu, 19 Nov 2015 19:43:28 GMT</pubDate>
+    <pubDate>Fri, 20 Nov 2015 16:46:59 GMT</pubDate>
     <generator>Blogofile</generator>
     <sy:updatePeriod>hourly</sy:updatePeriod>
     <sy:updateFrequency>1</sy:updateFrequency>
+    <item>
+      <title>Asynchronously running python blocks in org-mode</title>
+      <link>http://jkitchin.github.io/blog/2015/11/20/Asynchronously-running-python-blocks-in-org-mode</link>
+      <pubDate>Fri, 20 Nov 2015 11:46:45 EST</pubDate>
+      <category><![CDATA[python]]></category>
+      <category><![CDATA[orgmode]]></category>
+      <category><![CDATA[emacs]]></category>
+      <guid isPermaLink="false">U7qjSMgTDurNF_8TXKWrVuj-0X4=</guid>
+      <description>Asynchronously running python blocks in org-mode</description>
+      <content:encoded><![CDATA[
+
+
+<p>
+If you run long Python blocks from org-mode, you might want to keep working while it runs. Currently Emacs gets blocked and you have to wait patiently.  In this post we consider some ways to avoid this that run our code asynchronously, but still put results where they belong in the org-buffer.
+</p>
+
+<p>
+This is a long post. You may want to see the video: <a href="https://www.youtube.com/watch?v=VDyoN8yipSE">https://www.youtube.com/watch?v=VDyoN8yipSE</a> , or skip to the <a href="#sec-3">end</a> where the best and final version is shown.
+</p>
+
+<div id="outline-container-sec-1" class="outline-2">
+<h2 id="sec-1"><span class="section-number-2">1</span> The async module</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+Here we consider an approach that uses <a href="https://github.com/jwiegley/emacs-async">https://github.com/jwiegley/emacs-async</a> module. The idea is to tangle the Python block at point to a temp file, then asynchronously run it. We capture the output and put it back in the buffer. We use a uuid to find the place to put the results in org-mode format. Here is the code that implements this idea.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">async</span>)
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-babel-async-execute</span> ()
+  <span style="color: #036A07;">"Run a python block at point asynchrously."</span>
+  (<span style="color: #0000FF;">interactive</span>)
+
+  (<span style="color: #0000FF;">let</span> ((current-file (buffer-file-name))
+        (uuid (org-id-uuid))
+        (temporary-file-directory <span style="color: #008000;">"./"</span>)
+        (tempfile (make-temp-file <span style="color: #008000;">"py-"</span>)))
+
+    (org-babel-tangle '(4) tempfile)
+    (org-babel-remove-result)
+    (<span style="color: #0000FF;">save-excursion</span>
+      (re-search-forward <span style="color: #008000;">"#\\+END_SRC"</span>)
+      (insert (format
+               <span style="color: #008000;">"\n\n#+RESULTS: %s\n: %s"</span>
+               (<span style="color: #0000FF;">or</span> (org-element-property <span style="color: #006FE0;">:name</span> (org-element-context))
+                   <span style="color: #008000;">""</span>)
+               uuid)))
+
+    (<span style="color: #0000FF;">async-start</span>
+     <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">what to start</span>
+     `(<span style="color: #0000FF;">lambda</span> ()
+        <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">now we run the command then cleanup</span>
+        (<span style="color: #0000FF;">prog1</span>
+            (shell-command-to-string (format <span style="color: #008000;">"python %s"</span> ,tempfile))
+          (delete-file ,tempfile)))
+
+     `(<span style="color: #0000FF;">lambda</span> (result)
+        <span style="color: #036A07;">"Code that runs when the async function finishes."</span>
+        (<span style="color: #0000FF;">save-window-excursion</span>
+          (<span style="color: #0000FF;">save-excursion</span>
+            (<span style="color: #0000FF;">save-restriction</span>
+              (<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect ,current-file)
+                (goto-char (point-min))
+                (re-search-forward ,uuid)
+                (beginning-of-line)
+                (kill-line)
+                (insert (mapconcat
+                         (<span style="color: #0000FF;">lambda</span> (x)
+                           (format <span style="color: #008000;">": %s"</span> x))
+                         (butlast (s-split <span style="color: #008000;">"\n"</span> result))
+                         <span style="color: #008000;">"\n"</span>))))))))))
+</pre>
+</div>
+
+<pre class="example">
+org-babel-async-execute
+</pre>
+
+<p>
+Here is a block to test it on. We can run the block, and keep on working while the code runs. The results seem to get inserted correctly at the right point even if I am in another window or frame! We don't get easy access to continuous output of the command. This wouldn't work if we close Emacs, but who does that?
+</p>
+
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #0000FF;">print</span> <span style="color: #008000;">'hello world'</span>
+<span style="color: #0000FF;">import</span> time
+time.sleep(5)
+
+<span style="color: #0000FF;">import</span> os
+<span style="color: #0000FF;">print</span> os.getcwd()
+<span style="color: #0000FF;">print</span> time.asctime()
+</pre>
+</div>
+
+<pre class="example">
+hello world
+/Users/jkitchin/blogofile-jkitchin.github.com/_blog
+Fri Nov 20 10:17:53 2015
+</pre>
+
+<p>
+There are some limitations to this approach. One of them is it assumes the src block is a stand-alone block that will run on its own. That is usually how I run mine, but I could see having other modules that should be tangled out of a file too. I think the script is being run in the current working directory, so it probably will find any local imports it needs.
+</p>
+
+<p>
+You don't get any intermediate feedback on this process. It seems to be possible to do that with a different approach that puts some output in a new buffer, e.g. with start-process. But, you still need some clever code like the async model to know when to insert the results back into this buffer. We consider Emacs processes and sentinels next.
+</p>
+</div>
+</div>
+
+<div id="outline-container-sec-2" class="outline-2">
+<h2 id="sec-2"><span class="section-number-2">2</span> Emacs process approach with tangling</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+We can start a process in Emacs, and attach a sentinel function to it that runs after the process completes. Here is an example of that. We still tangle the src-block here.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-babel-async-execute</span> ()
+  (<span style="color: #0000FF;">interactive</span>)
+  (<span style="color: #0000FF;">let*</span> ((current-file (buffer-file-name))
+        (uuid (org-id-uuid))
+        (temporary-file-directory <span style="color: #008000;">"./"</span>)
+        (tempfile (make-temp-file <span style="color: #008000;">"py-"</span>))
+        (pbuffer (format <span style="color: #008000;">"*%s*"</span> uuid))
+        process)
+
+    (org-babel-tangle '(4) tempfile)
+    (org-babel-remove-result)
+
+    (<span style="color: #0000FF;">save-excursion</span>
+      (re-search-forward <span style="color: #008000;">"#\\+END_SRC"</span>)
+      (insert (format
+               <span style="color: #008000;">"\n\n#+RESULTS: %s\n: %s"</span>
+               (<span style="color: #0000FF;">or</span> (org-element-property <span style="color: #006FE0;">:name</span> (org-element-context))
+                   <span style="color: #008000;">""</span>)
+               uuid)))
+
+    (<span style="color: #0000FF;">setq</span> process (start-process
+                   uuid
+                   pbuffer
+                   <span style="color: #008000;">"python"</span>
+                   tempfile))
+
+    (set-process-sentinel
+     process
+     `(<span style="color: #0000FF;">lambda</span> (process event)
+        (<span style="color: #0000FF;">when</span> (string= <span style="color: #008000;">"finished\n"</span> event)
+          (delete-file ,tempfile)
+          (<span style="color: #0000FF;">save-window-excursion</span>
+            (<span style="color: #0000FF;">save-excursion</span>
+              (<span style="color: #0000FF;">save-restriction</span>
+                (<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect ,current-file)
+                  (goto-char (point-min))
+                  (re-search-forward ,uuid)
+                  (beginning-of-line)
+                  (kill-line)
+                  (insert (mapconcat
+                           (<span style="color: #0000FF;">lambda</span> (x)
+                             (format <span style="color: #008000;">": %s"</span> x))
+                           (split-string
+                            (<span style="color: #0000FF;">with-current-buffer</span> ,pbuffer (buffer-string))
+                            <span style="color: #008000;">"\n"</span>)
+                           <span style="color: #008000;">"\n"</span>)))))))
+        (kill-buffer ,pbuffer)))))
+</pre>
+</div>
+
+<pre class="example">
+org-babel-async-execute
+</pre>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #0000FF;">print</span> <span style="color: #008000;">'hello world'</span>
+<span style="color: #0000FF;">import</span> time
+time.sleep(10)
+
+<span style="color: #0000FF;">import</span> os
+<span style="color: #0000FF;">print</span> os.getcwd()
+<span style="color: #0000FF;">print</span> time.asctime()
+</pre>
+</div>
+
+<pre class="example">
+hello world
+/Users/jkitchin/blogofile-jkitchin.github.com/_blog
+Fri Nov 20 10:20:01 2015
+</pre>
+
+<p>
+That works well from what I can see. There are some limitations. I doubt this will work if you use variables in the src block header. Next we consider an approach that does not do the tangling, and that will show us code output as it goes.
+</p>
+</div>
+</div>
+
+<div id="outline-container-sec-3" class="outline-2">
+<h2 id="sec-3"><a id="ID-D8F2CBB5-31B2-4477-A363-E3C0063214DE" name="ID-D8F2CBB5-31B2-4477-A363-E3C0063214DE"></a><span class="section-number-2">3</span> Emacs process approach with no tangling</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+As an alternative to tangling to a file, we could get the code and send it to our process. We will get some header cruft in the first three lines of the output which I discard, and some &gt;&gt;&gt; strings that look like interactive python prompts, and we get rid of that too. This seems to have a few extra blank lines in the output that I didn't find a way to eliminate yet.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-babel-async-execute</span> ()
+  (<span style="color: #0000FF;">interactive</span>)
+  (<span style="color: #0000FF;">let*</span> ((current-file (buffer-file-name))
+         (uuid (org-id-uuid))
+         (code (org-element-property <span style="color: #006FE0;">:value</span> (org-element-context)))
+         (pbuffer (format <span style="color: #008000;">"*%s*"</span> uuid))
+         process)
+
+    (org-babel-remove-result)
+
+    (<span style="color: #0000FF;">save-excursion</span>
+      (re-search-forward <span style="color: #008000;">"#\\+END_SRC"</span>)
+      (insert (format
+               <span style="color: #008000;">"\n\n#+RESULTS: %s\n: %s"</span>
+               (<span style="color: #0000FF;">or</span> (org-element-property <span style="color: #006FE0;">:name</span> (org-element-context))
+                   <span style="color: #008000;">""</span>)
+               uuid)))
+    (switch-to-buffer-other-window pbuffer)
+
+    (<span style="color: #0000FF;">setq</span> process (start-process
+                   uuid
+                   pbuffer
+                   <span style="color: #008000;">"python"</span> <span style="color: #008000;">"-"</span>))
+    (process-send-string process code)
+    (process-send-eof process)
+    (stop-process process)
+
+    (set-process-sentinel
+     process
+     `(<span style="color: #0000FF;">lambda</span> (process event)
+        (<span style="color: #0000FF;">when</span> (string= <span style="color: #008000;">"finished\n"</span> event)
+          (<span style="color: #0000FF;">save-window-excursion</span>
+            (<span style="color: #0000FF;">save-excursion</span>
+              (<span style="color: #0000FF;">save-restriction</span>
+                (<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect ,current-file)
+                  (goto-char (point-min))
+                  (re-search-forward ,uuid)
+                  (beginning-of-line)
+                  (kill-line)
+                  (insert
+                   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">This clunky code mostly cleans up the output so it looks</span>
+                   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">more like org-mode output</span>
+                   (mapconcat
+                    (<span style="color: #0000FF;">lambda</span> (x)
+                      (format <span style="color: #008000;">": %s"</span> x))
+                    (split-string
+                     (replace-regexp-in-string
+                      <span style="color: #008000;">"</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">(</span><span style="color: #008000;">&gt;&gt;&gt; </span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">|</span><span style="color: #008000;">\\.\\.\\. </span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">|</span><span style="color: #008000;">: $</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">|</span><span style="color: #008000;">: &gt;&gt;&gt;$</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">)</span><span style="color: #008000;">"</span>
+                      <span style="color: #008000;">""</span>
+                      (mapconcat 'identity
+                                 (nthcdr
+                                  3
+                                  (butlast (split-string
+                                            (<span style="color: #0000FF;">with-current-buffer</span>
+                                                ,pbuffer
+                                              (s-trim
+                                               (buffer-string)))
+                                            <span style="color: #008000;">"\n"</span>)))
+                                 <span style="color: #008000;">"\n"</span>))
+                     <span style="color: #008000;">"\n"</span>)
+                    <span style="color: #008000;">"\n"</span>)))))))
+        (<span style="color: #0000FF;">when</span> (get-buffer ,pbuffer)
+          (kill-buffer ,pbuffer)
+          (delete-window))
+        (delete-process process)))))
+</pre>
+</div>
+
+<pre class="example">
+org-babel-async-execute
+</pre>
+
+<p>
+Let us try it out again.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #0000FF;">print</span> <span style="color: #008000;">'hello world'</span>
+<span style="color: #0000FF;">import</span> time
+time.sleep(10)
+
+<span style="color: #0000FF;">for</span> i <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">range</span>(5):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">print</span> i
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   time.sleep(0.5)
+
+<span style="color: #0000FF;">import</span> os
+<span style="color: #0000FF;">print</span> os.getcwd()
+<span style="color: #0000FF;">print</span> time.asctime()
+</pre>
+</div>
+
+<pre class="example">
+hello world
+0
+1
+2
+3
+4
+/Users/jkitchin/blogofile-jkitchin.github.com/_blog
+Fri Nov 20 10:25:41 2015
+</pre>
+
+
+<p>
+It works fine for this simple example. Again, this example doesn't do anything particularly sophisticated with src-block headers or imports, etc&#x2026; We also get to see the output as the code executes, which is a pleasant change from the usual way of running python blocks.
+</p>
+
+<p>
+Maybe some org-moder's out there can try this and run it through some more rigorous paces?
+</p>
+</div>
+</div>
+<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/11/20/Asynchronously-running-python-blocks-in-org-mode.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>]]></content:encoded>
+    </item>
     <item>
       <title>A framework for automated feedback with Python and org-mode</title>
       <link>http://jkitchin.github.io/blog/2015/10/03/A-framework-for-automated-feedback-with-Python-and-org-mode</link>
@@ -3128,166 +3452,6 @@ Let us look at a tabular form of that data so it is sortable. We attempt to remo
 Not too bad. Clearly we could do a lot more work to fine tune exactly what data we retrieve, and then what to do with it. The tools are all here to do that.
 </p>
 <p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/03/28/The-orcid-api-and-generating-a-bibtex-file-from-it.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>]]></content:encoded>
-    </item>
-    <item>
-      <title>Making org-mode Python sessions look better</title>
-      <link>http://jkitchin.github.io/blog/2015/03/12/Making-org-mode-Python-sessions-look-better</link>
-      <pubDate>Thu, 12 Mar 2015 10:45:25 EDT</pubDate>
-      <category><![CDATA[python]]></category>
-      <category><![CDATA[orgmode]]></category>
-      <guid isPermaLink="false">MN-Omj3zydWElmxF1nt9OF2w1B0=</guid>
-      <description>Making org-mode Python sessions look better</description>
-      <content:encoded><![CDATA[
-
-
-<p>
-Using sessions for python in org-mode has always bugged me a little bit. Mostly the appearance of &gt;&gt;&gt; and &#x2026; in the output. For example:
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #0000FF;">print</span> 8
-</pre>
-</div>
-
-<pre class="example">
-&gt;&gt;&gt; &gt;&gt;&gt; &gt;&gt;&gt; 8
-</pre>
-
-<p>
-Today on the org-mode mailing list someone suggested a <a href="http://thread.gmane.org/gmane.emacs.orgmode/95980/focus=96011">patch</a> that might fix that up. Hopefully that patch makes it into org-mode, but if you run off of ELPA like I do it will be some time before it appears in your working version.
-</p>
-
-<p>
-In the meantime, inspired by my <a href="http://kitchingroup.cheme.cmu.edu/blog/2015/03/11/Updating-Multiple-RESULTS-blocks-in-org-mode/">recent post</a> on updating multiple results, here we add a new hook function that removes these annoying characters from a Python session results section. Here is my version of this code.
-"^: &gt;&gt;&gt;$"
-</p>
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-babel-python-strip-session-chars</span> ()
-  <span style="color: #036A07;">"Remove &gt;&gt;&gt; and ... from a Python session output."</span>
-  (<span style="color: #0000FF;">when</span> (and (string=
-              <span style="color: #008000;">"python"</span>
-              (org-element-property <span style="color: #006FE0;">:language</span> (org-element-at-point)))
-             (string-match
-              <span style="color: #008000;">":session"</span>
-              (org-element-property <span style="color: #006FE0;">:parameters</span> (org-element-at-point))))
-
-    (<span style="color: #0000FF;">save-excursion</span>
-      (<span style="color: #0000FF;">when</span> (org-babel-where-is-src-block-result)
-        (goto-char (org-babel-where-is-src-block-result))
-        (end-of-line 1)
-        <span style="color: #8D8D84;">;</span><span style="color: #8D8D84; font-style: italic;">(while (looking-at "[\n\r\t\f ]") (forward-char 1))</span>
-        (<span style="color: #0000FF;">while</span> (re-search-forward
-                <span style="color: #008000;">"</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">(</span><span style="color: #008000;">&gt;&gt;&gt; </span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">|</span><span style="color: #008000;">\\.\\.\\. </span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">|</span><span style="color: #008000;">: $</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">|</span><span style="color: #008000;">: &gt;&gt;&gt;$</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">)</span><span style="color: #008000;">"</span>
-                (org-element-property <span style="color: #006FE0;">:end</span> (org-element-at-point))
-                t)
-          (replace-match <span style="color: #008000;">""</span>)
-          <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">this enables us to get rid of blank lines and blank : &gt;&gt;&gt;</span>
-          (beginning-of-line)
-          (<span style="color: #0000FF;">when</span> (looking-at <span style="color: #008000;">"^$"</span>)
-            (kill-line)))))))
-
-(add-hook 'org-babel-after-execute-hook 'org-babel-python-strip-session-chars)
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="left" />
-
-<col  class="left" />
-</colgroup>
-<tbody>
-<tr>
-<td class="left">org-babel-python-strip-session-chars</td>
-<td class="left">(lambda nil (org-refresh-images))</td>
-</tr>
-</tbody>
-</table>
-
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #0000FF;">import</span> matplotlib.pyplot <span style="color: #0000FF;">as</span> plt
-plt.plot([3, 4, 5])
-plt.show()
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">f</span>(s):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">x</span> = 2 * s
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">blank lines look like indentation errors</span>
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> x
-
-<span style="color: #0000FF;">print</span> f(4)
-</pre>
-</div>
-
-<pre class="example">
-[&lt;matplotlib.lines.Line2D object at 0x10955c290&gt;]
-8
-</pre>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #0000FF;">print</span> f(9)
-</pre>
-</div>
-
-<pre class="example">
-18
-</pre>
-
-<p>
-Here we can make an inline figure.
-</p>
-<div class="org-src-container">
-
-<pre class="src src-python">plt.figure()
-plt.plot([3, 4.5, 5])
-plt.savefig(<span style="color: #008000;">'images/session-fig.png'</span>)
-<span style="color: #008000;">'images/session-fig.png'</span>
-</pre>
-</div>
-
-<p>
-<img src="/media/2015-03-12-Making-org-mode-Python-sessions-look-better/session-fig.png"> 
-Not bad. It seems to work! Maybe this will make sessions more usable for me.
-</p>
-
-<p>
-<span class="timestamp-wrapper"><span class="timestamp">[2015-03-12 Thu]</span></span> New corner case, do not cause an error when results are silenced.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #0000FF;">print</span> 6
-</pre>
-</div>
-
-
-<p>
-Testing getting rid of blank lines and empty : &gt;&gt;&gt; lines.
-</p>
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #BA36A5;">a</span> = 2
-<span style="color: #BA36A5;">b</span> = 3
-<span style="color: #BA36A5;">c</span> = 4
-<span style="color: #0000FF;">print</span>
-<span style="color: #0000FF;">print</span> <span style="color: #008000;">'a=      '</span>, a
-<span style="color: #0000FF;">print</span> <span style="color: #008000;">'b =     '</span>, b
-<span style="color: #0000FF;">print</span> <span style="color: #008000;">'a + b = '</span>, a+b
-</pre>
-</div>
-
-<pre class="example">
-a=       2
-b =      3
-a + b =  5
-</pre>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/03/12/Making-org-mode-Python-sessions-look-better.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>]]></content:encoded>
     </item>
   </channel>
 </rss>

@@ -10,10 +10,334 @@
     <title>The Kitchin Research Group</title>
     <link>http://jkitchin.github.io/blog</link>
     <description>Chemical Engineering at Carnegie Mellon University</description>
-    <pubDate>Thu, 19 Nov 2015 19:43:28 GMT</pubDate>
+    <pubDate>Fri, 20 Nov 2015 16:47:00 GMT</pubDate>
     <generator>Blogofile</generator>
     <sy:updatePeriod>hourly</sy:updatePeriod>
     <sy:updateFrequency>1</sy:updateFrequency>
+    <item>
+      <title>Asynchronously running python blocks in org-mode</title>
+      <link>http://jkitchin.github.io/blog/2015/11/20/Asynchronously-running-python-blocks-in-org-mode</link>
+      <pubDate>Fri, 20 Nov 2015 11:46:45 EST</pubDate>
+      <category><![CDATA[python]]></category>
+      <category><![CDATA[orgmode]]></category>
+      <category><![CDATA[emacs]]></category>
+      <guid isPermaLink="false">U7qjSMgTDurNF_8TXKWrVuj-0X4=</guid>
+      <description>Asynchronously running python blocks in org-mode</description>
+      <content:encoded><![CDATA[
+
+
+<p>
+If you run long Python blocks from org-mode, you might want to keep working while it runs. Currently Emacs gets blocked and you have to wait patiently.  In this post we consider some ways to avoid this that run our code asynchronously, but still put results where they belong in the org-buffer.
+</p>
+
+<p>
+This is a long post. You may want to see the video: <a href="https://www.youtube.com/watch?v=VDyoN8yipSE">https://www.youtube.com/watch?v=VDyoN8yipSE</a> , or skip to the <a href="#sec-3">end</a> where the best and final version is shown.
+</p>
+
+<div id="outline-container-sec-1" class="outline-2">
+<h2 id="sec-1"><span class="section-number-2">1</span> The async module</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+Here we consider an approach that uses <a href="https://github.com/jwiegley/emacs-async">https://github.com/jwiegley/emacs-async</a> module. The idea is to tangle the Python block at point to a temp file, then asynchronously run it. We capture the output and put it back in the buffer. We use a uuid to find the place to put the results in org-mode format. Here is the code that implements this idea.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">async</span>)
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-babel-async-execute</span> ()
+  <span style="color: #036A07;">"Run a python block at point asynchrously."</span>
+  (<span style="color: #0000FF;">interactive</span>)
+
+  (<span style="color: #0000FF;">let</span> ((current-file (buffer-file-name))
+        (uuid (org-id-uuid))
+        (temporary-file-directory <span style="color: #008000;">"./"</span>)
+        (tempfile (make-temp-file <span style="color: #008000;">"py-"</span>)))
+
+    (org-babel-tangle '(4) tempfile)
+    (org-babel-remove-result)
+    (<span style="color: #0000FF;">save-excursion</span>
+      (re-search-forward <span style="color: #008000;">"#\\+END_SRC"</span>)
+      (insert (format
+               <span style="color: #008000;">"\n\n#+RESULTS: %s\n: %s"</span>
+               (<span style="color: #0000FF;">or</span> (org-element-property <span style="color: #006FE0;">:name</span> (org-element-context))
+                   <span style="color: #008000;">""</span>)
+               uuid)))
+
+    (<span style="color: #0000FF;">async-start</span>
+     <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">what to start</span>
+     `(<span style="color: #0000FF;">lambda</span> ()
+        <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">now we run the command then cleanup</span>
+        (<span style="color: #0000FF;">prog1</span>
+            (shell-command-to-string (format <span style="color: #008000;">"python %s"</span> ,tempfile))
+          (delete-file ,tempfile)))
+
+     `(<span style="color: #0000FF;">lambda</span> (result)
+        <span style="color: #036A07;">"Code that runs when the async function finishes."</span>
+        (<span style="color: #0000FF;">save-window-excursion</span>
+          (<span style="color: #0000FF;">save-excursion</span>
+            (<span style="color: #0000FF;">save-restriction</span>
+              (<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect ,current-file)
+                (goto-char (point-min))
+                (re-search-forward ,uuid)
+                (beginning-of-line)
+                (kill-line)
+                (insert (mapconcat
+                         (<span style="color: #0000FF;">lambda</span> (x)
+                           (format <span style="color: #008000;">": %s"</span> x))
+                         (butlast (s-split <span style="color: #008000;">"\n"</span> result))
+                         <span style="color: #008000;">"\n"</span>))))))))))
+</pre>
+</div>
+
+<pre class="example">
+org-babel-async-execute
+</pre>
+
+<p>
+Here is a block to test it on. We can run the block, and keep on working while the code runs. The results seem to get inserted correctly at the right point even if I am in another window or frame! We don't get easy access to continuous output of the command. This wouldn't work if we close Emacs, but who does that?
+</p>
+
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #0000FF;">print</span> <span style="color: #008000;">'hello world'</span>
+<span style="color: #0000FF;">import</span> time
+time.sleep(5)
+
+<span style="color: #0000FF;">import</span> os
+<span style="color: #0000FF;">print</span> os.getcwd()
+<span style="color: #0000FF;">print</span> time.asctime()
+</pre>
+</div>
+
+<pre class="example">
+hello world
+/Users/jkitchin/blogofile-jkitchin.github.com/_blog
+Fri Nov 20 10:17:53 2015
+</pre>
+
+<p>
+There are some limitations to this approach. One of them is it assumes the src block is a stand-alone block that will run on its own. That is usually how I run mine, but I could see having other modules that should be tangled out of a file too. I think the script is being run in the current working directory, so it probably will find any local imports it needs.
+</p>
+
+<p>
+You don't get any intermediate feedback on this process. It seems to be possible to do that with a different approach that puts some output in a new buffer, e.g. with start-process. But, you still need some clever code like the async model to know when to insert the results back into this buffer. We consider Emacs processes and sentinels next.
+</p>
+</div>
+</div>
+
+<div id="outline-container-sec-2" class="outline-2">
+<h2 id="sec-2"><span class="section-number-2">2</span> Emacs process approach with tangling</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+We can start a process in Emacs, and attach a sentinel function to it that runs after the process completes. Here is an example of that. We still tangle the src-block here.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-babel-async-execute</span> ()
+  (<span style="color: #0000FF;">interactive</span>)
+  (<span style="color: #0000FF;">let*</span> ((current-file (buffer-file-name))
+        (uuid (org-id-uuid))
+        (temporary-file-directory <span style="color: #008000;">"./"</span>)
+        (tempfile (make-temp-file <span style="color: #008000;">"py-"</span>))
+        (pbuffer (format <span style="color: #008000;">"*%s*"</span> uuid))
+        process)
+
+    (org-babel-tangle '(4) tempfile)
+    (org-babel-remove-result)
+
+    (<span style="color: #0000FF;">save-excursion</span>
+      (re-search-forward <span style="color: #008000;">"#\\+END_SRC"</span>)
+      (insert (format
+               <span style="color: #008000;">"\n\n#+RESULTS: %s\n: %s"</span>
+               (<span style="color: #0000FF;">or</span> (org-element-property <span style="color: #006FE0;">:name</span> (org-element-context))
+                   <span style="color: #008000;">""</span>)
+               uuid)))
+
+    (<span style="color: #0000FF;">setq</span> process (start-process
+                   uuid
+                   pbuffer
+                   <span style="color: #008000;">"python"</span>
+                   tempfile))
+
+    (set-process-sentinel
+     process
+     `(<span style="color: #0000FF;">lambda</span> (process event)
+        (<span style="color: #0000FF;">when</span> (string= <span style="color: #008000;">"finished\n"</span> event)
+          (delete-file ,tempfile)
+          (<span style="color: #0000FF;">save-window-excursion</span>
+            (<span style="color: #0000FF;">save-excursion</span>
+              (<span style="color: #0000FF;">save-restriction</span>
+                (<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect ,current-file)
+                  (goto-char (point-min))
+                  (re-search-forward ,uuid)
+                  (beginning-of-line)
+                  (kill-line)
+                  (insert (mapconcat
+                           (<span style="color: #0000FF;">lambda</span> (x)
+                             (format <span style="color: #008000;">": %s"</span> x))
+                           (split-string
+                            (<span style="color: #0000FF;">with-current-buffer</span> ,pbuffer (buffer-string))
+                            <span style="color: #008000;">"\n"</span>)
+                           <span style="color: #008000;">"\n"</span>)))))))
+        (kill-buffer ,pbuffer)))))
+</pre>
+</div>
+
+<pre class="example">
+org-babel-async-execute
+</pre>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #0000FF;">print</span> <span style="color: #008000;">'hello world'</span>
+<span style="color: #0000FF;">import</span> time
+time.sleep(10)
+
+<span style="color: #0000FF;">import</span> os
+<span style="color: #0000FF;">print</span> os.getcwd()
+<span style="color: #0000FF;">print</span> time.asctime()
+</pre>
+</div>
+
+<pre class="example">
+hello world
+/Users/jkitchin/blogofile-jkitchin.github.com/_blog
+Fri Nov 20 10:20:01 2015
+</pre>
+
+<p>
+That works well from what I can see. There are some limitations. I doubt this will work if you use variables in the src block header. Next we consider an approach that does not do the tangling, and that will show us code output as it goes.
+</p>
+</div>
+</div>
+
+<div id="outline-container-sec-3" class="outline-2">
+<h2 id="sec-3"><a id="ID-D8F2CBB5-31B2-4477-A363-E3C0063214DE" name="ID-D8F2CBB5-31B2-4477-A363-E3C0063214DE"></a><span class="section-number-2">3</span> Emacs process approach with no tangling</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+As an alternative to tangling to a file, we could get the code and send it to our process. We will get some header cruft in the first three lines of the output which I discard, and some &gt;&gt;&gt; strings that look like interactive python prompts, and we get rid of that too. This seems to have a few extra blank lines in the output that I didn't find a way to eliminate yet.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-babel-async-execute</span> ()
+  (<span style="color: #0000FF;">interactive</span>)
+  (<span style="color: #0000FF;">let*</span> ((current-file (buffer-file-name))
+         (uuid (org-id-uuid))
+         (code (org-element-property <span style="color: #006FE0;">:value</span> (org-element-context)))
+         (pbuffer (format <span style="color: #008000;">"*%s*"</span> uuid))
+         process)
+
+    (org-babel-remove-result)
+
+    (<span style="color: #0000FF;">save-excursion</span>
+      (re-search-forward <span style="color: #008000;">"#\\+END_SRC"</span>)
+      (insert (format
+               <span style="color: #008000;">"\n\n#+RESULTS: %s\n: %s"</span>
+               (<span style="color: #0000FF;">or</span> (org-element-property <span style="color: #006FE0;">:name</span> (org-element-context))
+                   <span style="color: #008000;">""</span>)
+               uuid)))
+    (switch-to-buffer-other-window pbuffer)
+
+    (<span style="color: #0000FF;">setq</span> process (start-process
+                   uuid
+                   pbuffer
+                   <span style="color: #008000;">"python"</span> <span style="color: #008000;">"-"</span>))
+    (process-send-string process code)
+    (process-send-eof process)
+    (stop-process process)
+
+    (set-process-sentinel
+     process
+     `(<span style="color: #0000FF;">lambda</span> (process event)
+        (<span style="color: #0000FF;">when</span> (string= <span style="color: #008000;">"finished\n"</span> event)
+          (<span style="color: #0000FF;">save-window-excursion</span>
+            (<span style="color: #0000FF;">save-excursion</span>
+              (<span style="color: #0000FF;">save-restriction</span>
+                (<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect ,current-file)
+                  (goto-char (point-min))
+                  (re-search-forward ,uuid)
+                  (beginning-of-line)
+                  (kill-line)
+                  (insert
+                   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">This clunky code mostly cleans up the output so it looks</span>
+                   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">more like org-mode output</span>
+                   (mapconcat
+                    (<span style="color: #0000FF;">lambda</span> (x)
+                      (format <span style="color: #008000;">": %s"</span> x))
+                    (split-string
+                     (replace-regexp-in-string
+                      <span style="color: #008000;">"</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">(</span><span style="color: #008000;">&gt;&gt;&gt; </span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">|</span><span style="color: #008000;">\\.\\.\\. </span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">|</span><span style="color: #008000;">: $</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">|</span><span style="color: #008000;">: &gt;&gt;&gt;$</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">)</span><span style="color: #008000;">"</span>
+                      <span style="color: #008000;">""</span>
+                      (mapconcat 'identity
+                                 (nthcdr
+                                  3
+                                  (butlast (split-string
+                                            (<span style="color: #0000FF;">with-current-buffer</span>
+                                                ,pbuffer
+                                              (s-trim
+                                               (buffer-string)))
+                                            <span style="color: #008000;">"\n"</span>)))
+                                 <span style="color: #008000;">"\n"</span>))
+                     <span style="color: #008000;">"\n"</span>)
+                    <span style="color: #008000;">"\n"</span>)))))))
+        (<span style="color: #0000FF;">when</span> (get-buffer ,pbuffer)
+          (kill-buffer ,pbuffer)
+          (delete-window))
+        (delete-process process)))))
+</pre>
+</div>
+
+<pre class="example">
+org-babel-async-execute
+</pre>
+
+<p>
+Let us try it out again.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #0000FF;">print</span> <span style="color: #008000;">'hello world'</span>
+<span style="color: #0000FF;">import</span> time
+time.sleep(10)
+
+<span style="color: #0000FF;">for</span> i <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">range</span>(5):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">print</span> i
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   time.sleep(0.5)
+
+<span style="color: #0000FF;">import</span> os
+<span style="color: #0000FF;">print</span> os.getcwd()
+<span style="color: #0000FF;">print</span> time.asctime()
+</pre>
+</div>
+
+<pre class="example">
+hello world
+0
+1
+2
+3
+4
+/Users/jkitchin/blogofile-jkitchin.github.com/_blog
+Fri Nov 20 10:25:41 2015
+</pre>
+
+
+<p>
+It works fine for this simple example. Again, this example doesn't do anything particularly sophisticated with src-block headers or imports, etc&#x2026; We also get to see the output as the code executes, which is a pleasant change from the usual way of running python blocks.
+</p>
+
+<p>
+Maybe some org-moder's out there can try this and run it through some more rigorous paces?
+</p>
+</div>
+</div>
+<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/11/20/Asynchronously-running-python-blocks-in-org-mode.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>]]></content:encoded>
+    </item>
     <item>
       <title>Functional and display math in technical documents</title>
       <link>http://jkitchin.github.io/blog/2015/11/19/Functional-and-display-math-in-technical-documents</link>
@@ -1368,159 +1692,6 @@ This could be super useful for a lot of different elements: headlines, src-block
 </div>
 </div>
 <p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/07/06/Indexing-headlines-in-org-files-with-swish-e-with-laser-sharp-results.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>]]></content:encoded>
-    </item>
-    <item>
-      <title>Integrating swish-e and Emacs</title>
-      <link>http://jkitchin.github.io/blog/2015/06/25/Integrating-swish-e-and-Emacs</link>
-      <pubDate>Thu, 25 Jun 2015 10:37:05 EDT</pubDate>
-      <category><![CDATA[orgmode]]></category>
-      <category><![CDATA[emacs]]></category>
-      <guid isPermaLink="false">6niCJ0luIGwpPDINzVyYVCw0RB8=</guid>
-      <description>Integrating swish-e and Emacs</description>
-      <content:encoded><![CDATA[
-
-
-
-<p>
-<a href="http://swish-e.org">swish-e</a> is a software package that indexes files on your computer, and then allows you to search the index. Spotlight on my Mac is not working too well (sometimes not at all), and I want some more flexibility so today we try getting swish-e up and running and integrated with Emacs. I don't know that swish-e is the best tool for this available, but it has been on my radar a <i>long</i> time (probably since 2003 from this <a href="http://joshr.com/src/docs/HowToIndexAnything.pdf">article</a> ), and it was easy to setup and use.
-</p>
-
-<p>
-I use homebrew, so installation was this simple:
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-sh">brew install swish-e
-</pre>
-</div>
-
-<p>
-To test things out, I will only index org-files. I have these all over the place, and they are not all in my org-mode agenda. So, finding them quickly would be awesome.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-text"># Example configuration file
-
-# Tell Swish-e what to directories to index
-IndexDir /Users/jkitchin/Dropbox
-IndexDir "/Users/jkitchin/Box Sync"
-IndexDir /Users/jkitchin/blogofile-jkitchin.github.com
-
-# where to save the index
-IndexFile /Users/jkitchin/.swish-e/index.swish-e
-
-# What to index
-IndexOnly .org
-
-# Tell Swish-e that .txt files are to use the text parser.
-IndexContents TXT* .org
-
-# Otherwise, use the HTML parser
-DefaultContents HTML*
-
-# Ask libxml2 to report any parsing errors and warnings or
-# any UTF-8 to 8859-1 conversion errors
-ParserWarnLevel 9
-</pre>
-</div>
-
-<p>
-Now, we create our index.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-sh">swish-e -c ~/.swish-e/swish.conf
-</pre>
-</div>
-
-<pre class="example">
-Indexing Data Source: "File-System"
-Indexing "/Users/jkitchin/Dropbox"
-Indexing "/Users/jkitchin/Box Sync"
-Indexing "/Users/jkitchin/blogofile-jkitchin.github.com"
-Removing very common words...
-no words removed.
-Writing main index...
-Sorting words ...
-Sorting 130,109 words alphabetically
-Writing header ...
-Writing index entries ...
-  Writing word text: ...  Writing word text:  10%  Writing word text:  20%  Writing word text:  30%  Writing word text:  40%  Writing word text:  50%  Writing word text:  60%  Writing word text:  70%  Writing word text:  80%  Writing word text:  90%  Writing word text: 100%  Writing word text: Complete
-  Writing word hash: ...  Writing word hash:  10%  Writing word hash:  20%  Writing word hash:  30%  Writing word hash:  40%  Writing word hash:  50%  Writing word hash:  60%  Writing word hash:  70%  Writing word hash:  80%  Writing word hash:  90%  Writing word hash: 100%  Writing word hash: Complete
-  Writing word data: ...  Writing word data:   9%  Writing word data:  19%  Writing word data:  29%  Writing word data:  39%  Writing word data:  49%  Writing word data:  59%  Writing word data:  69%  Writing word data:  79%  Writing word data:  89%  Writing word data:  99%  Writing word data: Complete
-130,109 unique words indexed.
-Sorting property: swishdocpath                            Sorting property: swishtitle                              Sorting property: swishdocsize                            Sorting property: swishlastmodified                       4 properties sorted.
-3,208 files indexed.  54,104,974 total bytes.  8,038,594 total words.
-Elapsed time: 00:00:16 CPU time: 00:00:13
-Indexing done!
-</pre>
-
-
-<p>
-Now an example search. I have been looking into the Energy frontier research centers, and I want to find my notes on it. Here is a little query. I use a special output format to keep things simple for the parsing later, just the rank and path, separated by a tab.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-sh">swish-e -f ~/.swish-e/index.swish-e -x <span style="color: #008000;">'%r\t%p\n'</span> -w efrc
-</pre>
-</div>
-<pre class="example">
-# SWISH format: 2.4.7
-# Search words: efrc
-# Removed stopwords:
-# Number of hits: 2
-# Search time: 0.000 seconds
-# Run time: 0.008 seconds
-1000	/Users/jkitchin/Dropbox/org-mode/journal.org
-471	/Users/jkitchin/Dropbox/org-mode/proposals.org
-.
-</pre>
-
-<p>
-Now, for the integration with Emacs. We just get that output in a string, split it, and get the parts we want.  I think I will use helm to provide a selection buffer to these results. We need a list of cons cells (string . candidate). Then we write an interactive helm function. We provide two sources. One for the initial query, and another to start a new search, in case you don't find what you want.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">helm-swish-e-candidates</span> (query)
-  <span style="color: #036A07;">"Generate a list of cons cells (swish-e result . path)."</span>
-  (<span style="color: #0000FF;">let*</span> ((result (shell-command-to-string
-                  (format <span style="color: #008000;">"swish-e -f ~/.swish-e/index.swish-e -x \"%%r\t%%p\n\" -w %s"</span>
-                          (shell-quote-argument query))))
-         (lines (s-split <span style="color: #008000;">"\n"</span> result t))
-         (candidates '()))
-    (<span style="color: #0000FF;">loop</span> for line in lines
-          unless (<span style="color: #0000FF;">or</span>  (s-starts-with? <span style="color: #008000;">"#"</span> line)
-                      (s-starts-with? <span style="color: #008000;">"."</span> line))
-          collect (cons line (cdr (s-split <span style="color: #008000;">"\t"</span> line))))))
-
-
-(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">helm-swish-e</span> (query)
-  <span style="color: #036A07;">"Run a swish-e query and provide helm selection buffer of the results."</span>
-  (<span style="color: #0000FF;">interactive</span> <span style="color: #008000;">"sQuery: "</span>)
-  (helm <span style="color: #006FE0;">:sources</span> `(((name . ,(format <span style="color: #008000;">"swish-e: %s"</span> query))
-                    (candidates . ,(helm-swish-e-candidates query))
-                    (action . ((<span style="color: #008000;">"open"</span> . (<span style="color: #0000FF;">lambda</span> (f)
-                                           (find-file (car f)))))))
-                   ((name . <span style="color: #008000;">"New search"</span>)
-                    (dummy)
-                    (action . ((<span style="color: #008000;">"search"</span> . (<span style="color: #0000FF;">lambda</span> (f)
-                                             (helm-swish-e helm-pattern)))))))))
-</pre>
-</div>
-
-<pre class="example">
-helm-swish-e
-</pre>
-
-<p>
-Now I can run M-x helm-swish-e and enter "efrc AND computing infrastructure" to find org files containing those words, then press enter to find the file. Nice and easy. I have not tested the query syntax very fully, but so far it is working fine!
-</p>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/06/25/Integrating-swish-e-and-Emacs.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>]]></content:encoded>
     </item>
   </channel>
 </rss>
