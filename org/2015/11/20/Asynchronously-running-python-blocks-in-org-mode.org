@@ -1,0 +1,267 @@
+* TODO Asynchronously running python blocks in org-mode
+  :PROPERTIES:
+  :categories: emacs,python,orgmode
+  :date:     2015/11/20 11:46:45
+  :updated:  2015/11/20 11:46:45
+  :END:
+If you run long Python blocks from org-mode, you might want to keep working while it runs. Currently Emacs gets blocked and you have to wait patiently.  In this post we consider some ways to avoid this that run our code asynchronously, but still put results where they belong in the org-buffer.
+
+This is a long post. You may want to see the video: https://www.youtube.com/watch?v=VDyoN8yipSE, or skip to the [[id:D8F2CBB5-31B2-4477-A363-E3C0063214DE][end]] where the best and final version is shown.
+
+** The async module
+
+Here we consider an approach that uses https://github.com/jwiegley/emacs-async module. The idea is to tangle the Python block at point to a temp file, then asynchronously run it. We capture the output and put it back in the buffer. We use a uuid to find the place to put the results in org-mode format. Here is the code that implements this idea.
+
+#+BEGIN_SRC emacs-lisp
+(require 'async)
+
+(defun org-babel-async-execute ()
+  "Run a python block at point asynchrously."
+  (interactive)
+
+  (let ((current-file (buffer-file-name))
+	(uuid (org-id-uuid))
+	(temporary-file-directory "./")
+	(tempfile (make-temp-file "py-")))
+
+    (org-babel-tangle '(4) tempfile)
+    (org-babel-remove-result)
+    (save-excursion
+      (re-search-forward "#\\+END_SRC")
+      (insert (format
+	       "\n\n#+RESULTS: %s\n: %s"
+	       (or (org-element-property :name (org-element-context))
+		   "")
+	       uuid)))
+
+    (async-start
+     ;; what to start
+     `(lambda ()
+	;; now we run the command then cleanup
+	(prog1
+	    (shell-command-to-string (format "python %s" ,tempfile))
+	  (delete-file ,tempfile)))
+
+     `(lambda (result)
+	"Code that runs when the async function finishes."
+	(save-window-excursion
+	  (save-excursion
+	    (save-restriction
+	      (with-current-buffer (find-file-noselect ,current-file)
+		(goto-char (point-min))
+		(re-search-forward ,uuid)
+		(beginning-of-line)
+		(kill-line)
+		(insert (mapconcat
+			 (lambda (x)
+			   (format ": %s" x))
+			 (butlast (s-split "\n" result))
+			 "\n"))))))))))
+#+END_SRC
+
+#+RESULTS:
+: org-babel-async-execute
+
+Here is a block to test it on. We can run the block, and keep on working while the code runs. The results seem to get inserted correctly at the right point even if I am in another window or frame! We don't get easy access to continuous output of the command. This wouldn't work if we close Emacs, but who does that?
+
+
+#+BEGIN_SRC python
+print 'hello world'
+import time
+time.sleep(5)
+
+import os
+print os.getcwd()
+print time.asctime()
+#+END_SRC
+
+#+RESULTS:
+: hello world
+: /Users/jkitchin/blogofile-jkitchin.github.com/_blog
+: Fri Nov 20 10:17:53 2015
+
+There are some limitations to this approach. One of them is it assumes the src block is a stand-alone block that will run on its own. That is usually how I run mine, but I could see having other modules that should be tangled out of a file too. I think the script is being run in the current working directory, so it probably will find any local imports it needs.
+
+You don't get any intermediate feedback on this process. It seems to be possible to do that with a different approach that puts some output in a new buffer, e.g. with start-process. But, you still need some clever code like the async model to know when to insert the results back into this buffer. We consider Emacs processes and sentinels next.
+
+** Emacs process approach with tangling
+We can start a process in Emacs, and attach a sentinel function to it that runs after the process completes. Here is an example of that. We still tangle the src-block here.
+
+#+BEGIN_SRC emacs-lisp
+(defun org-babel-async-execute ()
+  (interactive)
+  (let* ((current-file (buffer-file-name))
+	(uuid (org-id-uuid))
+	(temporary-file-directory "./")
+	(tempfile (make-temp-file "py-"))
+	(pbuffer (format "*%s*" uuid))
+	process)
+
+    (org-babel-tangle '(4) tempfile)
+    (org-babel-remove-result)
+
+    (save-excursion
+      (re-search-forward "#\\+END_SRC")
+      (insert (format
+	       "\n\n#+RESULTS: %s\n: %s"
+	       (or (org-element-property :name (org-element-context))
+		   "")
+	       uuid)))
+
+    (setq process (start-process
+		   uuid
+		   pbuffer
+		   "python"
+		   tempfile))
+
+    (set-process-sentinel
+     process
+     `(lambda (process event)
+	(when (string= "finished\n" event)
+	  (delete-file ,tempfile)
+	  (save-window-excursion
+	    (save-excursion
+	      (save-restriction
+		(with-current-buffer (find-file-noselect ,current-file)
+		  (goto-char (point-min))
+		  (re-search-forward ,uuid)
+		  (beginning-of-line)
+		  (kill-line)
+		  (insert (mapconcat
+			   (lambda (x)
+			     (format ": %s" x))
+			   (split-string
+			    (with-current-buffer ,pbuffer (buffer-string))
+			    "\n")
+			   "\n")))))))
+	(kill-buffer ,pbuffer)))))
+#+END_SRC
+
+#+RESULTS:
+: org-babel-async-execute
+
+#+BEGIN_SRC python
+print 'hello world'
+import time
+time.sleep(10)
+
+import os
+print os.getcwd()
+print time.asctime()
+#+END_SRC
+
+#+RESULTS:
+: hello world
+: /Users/jkitchin/blogofile-jkitchin.github.com/_blog
+: Fri Nov 20 10:20:01 2015
+:
+
+That works well from what I can see. There are some limitations. I doubt this will work if you use variables in the src block header. Next we consider an approach that does not do the tangling, and that will show us code output as it goes.
+
+** Emacs process approach with no tangling
+   :PROPERTIES:
+   :ID:       D8F2CBB5-31B2-4477-A363-E3C0063214DE
+   :END:
+As an alternative to tangling to a file, we could get the code and send it to our process. We will get some header cruft in the first three lines of the output which I discard, and some >>> strings that look like interactive python prompts, and we get rid of that too. This seems to have a few extra blank lines in the output that I didn't find a way to eliminate yet.
+
+#+BEGIN_SRC emacs-lisp
+(defun org-babel-async-execute ()
+  (interactive)
+  (let* ((current-file (buffer-file-name))
+	 (uuid (org-id-uuid))
+	 (code (org-element-property :value (org-element-context)))
+	 (pbuffer (format "*%s*" uuid))
+	 process)
+
+    (org-babel-remove-result)
+
+    (save-excursion
+      (re-search-forward "#\\+END_SRC")
+      (insert (format
+	       "\n\n#+RESULTS: %s\n: %s"
+	       (or (org-element-property :name (org-element-context))
+		   "")
+	       uuid)))
+    (switch-to-buffer-other-window pbuffer)
+
+    (setq process (start-process
+		   uuid
+		   pbuffer
+		   "python" "-"))
+    (process-send-string process code)
+    (process-send-eof process)
+    (stop-process process)
+
+    (set-process-sentinel
+     process
+     `(lambda (process event)
+	(when (string= "finished\n" event)
+	  (save-window-excursion
+	    (save-excursion
+	      (save-restriction
+		(with-current-buffer (find-file-noselect ,current-file)
+		  (goto-char (point-min))
+		  (re-search-forward ,uuid)
+		  (beginning-of-line)
+		  (kill-line)
+		  (insert
+		   ;; This clunky code mostly cleans up the output so it looks
+		   ;; more like org-mode output
+		   (mapconcat
+		    (lambda (x)
+		      (format ": %s" x))
+		    (split-string
+		     (replace-regexp-in-string
+                      "\\(>>> \\|\\.\\.\\. \\|: $\\|: >>>$\\)"
+		      ""
+		      (mapconcat 'identity
+				 (nthcdr
+				  3
+				  (butlast (split-string
+					    (with-current-buffer
+						,pbuffer
+					      (s-trim
+					       (buffer-string)))
+					    "\n")))
+				 "\n"))
+		     "\n")
+		    "\n")))))))
+	(when (get-buffer ,pbuffer)
+	  (kill-buffer ,pbuffer)
+	  (delete-window))
+	(delete-process process)))))
+#+END_SRC
+
+#+RESULTS:
+: org-babel-async-execute
+
+Let us try it out again.
+
+#+BEGIN_SRC python
+print 'hello world'
+import time
+time.sleep(10)
+
+for i in range(5):
+    print i
+    time.sleep(0.5)
+
+import os
+print os.getcwd()
+print time.asctime()
+#+END_SRC
+
+#+RESULTS:
+: hello world
+: 0
+: 1
+: 2
+: 3
+: 4
+: /Users/jkitchin/blogofile-jkitchin.github.com/_blog
+: Fri Nov 20 10:25:41 2015
+
+
+It works fine for this simple example. Again, this example doesn't do anything particularly sophisticated with src-block headers or imports, etc... We also get to see the output as the code executes, which is a pleasant change from the usual way of running python blocks.
+
+Maybe some org-moder's out there can try this and run it through some more rigorous paces?
