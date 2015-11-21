@@ -88,7 +88,7 @@
       <p><small><span class="blog_post_date">Posted November 20, 2015 at 11:46 AM</span> | categories:
         <span class="blog_post_categories"><a href='/blog/category/python/'>python</a>, <a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2015/11/20/Asynchronously-running-python-blocks-in-org-mode#disqus_thread">View Comments</a>
-      <p><small><span class="blog_post_date">Updated November 20, 2015 at 04:42 PM</span>
+      <p><small><span class="blog_post_date">Updated November 20, 2015 at 07:30 PM</span>
       </small></p>
     </header>
     <div class="post_prose">
@@ -288,16 +288,19 @@ That works well from what I can see. There are some limitations. I doubt this wi
 <h2 id="sec-3"><a id="ID-D8F2CBB5-31B2-4477-A363-E3C0063214DE" name="ID-D8F2CBB5-31B2-4477-A363-E3C0063214DE"></a><span class="section-number-2">3</span> Emacs process approach with no tangling</h2>
 <div class="outline-text-2" id="text-3">
 <p>
-As an alternative to tangling to a file, here we just copy the code to a file and then run it.
-</p>
-
-<p>
-UPDATE: I eliminated the send string approach because it caused some problems with blank lines in loops and such. This new approach eliminates that issue.
+As an alternative to tangling to a file, here we just copy the code to a file and then run it. This allows us to use :var in the header to pass data in at run time. At the moment, this code only supports printed output from code blocks, not the value for :results.
 </p>
 
 <div class="org-src-container">
 
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-babel-async-execute</span> ()
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-babel-async-execute:python</span> ()
+  <span style="color: #036A07;">"Execute the python src-block at point asynchronously.</span>
+<span style="color: #036A07;">:var headers are supported.</span>
+<span style="color: #036A07;">:results output is all that is supported for output.</span>
+
+<span style="color: #036A07;">A new window will pop up showing you the output as it appears,</span>
+<span style="color: #036A07;">and the output in that window will be put in the RESULTS section</span>
+<span style="color: #036A07;">of the code block."</span>
   (<span style="color: #0000FF;">interactive</span>)
   (<span style="color: #0000FF;">let*</span> ((current-file (buffer-file-name))
          (uuid (org-id-uuid))
@@ -305,8 +308,12 @@ UPDATE: I eliminated the send string approach because it caused some problems wi
          (temporary-file-directory <span style="color: #008000;">"."</span>)
          (tempfile (make-temp-file <span style="color: #008000;">"py-"</span>))
          (pbuffer (format <span style="color: #008000;">"*%s*"</span> uuid))
+         (varcmds (org-babel-variable-assignments:python
+                   (nth 2 (org-babel-get-src-block-info))))
          process)
 
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">get rid of old results, and put a place-holder for the new results to</span>
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">come.</span>
     (org-babel-remove-result)
 
     (<span style="color: #0000FF;">save-excursion</span>
@@ -316,41 +323,50 @@ UPDATE: I eliminated the send string approach because it caused some problems wi
                (<span style="color: #0000FF;">or</span> (org-element-property <span style="color: #006FE0;">:name</span> (org-element-context))
                    <span style="color: #008000;">""</span>)
                uuid)))
+
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">open the results buffer to see the results in.</span>
     (switch-to-buffer-other-window pbuffer)
 
-    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Create temp file</span>
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Create temp file containing the code.</span>
     (<span style="color: #0000FF;">with-temp-file</span> tempfile
+      <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">if there are :var headers insert them.</span>
+      (<span style="color: #0000FF;">dolist</span> (cmd varcmds)
+        (insert cmd)
+        (insert <span style="color: #008000;">"\n"</span>))
       (insert code))
 
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">run the code</span>
     (<span style="color: #0000FF;">setq</span> process (start-process
                    uuid
                    pbuffer
                    <span style="color: #008000;">"python"</span>
                    tempfile))
 
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">when the process is done, run this code to put the results in the</span>
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">org-mode buffer.</span>
     (set-process-sentinel
      process
      `(<span style="color: #0000FF;">lambda</span> (process event)
         (<span style="color: #0000FF;">save-window-excursion</span>
-            (<span style="color: #0000FF;">save-excursion</span>
-              (<span style="color: #0000FF;">save-restriction</span>
-                (<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect ,current-file)
-                  (goto-char (point-min))
-                  (re-search-forward ,uuid)
-                  (beginning-of-line)
-                  (kill-line)
-                  (insert
-                   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">This clunky code mostly cleans up the output so it looks</span>
-                   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">more like org-mode output</span>
-                   (mapconcat
-                    (<span style="color: #0000FF;">lambda</span> (x)
-                      (format <span style="color: #008000;">": %s"</span> x))
-                    (butlast (split-string
-                              (<span style="color: #0000FF;">with-current-buffer</span>
-                                  ,pbuffer
-                                (buffer-string))
-                              <span style="color: #008000;">"\n"</span>))
-                    <span style="color: #008000;">"\n"</span>))))))
+          (<span style="color: #0000FF;">save-excursion</span>
+            (<span style="color: #0000FF;">save-restriction</span>
+              (<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect ,current-file)
+                (goto-char (point-min))
+                (re-search-forward ,uuid)
+                (beginning-of-line)
+                (kill-line)
+                (insert
+                 (mapconcat
+                  (<span style="color: #0000FF;">lambda</span> (x)
+                    (format <span style="color: #008000;">": %s"</span> x))
+                  (butlast (split-string
+                            (<span style="color: #0000FF;">with-current-buffer</span>
+                                ,pbuffer
+                              (buffer-string))
+                            <span style="color: #008000;">"\n"</span>))
+                  <span style="color: #008000;">"\n"</span>))))))
+        <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">delete the results buffer then delete the tempfile.</span>
+        <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">finally, delete the process.</span>
         (<span style="color: #0000FF;">when</span> (get-buffer ,pbuffer)
           (kill-buffer ,pbuffer)
           (delete-window))
@@ -360,7 +376,7 @@ UPDATE: I eliminated the send string approach because it caused some problems wi
 </div>
 
 <pre class="example">
-org-babel-async-execute
+org-babel-async-execute:python
 </pre>
 
 <p>
@@ -382,6 +398,10 @@ time.sleep(1)
 <span style="color: #0000FF;">import</span> os
 <span style="color: #0000FF;">print</span> os.getcwd()
 <span style="color: #0000FF;">print</span> time.asctime()
+
+<span style="color: #0000FF;">print</span> data
+
+<span style="color: #0000FF;">raise</span> <span style="color: #6434A3;">IOError</span>(<span style="color: #008000;">'No file!'</span>)
 </pre>
 </div>
 
@@ -393,13 +413,16 @@ hello world
 3
 4
 /Users/jkitchin/blogofile-jkitchin.github.com/_blog
-Fri Nov 20 16:42:24 2015
+Fri Nov 20 19:30:16 2015
+[1, 3]
+Traceback (most recent call last):
+  File "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/py-84344aa1", line 18, in &lt;module&gt;
+    raise IOError('No file!')
+IOError: No file!
 </pre>
 
-
-
 <p>
-It works fine for this simple example. Again, this example doesn't do anything particularly sophisticated with src-block headers or imports, etc&#x2026; We also get to see the output as the code executes, which is a pleasant change from the usual way of running python blocks.
+It works fine for this simple example. We get to see the output as the code executes, which is a pleasant change from the usual way of running python blocks. There is some support for some header arguments, notably the :var header. I don't use :results value in Python, so for now only output is supported. We even support Exceptions in the output finally!
 </p>
 
 <p>

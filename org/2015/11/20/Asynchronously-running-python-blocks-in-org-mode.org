@@ -3,7 +3,7 @@
   :PROPERTIES:
   :categories: emacs,python,orgmode
   :date:     2015/11/20 11:46:45
-  :updated:  2015/11/20 16:42:38
+  :updated:  2015/11/20 19:30:57
   :END:
 If you run long Python blocks from org-mode, you might want to keep working while it runs. Currently Emacs gets blocked and you have to wait patiently.  In this post we consider some ways to avoid this that run our code asynchronously, but still put results where they belong in the org-buffer.
 
@@ -163,12 +163,17 @@ That works well from what I can see. There are some limitations. I doubt this wi
    :PROPERTIES:
    :ID:       D8F2CBB5-31B2-4477-A363-E3C0063214DE
    :END:
-As an alternative to tangling to a file, here we just copy the code to a file and then run it.
-
-UPDATE: I eliminated the send string approach because it caused some problems with blank lines in loops and such. This new approach eliminates that issue.
+As an alternative to tangling to a file, here we just copy the code to a file and then run it. This allows us to use :var in the header to pass data in at run time. At the moment, this code only supports printed output from code blocks, not the value for :results.
 
 #+BEGIN_SRC emacs-lisp
-(defun org-babel-async-execute ()
+(defun org-babel-async-execute:python ()
+  "Execute the python src-block at point asynchronously.
+:var headers are supported.
+:results output is all that is supported for output.
+
+A new window will pop up showing you the output as it appears,
+and the output in that window will be put in the RESULTS section
+of the code block."
   (interactive)
   (let* ((current-file (buffer-file-name))
 	 (uuid (org-id-uuid))
@@ -176,8 +181,12 @@ UPDATE: I eliminated the send string approach because it caused some problems wi
 	 (temporary-file-directory ".")
 	 (tempfile (make-temp-file "py-"))
 	 (pbuffer (format "*%s*" uuid))
+	 (varcmds (org-babel-variable-assignments:python
+		   (nth 2 (org-babel-get-src-block-info))))
 	 process)
 
+    ;; get rid of old results, and put a place-holder for the new results to
+    ;; come.
     (org-babel-remove-result)
 
     (save-excursion
@@ -187,41 +196,50 @@ UPDATE: I eliminated the send string approach because it caused some problems wi
 	       (or (org-element-property :name (org-element-context))
 		   "")
 	       uuid)))
+
+    ;; open the results buffer to see the results in.
     (switch-to-buffer-other-window pbuffer)
 
-    ;; Create temp file
+    ;; Create temp file containing the code.
     (with-temp-file tempfile
+      ;; if there are :var headers insert them.
+      (dolist (cmd varcmds)
+	(insert cmd)
+	(insert "\n"))
       (insert code))
 
+    ;; run the code
     (setq process (start-process
 		   uuid
 		   pbuffer
 		   "python"
 		   tempfile))
 
+    ;; when the process is done, run this code to put the results in the
+    ;; org-mode buffer.
     (set-process-sentinel
      process
      `(lambda (process event)
 	(save-window-excursion
-	    (save-excursion
-	      (save-restriction
-		(with-current-buffer (find-file-noselect ,current-file)
-		  (goto-char (point-min))
-		  (re-search-forward ,uuid)
-		  (beginning-of-line)
-		  (kill-line)
-		  (insert
-		   ;; This clunky code mostly cleans up the output so it looks
-		   ;; more like org-mode output
-		   (mapconcat
-		    (lambda (x)
-		      (format ": %s" x))
-		    (butlast (split-string
-			      (with-current-buffer
-				  ,pbuffer
-				(buffer-string))
-			      "\n"))
-		    "\n"))))))
+	  (save-excursion
+	    (save-restriction
+	      (with-current-buffer (find-file-noselect ,current-file)
+		(goto-char (point-min))
+		(re-search-forward ,uuid)
+		(beginning-of-line)
+		(kill-line)
+		(insert
+		 (mapconcat
+		  (lambda (x)
+		    (format ": %s" x))
+		  (butlast (split-string
+			    (with-current-buffer
+				,pbuffer
+			      (buffer-string))
+			    "\n"))
+		  "\n"))))))
+	;; delete the results buffer then delete the tempfile.
+	;; finally, delete the process.
 	(when (get-buffer ,pbuffer)
 	  (kill-buffer ,pbuffer)
 	  (delete-window))
@@ -230,11 +248,11 @@ UPDATE: I eliminated the send string approach because it caused some problems wi
 #+END_SRC
 
 #+RESULTS:
-: org-babel-async-execute
+: org-babel-async-execute:python
 
 Let us try it out again.
 
-#+BEGIN_SRC python
+#+BEGIN_SRC python :var data='(1  3)
 print 'hello world'
 import time
 time.sleep(1)
@@ -248,6 +266,10 @@ for i in range(5):
 import os
 print os.getcwd()
 print time.asctime()
+
+print data
+
+raise IOError('No file!')
 #+END_SRC
 
 #+RESULTS:
@@ -258,10 +280,13 @@ print time.asctime()
 : 3
 : 4
 : /Users/jkitchin/blogofile-jkitchin.github.com/_blog
-: Fri Nov 20 16:42:24 2015
+: Fri Nov 20 19:30:16 2015
+: [1, 3]
+: Traceback (most recent call last):
+:   File "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/py-84344aa1", line 18, in <module>
+:     raise IOError('No file!')
+: IOError: No file!
 
-
-
-It works fine for this simple example. Again, this example doesn't do anything particularly sophisticated with src-block headers or imports, etc... We also get to see the output as the code executes, which is a pleasant change from the usual way of running python blocks.
+It works fine for this simple example. We get to see the output as the code executes, which is a pleasant change from the usual way of running python blocks. There is some support for some header arguments, notably the :var header. I don't use :results value in Python, so for now only output is supported. We even support Exceptions in the output finally!
 
 Maybe some org-moder's out there can try this and run it through some more rigorous paces?
