@@ -1,0 +1,84 @@
+(org-data nil (headline (:raw-value Adding emacs command key-bindings and help functionality to org-mode :begin 2824 :end 7833 :pre-blank 0 :hiddenp nil :contents-begin 2900 :contents-end 7833 :level 1 :priority nil :tags nil :todo-keyword TODO :todo-type todo :post-blank 0 :footnote-section-p nil :archivedp nil :commentedp nil :quotedp nil :CATEGORIES emacs,orgmode :ID 1B122428-E8FF-476B-B07B-79A7541003DC :CATEGORY blog :title (Adding emacs command key-bindings and help functionality to org-mode) :parent #0) (section (:begin 2900 :end 7833 :contents-begin 2900 :contents-end 7833 :post-blank 0 :parent #1) (property-drawer (:begin 2900 :end 3002 :hiddenp outline :contents-begin 2915 :contents-end 2994 :post-blank 0 :post-affiliated 2900 :parent #2) (node-property (:key categories :value emacs,orgmode :begin 2915 :end 2944 :post-blank 0 :parent #3)) (node-property (:key ID :value 1B122428-E8FF-476B-B07B-79A7541003DC :begin 2944 :end 2994 :post-blank 0 :parent #3))) (paragraph (:begin 3002 :end 3322 :contents-begin 3002 :contents-end 3322 :post-blank 0 :post-affiliated 3002 :parent #2) The documentation of functions in emacs allows you to put some light markup into function doc strings that will render as the key sequence required to run the command when you look up the help on the function. I would like to have something like that in org-mode. You can look up the key-binding to a command like this:
+) (src-block (:language emacs-lisp :switches nil :parameters nil :begin 3322 :end 3414 :number-lines nil :preserve-indent t :retain-labels t :use-labels t :label-fmt nil :hiddenp nil :value (substitute-command-keys "\\[org-toggle-latex-overlays]")
+ :post-blank 1 :post-affiliated 3322 :parent #2)) (fixed-width (:begin 3414 :end 3440 :value C-c C-x C-l
+ :post-blank 1 :post-affiliated 3425 :results () :parent #2)) (paragraph (:begin 3440 :end 3890 :contents-begin 3440 :contents-end 3889 :post-blank 1 :post-affiliated 3440 :parent #2) We are going to explore a way to recognize the syntax shown above, change its appearance to alert us that we are looking at an emacs command, add a tooltip, and make it clickable to open the documentation, and s (super) clickable to find the function code. Font lock is the tool we will use for this. Basically, we need a regular expression to match the syntax, and a function to find the next instance, and put some properties on the matched text.
+) (paragraph (:begin 3890 :end 4165 :contents-begin 3890 :contents-end 4164 :post-blank 1 :post-affiliated 3890 :parent #2) Here we use the `rx' library to build up a regular expression for this. It is a bit easier to document than a raw regexp. Since we are matching \ in the pattern, there are some obligatory escaping \ characters in there too. Here is how to set it up, and use it on a string.
+) (src-block (:language emacs-lisp :switches nil :parameters nil :begin 4165 :end 4496 :number-lines nil :preserve-indent t :retain-labels t :use-labels t :label-fmt nil :hiddenp nil :value (require 'rx)
+
+(let ((rex (rx
+	    (and
+	     (eval "\\[")
+	     (group (one-or-more (not (any "]"))))
+	     "]"))))
+      (string-match rex "\\\\[org-toggle-latex-overlays]")
+      (list (match-string 0 "\\\\[org-toggle-latex-overlays]")
+	    (match-string 1 "\\\\[org-toggle-latex-overlays]")))
+ :post-blank 1 :post-affiliated 4165 :parent #2)) (table (:begin 4496 :end 4569 :type org :tblfm nil :contents-begin 4507 :contents-end 4568 :value nil :post-blank 1 :post-affiliated 4507 :results () :parent #2) (table-row (:type standard :begin 4507 :end 4568 :contents-begin 4508 :contents-end 4567 :post-blank 0 :parent #3) (table-cell (:begin 4508 :end 4539 :contents-begin 4509 :contents-end 4537 :post-blank 0 :parent #4) \[org-toggle-latex-overlays]) (table-cell (:begin 4539 :end 4567 :contents-begin 4540 :contents-end 4565 :post-blank 0 :parent #4) org-toggle-latex-overlays))) (paragraph (:begin 4569 :end 4906 :contents-begin 4569 :contents-end 4905 :post-blank 1 :post-affiliated 4569 :parent #2) So, we can find these, and all we need is to integrate this into font-lock. We define a function that will move the point to the end of the next match, and put properties on the match. We will go ahead and make the text clickable so we can access documentation and code easily. The tooltip will show the key-binding to run the command.
+) (src-block (:language emacs-lisp :switches nil :parameters :results silent :begin 4906 :end 6465 :number-lines nil :preserve-indent t :retain-labels t :use-labels t :label-fmt nil :hiddenp nil :value (require 'rx)
+
+(defvar elisp-symbol-keybinding-re
+  (rx
+   ;; opening \\[
+   (eval "\\[")
+   ;; one or more characters that are not ]
+   (group (one-or-more (not (any "]"))))
+   ;; The closing ]
+   "]")
+"Regexp for an elisp command keybinding syntax. \\[some-command]
+Regexp group 1 matches `some-command'.")
+
+(defun match-next-keybinding (&optional limit)
+  "Move point to the end of the next expression matching
+`elisp-symbol-keybinding-re', and put an overlay on the match
+that shows the key sequence. Non-bound commands are not
+fontified."
+  (when (and (re-search-forward elisp-symbol-keybinding-re limit t)
+	     (fboundp (intern (match-string 1))))
+    (let* ((beg (match-beginning 0))
+	   (end (match-end 0))
+	   (s (match-string 0))
+	   (command (match-string 1))
+	   (describe-func `(lambda ()
+		    "Run `describe-function' on the command."
+		    (interactive)
+		    (describe-function (intern ,command))))
+	   (find-func `(lambda ()
+		     "Run `find-function' on the command."
+		     (interactive)
+		     (find-function (intern ,command))))
+	   (map (make-sparse-keymap)))
+
+      ;; this is what gets run when you click on it.
+      (define-key map [mouse-1] describe-func)
+      (define-key map [s-mouse-1] find-func)
+      ;; Here we define the text properties
+      (add-text-properties
+       beg end
+       `(local-map ,map
+	 mouse-face highlight
+	 help-echo ,(format
+		     "%s\n\nClick for documentation\ns-mouse-1 to find function."
+		     (substitute-command-keys s))
+	 keybinding t)))))
+ :post-blank 1 :post-affiliated 4906 :parent #2)) (paragraph (:begin 6465 :end 6544 :contents-begin 6465 :contents-end 6543 :post-blank 1 :post-affiliated 6465 :parent #2) Now we need a way to turn them on and off. We do that here with a minor mode.
+) (src-block (:language emacs-lisp :switches nil :parameters nil :begin 6544 :end 7057 :number-lines nil :preserve-indent t :retain-labels t :use-labels t :label-fmt nil :hiddenp nil :value (define-minor-mode emacs-keybinding-overlay-mode
+  "Fontify on emacs keybinding syntax. Adds a tooltip for
+keybinding, and make the command clickable to get to the
+documentation."
+  :lighter " KB"
+  (if emacs-keybinding-overlay-mode
+      ;; turn them on
+      (font-lock-add-keywords
+       nil
+       '((match-next-keybinding 1 font-lock-constant-face)))
+    ;; turn them off
+    (font-lock-remove-keywords
+     nil
+     '((match-next-keybinding 1 font-lock-constant-face)))))
+ :post-blank 1 :post-affiliated 6544 :parent #2)) (keyword (:key RESULTS :value  :begin 7057 :end 7069 :post-blank 1 :post-affiliated 7057 :parent #2)) (paragraph (:begin 7069 :end 7166 :contents-begin 7069 :contents-end 7165 :post-blank 1 :post-affiliated 7069 :parent #2) Here are some sample uses.
+You can use  \\[org-toggle-latex-overlays] to toggle latex overlays.
+) (paragraph (:begin 7166 :end 7235 :contents-begin 7166 :contents-end 7234 :post-blank 1 :post-affiliated 7166 :parent #2) You can use \\[org-ref-helm-insert-cite-link]  to insert citations.
+) (paragraph (:begin 7235 :end 7621 :contents-begin 7235 :contents-end 7620 :post-blank 1 :post-affiliated 7235 :parent #2) That more or less does it! I don't know if this is the canonical way to do this, but it works nicely here. You can also use overlays, but I found them a little confusing because they are not editable, and you have to toggle the minor mode to see them. Here we have unobtrusive tooltips. One downside is these won't export in any fashion in org-mode since it is not part of the syntax.
+) (paragraph (:begin 7621 :end 7736 :contents-begin 7621 :contents-end 7735 :post-blank 1 :post-affiliated 7621 :parent #2) Maybe it would make sense to do this for this syntax too: `helm', which is also commonly used in doc strings too.
+) (paragraph (:begin 7736 :end 7833 :contents-begin 7736 :contents-end 7833 :post-blank 0 :post-affiliated 7736 :parent #2) (eval `(with-temp-file "test.txt"
+   (insert (format "%s" (quote ,(org-element-parse-buffer))))))))))
