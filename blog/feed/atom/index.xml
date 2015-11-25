@@ -7,12 +7,225 @@
   <title type="text">The Kitchin Research Group</title>
   <subtitle type="text">Chemical Engineering at Carnegie Mellon University</subtitle>
 
-  <updated>2015-11-24T15:08:58Z</updated>
+  <updated>2015-11-25T14:32:14Z</updated>
   <generator uri="http://blogofile.com/">Blogofile</generator>
 
   <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog" />
   <id>http://jkitchin.github.io/blog/feed/atom/</id>
   <link rel="self" type="application/atom+xml" href="http://jkitchin.github.io/blog/feed/atom/" />
+  <entry>
+    <author>
+      <name></name>
+      <uri>http://jkitchin.github.io/blog</uri>
+    </author>
+    <title type="html"><![CDATA[LDAP lookups from Emacs]]></title>
+    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2015/11/25/LDAP-lookups-from-Emacs" />
+    <id>http://jkitchin.github.io/blog/2015/11/25/LDAP-lookups-from-Emacs</id>
+    <updated>2015-11-25T09:31:58Z</updated>
+    <published>2015-11-25T09:31:58Z</published>
+    <category scheme="http://jkitchin.github.io/blog" term="helm" />
+    <category scheme="http://jkitchin.github.io/blog" term="emacs" />
+    <summary type="html"><![CDATA[LDAP lookups from Emacs]]></summary>
+    <content type="html" xml:base="http://jkitchin.github.io/blog/2015/11/25/LDAP-lookups-from-Emacs"><![CDATA[
+
+
+
+<p>
+Now that I have email and Cisco Jabber totally integrated into Emacs it would be nice to tap into the CMU LDAP (Lightweight Directory Access Protocol) service  to find emails and phone numbers. We to use the ldapsearch command-line utility to query our LDAP service like this to find an email address.
+</p>
+
+<p>
+You might like the video explanation here: <a href="https://www.youtube.com/watch?v=N7AaKHRd9uw">https://www.youtube.com/watch?v=N7AaKHRd9uw</a> 
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(shell-command-to-string <span style="color: #008000;">"ldapsearch -x -LLL -h ldap.andrew.cmu.edu -b ou=Person,dc=cmu,dc=edu cn=\"John Kitchin\""</span>)
+</pre>
+</div>
+
+<pre class="example">
+dn: guid=1976CCAA-B465-11D8-8000-080020CC75D3,ou=person,dc=cmu,dc=edu
+objectClass: cmuPerson
+eduPersonPrimaryAffiliation: Faculty
+guid: 1976CCAA-B465-11D8-8000-080020CC75D3
+cmuPrivate: homePostalAddress
+cmuPrivate: homePhone
+cn: John Kitchin
+givenName: John
+sn: Kitchin
+cmuPrimaryCampus: Pittsburgh
+cmuCampus: Pittsburgh
+cmuAndrewId: jkitchin
+cmueduId: jkitchin
+cmuAndrewCommonNamespaceId: jkitchin
+mail: jkitchin@cmu.edu
+eduPersonSchoolCollegeName: CIT - Consolidated
+cmuPersonPrincipalName: jkitchin@ANDREW.CMU.EDU
+postalAddress: DH A207F
+cmuDepartment: Chemical Engineering
+cmuDepartment: MSE: Materials Science &amp; Engineering
+cmuPersonAffiliation: Tenure-Track Faculty
+eduPersonAffiliation: Faculty
+cmuAccount: uid=jkitchin,ou=account,dc=andrew,dc=cmu,dc=edu
+cmuAccount: uid=jkitchin,ou=account,dc=cmu,dc=edu
+cmuActiveDN: uid=jkitchin,ou=account,dc=andrew,dc=cmu,dc=edu
+cmuActiveDN: uid=jkitchin,ou=account,dc=cmu,dc=edu
+title: Professor
+telephoneNumber: +1 412 268 7803
+</pre>
+
+<p>
+We actually get LDIF data from ldapsearch with a lot of details. Next we wrap the output in a function that converts each result from ldapsearch into a p-list that we will use later in a helm function to help us select a match.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">ldap-query</span> (query-string)
+  <span style="color: #036A07;">"Send QUERY-STRING to our ldap server and parse results into a</span>
+<span style="color: #036A07;">list of p-lists for each entry returned."</span>
+  (<span style="color: #0000FF;">interactive</span> <span style="color: #008000;">"sLDAP query: "</span>)
+  (<span style="color: #0000FF;">let</span> ((output (butlast (split-string
+                          (shell-command-to-string
+                           (format (concat  <span style="color: #008000;">"ldapsearch -x -LLL "</span>
+                                            <span style="color: #008000;">"-h ldap.andrew.cmu.edu "</span>
+                                            <span style="color: #008000;">"-b ou=Person,dc=cmu,dc=edu %s"</span>)
+                                   query-string))
+                          <span style="color: #008000;">"\n"</span>)))
+        (lines '())
+        (result '())
+        (results '(())))
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">cleanup trailing lines and ignore initial lines</span>
+    (<span style="color: #0000FF;">loop</span> for line in output
+          do
+          (<span style="color: #0000FF;">cond</span>
+           <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">join lines that run over</span>
+           ((s-starts-with? <span style="color: #008000;">" "</span> line)
+            (<span style="color: #0000FF;">setf</span> (car (last lines))
+                  (concat (car (last lines)) line)))
+           <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">ignore this</span>
+           ((string-match <span style="color: #008000;">"Size limit exceeded"</span> line)
+            nil)
+           (t
+            (add-to-list 'lines line t))))
+
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">now we need to parse the lines. A new entry starts with a dn: line.</span>
+    (<span style="color: #0000FF;">dolist</span> (line lines)
+      (<span style="color: #0000FF;">cond</span>
+       ((s-starts-with? <span style="color: #008000;">"dn:"</span> line)
+        <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">add new entry</span>
+        (add-to-list 'results `(<span style="color: #006FE0;">:dn</span> ,line)))
+       ((string-match <span style="color: #008000;">":"</span> line)
+        (<span style="color: #0000FF;">let*</span> ((s (split-string line <span style="color: #008000;">":"</span>))
+               (prop (intern (concat <span style="color: #008000;">":"</span> (s-trim (car s)))))
+               (val (s-trim (cadr s))))
+          (<span style="color: #0000FF;">setf</span> (car results) (plist-put (car results) prop val))))))
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">last result seems to be nil so we drop it</span>
+    (-filter (<span style="color: #0000FF;">lambda</span> (x) (not (null x))) results)))
+</pre>
+</div>
+
+<pre class="example">
+ldap-query
+</pre>
+
+<p>
+Here is an example of that function:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(ldap-query <span style="color: #008000;">"cn=\"John Kitchin\""</span>)
+</pre>
+</div>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">((<span style="color: #006FE0;">:dn</span> <span style="color: #008000;">"dn: guid=1976CCAA-B465-11D8-8000-080020CC75D3,ou=person,dc=cmu,dc=edu"</span> <span style="color: #006FE0;">:objectClass</span> <span style="color: #008000;">"cmuPerson"</span> <span style="color: #006FE0;">:eduPersonPrimaryAffiliation</span> <span style="color: #008000;">"Faculty"</span> <span style="color: #006FE0;">:guid</span> <span style="color: #008000;">"1976CCAA-B465-11D8-8000-080020CC75D3"</span> <span style="color: #006FE0;">:cmuPrivate</span> <span style="color: #008000;">"homePhone"</span> <span style="color: #006FE0;">:cn</span> <span style="color: #008000;">"John Kitchin"</span> <span style="color: #006FE0;">:givenName</span> <span style="color: #008000;">"John"</span> <span style="color: #006FE0;">:sn</span> <span style="color: #008000;">"Kitchin"</span> <span style="color: #006FE0;">:cmuPrimaryCampus</span> <span style="color: #008000;">"Pittsburgh"</span> <span style="color: #006FE0;">:cmuCampus</span> <span style="color: #008000;">"Pittsburgh"</span> <span style="color: #006FE0;">:cmuAndrewId</span> <span style="color: #008000;">"jkitchin"</span> <span style="color: #006FE0;">:cmueduId</span> <span style="color: #008000;">"jkitchin"</span> <span style="color: #006FE0;">:cmuAndrewCommonNamespaceId</span> <span style="color: #008000;">"jkitchin"</span> <span style="color: #006FE0;">:mail</span> <span style="color: #008000;">"jkitchin@cmu.edu"</span> <span style="color: #006FE0;">:eduPersonSchoolCollegeName</span> <span style="color: #008000;">"CIT - Consolidated"</span> <span style="color: #006FE0;">:cmuPersonPrincipalName</span> <span style="color: #008000;">"jkitchin@ANDREW.CMU.EDU"</span> <span style="color: #006FE0;">:postalAddress</span> <span style="color: #008000;">"DH A207F"</span> <span style="color: #006FE0;">:cmuDepartment</span> <span style="color: #008000;">"MSE"</span> <span style="color: #006FE0;">:cmuPersonAffiliation</span> <span style="color: #008000;">"Tenure-Track Faculty"</span> <span style="color: #006FE0;">:eduPersonAffiliation</span> <span style="color: #008000;">"Faculty"</span> <span style="color: #006FE0;">:cmuAccount</span> <span style="color: #008000;">"uid=jkitchin,ou=account,dc=cmu,dc=edu"</span> <span style="color: #006FE0;">:cmuActiveDN</span> <span style="color: #008000;">"uid=jkitchin,ou=account,dc=cmu,dc=edu"</span> <span style="color: #006FE0;">:title</span> <span style="color: #008000;">"Professor"</span> <span style="color: #006FE0;">:telephoneNumber</span> <span style="color: #008000;">"+1 412 268 7803"</span>))
+</pre>
+</div>
+
+
+<p>
+Now, we wrap a helm function around that to give us a nice menu to select entries from, and a few actions like sending an email, calling, copying the name and email, and seeing the information in a reasonable way. We also add a fallback method in case we don't find what we want and need to do a new search.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">helm-ldap</span> (query-string)
+  (<span style="color: #0000FF;">interactive</span> <span style="color: #008000;">"sLDAP query: "</span>)
+  (helm
+   <span style="color: #006FE0;">:sources</span>
+   `(((name . <span style="color: #008000;">"HELM ldap"</span>)
+      (candidates . ,(mapcar
+                      (<span style="color: #0000FF;">lambda</span> (x)
+                        (cons
+                         (format
+                          <span style="color: #008000;">"%20s|%30s|%30s|%20s|%s"</span>
+                          (s-truncate
+                           20
+                           (<span style="color: #0000FF;">or</span> (plist-get x <span style="color: #006FE0;">:title</span>) <span style="color: #008000;">" "</span>))
+                          (plist-get x <span style="color: #006FE0;">:cn</span>)
+                          (plist-get x <span style="color: #006FE0;">:mail</span>)
+                          (plist-get x <span style="color: #006FE0;">:cmuDisplayAddress</span>)
+                          (<span style="color: #0000FF;">or</span> (plist-get x <span style="color: #006FE0;">:telephoneNumber</span>) <span style="color: #008000;">" "</span>))
+                         x))
+                      (ldap-query
+                       (<span style="color: #0000FF;">if</span> (string-match <span style="color: #008000;">"="</span> query-string)
+                           query-string
+                         (concat <span style="color: #008000;">"cn=*"</span> query-string <span style="color: #008000;">"*"</span>)))))
+      (action . ((<span style="color: #008000;">"Email"</span> . (<span style="color: #0000FF;">lambda</span> (x)
+                              (compose-mail)
+                              (message-goto-to)
+                              (insert (plist-get x <span style="color: #006FE0;">:mail</span>))
+                              (message-goto-subject)))
+                 (<span style="color: #008000;">"Call"</span> . (<span style="color: #0000FF;">lambda</span> (x)
+                             (cisco-call
+                              (plist-get x <span style="color: #006FE0;">:telephoneNumber</span>))))
+                 (<span style="color: #008000;">"Copy Name and email address"</span> . (<span style="color: #0000FF;">lambda</span> (x)
+                                                    (kill-new
+                                                     (format
+                                                      <span style="color: #008000;">"%s &lt;%s&gt;"</span>
+                                                      (plist-get x <span style="color: #006FE0;">:cn</span>)
+                                                      (plist-get x <span style="color: #006FE0;">:mail</span>)))))
+                 (<span style="color: #008000;">"Information"</span> . (<span style="color: #0000FF;">lambda</span> (x)
+                                    (switch-to-buffer
+                                     (get-buffer-create <span style="color: #008000;">"*helm ldap*"</span>))
+                                    (erase-buffer)
+                                    (<span style="color: #0000FF;">dolist</span> (key (<span style="color: #0000FF;">cl-loop</span>
+                                                  for key in x by #'cddr
+                                                  collect key))
+                                      (insert (format <span style="color: #008000;">"|%s | %s|\n"</span>
+                                                      key (plist-get x key))))
+                                    (org-mode)
+                                    (goto-char 0)
+                                    (org-ctrl-c-ctrl-c)
+                                    (insert <span style="color: #008000;">"press q to quit.\n\n"</span>)
+                                    (<span style="color: #0000FF;">setq</span> buffer-read-only t)
+                                    (use-local-map (copy-keymap org-mode-map))
+                                    (local-set-key <span style="color: #008000;">"q"</span>
+                                                   #'(lambda ()
+                                                       (<span style="color: #0000FF;">interactive</span>)
+                                                       (quit-window t))))))))
+     <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">fallback action</span>
+     ((name . <span style="color: #008000;">"New search"</span>)
+      (dummy)
+      (action . (<span style="color: #0000FF;">lambda</span> (x) (helm-ldap x)))))))
+</pre>
+</div>
+
+<pre class="example">
+helm-ldap
+</pre>
+
+<p>
+That is pretty convenient!
+</p>
+
+<p>
+John Kitchin &lt;jkitchin@cmu.edu&gt;</p>
+<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/11/25/LDAP-lookups-from-Emacs.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>]]></content>
+  </entry>
   <entry>
     <author>
       <name></name>
@@ -1647,76 +1860,5 @@ I don't use phone calls very often, but an interesting thing might be to open a 
 </div>
 </div>
 <p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/11/04/Clickable-telephone-numbers-in-mu4e-messages.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>]]></content>
-  </entry>
-  <entry>
-    <author>
-      <name></name>
-      <uri>http://jkitchin.github.io/blog</uri>
-    </author>
-    <title type="html"><![CDATA[YAT - yet another template strategy]]></title>
-    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2015/11/01/YAT-yet-another-template-strategy" />
-    <id>http://jkitchin.github.io/blog/2015/11/01/YAT-yet-another-template-strategy</id>
-    <updated>2015-11-01T14:12:34Z</updated>
-    <published>2015-11-01T14:12:34Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="orgmode" />
-    <category scheme="http://jkitchin.github.io/blog" term="emacs" />
-    <summary type="html"><![CDATA[YAT - yet another template strategy]]></summary>
-    <content type="html" xml:base="http://jkitchin.github.io/blog/2015/11/01/YAT-yet-another-template-strategy"><![CDATA[
-
-
-
-<p>
-I have another need for a template that is dynamically evaluated. I previously wrote about this <a href="http://kitchingroup.cheme.cmu.edu/blog/2014/01/26/Another-alternative-to-string-templates/">here</a> , and today I am going to do a variation of the theme. We will still use a syntax of $(expression), but a new approach to evaluating the expression. I saw this interesting function to evaluate and replace an s-expression in a buffer <a href="http://emacsredux.com/blog/2013/06/21/eval-and-replace/">Eval and Replace - Emacs Redux</a> . I am going use that to replace a template expression in a string, with a little variation to avoid replacing non-sexp variations, e.g. $(. Here we go.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">eval-and-replace</span> ()
-  <span style="color: #036A07;">"Replace the preceding sexp with its value."</span>
-  (<span style="color: #0000FF;">interactive</span>)
-  (backward-kill-sexp)
-  (<span style="color: #0000FF;">condition-case</span> nil
-      (princ (eval (read (current-kill 0)))
-             (current-buffer))
-    (<span style="color: #ff0000; font-weight: bold;">error</span> (message <span style="color: #008000;">"Invalid expression"</span>)
-           (insert (concat <span style="color: #008000;">"$"</span> (current-kill 0))))))
-
-(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">j-format</span> (s)
-  <span style="color: #036A07;">"Replace all instances of $(expression) in S with the evaluated</span>
-<span style="color: #036A07;">expression."</span>
-  (<span style="color: #0000FF;">with-temp-buffer</span>
-    (insert s)
-    (goto-char (point-min))
-    (<span style="color: #0000FF;">while</span> (re-search-forward <span style="color: #008000;">"$("</span> nil t)
-      (backward-char)
-      (<span style="color: #0000FF;">when</span> (sexp-at-point)
-        <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">get rid of the $</span>
-        (delete-char -1)
-        <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">go to the end of the sexp and then eval-and-replace it.</span>
-        (end-of-sexp)
-        (eval-and-replace)))
-    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">return the formatted text.</span>
-    (buffer-string)))
-
-
-(<span style="color: #0000FF;">let</span> ((some-var <span style="color: #008000;">"You got me"</span>))
-  (j-format <span style="color: #008000;">"Test of 4 + 5 = $(+ 4 5). $(  $(foobar). $(progn (setq x 5) \"\")</span>
-<span style="color: #008000;">and then we have 2x=$(prin1 (* 2 x)).</span>
-
-<span style="color: #008000;">some-var = $(print some-var)"</span>))
-</pre>
-</div>
-
-<pre class="example">
-Test of 4 + 5 = 9. $(  $(foobar).
-and then we have 2x=10.
-
-some-var = You got me
-</pre>
-
-<p>
-That seems pretty ok. I obviously have not tested it extensively, but it looks pretty promising.
-</p>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/11/01/YAT---yet-another-template-strategy.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>]]></content>
   </entry>
 </feed>
