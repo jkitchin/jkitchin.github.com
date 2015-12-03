@@ -1,4 +1,4 @@
-% Created 2015-11-21 Sat 16:55
+% Created 2015-12-03 Thu 15:44
 \documentclass[11pt]{article}
 \usepackage[utf8]{inputenc}
 \usepackage{lmodern}
@@ -33,23 +33,256 @@ citecolor=blue,filecolor=blue,menucolor=blue,urlcolor=blue]{hyperref}
 \title{org-element-explorer}
 \begin{document}
 
-\section{Attempt 2 with :wrap}
+\section{{\bfseries\sffamily DONE} Exporting numbered citations in html with unsorted numbered bibliography}
 \label{sec-1}
-this works if you run the block on the backend.
 
-(setq org-export-babel-evaluate nil)
+In this \href{http://kitchingroup.cheme.cmu.edu/blog/2014/05/17/Exporting-citations-in-html/}{post} we illustrated a simple export of org-ref citations to html. This was a simple export that simply replaced each citation with a hyperlink. Today we look at formatting them with numbers, and having a numbered bibliography. This will take multiple passes to achieve. One pass to get the citations and calculate replacements, and one pass to replace them.
+
+This text is just some text with somewhat random citations in it for seeing it work. You might like my two data sharing articles \cite{kitchin-2015-examp,kitchin-2015-data-surfac-scien}. We illustrate the use of org-mode in publishing computational work \cite{xu-2015-tunin-oxide,mehta-2014-ident-poten,curnan-2014-effec-concen}, experimental \cite{hallenbeck-2013-effec-o2} and mixed computational and experimental work \cite{miller-2014-simul-temper,boes-2015-estim-bulk}. This example will correctly number multiple references to a citation, e.g.  \cite{kitchin-2015-examp} and \cite{kitchin-2015-data-surfac-scien}.
+
+This post is somewhat long, and the way I worked it out is at the end (\hyperref[sec-1-2]{Long appendix illustrating how we got the code to work}). The short version is that we do some preprocessing to get the citations in the document, calculate replacement values for them and the bibliography, replace them in the org-buffer \emph{before} the export in the backend (html) format we want, and then conclude with the export. This is proof of concept work.
+
+The main issues you can see are:
+\begin{enumerate}
+\item Our formatting code is very rudimentary, and relies on reftex. It is not as good as bibtex, or presumably some citation processor. Major improvements would require abandoning the reftex approach to use something that builds up the bibliography entry, allows modification of author names, and accomodates missing information gracefully.
+\item The bibliography contents reflect the contents of my bibtex file, which is \LaTeX{} compatible. We could clean it up more, by either post-processing to remove some things like escaped \&, or by breaking compatibility with \LaTeX{}.
+\item The intext citations could use some fine tuning on spaces, e.g. to remove trailing spaces after words, or to move superscripts to the right of punctuation, or to adjust spaces after some citations.
+\item Changing the bibliography style for each entry amounts to changing a variable for the bibliography. We have to modify a function to change the intext citation style, e.g. to brackets, or (author year).
+\item I stuck with only cite links here, and only articles and books. It would not get a citenum format correct, e.g. it should not be superscripted in this case, or a citeauthor format correct. That would require some code in the replacement section that knows how to replace different types of citations.
+\end{enumerate}
+
+The  org-ref-unsrt-html-processor function could be broken up more, and could take some parameters to fine-tune some of these things, and generalize some things like getting the citation elements for the buffer. Overall, I think this shows that citations in org-mode with org-ref are actually pretty flexible. It is not as good as bibtex/\LaTeX{}, and won't be for an unforseeably long time unless someone really needs high quality citations in a format other than \LaTeX{}.
+
+\bibliographystyle{unsrt}
+
+\bibliography{/Users/jkitchin/numbered}
+
+\subsection{The working code}
+\label{sec-1-1}
+Here is a funtion to process the org file prior parsing during the export process. This function goes into org-export-before-parsing-hook, and takes one argument, the backend. We simply replace all the citation links with formatted HTML snippets or blocks. If the snippets get longer than a line, it will break.
+
+We use org-ref-reftex-format-citation to generate the bibliography, which uses reftex to format a string with escape characters in it.
+
 \begin{minted}[frame=lines,fontsize=\scriptsize,linenos]{common-lisp}
-(defun ex-aware-wrap ()
-  (unless org-export-current-backend
-      (concat "src org :exports results "
-              ":results  replace drawer"
-"\n#+caption: test"
-              "\n#+ATTR_LATEX: "
-              ":environment longtable")))
+(setq org-ref-bibliography-entry-format
+      '(("article" . "<li><a id=\"\%k\">%a, %t, <i>%j</i>, <b>%v(%n)</b>, %p (%y)</a>. <a href=\"%U\">link</a>. <a href=\"http://dx.doi.org/%D\">doi</a>.</li>")
+        ("book" . "<li><a id=\"\%k\">%a, %t, %u (%y).</a></li>")))
+
+(defun org-ref-unsrt-latex-processor () nil)
+(defun org-ref-unsrt-html-processor ()
+  "Citation processor function for the unsrt style with html output."
+  (let (links
+        unique-keys numbered-keys
+        replacements
+        bibliography-link
+        bibliographystyle-link
+        bibliography)
+    ;; step 1 - get the citation links
+    (setq links (loop for link in (org-element-map
+                                      (org-element-parse-buffer) 'link 'identity)
+                      if (-contains?
+                          org-ref-cite-types
+                          (org-element-property :type link))
+                      collect link))
+
+    ;; list of unique numbered keys. '((key number))
+    (setq unique-keys (loop for i from 1
+                            for key in (org-ref-get-bibtex-keys)
+                            collect (list key (number-to-string i))))
+
+
+    ;; (start end replacement-text)
+    (setq replacements
+          (loop for link in links
+                collect
+                (let ((path (org-element-property :path link)))
+                  (loop for (key number) in unique-keys
+                        do
+                        (setq
+                         path
+                         (replace-regexp-in-string
+                          key (format "<a href=\"#%s\">%s</a>" key number)
+                          path)))
+                  (list (org-element-property :begin link)
+                        (org-element-property :end link)
+                        (format "@@html:<sup>%s</sup>@@" path)))))
+
+    ;; construct the bibliography string
+    (setq bibliography
+          (concat "#+begin_html
+<h1>Bibliography</h1><ol>"
+                  (mapconcat
+                   'identity
+                   (loop for (key number) in unique-keys
+                         collect
+                         (let* ((result (org-ref-get-bibtex-key-and-file key))
+                                (bibfile (cdr result))
+                                (entry (save-excursion
+                                         (with-temp-buffer
+                                           (insert-file-contents bibfile)
+                                           (bibtex-set-dialect
+                                            (parsebib-find-bibtex-dialect) t)
+                                           (bibtex-search-entry key)
+                                           (bibtex-parse-entry t)))))
+                           ;; remove escaped & in the strings
+                           (replace-regexp-in-string "\\\\&" "&"
+                                           (org-ref-reftex-format-citation
+                                            entry
+                                            (cdr (assoc (cdr (assoc "=type=" entry))
+                                                        org-ref-bibliography-entry-format))))))
+                   "")
+                  "</ol>
+#+end_html"))
+
+    ;; now, we need to replace each citation. We do that in reverse order so the
+    ;; positions do not change.
+    (loop for (start end replacement) in (reverse replacements)
+          do
+          (setf (buffer-substring start end) replacement))
+
+    ;; Eliminate bibliography style links
+    (loop for link in (org-element-map
+                          (org-element-parse-buffer) 'link 'identity)
+          if (string= "bibliographystyle"
+                      (org-element-property :type link))
+          do
+          (setf (buffer-substring (org-element-property :begin link)
+                                  (org-element-property :end link))
+                ""))
+
+    ;; replace the bibliography link with the bibliography text
+    (setq bibliography-link (loop for link in (org-element-map
+                                                  (org-element-parse-buffer) 'link 'identity)
+                                  if (string= "bibliography"
+                                              (org-element-property :type link))
+                                  collect link))
+    (if (> (length bibliography-link) 1)
+        (error "Only one bibliography link allowed"))
+
+    (setq bibliography-link (car bibliography-link))
+    (setf (buffer-substring (org-element-property :begin bibliography-link)
+                            (org-element-property :end bibliography-link))
+          bibliography)))
+
+
+(defun org-ref-citation-processor (backend)
+  "Figure out what to call and call it"
+  (let (bibliographystyle)
+    (setq
+     bibliographystyle
+     (org-element-property
+      :path (car
+             (loop for link in
+                   (org-element-map
+                       (org-element-parse-buffer) 'link 'identity)
+                   if (string= "bibliographystyle"
+                               (org-element-property :type link))
+                   collect link))))
+    (funcall (intern (format "org-ref-%s-%s-processor" bibliographystyle backend)))))
+
+(add-hook 'org-export-before-parsing-hook 'org-ref-citation-processor)
+
+(browse-url (org-html-export-to-html))
 \end{minted}
 
 \begin{verbatim}
-ex-aware-wrap
+#<process open ./blog.html>
 \end{verbatim}
+
+
+\subsection{Long appendix illustrating how we got the code to work}
+\label{sec-1-2}
+The first thing we need is a list of all the citation links, in the order cited. Here they are.
+
+\begin{minted}[frame=lines,fontsize=\scriptsize,linenos]{common-lisp}
+(mapcar
+ (lambda (link) (org-element-property :path link))
+ (loop for link in (org-element-map (org-element-parse-buffer) 'link 'identity)
+       if (-contains? org-ref-cite-types (org-element-property :type link))
+       collect link))
+\end{minted}
+\begin{center}
+\begin{tabular}{llllll}
+armiento-2014-high & daza-2014-carbon-dioxid,mehta-2014-ident-poten,suntivich-2014-estim-hybrid & armiento-2014-high & alesi-2012-evaluat-primar & day-1995-scien-englis & armiento-2014-high\\
+\end{tabular}
+\end{center}
+
+Now, we need to compute replacements for each citation link, and construct the bibliography. We will make a numbered, unsorted bibliography, and we want to replace each citation with the corresponding numbers, hyperlinked to the entry.
+
+We start with a list of the keys in the order cited, and a number we will use for each one.
+
+\begin{minted}[frame=lines,fontsize=\scriptsize,linenos]{common-lisp}
+(loop for i from 1
+      for key in (org-ref-get-bibtex-keys)
+      collect (list key i))
+\end{minted}
+
+\begin{center}
+\begin{tabular}{lr}
+armiento-2014-high & 1\\
+daza-2014-carbon-dioxid & 2\\
+mehta-2014-ident-poten & 3\\
+suntivich-2014-estim-hybrid & 4\\
+alesi-2012-evaluat-primar & 5\\
+day-1995-scien-englis & 6\\
+\end{tabular}
+\end{center}
+
+Now, we need to compute replacements for each cite link. This will be replacing each key with the number above. We will return a list of ((start end) . "replacement text") that we can use to replace each link. For fun, we make these superscripted html.
+
+\begin{minted}[frame=lines,fontsize=\scriptsize,linenos]{common-lisp}
+(let ((links (loop for link in (org-element-map (org-element-parse-buffer) 'link 'identity)
+                   if (-contains? org-ref-cite-types (org-element-property :type link))
+                   collect link))
+      (replacements (loop for i from 1
+                          for key in (org-ref-get-bibtex-keys)
+                          collect (list key (number-to-string i)))))
+  (loop for link in links
+        collect (let ((path (org-element-property :path link)))
+                  (dolist (repl replacements)
+                    (setq path (replace-regexp-in-string (car repl) (nth 1 repl) path)))
+                  (list (org-element-property :begin link)
+                        (org-element-property :end link)
+                        (format "<sup>%s</sup>" path)))))
+\end{minted}
+
+\begin{center}
+\begin{tabular}{rrl}
+604 & 628 & <sup>1</sup>\\
+643 & 723 & <sup>2,3,4</sup>\\
+803 & 826 & <sup>1</sup>\\
+924 & 954 & <sup>5</sup>\\
+996 & 1022 & <sup>6</sup>\\
+1062 & 1085 & <sup>1</sup>\\
+\end{tabular}
+\end{center}
+
+We also need to compute the bibliography for each key. We will use org-ref-reftex-format-citation to do this. For that we need the parsed bibtex entries, and a format string. org-ref provides most of this.
+
+\begin{minted}[frame=lines,fontsize=\scriptsize,linenos]{common-lisp}
+(setq org-ref-bibliography-entry-format
+      '(("article" . "<li>%a, %t, <i>%j</i>, <b>%v(%n)</b>, %p (%y). <a href=\"%U\">link</a>. <a href=\"http://dx.doi.org/%D\">doi</a>.</li>")
+        ("book" . "<li>%a, %t, %u (%y).</li>")))
+
+(concat "<h1>Bibliography</h1><br><ol>"
+        (mapconcat
+         'identity
+         (loop for key in (org-ref-get-bibtex-keys)
+               collect
+               (let* ((result (org-ref-get-bibtex-key-and-file key))
+                      (bibfile (cdr result))
+                      (entry (save-excursion
+                               (with-temp-buffer
+                                 (insert-file-contents bibfile)
+                                 (bibtex-set-dialect (parsebib-find-bibtex-dialect) t)
+                                 (bibtex-search-entry key)
+                                 (bibtex-parse-entry)))))
+                 (org-ref-reftex-format-citation
+                  entry
+                  (cdr (assoc (cdr (assoc "=type=" entry))
+                              org-ref-bibliography-entry-format)))))
+         "")
+        "</ol>")
+\end{minted}
 % Emacs 25.0.50.1 (Org mode 8.2.10)
 \end{document}
