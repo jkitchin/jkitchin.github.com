@@ -3,7 +3,7 @@ MODULE Circle
       implicit None
       public :: area
 contains
-      function area(r) 
+      function area(r)
       implicit none
       real, intent(in) :: r
       real :: area
