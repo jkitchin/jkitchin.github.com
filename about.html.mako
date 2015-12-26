@@ -42,15 +42,18 @@ Current PhD students
 Current Master's students
 -------------------------
 
--    Zhaofeng Chen (Dec. 2015)
--    Venkatesh Naik (Dec. 2015)
--    Hari Thirumalai (Dec. 2015)
--    Siddharth Deshpande (Dec. 2015)
+- Chen Wang
+- Akshay Tharval
+- Teng Ma
+- Feiyang Geng
+- Devon Walker
+- Tianyu Gao
 
 Current Undergraduates
 -----------------------
 
--    Matt Palmer (Summer 2015)
+  No positions available
+
 
 Former Group members
 ------------------------
@@ -77,6 +80,12 @@ Former Group members
   - [John Michael](http://orcid.org/0000-0002-1261-4910) (M.S. May 2015)
   - [Mehak Chawla](http://orcid.org/0000-0002-5925-7527) (M.S. May 2015)
   - [Matt Curnan](http://orcid.org/0000-0001-7999-9272) (PhD Summer 2015)   <span id='badgeCont798143' style='width:26px'><script src='http://labs.researcherid.com/mashlets?el=badgeCont798143&mashlet=badge&showTitle=false&className=a&rid=C-7870-2015&size=small'></script></span>
+  - Matt Palmer (UG, Summer 2015)
+  - Zhaofeng Chen (M.S. Dec. 2015)
+  - Venkatesh Naik (M.S. Dec. 2015)
+  - Hari Thirumalai (M.S. Dec. 2015)
+  - Siddharth Deshpande (M.S. Dec. 2015)
+
 
 </%self:filter>
 </article>
