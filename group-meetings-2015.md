@@ -2,8 +2,8 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents">
 <ul>
-<li><a href="#sec-1">1. <span class="timestamp-wrapper"><span class="timestamp">[2016-01-08 Fri]</span></span></a></li>
-<li><a href="#sec-2">2. <span class="timestamp-wrapper"><span class="timestamp">[2016-01-22 Fri]</span></span></a></li>
+<li><a href="#sec-1">1. <span class="timestamp-wrapper"><span class="timestamp">&lt;2016-01-08 Fri&gt;</span></span></a></li>
+<li><a href="#sec-2">2. <span class="timestamp-wrapper"><span class="timestamp">&lt;2016-01-22 Fri&gt;</span></span></a></li>
 <li><a href="#sec-3">3. <span class="timestamp-wrapper"><span class="timestamp">&lt;2016-02-05 Fri&gt;</span></span></a></li>
 <li><a href="#sec-4">4. <span class="timestamp-wrapper"><span class="timestamp">&lt;2016-02-19 Fri&gt;</span></span></a></li>
 <li><a href="#sec-5">5. <span class="timestamp-wrapper"><span class="timestamp">&lt;2016-03-04 Fri&gt;</span></span></a></li>
@@ -16,15 +16,15 @@
 </div>
 </div>
 
-These are scheduled 3pm-4:30pm
+These are scheduled 3pm-4:30pm in Doherty Hall 1102 (conference room across the hall from the Front office).
 
-# <span class="timestamp-wrapper"><span class="timestamp">[2016-01-08 Fri]</span></span><a id="sec-1" name="sec-1"></a>
+# <span class="timestamp-wrapper"><span class="timestamp">&lt;2016-01-08 Fri&gt;</span></span><a id="sec-1" name="sec-1"></a>
 
 -   Introduction
 -   Kenate - introduction
 -   hackathon - one cool solution, one problem to solve
 
-# <span class="timestamp-wrapper"><span class="timestamp">[2016-01-22 Fri]</span></span><a id="sec-2" name="sec-2"></a>
+# <span class="timestamp-wrapper"><span class="timestamp">&lt;2016-01-22 Fri&gt;</span></span><a id="sec-2" name="sec-2"></a>
 
 -   Jake - tutorial (20 minutes)
 -   Alex - research (20 minutes)
@@ -58,7 +58,7 @@ These are scheduled 3pm-4:30pm
 -   Elif - research (20 minutes)
 -   Devon - project proposal (10 minutes)
 -   Feiyang - project proposal (10 minutes)
--   Tianyi - project proposal (10 minutes)
+-   Tianyu - project proposal (10 minutes)
 -   Teng Ma - project proposal (10 minutes)
 -   hackathon - one cool solution, one problem to solve
 
@@ -88,5 +88,5 @@ These are scheduled 3pm-4:30pm
 -   Elif - research (20 minutes)
 -   Devon - project update (10 minutes)
 -   Feiyang - project update (10 minutes)
--   Tianyi - project update (10 minutes)
+-   Tianyu - project update (10 minutes)
 -   Teng Ma - project update (10 minutes)
