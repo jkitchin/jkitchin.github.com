@@ -4,6 +4,7 @@
 
 Group meeting schedule
 
-<%include file="group-meetings-2015.md"/>
+See https://github.com/KitchinHUB/kitchingroup/blob/master/group-meetings-2015.org
+
 </%self:filter>
 </article>
