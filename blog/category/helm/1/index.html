@@ -83,6 +83,183 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Modern-use-of-helm-sortable-candidates"></div>
+      <h2 class="blog_post_title"><a href="/blog/2016/01/24/Modern-use-of-helm-sortable-candidates/" rel="bookmark" title="Permanent Link to Modern use of helm - sortable candidates">Modern use of helm - sortable candidates</a></h2>
+      <p><small><span class="blog_post_date">Posted January 24, 2016 at 02:48 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/helm/'>helm</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2016/01/24/Modern-use-of-helm-sortable-candidates#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+<a href="https://github.com/emacs-helm/helm">helm</a> continues to be my goto completion engine. I was perusing the source for helm-top, and noticed some cool new features, like sorting the candidates in the completion buffer! I also noticed that helm sources are preferably created with some new factory functions (as opposed to the a-lists I used to use). Here I explore some of these and illustrate how to make a sortable helm source.
+</p>
+
+<p>
+First, we need a function to give us some candidates we will select from. I will use a function that returns a list of cons cells from a variable containing some data where each element in the data is a plist containing a number and key. I list strings as the number and key  so we can see what sorting does later. The data is just a list of plists containing a "number" and a key that is a string. We will create a helm function with these as candidates, and an ability to sort them in ascending/descending order on either the number or key.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">setq</span> h-data '((<span style="color: #006FE0;">:num</span> 1 <span style="color: #006FE0;">:key</span> <span style="color: #008000;">"apple"</span>)
+               (<span style="color: #006FE0;">:num</span> 9 <span style="color: #006FE0;">:key</span> <span style="color: #008000;">"berry"</span>)
+               (<span style="color: #006FE0;">:num</span> 2 <span style="color: #006FE0;">:key</span> <span style="color: #008000;">"cactus"</span>)
+               (<span style="color: #006FE0;">:num</span> 5 <span style="color: #006FE0;">:key</span> <span style="color: #008000;">"dog"</span>)
+               (<span style="color: #006FE0;">:num</span> 4 <span style="color: #006FE0;">:key</span> <span style="color: #008000;">"frog"</span>)))
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">h-candidates</span> ()
+  <span style="color: #036A07;">"Returns candidates for the helm source."</span>
+  (<span style="color: #0000FF;">loop</span> for cand in h-data
+        collect (cons (format <span style="color: #008000;">"%s %s"</span>
+                              (plist-get cand <span style="color: #006FE0;">:num</span>)
+                              (plist-get cand <span style="color: #006FE0;">:key</span>))
+                      cand)))
+
+(print (h-candidates))
+</pre>
+</div>
+
+<pre class="example">
+(("1 apple" :num 1 :key "apple") ("9 berry" :num 9 :key "berry") ("2 cactus" :num 2 :key "cactus") ("5 dog" :num 5 :key "dog") ("4 frog" :num 4 :key "frog"))
+</pre>
+
+
+<p>
+Now, provide sorting, we need to create a candidate transformer function. This function will take the current candidates and source, and return a new list of candidates, possibly sorted. We use a variable to store how to sort the candidates. We also need a way to trigger the sorting. We will bind M-&lt;down&gt; to a function that will set the sort function, and refresh helm. Here is a keymap definition we will use later.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">h-map</span>
+  (<span style="color: #0000FF;">let</span> ((map (make-sparse-keymap)))
+    (set-keymap-parent map helm-map)
+    (define-key map (kbd <span style="color: #008000;">"M-&lt;down&gt;"</span>)   'h-sort)
+    map)
+  <span style="color: #036A07;">"keymap for a helm source."</span>)
+</pre>
+</div>
+
+<pre class="example">
+h-map
+</pre>
+
+<p>
+Now, we define the sort variable, a function that sets the variable, refreshes the candidates, and finally resets the sort variable. A key point here is the sort functions must take two arguments, which will be two candidates, and each candidate is of the form (string . data). We want to sort on one of the elements in the data plists for this example.
+</p>
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">h-sort-fn</span> nil)
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">h-sort</span> ()
+  (<span style="color: #0000FF;">interactive</span>)
+  (<span style="color: #0000FF;">let</span> ((action (read-char <span style="color: #008000;">"#decreasing (d) | #increasing (i) | a-z (a) | z-a (z: "</span>)))
+    (<span style="color: #0000FF;">cond</span>
+     ((eq action ?d)
+      (<span style="color: #0000FF;">setq</span> h-sort-fn (<span style="color: #0000FF;">lambda</span> (c1 c2) (&gt; (plist-get (cdr c1) <span style="color: #006FE0;">:num</span>) (plist-get (cdr c2) <span style="color: #006FE0;">:num</span>)))))
+     ((eq action ?i)
+      (<span style="color: #0000FF;">setq</span> h-sort-fn (<span style="color: #0000FF;">lambda</span> (c1 c2) (&lt; (plist-get (cdr c1) <span style="color: #006FE0;">:num</span>) (plist-get (cdr c2) <span style="color: #006FE0;">:num</span>)))))
+     ((eq action ?a)
+      (<span style="color: #0000FF;">setq</span> h-sort-fn (<span style="color: #0000FF;">lambda</span> (c1 c2) (string&lt; (plist-get (cdr c1) <span style="color: #006FE0;">:key</span>) (plist-get (cdr c2) <span style="color: #006FE0;">:key</span>)))))
+     ((eq action ?z)
+      (<span style="color: #0000FF;">setq</span> h-sort-fn (<span style="color: #0000FF;">lambda</span> (c1 c2) (string&gt; (plist-get (cdr c1) <span style="color: #006FE0;">:key</span>) (plist-get (cdr c2) <span style="color: #006FE0;">:key</span>)))))
+     (t (<span style="color: #0000FF;">setq</span> h-sort-fn nil)))
+     (helm-refresh)
+     (<span style="color: #0000FF;">setq</span> h-sort-fn nil)))
+</pre>
+</div>
+
+<pre class="example">
+h-sort
+</pre>
+
+<p>
+Next, we define a candidate transformer. This function takes the list of candidates and the source. Here, if we have defined a sort function, we use it to sort the candidates, and if not, return the candidates. A subtle point here is the use of -sort from dash.el, which does not modify the original list at all. The build in function sort does modify the candidate list somehow, and it does not work the way you want it to here. This function gets run as the helm pattern changes.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">h-candidate-transformer</span> (candidates source)
+  (<span style="color: #0000FF;">if</span> h-sort-fn
+    (<span style="color: #0000FF;">progn</span> (message <span style="color: #008000;">"Sorting with %s"</span> h-sort-fn)
+    (<span style="color: #0000FF;">-sort</span> h-sort-fn candidates))
+  candidates))
+</pre>
+</div>
+
+<pre class="example">
+h-candidate-transformer
+</pre>
+
+<p>
+Now, just for fun, we show that dynamically defined actions are possible. Here, we generate an action list that is different for even and odd numbers. These actions are pretty trivial, but give you an idea of what might be possible; custom, context specific actions.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp"><span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Make dynamic actions based on the candidate selected</span>
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">h-action-transformer</span> (actions candidate)
+  <span style="color: #036A07;">"Candidate is the result selected."</span>
+  (<span style="color: #0000FF;">if</span> (evenp (plist-get candidate <span style="color: #006FE0;">:num</span>))
+      '((<span style="color: #008000;">"Even"</span> . identity))
+    '((<span style="color: #008000;">"Odd"</span> . identity))))
+</pre>
+</div>
+
+<pre class="example">
+h-action-transformer
+</pre>
+
+<p>
+Finally, we are ready to create a helm source. We use the new factory function for creating the source with our keymap, candidates and transformer functions.
+</p>
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">setq</span> h-source
+      (<span style="color: #0000FF;">helm-build-sync-source</span> <span style="color: #008000;">"number-selector"</span>
+        <span style="color: #006FE0;">:keymap</span> h-map
+        <span style="color: #006FE0;">:candidates</span> #'h-candidates
+        <span style="color: #006FE0;">:filtered-candidate-transformer</span> #'h-candidate-transformer
+        <span style="color: #006FE0;">:action-transformer</span> #'h-action-transformer))
+</pre>
+</div>
+
+<p>
+Now, you can run the helm source like this.
+</p>
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(helm <span style="color: #006FE0;">:sources</span> 'h-source)
+</pre>
+</div>
+
+<p>
+You can sort the numbers in descending order by typing M-&lt;down&gt; and pressing d. To get ascending order, press i instead. To sort on the keys, type a sort from a to z, and press z to sort on z to a. If you press tab on a selection, you will see that the actions you get depend on whether the selection is an even or odd number! So, you can get some context specific actions depending on your selection. Pretty awesome.
+</p>
+<p>Copyright (C) 2016 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2016/01/24/Modern-use-of-helm---sortable-candidates.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2016/01/24/Modern-use-of-helm-sortable-candidates#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="LDAP-lookups-from-Emacs"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/11/25/LDAP-lookups-from-Emacs/" rel="bookmark" title="Permanent Link to LDAP lookups from Emacs">LDAP lookups from Emacs</a></h2>
       <p><small><span class="blog_post_date">Posted November 25, 2015 at 09:31 AM</span> | categories:
@@ -672,78 +849,6 @@ Interesting to me is that there are not a lot of actions in here. I mostly use t
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/02/04/Helm-at-the-Emacs#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="helm-and-prefix-functions"></div>
-      <h2 class="blog_post_title"><a href="/blog/2015/02/03/helm-and-prefix-functions/" rel="bookmark" title="Permanent Link to helm and prefix functions">helm and prefix functions</a></h2>
-      <p><small><span class="blog_post_date">Posted February 03, 2015 at 11:12 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/helm/'>helm</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2015/02/03/helm-and-prefix-functions#disqus_thread">View Comments</a>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-Helm modifies how you use <a href="https://www.gnu.org/software/emacs/manual/html_node/elisp/Prefix-Command-Arguments.html">prefix arguments</a> in Emacs. A prefix argument is when you type C-u before a command to modify its behavior. There are a few variations of prefix arguments. Basically, pressing C-u once sets a prefix variable to '(4), pressing twice sets it to '(16). Alternatively, C-u 7 sets the prefix to 7. In regular emacs commands, you type the prefix keys before the command. In helm, you type the after you enter the helm selection buffer, and before you press enter or select your action. In helm, you access the prefix arg in the variable helm-current-prefix-arg. Let us look at how you might use it.
-</p>
-
-<p>
-We make an action function that does something conditionally depending on the prefix arg. Yes, you could write several functions to accomplish that too, but maybe there is just a little difference that you can use the prefix arg to handle. What you cannot remember 4 prefix options? You do write good doc strings on your functions right ;) If not, you probably ought to write four functions with meaningful names, and meaningful helm descriptions!
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">action</span> (candidate)
-  <span style="color: #036A07;">"Our action function.</span>
-<span style="color: #036A07;">with no prefix message no prefix arg</span>
-<span style="color: #036A07;">with one prefix arg message C-u</span>
-<span style="color: #036A07;">with two prefix args message C-u C-u</span>
-<span style="color: #036A07;">with a numeric prefix arg, message the number."</span>
-  (interactive <span style="color: #008000;">"p"</span>)
-  (<span style="color: #0000FF;">cond</span>
-   ((eq nil helm-current-prefix-arg)
-    (message-box <span style="color: #008000;">"no prefix arg"</span>))
-   ((equal helm-current-prefix-arg '(4))
-    (message-box <span style="color: #008000;">"C-u"</span>))
-   ((equal helm-current-prefix-arg '(16))
-    (message-box <span style="color: #008000;">"C-u C-u"</span>))
-   (t
-    (message-box (format <span style="color: #008000;">"C-u %s"</span> helm-current-prefix-arg)))))
-
-(setq some-helm-source
-      '((name . <span style="color: #008000;">"HELM at the Emacs"</span>)
-        (candidates . (1 2 3 4))
-        (action . action)))
-
-(helm <span style="color: #006FE0;">:sources</span> '(some-helm-source))
-</pre>
-</div>
-
-<pre class="example">
-C-u (64)
-</pre>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/02/03/helm-and-prefix-functions.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/02/03/helm-and-prefix-functions#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="/blog/category/helm/2">Next Page »</a>
 
           </div>
@@ -783,11 +888,11 @@ C-u (64)
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2016/01/24/Modern-use-of-helm-sortable-candidates/">Modern use of helm - sortable candidates</a></li>
       <li><a href="/blog/2016/01/17/Side-by-side-figures-in-org-mode-for-different-export-outputs/">Side by side figures in org-mode for different export outputs</a></li>
       <li><a href="/blog/2016/01/16/Colored-text-in-org-mode-with-export-to-HTML/">Colored text in org-mode with export to HTML</a></li>
       <li><a href="/blog/2015/12/26/2015-in-a-nutshell-for-the-Kitchin-Research-Group/">2015 in a nutshell for the Kitchin Research Group</a></li>
       <li><a href="/blog/2015/12/22/org-ref-is-on-Melpa/">org-ref is on Melpa</a></li>
-      <li><a href="/blog/2015/12/11/Introduction-to-a-citation-processor-in-org-ref/">Introduction to a citation processor in org-ref</a></li>
     </ul>
   </section>
 

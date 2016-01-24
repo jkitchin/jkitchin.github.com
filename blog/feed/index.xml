@@ -10,10 +10,167 @@
     <title>The Kitchin Research Group</title>
     <link>http://jkitchin.github.io/blog</link>
     <description>Chemical Engineering at Carnegie Mellon University</description>
-    <pubDate>Mon, 18 Jan 2016 17:37:35 GMT</pubDate>
+    <pubDate>Sun, 24 Jan 2016 19:48:30 GMT</pubDate>
     <generator>Blogofile</generator>
     <sy:updatePeriod>hourly</sy:updatePeriod>
     <sy:updateFrequency>1</sy:updateFrequency>
+    <item>
+      <title>Modern use of helm - sortable candidates</title>
+      <link>http://jkitchin.github.io/blog/2016/01/24/Modern-use-of-helm-sortable-candidates</link>
+      <pubDate>Sun, 24 Jan 2016 14:48:13 EST</pubDate>
+      <category><![CDATA[helm]]></category>
+      <category><![CDATA[emacs]]></category>
+      <guid isPermaLink="false">ZnitoN0_UnTciejiQ08oPeIrO0w=</guid>
+      <description>Modern use of helm - sortable candidates</description>
+      <content:encoded><![CDATA[
+
+
+<p>
+<a href="https://github.com/emacs-helm/helm">helm</a> continues to be my goto completion engine. I was perusing the source for helm-top, and noticed some cool new features, like sorting the candidates in the completion buffer! I also noticed that helm sources are preferably created with some new factory functions (as opposed to the a-lists I used to use). Here I explore some of these and illustrate how to make a sortable helm source.
+</p>
+
+<p>
+First, we need a function to give us some candidates we will select from. I will use a function that returns a list of cons cells from a variable containing some data where each element in the data is a plist containing a number and key. I list strings as the number and key  so we can see what sorting does later. The data is just a list of plists containing a "number" and a key that is a string. We will create a helm function with these as candidates, and an ability to sort them in ascending/descending order on either the number or key.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">setq</span> h-data '((<span style="color: #006FE0;">:num</span> 1 <span style="color: #006FE0;">:key</span> <span style="color: #008000;">"apple"</span>)
+               (<span style="color: #006FE0;">:num</span> 9 <span style="color: #006FE0;">:key</span> <span style="color: #008000;">"berry"</span>)
+               (<span style="color: #006FE0;">:num</span> 2 <span style="color: #006FE0;">:key</span> <span style="color: #008000;">"cactus"</span>)
+               (<span style="color: #006FE0;">:num</span> 5 <span style="color: #006FE0;">:key</span> <span style="color: #008000;">"dog"</span>)
+               (<span style="color: #006FE0;">:num</span> 4 <span style="color: #006FE0;">:key</span> <span style="color: #008000;">"frog"</span>)))
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">h-candidates</span> ()
+  <span style="color: #036A07;">"Returns candidates for the helm source."</span>
+  (<span style="color: #0000FF;">loop</span> for cand in h-data
+        collect (cons (format <span style="color: #008000;">"%s %s"</span>
+                              (plist-get cand <span style="color: #006FE0;">:num</span>)
+                              (plist-get cand <span style="color: #006FE0;">:key</span>))
+                      cand)))
+
+(print (h-candidates))
+</pre>
+</div>
+
+<pre class="example">
+(("1 apple" :num 1 :key "apple") ("9 berry" :num 9 :key "berry") ("2 cactus" :num 2 :key "cactus") ("5 dog" :num 5 :key "dog") ("4 frog" :num 4 :key "frog"))
+</pre>
+
+
+<p>
+Now, provide sorting, we need to create a candidate transformer function. This function will take the current candidates and source, and return a new list of candidates, possibly sorted. We use a variable to store how to sort the candidates. We also need a way to trigger the sorting. We will bind M-&lt;down&gt; to a function that will set the sort function, and refresh helm. Here is a keymap definition we will use later.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">h-map</span>
+  (<span style="color: #0000FF;">let</span> ((map (make-sparse-keymap)))
+    (set-keymap-parent map helm-map)
+    (define-key map (kbd <span style="color: #008000;">"M-&lt;down&gt;"</span>)   'h-sort)
+    map)
+  <span style="color: #036A07;">"keymap for a helm source."</span>)
+</pre>
+</div>
+
+<pre class="example">
+h-map
+</pre>
+
+<p>
+Now, we define the sort variable, a function that sets the variable, refreshes the candidates, and finally resets the sort variable. A key point here is the sort functions must take two arguments, which will be two candidates, and each candidate is of the form (string . data). We want to sort on one of the elements in the data plists for this example.
+</p>
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">h-sort-fn</span> nil)
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">h-sort</span> ()
+  (<span style="color: #0000FF;">interactive</span>)
+  (<span style="color: #0000FF;">let</span> ((action (read-char <span style="color: #008000;">"#decreasing (d) | #increasing (i) | a-z (a) | z-a (z: "</span>)))
+    (<span style="color: #0000FF;">cond</span>
+     ((eq action ?d)
+      (<span style="color: #0000FF;">setq</span> h-sort-fn (<span style="color: #0000FF;">lambda</span> (c1 c2) (&gt; (plist-get (cdr c1) <span style="color: #006FE0;">:num</span>) (plist-get (cdr c2) <span style="color: #006FE0;">:num</span>)))))
+     ((eq action ?i)
+      (<span style="color: #0000FF;">setq</span> h-sort-fn (<span style="color: #0000FF;">lambda</span> (c1 c2) (&lt; (plist-get (cdr c1) <span style="color: #006FE0;">:num</span>) (plist-get (cdr c2) <span style="color: #006FE0;">:num</span>)))))
+     ((eq action ?a)
+      (<span style="color: #0000FF;">setq</span> h-sort-fn (<span style="color: #0000FF;">lambda</span> (c1 c2) (string&lt; (plist-get (cdr c1) <span style="color: #006FE0;">:key</span>) (plist-get (cdr c2) <span style="color: #006FE0;">:key</span>)))))
+     ((eq action ?z)
+      (<span style="color: #0000FF;">setq</span> h-sort-fn (<span style="color: #0000FF;">lambda</span> (c1 c2) (string&gt; (plist-get (cdr c1) <span style="color: #006FE0;">:key</span>) (plist-get (cdr c2) <span style="color: #006FE0;">:key</span>)))))
+     (t (<span style="color: #0000FF;">setq</span> h-sort-fn nil)))
+     (helm-refresh)
+     (<span style="color: #0000FF;">setq</span> h-sort-fn nil)))
+</pre>
+</div>
+
+<pre class="example">
+h-sort
+</pre>
+
+<p>
+Next, we define a candidate transformer. This function takes the list of candidates and the source. Here, if we have defined a sort function, we use it to sort the candidates, and if not, return the candidates. A subtle point here is the use of -sort from dash.el, which does not modify the original list at all. The build in function sort does modify the candidate list somehow, and it does not work the way you want it to here. This function gets run as the helm pattern changes.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">h-candidate-transformer</span> (candidates source)
+  (<span style="color: #0000FF;">if</span> h-sort-fn
+    (<span style="color: #0000FF;">progn</span> (message <span style="color: #008000;">"Sorting with %s"</span> h-sort-fn)
+    (<span style="color: #0000FF;">-sort</span> h-sort-fn candidates))
+  candidates))
+</pre>
+</div>
+
+<pre class="example">
+h-candidate-transformer
+</pre>
+
+<p>
+Now, just for fun, we show that dynamically defined actions are possible. Here, we generate an action list that is different for even and odd numbers. These actions are pretty trivial, but give you an idea of what might be possible; custom, context specific actions.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp"><span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Make dynamic actions based on the candidate selected</span>
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">h-action-transformer</span> (actions candidate)
+  <span style="color: #036A07;">"Candidate is the result selected."</span>
+  (<span style="color: #0000FF;">if</span> (evenp (plist-get candidate <span style="color: #006FE0;">:num</span>))
+      '((<span style="color: #008000;">"Even"</span> . identity))
+    '((<span style="color: #008000;">"Odd"</span> . identity))))
+</pre>
+</div>
+
+<pre class="example">
+h-action-transformer
+</pre>
+
+<p>
+Finally, we are ready to create a helm source. We use the new factory function for creating the source with our keymap, candidates and transformer functions.
+</p>
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">setq</span> h-source
+      (<span style="color: #0000FF;">helm-build-sync-source</span> <span style="color: #008000;">"number-selector"</span>
+        <span style="color: #006FE0;">:keymap</span> h-map
+        <span style="color: #006FE0;">:candidates</span> #'h-candidates
+        <span style="color: #006FE0;">:filtered-candidate-transformer</span> #'h-candidate-transformer
+        <span style="color: #006FE0;">:action-transformer</span> #'h-action-transformer))
+</pre>
+</div>
+
+<p>
+Now, you can run the helm source like this.
+</p>
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(helm <span style="color: #006FE0;">:sources</span> 'h-source)
+</pre>
+</div>
+
+<p>
+You can sort the numbers in descending order by typing M-&lt;down&gt; and pressing d. To get ascending order, press i instead. To sort on the keys, type a sort from a to z, and press z to sort on z to a. If you press tab on a selection, you will see that the actions you get depend on whether the selection is an even or odd number! So, you can get some context specific actions depending on your selection. Pretty awesome.
+</p>
+<p>Copyright (C) 2016 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2016/01/24/Modern-use-of-helm---sortable-candidates.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>]]></content:encoded>
+    </item>
     <item>
       <title>Side by side figures in org-mode for different export outputs</title>
       <link>http://jkitchin.github.io/blog/2016/01/17/Side-by-side-figures-in-org-mode-for-different-export-outputs</link>
@@ -3031,88 +3188,6 @@ checkbox
 </div>
 </div>
 <p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/11/24/Contextual-help-in-org-mode.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>]]></content:encoded>
-    </item>
-    <item>
-      <title>Improving org-ref cite links with tooltips</title>
-      <link>http://jkitchin.github.io/blog/2015/11/23/Improving-org-ref-cite-links-with-tooltips</link>
-      <pubDate>Mon, 23 Nov 2015 07:03:06 EST</pubDate>
-      <category><![CDATA[orgmode]]></category>
-      <category><![CDATA[orgref]]></category>
-      <category><![CDATA[emacs]]></category>
-      <guid isPermaLink="false">WqjVfuR5LraRWeyrPxlGjCdNs1U=</guid>
-      <description>Improving org-ref cite links with tooltips</description>
-      <content:encoded><![CDATA[
-
-
-<p>
-Org-ref uses timers to give you messages about the cite link at point. I am not so crazy about the timer, there is always a (short) delay, and I have had trouble debugging timers in the past, and you have to put the point on the link. Since I wrote that code, I have learned some new things about Emacs, including dynamic tooltips. This will allow me to use the mouse to see what a cite link refers to. While reading documents, I am more likely to use a mouse than when typing a document, and getting a tooltip by hovering sounds like a good idea.
-</p>
-
-<p>
-Here, we explore using dynamic tooltips on cite links. The idea is pretty simple, we tie into font-lock to add a function to the :help-echo property of a cite link. The function will go to point, and compute the citation string at point, which will be displayed as a tooltip when the mouse hovers over the citation.
-</p>
-
-<p>
-Font-lock allows you to specify a function that sets match-data and that can have other side-effects, e.g. setting text properties. Org-ref has a regexp that defines cite links, which we use here, and a function that gets the citation string at point. We just go to the mouse position, and get that string, wrapped in a save-excursion macro so that point does not actually move. Then, we add the function to font-lock keywords, and we are done!
-</p>
-
-<p>
-Here are some papers we wrote on using org-mode
-<a class='org-ref-reference' href="#kitchin-2015-examp">kitchin-2015-examp</a>,<a class='org-ref-reference' href="#kitchin-2015-data-surfac-scien">kitchin-2015-data-surfac-scien</a> and some other references
-in my bibliography <a class='org-ref-reference' href="#zou-2014-cobal-embed">zou-2014-cobal-embed</a>,<a class='org-ref-reference' href="#zlotea-2014-nanoal">zlotea-2014-nanoal</a> and one final
-example <a class='org-ref-reference' href="#zhu-2015">zhu-2015</a>.
-</p>
-
-
-<p>
-Here is the short code required to do this. You can see the tooltips in action here: <a href="https://www.youtube.com/watch?v=ifSmlId2rk0">https://www.youtube.com/watch?v=ifSmlId2rk0</a> 
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-ref-match-next-cite-link</span> (<span style="color: #6434A3;">&amp;optional</span> limit)
-  (<span style="color: #0000FF;">when</span> (re-search-forward org-ref-cite-re limit t)
-    (add-text-properties
-     (match-beginning 0) (match-end 0)
-     (list
-      'help-echo (<span style="color: #0000FF;">lambda</span> (window object position)
-                   (<span style="color: #0000FF;">save-excursion</span>
-                     (goto-char position)
-                     (<span style="color: #0000FF;">let</span> ((s (org-ref-get-citation-string-at-point)))
-                       (<span style="color: #0000FF;">with-temp-buffer</span>
-                         (insert s)
-                         (fill-paragraph)
-                         (buffer-string)))))))))
-
-<span style="color: #8D8D84;">; </span><span style="color: #8D8D84; font-style: italic;">do this for this buffer</span>
-(font-lock-add-keywords
-    nil
-    '((org-ref-match-next-cite-link (0  'org-ref-cite-face t)))
-    t)
-(font-lock-fontify-buffer)
-
-<span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">do this for every org file</span>
-(add-hook
- 'org-mode-hook
- (<span style="color: #0000FF;">lambda</span> ()
-   (font-lock-add-keywords
-    nil
-    '((org-ref-match-next-cite-link (0  'org-ref-cite-face t)))
-    t)))
-</pre>
-</div>
-
-
-<p>
-<h1 class='org-ref-bib-h1'>Bibliography</h1>
-<ul class='org-ref-bib'><li><a id="kitchin-2015-data-surfac-scien">[kitchin-2015-data-surfac-scien] "John Kitchin", Data Sharing in Surface Science, <i>"Surface Science "</i>, <b>(0)</b>,  -  (2015). <a href="http://www.sciencedirect.com/science/article/pii/S0039602815001326">link</a>. <a href="http://dx.doi.org/10.1016/j.susc.2015.05.007">doi</a>.</a></li>
-<li><a id="kitchin-2015-examp">[kitchin-2015-examp] Kitchin, Examples of Effective Data Sharing in Scientific Publishing, <i>ACS Catalysis</i>, <b>5(6)</b>, 3894-3899 (2015). <a href=" http://dx.doi.org/10.1021/acscatal.5b00538 ">link</a>. <a href="http://dx.doi.org/10.1021/acscatal.5b00538">doi</a>.</a></li>
-<li><a id="zhu-2015">[zhu-2015] Yinlong Zhu, Wei Zhou, Zhi-Gang Chen, Yubo Chen, , Chao Su, Moses Tad\'e & Zongping Shao, \ceSrNb_0.1Co_0.7Fe_0.2 O_3-$\delta$ Perovskite As a  Next-Generation Electrocatalyst for Oxygen Evolution in  Alkaline Solution, <i>Angew. Chem. Int. Ed.</i>, <b>54(13)</b>, 3897-3901 (2015). <a href="http://dx.doi.org/10.1002/anie.201408998">link</a>. <a href="http://dx.doi.org/10.1002/anie.201408998">doi</a>.</a></li>
-<li><a id="zlotea-2014-nanoal">[zlotea-2014-nanoal] Zlotea, Morfin, Nguyen, Nguyen, , Nelayah, Ricolleau, Latroche & Piccolo, Nanoalloying Bulk-Immiscible Iridium and Palladium Inhibits  Hydride Formation and Promotes Catalytic Performances, <i>Nanoscale</i>, <b>6(17)</b>, 9955 (2014). <a href="http://dx.doi.org/10.1039/C4NR02836H">link</a>. <a href="http://dx.doi.org/10.1039/c4nr02836h">doi</a>.</a></li>
-<li><a id="zou-2014-cobal-embed">[zou-2014-cobal-embed] Zou, Huang, Goswami, , Silva, Sathe, Mikmekov\'a, ska & Asefa, Cobalt-Embedded Nitrogen-Rich Carbon Nanotubes Efficiently  Catalyze Hydrogen Evolution Reaction At All pH Values, <i>Angewandte Chemie</i>, <b></b>, 4461-4465 (2014). <a href="http://dx.doi.org/10.1002/ange.201311111">link</a>. <a href="http://dx.doi.org/10.1002/ange.201311111">doi</a>.</a></li>
-</ul>
-</p>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/11/23/Improving-org-ref-cite-links-with-tooltips.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>]]></content:encoded>
     </item>
   </channel>
 </rss>
