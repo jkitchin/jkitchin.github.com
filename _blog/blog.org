@@ -1,3 +1,347 @@
+* Modern use of helm - sortable candidates
+  :PROPERTIES:
+  :categories: emacs,helm
+  :date:     2016/01/24 14:48:13
+  :updated:  2016/01/24 14:48:13
+  :END:
+[[https://github.com/emacs-helm/helm][helm]] continues to be my goto completion engine. I was perusing the source for helm-top, and noticed some cool new features, like sorting the candidates in the completion buffer! I also noticed that helm sources are preferably created with some new factory functions (as opposed to the a-lists I used to use). Here I explore some of these and illustrate how to make a sortable helm source.
+
+First, we need a function to give us some candidates we will select from. I will use a function that returns a list of cons cells from a variable containing some data where each element in the data is a plist containing a number and key. I list strings as the number and key  so we can see what sorting does later. The data is just a list of plists containing a "number" and a key that is a string. We will create a helm function with these as candidates, and an ability to sort them in ascending/descending order on either the number or key.
+
+#+BEGIN_SRC emacs-lisp :results output
+(setq h-data '((:num 1 :key "apple")
+	       (:num 9 :key "berry")
+	       (:num 2 :key "cactus")
+	       (:num 5 :key "dog")
+	       (:num 4 :key "frog")))
+
+(defun h-candidates ()
+  "Returns candidates for the helm source."
+  (loop for cand in h-data
+	collect (cons (format "%s %s"
+			      (plist-get cand :num)
+			      (plist-get cand :key))
+		      cand)))
+
+(print (h-candidates))
+#+END_SRC
+
+#+RESULTS:
+:
+: (("1 apple" :num 1 :key "apple") ("9 berry" :num 9 :key "berry") ("2 cactus" :num 2 :key "cactus") ("5 dog" :num 5 :key "dog") ("4 frog" :num 4 :key "frog"))
+
+
+Now, provide sorting, we need to create a candidate transformer function. This function will take the current candidates and source, and return a new list of candidates, possibly sorted. We use a variable to store how to sort the candidates. We also need a way to trigger the sorting. We will bind M-<down> to a function that will set the sort function, and refresh helm. Here is a keymap definition we will use later.
+
+#+BEGIN_SRC emacs-lisp
+(defvar h-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map helm-map)
+    (define-key map (kbd "M-<down>")   'h-sort)
+    map)
+  "keymap for a helm source.")
+#+END_SRC
+
+#+RESULTS:
+: h-map
+
+Now, we define the sort variable, a function that sets the variable, refreshes the candidates, and finally resets the sort variable. A key point here is the sort functions must take two arguments, which will be two candidates, and each candidate is of the form (string . data). We want to sort on one of the elements in the data plists for this example.
+#+BEGIN_SRC emacs-lisp
+(defvar h-sort-fn nil)
+
+(defun h-sort ()
+  (interactive)
+  (let ((action (read-char "#decreasing (d) | #increasing (i) | a-z (a) | z-a (z: ")))
+    (cond
+     ((eq action ?d)
+      (setq h-sort-fn (lambda (c1 c2) (> (plist-get (cdr c1) :num) (plist-get (cdr c2) :num)))))
+     ((eq action ?i)
+      (setq h-sort-fn (lambda (c1 c2) (< (plist-get (cdr c1) :num) (plist-get (cdr c2) :num)))))
+     ((eq action ?a)
+      (setq h-sort-fn (lambda (c1 c2) (string< (plist-get (cdr c1) :key) (plist-get (cdr c2) :key)))))
+     ((eq action ?z)
+      (setq h-sort-fn (lambda (c1 c2) (string> (plist-get (cdr c1) :key) (plist-get (cdr c2) :key)))))
+     (t (setq h-sort-fn nil)))
+     (helm-refresh)
+     (setq h-sort-fn nil)))
+#+END_SRC
+
+#+RESULTS:
+: h-sort
+
+Next, we define a candidate transformer. This function takes the list of candidates and the source. Here, if we have defined a sort function, we use it to sort the candidates, and if not, return the candidates. A subtle point here is the use of -sort from dash.el, which does not modify the original list at all. The build in function sort does modify the candidate list somehow, and it does not work the way you want it to here. This function gets run as the helm pattern changes.
+
+#+BEGIN_SRC emacs-lisp
+(defun h-candidate-transformer (candidates source)
+  (if h-sort-fn
+    (progn (message "Sorting with %s" h-sort-fn)
+    (-sort h-sort-fn candidates))
+  candidates))
+#+END_SRC
+
+#+RESULTS:
+: h-candidate-transformer
+
+Now, just for fun, we show that dynamically defined actions are possible. Here, we generate an action list that is different for even and odd numbers. These actions are pretty trivial, but give you an idea of what might be possible; custom, context specific actions.
+
+#+BEGIN_SRC emacs-lisp
+;; Make dynamic actions based on the candidate selected
+(defun h-action-transformer (actions candidate)
+  "Candidate is the result selected."
+  (if (evenp (plist-get candidate :num))
+      '(("Even" . identity))
+    '(("Odd" . identity))))
+#+END_SRC
+
+#+RESULTS:
+: h-action-transformer
+
+Finally, we are ready to create a helm source. We use the new factory function for creating the source with our keymap, candidates and transformer functions.
+#+BEGIN_SRC emacs-lisp
+(setq h-source
+      (helm-build-sync-source "number-selector"
+	:keymap h-map
+        :candidates #'h-candidates
+        :filtered-candidate-transformer #'h-candidate-transformer
+	:action-transformer #'h-action-transformer))
+#+END_SRC
+
+#+RESULTS:
+
+Now, you can run the helm source like this.
+#+BEGIN_SRC emacs-lisp
+(helm :sources 'h-source)
+#+END_SRC
+
+#+RESULTS:
+
+You can sort the numbers in descending order by typing M-<down> and pressing d. To get ascending order, press i instead. To sort on the keys, type a sort from a to z, and press z to sort on z to a. If you press tab on a selection, you will see that the actions you get depend on whether the selection is an even or odd number! So, you can get some context specific actions depending on your selection. Pretty awesome.
+
+
+
+* A new helm-bibtex selector
+
+#+BEGIN_SRC emacs-lisp
+(mapcar 'car or-bibtex-cache-data)
+#+END_SRC
+
+#+RESULTS:
+| hashes | candidates |
+
+#+BEGIN_SRC emacs-lisp
+(assoc 'hashes or-bibtex-cache-data)
+#+END_SRC
+
+#+RESULTS:
+| hashes | (~/Dropbox/bibliography/references.bib . a66900b30e17fcf69fbdfabe8269ac1ae573ececfb1b099ba1fd6511508b9d53) | quote | nil |
+
+
+#+BEGIN_SRC emacs-lisp :results output
+(progn (find-file "~/Dropbox/bibliography/references.bib")
+(goto-char (point-min))
+(parsebib-find-next-item)
+(print (parsebib-read-entry (parsebib-find-next-item))))
+#+END_SRC
+
+#+RESULTS:
+:
+: (("type" . "{Journal Article}") ("year" . "{2007}") ("volume" . "{http://science.energy.gov/~/media/bes/pdf/reports/files/cat_rpt.pdf}") ("journal" . "{DOE Report}") ("title" . "{Basic Research Needs: Catalysis for Energy}") ("=type=" . #("article" 0 7 (fontified t face font-lock-function-name-face))) ("=key=" . "2007-basic-resear-needs"))
+
+
+
+
+
+#+BEGIN_SRC emacs-lisp :results code
+(let ((entry (cdr (assoc (car (org-ref-find-bibliography))
+			 (cdr (assoc 'candidates or-bibtex-cache-data))))))
+entry
+  )
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC emacs-lisp
+(", The ACS Style Guide (2006)." "2006-acs-style-guide" "/Users/jkitchin/Dropbox/bibliography/references.bib" 1811
+ (("url" . "{http://dx.doi.org/10.1021/bk-2006-STYG}")
+  ("doi" . "{10.1021/bk-2006-styg}")
+  ("pages" . "{nil}")
+  ("year" . "{2006}")
+  ("publisher" . "{American Chemical Society (ACS)}")
+  ("series" . "{nil}")
+  ("date_added" . "{Wed Apr  1 10:17:54 2015}")
+  ("title" . "{The ACS Style Guide}")
+  ("author" . "{}")
+  ("=type=" .
+   #("book" 0 4
+     (fontified t face font-lock-function-name-face)))
+  ("=key=" . "2006-acs-style-guide")))
+#+END_SRC
+
+** 1
+#+BEGIN_SRC emacs-lisp :results raw
+(progn (find-file "bib.bib")
+(car (helm-bibtex-parse-bibliography)))
+#+END_SRC
+
+#+RESULTS:
+((year . 1997) (pages . {259-264}) (number . 3) (volume . 181) (journal . "Journal of Crystal Growth") (title . {Effect of growth conditions on formation of
+                  \ce{TiO_2}-{II} thin films in atomic layer
+                  deposition process}) (author . {Aarik, J. and Aidla, A. and Sammelselg, V. and
+                  Uustare, T.}) (=type= . article) (=key= . aarik-1997-effec-ii))
+
+#+BEGIN_SRC emacs-lisp
+(defvar my-bibtex-candidates
+  '()
+  "Variable to speed up things.")
+
+(defvar my-bibtex-hash nil
+  "hash of bibtex file.")
+
+(setq my-bibtex-hash "")
+
+(defun helm-bibtex-parse-bibliography ()
+  "Parse the BibTeX entries listed in the current buffer and
+return a list of entry keys in the order in which the entries
+appeared in the BibTeX files."
+  (goto-char (point-min))
+  (cl-loop
+   for entry-type = (parsebib-find-next-item)
+   while entry-type
+   unless (member-ignore-case entry-type '("preamble" "string" "comment"))
+   collect (-map (lambda (it)
+                   (cons (downcase (car it)) (cdr it)))
+                 (parsebib-read-entry entry-type))))
+
+
+(defun my-bibtex-candidates ()
+  (with-current-buffer (find-file-noselect (car org-ref-default-bibliography))
+    (let ((entries '())
+	  (bibtex-entries '())
+	  (formats '(("article" . "${author}, ${title}, ${journal} (${year}). keywords: ${keywords}")
+		     ("book" . "${author}, ${title} (${year}).")
+		     ("inproceedings" . "${author}, ${title} in ${booktitle} (${year}.")
+		     ("misc" . "${author}, ${title}")))
+	  (hash (secure-hash 'sha256 (current-buffer))))
+
+      (if (string= hash my-bibtex-hash)
+	  my-bibtex-candidates
+	(goto-char (point-min))
+
+	(setq my-bibtex-candidates (cl-loop
+				    for entry-type = (parsebib-find-next-item)
+				    while entry-type
+				    unless (member-ignore-case entry-type '("preamble" "string" "comment"))
+				    collect
+				    (let* ((entry (parsebib-read-entry entry-type))
+					   (key (cdr (assoc "=key=" entry))))
+				      (cons (s-format
+					     (or (cdr (assoc entry-type formats))
+						 (format "%s" entry))
+					     (lambda (field data)
+					       (replace-regexp-in-string
+						"^{\\|}$" ""
+						(replace-regexp-in-string
+						 "\n\\|\t\\|\s+" " "
+						 (or (cdr (assoc field data)) ""))))
+					     entry)
+					    (list key (point-marker) entry))))
+	      my-bibtex-hash hash)
+	my-bibtex-candidates))))
+
+(helm
+ :sources
+ `((name . "Bibtex")
+   (multiline)
+   (candidates . ,(my-bibtex-candidates))
+   (action . (("Identity" . (lambda (candidate)
+			      (helm-marked-candidates)))
+	      ("Open entry" . (lambda (candidate)
+				(let ((marker (nth 1 candidate)))
+				  (switch-to-buffer (marker-buffer marker))
+				  (goto-char (marker-position marker))
+				  (bibtex-beginning-of-entry))))))))
+#+END_SRC
+
+#+RESULTS:
+: 893130
+
+
+** org-ref-helm-bibtex
+
+#+BEGIN_SRC emacs-lisp
+(or-bibtex-candidates)
+#+END_SRC
+* context aware key binding
+[[elfeed:entry-id:http://planet.emacsen.org/atom.xml|http://endlessparentheses.com/define-context-aware-keys-in-emacs|http://endlessparentheses.com/define-context-aware-keys-in-emacs.html?source%3Drss][Endless Parentheses: Define context-aware keys in Emacs]]
+
+#+BEGIN_SRC emacs-lisp
+(defun endless/round-quotes (italicize)
+  "Insert “” and leave point in the middle.
+With prefix argument ITALICIZE, insert /“”/ instead (meant
+for org-mode)."
+  (interactive "P")
+  (if (looking-at "”[/=_\\*]?")
+      (goto-char (match-end 0))
+    (when italicize
+      (if (derived-mode-p 'markdown-mode)
+          (insert "__")
+        (insert "//"))
+      (forward-char -1))
+    (insert "“”")
+    (forward-char -1)))
+#+END_SRC
+
+#+RESULTS:
+: endless/round-quotes
+
+
+Then, we define the same key as before, but instead of just passing the command we use a menu-item bound to nil. The fact that it’s a menu-item is irrelevant here, it behaves exactly like a key bound to nil (i.e., an empty keybind). However, this allows us to setup
+a filter that changes the keybind to endless/round-quotes if we’re not inside an org-src-block.
+
+
+#+BEGIN_SRC emacs-lisp
+(define-key org-mode-map "\""
+  '(menu-item "maybe-round-quotes" nil
+              :filter (lambda (&optional _)
+                        (unless (org-in-src-block-p)
+                          #'endless/round-quotes))))
+; "regular quotes inside src blocks"
+#+END_SRC
+
+#+RESULTS:
+| menu-item | maybe-round-quotes | nil | :filter | (lambda (&optional _) (unless (org-in-src-block-p) (function endless/round-quotes))) |
+
+  “fancy quotes outside src-blocks”
+* mu4e template
+
+#+BEGIN_SRC emacs-lisp
+;; Function to return first name of email recipient
+;; Used by yasnippet
+;; Based closely on
+;; http://blog.binchen.org/posts/how-to-use-yasnippets-to-produce-email-templates-in-emacs.html
+(defun my-yas-get-first-name-from-to-field ()
+  (let ((rlt "NAME") str rlt2)
+    (save-excursion
+      (goto-char (point-min))
+      ;; first line in email could be some hidden line containing NO to field
+      (setq str (buffer-substring-no-properties (point-min) (point-max))))
+    ;; take name from TO field
+    (when (string-match "^To: \"?\\([^ ,]+\\)" str)
+      (setq rlt (match-string 1 str)))
+    ;;get name in FROM field if available
+    (when (string-match "^\\([^ ,\n]+\\).+writes:$" str)
+      (progn (setq rlt2 (match-string 1 str))
+             ;;prefer name in FROM field if TO field has "@"
+             (when (string-match "@" rlt)
+               (setq rlt rlt2))
+             ))
+    (message "rlt=%s" rlt)
+    rlt))
+#+END_SRC
+
+#+RESULTS:
+: my-yas-get-first-name-from-to-field
+
+
 * Testing font lock with anchored text
 
 http://emacs.stackexchange.com/questions/19179/how-can-i-highlight-different-keywords-according-to-a-suffix
@@ -2023,7 +2367,17 @@ Now, we convert a headline to a alist.
 
 * TODO Explode paragraph to numbered list
 
+#+BEGIN_SRC emacs-lisp
+(setq sentence-end-double-space nil)
+#+END_SRC
+
+#+RESULTS:
+
 Lorem ipsum dolor sit amet, consectetur adipiscing elit. Suspendisse viverra consectetur euismod. Donec non tempor turpis.
+
+1. This is a test.
+2. I am typing some random text here consisting of several sentences and now am approaching the end of the display window.
+3. Even though the previous sentence did not end something odd happens.
 
 #+BEGIN_SRC emacs-lisp
 (defun explode-paragraph ()
@@ -2033,18 +2387,21 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Suspendisse viverra con
     (backward-paragraph) (forward-line)
     (setq start (point))
     (forward-paragraph) (previous-line)
-    (setq end (point))
+    (setq end (line-end-position))
 
     ;; now move by sentence, insert number and \n. at the end go to beginning
-    ;; insert a number and use C-cC-c to renumber the list.
+    ;; C-cC-c to renumber the list.
     (save-restriction
       (narrow-to-region start end)
       (goto-char (point-min))
+      (insert "1. ")
       (while (< (point) (point-max))
 	(forward-sentence)
-	(insert "\n1. "))
+	(when (if sentence-end-double-space
+		  (looking-at "  [[:alpha:]]")
+		(looking-at " [[:alpha:]]"))
+	  (insert "\n1. ")))
       (goto-char (point-min))
-      (insert "1. ")
       (org-ctrl-c-ctrl-c))))
 
 (defun unfill-paragraph ()
@@ -2086,9 +2443,7 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Suspendisse viverra con
 #+RESULTS:
 : list-to-paragraph
 
-1. idea 1
-2. idea 2
-3. idea 3
+1. idea 1. idea 2. idea 3.
 
 cite:antony-2012-pathw-c
 
