@@ -83,6 +83,359 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Improved-debugging-of-Python-code-blocks-in-org-mode"></div>
+      <h2 class="blog_post_title"><a href="/blog/2014/09/27/Improved-debugging-of-Python-code-blocks-in-org-mode/" rel="bookmark" title="Permanent Link to Improved debugging of Python code blocks in org-mode">Improved debugging of Python code blocks in org-mode</a></h2>
+      <p><small><span class="blog_post_date">Posted September 27, 2014 at 03:27 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2014/09/27/Improved-debugging-of-Python-code-blocks-in-org-mode#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+Writing and running code blocks in org-mode is awesome, when it works. I find as the code blocks get past a certain size though, it can be tedious to debug, especially for new users. Since I am teaching 59 students to use Python in org-mode, I see this issue a lot! They lack experience to avoid many simple errors, and to find and fix them. Even in my hands, I do not always want to be switching to Python mode to run and debug blocks. 
+</p>
+
+<p>
+org-mode src-blocks offer a unique challenge for the usual tools like pylint and pychecker, because the code does not exist in a file. In this post, I will explore developing some functions that do syntax checking on a src block. We will use a simple method which will write the block to a temporary file, and to the checking on that block. Then, we will create temporary buffers with the output.
+</p>
+
+<p>
+Here is the first idea. We create a temp file in the working directory, write the code to it, and run pychecker, pyflakes and pep8 on the file. 
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">org-pychecker</span> ()
+  <span style="color: #228b22;">"Run pychecker on a source block"</span>
+  (interactive)
+  (<span style="color: #8b0000;">let</span> ((eop (org-element-at-point))
+        (temporary-file-directory <span style="color: #228b22;">"."</span>)
+        (tempfile))
+    (<span style="color: #8b0000;">when</span> (and (eq 'src-block (car eop))
+               (string= <span style="color: #228b22;">"python"</span> (org-element-property <span style="color: #cd0000;">:language</span> eop)))
+      (setq tempfile (make-temp-file <span style="color: #228b22;">"pychecker"</span> nil <span style="color: #228b22;">".py"</span>))
+      ;; <span style="color: #ff0000; font-weight: bold;">create code file</span>
+      (<span style="color: #8b0000;">with-temp-file</span> tempfile
+        (insert (org-element-property <span style="color: #cd0000;">:value</span> eop)))
+      (switch-to-buffer <span style="color: #228b22;">"*pychecker*"</span>)
+      (erase-buffer)
+      (insert <span style="color: #228b22;">"pychecker\n=================\n"</span>)
+      (insert
+       (shell-command-to-string (format <span style="color: #228b22;">"pychecker %s"</span> (file-name-nondirectory tempfile))))
+      (insert <span style="color: #228b22;">"\npyflakes\n=================\n"</span>)
+      (insert
+       (shell-command-to-string (format <span style="color: #228b22;">"pyflakes %s"</span> (file-name-nondirectory tempfile))))
+      (insert <span style="color: #228b22;">"\npep8\n=================\n"</span>)
+      (insert
+       (shell-command-to-string (format <span style="color: #228b22;">"pep8 %s"</span> (file-name-nondirectory tempfile))))
+      (delete-file tempfile))))
+</pre>
+</div>
+
+<p>
+Here is a sample code block with some errors in it.
+</p>
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #000000; background-color: #cccccc; font-weight: bold;">a</span> = <span style="color: #000000; background-color: #cccccc; font-weight: bold;">5</span>  <span style="color: #ff0000; font-weight: bold;"># a variable we do not use</span>
+
+
+<span style="color: #8b0000;">def</span> <span style="color: #8b2323;">f</span>(x, y):  <span style="color: #ff0000; font-weight: bold;"># unused argument</span>
+    <span style="color: #8b0000;">return</span> x - b <span style="color: #ff0000; font-weight: bold;"># undefined variable</span>
+
+<span style="color: #8b0000;">print</span> <span style="color: #000000; background-color: #cccccc; font-weight: bold;">6</span> * c
+</pre>
+</div>
+
+<p>
+On the code block above, that function leads to this output.
+</p>
+
+<pre class="example">
+pychecker
+=================
+Processing module pychecker63858xo0 (pychecker63858xo0.py)...
+  Caught exception importing module pychecker63858xo0:
+    File "/Users/jkitchin/Library/Enthought/Canopy_64bit/User/lib/python2.7/site-packages/pychecker/pcmodules.py", line 540, in setupMainCode()
+      module = imp.load_module(self.moduleName, handle, filename, smt)
+    File "pychecker63858xo0.py", line 7, in &lt;module&gt;()
+      print 6 * c
+  NameError: name 'c' is not defined
+
+Warnings...
+
+pychecker63858xo0:1: NOT PROCESSED UNABLE TO IMPORT
+
+pyflakes
+=================
+pychecker63858xo0.py:5: undefined name 'b'
+pychecker63858xo0.py:7: undefined name 'c'
+
+pep8
+=================
+pychecker63858xo0.py:5:17: E261 at least two spaces before inline comment
+</pre>
+
+<p>
+That is pretty helpful, but it gives us line numbers we cannot directly access in our code block. We can open the code block in Python mode, and then navigate to them, but that is likely to make the buffer with this information disappear. It would be better if we could just click on a link and go to the right place. Let us explore what we need for that. 
+</p>
+
+<p>
+We need to parse the output to get the line numbers, and then we can construct org-links to those places in the src block. pyflakes, pep8 and pylint look like the easiest to get. A way to get to the line would be a lisp function that moves to the beginning of the code block, and then moves forward n lines. We will use a regular expression on each line of the output of pyflakes and pep8 to get the line number. We will construct an org-link to go to the source block at the line. 
+</p>
+
+<p>
+In this long code block, we create a function that will run pyflakes, pep8 and pylint, and create a new buffer with links to the issues it finds. Finally, we apply this as advice on executing org-babel-execute:python so it only runs when we execute a python block in org-mode. This is a long block, because I have made it pretty feature complete. 
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">org-py-check</span> ()
+  <span style="color: #228b22;">"Run python check programs on a source block.</span>
+<span style="color: #228b22;">Opens a buffer with links to what is found."</span>
+  (interactive)
+  (<span style="color: #8b0000;">let</span> ((eop (org-element-at-point))
+        (temporary-file-directory <span style="color: #228b22;">"."</span>)
+        (cb (current-buffer))
+        (n) ; <span style="color: #ff0000; font-weight: bold;">for line number</span>
+        (content) ; <span style="color: #ff0000; font-weight: bold;">error on line</span>
+        (pb <span style="color: #228b22;">"*org pycheck*"</span>)
+        (pyflakes-status nil)
+        (link)
+        (tempfile))
+
+    (<span style="color: #8b0000;">unless</span> (executable-find <span style="color: #228b22;">"pyflakes"</span>)
+      (<span style="color: #ff0000; font-weight: bold;">error</span> <span style="color: #228b22;">"pyflakes is not installed."</span>))
+    
+    (<span style="color: #8b0000;">unless</span> (executable-find <span style="color: #228b22;">"pep8"</span>)
+      (<span style="color: #ff0000; font-weight: bold;">error</span> <span style="color: #228b22;">"pep8 not installed"</span>))
+
+    (<span style="color: #8b0000;">unless</span> (executable-find <span style="color: #228b22;">"pylint"</span>)
+      (<span style="color: #ff0000; font-weight: bold;">error</span> <span style="color: #228b22;">"pylint not installed"</span>))
+
+    ;; <span style="color: #ff0000; font-weight: bold;">rm buffer if it exists</span>
+    (<span style="color: #8b0000;">when</span> (get-buffer pb) (kill-buffer pb))
+    
+    ;; <span style="color: #ff0000; font-weight: bold;">only run if in a python code-block</span>
+    (<span style="color: #8b0000;">when</span> (and (eq 'src-block (car eop))
+               (string= <span style="color: #228b22;">"python"</span> (org-element-property <span style="color: #cd0000;">:language</span> eop)))
+
+      ;; <span style="color: #ff0000; font-weight: bold;">tempfile for the code</span>
+      (setq tempfile (make-temp-file <span style="color: #228b22;">"pychecker"</span> nil <span style="color: #228b22;">".py"</span>))
+      ;; <span style="color: #ff0000; font-weight: bold;">create code file</span>
+      (<span style="color: #8b0000;">with-temp-file</span> tempfile
+        (insert (org-element-property <span style="color: #cd0000;">:value</span> eop)))
+      
+      (<span style="color: #8b0000;">let</span> ((status (shell-command
+                     (format <span style="color: #228b22;">"pyflakes %s"</span> (file-name-nondirectory tempfile))))
+            (output (delete <span style="color: #228b22;">""</span> (split-string
+                                (<span style="color: #8b0000;">with-current-buffer</span> <span style="color: #228b22;">"*Shell Command Output*"</span>
+                                  (buffer-string)) <span style="color: #228b22;">"\n"</span>))))
+        (setq pyflakes-status status)
+        (kill-buffer <span style="color: #228b22;">"*Shell Command Output*"</span>)
+        (<span style="color: #8b0000;">when</span> output
+          (set-buffer (get-buffer-create pb))
+          (insert (format <span style="color: #228b22;">"\n* pyflakes output (status=%s)</span>
+<span style="color: #228b22;">pyflakes checks your code for errors. You should probably fix all of these.</span>
+
+<span style="color: #228b22;">"</span> status))
+          (<span style="color: #8b0000;">dolist</span> (line output)
+            ;; <span style="color: #ff0000; font-weight: bold;">get the line number</span>
+            (<span style="color: #8b0000;">if</span> 
+                (string-match (format <span style="color: #228b22;">"^%s:</span><span style="color: #228b22;">\\</span><span style="color: #228b22;">(</span><span style="color: #228b22;">[0-9]*</span><span style="color: #228b22;">\\</span><span style="color: #228b22;">)</span><span style="color: #228b22;">:</span><span style="color: #228b22;">\\</span><span style="color: #228b22;">(</span><span style="color: #228b22;">.*</span><span style="color: #228b22;">\\</span><span style="color: #228b22;">)</span><span style="color: #228b22;">"</span>
+                                      (file-name-nondirectory tempfile))
+                              line)
+                (<span style="color: #8b0000;">progn</span>
+                  (setq n (match-string 1 line))
+                  (setq content (match-string 2 line))
+                  (setq link (format <span style="color: #228b22;">"[[elisp:(progn (switch-to-buffer-other-window \"%s\")(goto-char %s)(forward-line %s))][%s]]\n"</span>
+                                     cb
+                                     (org-element-property <span style="color: #cd0000;">:begin</span> eop)
+                                     n
+                                     (format <span style="color: #228b22;">"Line %s: %s"</span> n content))))
+              ;; <span style="color: #ff0000; font-weight: bold;">no match, just insert line</span>
+              (setq link (concat line <span style="color: #228b22;">"\n"</span>)))
+            (insert link))))
+
+      (<span style="color: #8b0000;">let</span> ((status (shell-command
+                     (format <span style="color: #228b22;">"pep8 %s"</span> (file-name-nondirectory tempfile))))
+            (output (delete <span style="color: #228b22;">""</span> (split-string
+                                (<span style="color: #8b0000;">with-current-buffer</span> <span style="color: #228b22;">"*Shell Command Output*"</span>
+                                  (buffer-string)) <span style="color: #228b22;">"\n"</span>))))
+        (kill-buffer <span style="color: #228b22;">"*Shell Command Output*"</span>)
+        (<span style="color: #8b0000;">when</span> output
+          (set-buffer (get-buffer-create pb))
+          (insert (format <span style="color: #228b22;">"\n\n* pep8 output (status = %s)\n"</span> status))
+          (insert <span style="color: #228b22;">"pep8 is the [[http://legacy.python.org/dev/peps/pep-0008][officially recommended style]] for writing Python code. Fixing these will usually make your code more readable and beautiful. Your code will probably run if you do not fix them, but, it will be ugly.</span>
+
+<span style="color: #228b22;">"</span>)
+          (<span style="color: #8b0000;">dolist</span> (line output)
+            ;; <span style="color: #ff0000; font-weight: bold;">get the line number</span>
+            (<span style="color: #8b0000;">if</span> 
+                (string-match (format <span style="color: #228b22;">"^%s:</span><span style="color: #228b22;">\\</span><span style="color: #228b22;">(</span><span style="color: #228b22;">[0-9]*</span><span style="color: #228b22;">\\</span><span style="color: #228b22;">)</span><span style="color: #228b22;">:</span><span style="color: #228b22;">\\</span><span style="color: #228b22;">(</span><span style="color: #228b22;">.*</span><span style="color: #228b22;">\\</span><span style="color: #228b22;">)</span><span style="color: #228b22;">"</span>
+                                      (file-name-nondirectory tempfile))
+                              line)
+                (<span style="color: #8b0000;">progn</span>
+                  (setq n (match-string 1 line))
+                  (setq content (match-string 2 line))
+                  (setq link (format <span style="color: #228b22;">"[[elisp:(progn (switch-to-buffer-other-window \"%s\")(goto-char %s)(forward-line %s))][%s]]\n"</span>
+                                     cb
+                                     (org-element-property <span style="color: #cd0000;">:begin</span> eop)
+                                     n
+                                     (format <span style="color: #228b22;">"Line %s: %s"</span> n content))))
+              ;; <span style="color: #ff0000; font-weight: bold;">no match, just insert line</span>
+              (setq link (concat line <span style="color: #228b22;">"\n"</span>)))
+            (insert link))))
+
+      ;; <span style="color: #ff0000; font-weight: bold;">pylint</span>
+      (<span style="color: #8b0000;">let</span> ((status (shell-command
+                     (format <span style="color: #228b22;">"pylint -r no %s"</span> (file-name-nondirectory tempfile))))
+            (output (delete <span style="color: #228b22;">""</span> (split-string
+                                (<span style="color: #8b0000;">with-current-buffer</span> <span style="color: #228b22;">"*Shell Command Output*"</span>
+                                  (buffer-string)) <span style="color: #228b22;">"\n"</span>))))
+        (kill-buffer <span style="color: #228b22;">"*Shell Command Output*"</span>)
+        (<span style="color: #8b0000;">when</span> output
+          (set-buffer (get-buffer-create pb))
+          (insert (format <span style="color: #228b22;">"\n\n* pylint (status = %s)\n"</span> status))
+          (insert <span style="color: #228b22;">"pylint checks your code for errors, style and convention. It is complementary to pyflakes and pep8, and usually more detailed.</span>
+
+<span style="color: #228b22;">"</span>)
+
+          (<span style="color: #8b0000;">dolist</span> (line output)
+            ;; <span style="color: #ff0000; font-weight: bold;">pylint gives a line and column number</span>
+            (<span style="color: #8b0000;">if</span> 
+                (string-match <span style="color: #228b22;">"[A-Z]:\\s-+</span><span style="color: #228b22;">\\</span><span style="color: #228b22;">(</span><span style="color: #228b22;">[0-9]*</span><span style="color: #228b22;">\\</span><span style="color: #228b22;">)</span><span style="color: #228b22;">,\\s-*</span><span style="color: #228b22;">\\</span><span style="color: #228b22;">(</span><span style="color: #228b22;">[0-9]*</span><span style="color: #228b22;">\\</span><span style="color: #228b22;">)</span><span style="color: #228b22;">:</span><span style="color: #228b22;">\\</span><span style="color: #228b22;">(</span><span style="color: #228b22;">.*</span><span style="color: #228b22;">\\</span><span style="color: #228b22;">)</span><span style="color: #228b22;">"</span>                            
+                              line)
+                (<span style="color: #8b0000;">let</span> ((line-number (match-string 1 line))
+                      (column-number (match-string 2 line))
+                      (content (match-string 3 line)))
+                     
+                  (setq link (format <span style="color: #228b22;">"[[elisp:(progn (switch-to-buffer-other-window \"%s\")(goto-char %s)(forward-line %s)(forward-line 0)(forward-char %s))][%s]]\n"</span>
+                                     cb
+                                     (org-element-property <span style="color: #cd0000;">:begin</span> eop)
+                                     line-number
+                                     column-number
+                                     line)))
+              ;; <span style="color: #ff0000; font-weight: bold;">no match, just insert line</span>
+              (setq link (concat line <span style="color: #228b22;">"\n"</span>)))
+            (insert link))))
+    
+      (<span style="color: #8b0000;">when</span> (get-buffer pb)
+        (switch-to-buffer-other-window pb)
+        (goto-char (point-min))
+        (insert <span style="color: #228b22;">"Press q to close the window\n"</span>)
+        (org-mode)       
+        (org-cycle '(64))
+        ;; <span style="color: #ff0000; font-weight: bold;">make read-only and press q to quit</span>
+        (setq buffer-read-only t)
+        (use-local-map (copy-keymap org-mode-map))
+        (local-set-key <span style="color: #228b22;">"q"</span> #'(<span style="color: #8b0000;">lambda</span> () (interactive) (kill-buffer))))
+
+      (<span style="color: #8b0000;">unless</span> (= 0 pyflakes-status)
+        (forward-line 4)
+        (<span style="color: #ff0000; font-weight: bold;">error</span> <span style="color: #228b22;">"pyflakes exited non-zero. please fix errors"</span>))
+      ;; <span style="color: #ff0000; font-weight: bold;">final cleanup and delete file</span>
+      (delete-file tempfile)
+      (switch-to-buffer-other-window cb))))
+
+
+(<span style="color: #8b0000;">defadvice</span> <span style="color: #8b2323;">org-babel-execute:python</span> (before pychecker)
+  (org-py-check))
+
+(ad-activate 'org-babel-execute:python)
+</pre>
+</div>
+
+<pre class="example">
+org-babel-execute:python
+</pre>
+
+<p>
+Now, when I try to run this code block, which has some errors in it:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #000000; background-color: #cccccc; font-weight: bold;">a</span> = <span style="color: #000000; background-color: #cccccc; font-weight: bold;">5</span>  <span style="color: #ff0000; font-weight: bold;"># a variable we do not use</span>
+
+
+<span style="color: #8b0000;">def</span> <span style="color: #8b2323;">f</span>(x, y):  <span style="color: #ff0000; font-weight: bold;"># unused argument</span>
+    <span style="color: #8b0000;">return</span> x - b <span style="color: #ff0000; font-weight: bold;"># undefined</span>
+
+<span style="color: #8b0000;">print</span> <span style="color: #000000; background-color: #cccccc; font-weight: bold;">6</span> * c
+</pre>
+</div>
+
+<p>
+I get a new buffer with approximately these contents:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-org">Press q to close the window
+
+<span style="color: #8b2323;">* pyflakes output (status=1)</span>
+pyflakes checks your code for errors. You should probably fix all of these.
+
+<span style="color: #0000ff; font-weight: bold; text-decoration: underline;"><a href="elisp:(progn (switch-to-buffer-other-window &quot;blog.org&quot;)(goto-char 9180)(forward-line 5))">Line 5:  undefined name 'b'</a></span>
+<span style="color: #0000ff; font-weight: bold; text-decoration: underline;"><a href="elisp:(progn (switch-to-buffer-other-window &quot;blog.org&quot;)(goto-char 9180)(forward-line 7))">Line 7:  undefined name 'c'</a></span>
+
+
+<span style="color: #8b2323;">* pep8 output (status = 1)</span>
+pep8 is the <span style="color: #0000ff; font-weight: bold; text-decoration: underline;"><a href="http://legacy.python.org/dev/peps/pep-0008">officially recommended style</a></span> for writing Python code. Fixing these will usually make your code more readable and beautiful. Your code will probably run if you do not fix them, but, it will be ugly.
+
+<span style="color: #0000ff; font-weight: bold; text-decoration: underline;"><a href="elisp:(progn (switch-to-buffer-other-window &quot;blog.org&quot;)(goto-char 9180)(forward-line 5))">Line 5: 17: E261 at least two spaces before inline comment</a></span>
+
+
+<span style="color: #8b2323;">* pylint (status = 22)pylint checks your code for errors, style and convention. It is complementary to pyflakes and pep8, and usually more detailed.</span>
+
+No config file found, using default configuration
+<span style="color: #4682b4;">************* Module pychecker68224dkX</span>
+<span style="color: #0000ff; font-weight: bold; text-decoration: underline;"><a href="elisp:(progn (switch-to-buffer-other-window &quot;blog.org&quot;)(goto-char 9180)(forward-line 1)(forward-line 0)(forward-char 0))">C:  1, 0: Invalid module name "pychecker68224dkX" (invalid-name)</a></span>
+<span style="color: #0000ff; font-weight: bold; text-decoration: underline;"><a href="elisp:(progn (switch-to-buffer-other-window &quot;blog.org&quot;)(goto-char 9180)(forward-line 1)(forward-line 0)(forward-char 0))">C:  1, 0: Missing module docstring (missing-docstring)</a></span>
+<span style="color: #0000ff; font-weight: bold; text-decoration: underline;"><a href="elisp:(progn (switch-to-buffer-other-window &quot;blog.org&quot;)(goto-char 9180)(forward-line 1)(forward-line 0)(forward-char 0))">C:  1, 0: Invalid constant name "a" (invalid-name)</a></span>
+<span style="color: #0000ff; font-weight: bold; text-decoration: underline;"><a href="elisp:(progn (switch-to-buffer-other-window &quot;blog.org&quot;)(goto-char 9180)(forward-line 4)(forward-line 0)(forward-char 0))">C:  4, 0: Invalid function name "f" (invalid-name)</a></span>
+<span style="color: #0000ff; font-weight: bold; text-decoration: underline;"><a href="elisp:(progn (switch-to-buffer-other-window &quot;blog.org&quot;)(goto-char 9180)(forward-line 4)(forward-line 0)(forward-char 0))">C:  4, 0: Invalid argument name "x" (invalid-name)</a></span>
+<span style="color: #0000ff; font-weight: bold; text-decoration: underline;"><a href="elisp:(progn (switch-to-buffer-other-window &quot;blog.org&quot;)(goto-char 9180)(forward-line 4)(forward-line 0)(forward-char 0))">C:  4, 0: Invalid argument name "y" (invalid-name)</a></span>
+<span style="color: #0000ff; font-weight: bold; text-decoration: underline;"><a href="elisp:(progn (switch-to-buffer-other-window &quot;blog.org&quot;)(goto-char 9180)(forward-line 4)(forward-line 0)(forward-char 0))">C:  4, 0: Missing function docstring (missing-docstring)</a></span>
+<span style="color: #0000ff; font-weight: bold; text-decoration: underline;"><a href="elisp:(progn (switch-to-buffer-other-window &quot;blog.org&quot;)(goto-char 9180)(forward-line 5)(forward-line 0)(forward-char 15))">E:  5,15: Undefined variable 'b' (undefined-variable)</a></span>
+<span style="color: #0000ff; font-weight: bold; text-decoration: underline;"><a href="elisp:(progn (switch-to-buffer-other-window &quot;blog.org&quot;)(goto-char 9180)(forward-line 4)(forward-line 0)(forward-char 9))">W:  4, 9: Unused argument 'y' (unused-argument)</a></span>
+<span style="color: #0000ff; font-weight: bold; text-decoration: underline;"><a href="elisp:(progn (switch-to-buffer-other-window &quot;blog.org&quot;)(goto-char 9180)(forward-line 7)(forward-line 0)(forward-char 10))">E:  7,10: Undefined variable 'c' (undefined-variable)</a></span>
+</pre>
+</div>
+
+<p>
+Each of those links takes me to either the line, or the position of the error (in the case of pylint)! I have not tested this on more than a handful of code blocks, but it has worked pretty nicely on them so far!
+</p>
+
+<p>
+Of course, you must have pyflakes, pep8 and pylint installed. But those are all easily installed with pip as far as I can tell.
+</p>
+<p>Copyright (C) 2014 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2014/09/27/Improved-debugging-of-Python-code-blocks-in-org-mode.org">org-mode source</a><p><p>Org-mode version = 8.2.7c</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2014/09/27/Improved-debugging-of-Python-code-blocks-in-org-mode#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Generating-an-atomic-stoichiometric-matrix"></div>
       <h2 class="blog_post_title"><a href="/blog/2014/09/23/Generating-an-atomic-stoichiometric-matrix/" rel="bookmark" title="Permanent Link to Generating an atomic stoichiometric matrix">Generating an atomic stoichiometric matrix</a></h2>
       <p><small><span class="blog_post_date">Posted September 23, 2014 at 02:25 PM</span> | categories:
@@ -837,325 +1190,6 @@ That is pretty nice. It looks like a nice syntax for queries. One day I will try
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2014/03/31/Using-pyparsing-for-search-queries-with-tags#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Searching-for-directories-by-tags"></div>
-      <h2 class="blog_post_title"><a href="/blog/2014/03/29/Searching-for-directories-by-tags/" rel="bookmark" title="Permanent Link to Searching for directories by tags">Searching for directories by tags</a></h2>
-      <p><small><span class="blog_post_date">Posted March 29, 2014 at 05:41 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/python/'>python</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2014/03/29/Searching-for-directories-by-tags#disqus_thread">View Comments</a>
-      <p><small><span class="blog_post_date">Updated March 30, 2014 at 12:02 PM</span>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-
-<p>
-Today I explore searching for directories by using tags. We will create a TAGS table by first walking through the directories and tagging each directory with all of the relative path components. Then, we will use set algebra to identify specific directories.
-</p>
-
-<p>
-First, let us make a directory setup to use. We will nest some calculations that might be typical. These will be nested directories that might contain planewave (pw) and k-points (kpts) convergence and equation of state (eos) directories, with the sets of calculations inside those. The idea then is that the directory components will form at least some of the tags.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #8b0000;">import</span> os
-
-os.mkdir(<span style="color: #228b22;">'tags'</span>)
-
-<span style="color: #8b0000;">for</span> cmpd <span style="color: #8b0000;">in</span> [<span style="color: #228b22;">'A'</span>, <span style="color: #228b22;">'B'</span>, <span style="color: #228b22;">'C'</span>, <span style="color: #228b22;">'D'</span>]:
-    <span style="color: #8b0000;">for</span> c <span style="color: #8b0000;">in</span> [<span style="color: #228b22;">'pw'</span>, <span style="color: #228b22;">'kpts'</span>, <span style="color: #228b22;">'eos'</span>]:
-        os.makedirs(os.path.join(<span style="color: #228b22;">'tags'</span>, cmpd, c))
-
-<span style="color: #8b0000;">for</span> cmpd <span style="color: #8b0000;">in</span> [<span style="color: #228b22;">'A'</span>, <span style="color: #228b22;">'B'</span>, <span style="color: #228b22;">'C'</span>, <span style="color: #228b22;">'D'</span>]:
-    <span style="color: #8b0000;">for</span> run <span style="color: #8b0000;">in</span> [1, 2, 3, 4, 5]:
-        os.makedirs(os.path.join(<span style="color: #228b22;">'tags'</span>, cmpd, <span style="color: #228b22;">'eos'</span>, <span style="color: #cd0000;">str</span>(run)))
-
-<span style="color: #8b0000;">for</span> cmpd <span style="color: #8b0000;">in</span> [<span style="color: #228b22;">'A'</span>, <span style="color: #228b22;">'B'</span>, <span style="color: #228b22;">'C'</span>, <span style="color: #228b22;">'D'</span>]:
-    <span style="color: #8b0000;">for</span> run <span style="color: #8b0000;">in</span> [200, 250, 300, 350, 400]:
-        os.makedirs(os.path.join(<span style="color: #228b22;">'tags'</span>, cmpd, <span style="color: #228b22;">'pw'</span>, <span style="color: #cd0000;">str</span>(run)))
-
-<span style="color: #8b0000;">for</span> cmpd <span style="color: #8b0000;">in</span> [<span style="color: #228b22;">'A'</span>, <span style="color: #228b22;">'B'</span>, <span style="color: #228b22;">'C'</span>, <span style="color: #228b22;">'D'</span>]:
-    <span style="color: #8b0000;">for</span> run <span style="color: #8b0000;">in</span> [<span style="color: #228b22;">'2x2x2'</span>, <span style="color: #228b22;">'4x4x4'</span>, <span style="color: #228b22;">'8x8x8'</span>]:
-        os.makedirs(os.path.join(<span style="color: #228b22;">'tags'</span>, cmpd, <span style="color: #228b22;">'kpts'</span>, <span style="color: #cd0000;">str</span>(run)))
-</pre>
-</div>
-
-<p>
-Let us just double check what this directory tree looks like for one compound A.
-</p>
-<div class="org-src-container">
-
-<pre class="src src-sh">ls tags/A/*
-</pre>
-</div>
-
-<pre class="example">
-tags/A/eos:
-1
-2
-3
-4
-5
-
-tags/A/kpts:
-2x2x2
-4x4x4
-8x8x8
-
-tags/A/pw:
-200
-250
-300
-350
-400
-</pre>
-
-<p>
-Now, we will walk through the directories, and split the path components to create a TAGS structure. I will store these as sets within a dictionary. We will save the structure in a pickle file to reuse it later.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #8b0000;">import</span> os
-<span style="color: #8b0000;">import</span> pickle
-
-<span style="color: #8b008b;">TAGS</span> = {}
-<span style="color: #8b008b;">TAGS</span>[<span style="color: #228b22;">'all'</span>] = <span style="color: #cd0000;">set</span>()
-
-<span style="color: #8b0000;">for</span> root, dirs, files <span style="color: #8b0000;">in</span> os.walk(<span style="color: #228b22;">'tags'</span>):
-    <span style="color: #8b008b;">base</span>, <span style="color: #8b008b;">tail</span> = os.path.split(root)
-    TAGS[<span style="color: #228b22;">'all'</span>].add(root)
-    <span style="color: #8b0000;">while</span> base:
-        <span style="color: #8b0000;">if</span> tail <span style="color: #8b0000;">in</span> TAGS:
-            TAGS[tail].add(root)
-        <span style="color: #8b0000;">else</span>:
-            <span style="color: #8b008b;">TAGS</span>[tail] = <span style="color: #cd0000;">set</span>([root])
-        <span style="color: #8b008b;">base</span>, <span style="color: #8b008b;">tail</span> = os.path.split(base)
-
-<span style="color: #8b0000;">with</span> <span style="color: #cd0000;">open</span>(<span style="color: #228b22;">'TAGS.pkl'</span>, <span style="color: #228b22;">'w'</span>) <span style="color: #8b0000;">as</span> f:
-    f.write(pickle.dumps(TAGS))
-
-<span style="color: #8b0000;">print</span> TAGS.keys()
-</pre>
-</div>
-
-<pre class="example">
-['A', '1', 'all', 'B', '250', 'pw', '2x2x2', '300', 'C', '400', 'kpts', '8x8x8', 'eos', '3', '2', '5', '4', '350', '200', '4x4x4', 'D']
-</pre>
-
-<p>
-Now we have a lot of keys that tag each directory. Each tag is a set of directories, and we can do set algebra to get specific results. For example, we can find a result by appropriate differences, intersections and unions of the sets. An advantage of this approach is that order of the tags is not relevant (unlike the path, where each component must be in the right order).
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #8b0000;">import</span> pickle
-
-<span style="color: #8b0000;">with</span> <span style="color: #cd0000;">open</span>(<span style="color: #228b22;">'TAGS.pkl'</span>, <span style="color: #228b22;">'r'</span>) <span style="color: #8b0000;">as</span> f:
-    <span style="color: #8b008b;">TAGS</span> = pickle.loads(f.read())
-
-<span style="color: #8b0000;">print</span> TAGS[<span style="color: #228b22;">'A'</span>].intersection(TAGS[<span style="color: #228b22;">'pw'</span>]).intersection(TAGS[<span style="color: #228b22;">'300'</span>])
-<span style="color: #8b0000;">print</span> TAGS[<span style="color: #228b22;">'300'</span>].intersection(TAGS[<span style="color: #228b22;">'pw'</span>]).intersection(TAGS[<span style="color: #228b22;">'A'</span>])
-</pre>
-</div>
-
-<pre class="example">
-set(['tags\\A\\pw\\300'])
-set(['tags\\A\\pw\\300'])
-</pre>
-
-<p>
-The syntax here is a tad heavy because of the chained dot notation operations. You can also use the logical operators like this:
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #8b0000;">import</span> pickle
-
-<span style="color: #8b0000;">with</span> <span style="color: #cd0000;">open</span>(<span style="color: #228b22;">'TAGS.pkl'</span>, <span style="color: #228b22;">'r'</span>) <span style="color: #8b0000;">as</span> f:
-    <span style="color: #8b008b;">TAGS</span> = pickle.loads(f.read())
-
-<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">300 and pw and A</span>
-<span style="color: #8b0000;">print</span> TAGS[<span style="color: #228b22;">'300'</span>] &amp; TAGS[<span style="color: #228b22;">'pw'</span>] &amp; TAGS[<span style="color: #228b22;">'A'</span>]
-</pre>
-</div>
-
-<pre class="example">
-set(['tags\\A\\pw\\300'])
-</pre>
-
-
-<p>
-We can get a set of calculations, for example an equation of state like this:
-</p>
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #8b0000;">import</span> pickle
-
-<span style="color: #8b0000;">with</span> <span style="color: #cd0000;">open</span>(<span style="color: #228b22;">'TAGS.pkl'</span>, <span style="color: #228b22;">'r'</span>) <span style="color: #8b0000;">as</span> f:
-    <span style="color: #8b008b;">TAGS</span> = pickle.loads(f.read())
-
-<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">300 and pw and A</span>
-<span style="color: #8b0000;">print</span> TAGS[<span style="color: #228b22;">'A'</span>] &amp; TAGS[<span style="color: #228b22;">'eos'</span>]
-</pre>
-</div>
-
-<pre class="example">
-set(['tags\\A\\eos', 'tags\\A\\eos\\5', 'tags\\A\\eos\\4', 'tags\\A\\eos\\1', 'tags\\A\\eos\\3', 'tags\\A\\eos\\2'])
-</pre>
-
-<p>
-Now, let us construct some more complex queries. With sets we use intersections for <code>and</code> and we construct unions of queries that are like an or. We examine different notations to see which one is better.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #8b0000;">import</span> pickle
-
-<span style="color: #8b0000;">with</span> <span style="color: #cd0000;">open</span>(<span style="color: #228b22;">'TAGS.pkl'</span>, <span style="color: #228b22;">'r'</span>) <span style="color: #8b0000;">as</span> f:
-    <span style="color: #8b008b;">TAGS</span> = pickle.loads(f.read())
-
-<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">find calculation 3 in eos for B and C</span>
-<span style="color: #8b0000;">print</span> (TAGS[<span style="color: #228b22;">'3'</span>]
-       .intersection(TAGS[<span style="color: #228b22;">'eos'</span>])
-       .intersection(TAGS[<span style="color: #228b22;">'B'</span>])
-       .union
-       (TAGS[<span style="color: #228b22;">'3'</span>]
-        .intersection(TAGS[<span style="color: #228b22;">'eos'</span>])
-        .intersection(TAGS[<span style="color: #228b22;">'C'</span>])))
-
-<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">this notation makes more sense to me. ^ = or</span>
-<span style="color: #8b0000;">print</span> TAGS[<span style="color: #228b22;">'3'</span>] &amp; TAGS[<span style="color: #228b22;">'eos'</span>] &amp; (TAGS[<span style="color: #228b22;">'B'</span>] ^ TAGS[<span style="color: #228b22;">'C'</span>])
-</pre>
-</div>
-
-<pre class="example">
-set(['tags\\C\\eos\\3', 'tags\\B\\eos\\3'])
-set(['tags\\C\\eos\\3', 'tags\\B\\eos\\3'])
-</pre>
-
-<p>
-You can see the two approaches give the same results. The logical operator syntax is more concise and (I think) more readable. Let us consider a query with "not". We can use a difference operator for that. We subtract all the paths with tag "B" from the set containing "4x4x4", which will give us paths tagged with "4x4x4" but not "B".
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #8b0000;">import</span> pickle
-
-<span style="color: #8b0000;">with</span> <span style="color: #cd0000;">open</span>(<span style="color: #228b22;">'TAGS.pkl'</span>, <span style="color: #228b22;">'r'</span>) <span style="color: #8b0000;">as</span> f:
-    <span style="color: #8b008b;">TAGS</span> = pickle.loads(f.read())
-
-<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">find calculation 4x4x4 but not B</span>
-<span style="color: #8b0000;">print</span> (TAGS[<span style="color: #228b22;">'4x4x4'</span>].difference(TAGS[<span style="color: #228b22;">'B'</span>]))
-
-<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">this makes more sense 4x4x4 but not B, </span>
-<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">i.e. subtract paths tagged B from those tagged 4x4x4</span>
-<span style="color: #8b0000;">print</span> TAGS[<span style="color: #228b22;">'4x4x4'</span>] -  TAGS[<span style="color: #228b22;">'B'</span>]
-</pre>
-</div>
-
-<pre class="example">
-set(['tags\\D\\kpts\\4x4x4', 'tags\\A\\kpts\\4x4x4', 'tags\\C\\kpts\\4x4x4'])
-set(['tags\\D\\kpts\\4x4x4', 'tags\\A\\kpts\\4x4x4', 'tags\\C\\kpts\\4x4x4'])
-</pre>
-
-
-<p>
-Note it is not so obvious how to get results not tagged with "A". We need to subtract the tagged calculations from some set. 
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #8b0000;">import</span> pickle
-
-<span style="color: #8b0000;">with</span> <span style="color: #cd0000;">open</span>(<span style="color: #228b22;">'TAGS.pkl'</span>, <span style="color: #228b22;">'r'</span>) <span style="color: #8b0000;">as</span> f:
-    <span style="color: #8b008b;">TAGS</span> = pickle.loads(f.read())
-
-<span style="color: #8b0000;">print</span> TAGS[<span style="color: #228b22;">'all'</span>] - TAGS[<span style="color: #228b22;">'A'</span>]  <span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">not A</span>
-</pre>
-</div>
-
-<pre class="example">
-set(['tags\\D\\kpts', 'tags\\D\\pw\\200', 'tags\\D\\pw\\350', 'tags\\D\\pw\\250', 'tags\\D\\kpts\\8x8x8', 'tags\\C\\eos', 'tags\\D\\eos\\2', 'tags\\D\\eos\\3', 'tags\\D\\eos\\4', 'tags\\D\\eos\\5', 'tags\\B\\kpts\\2x2x2', 'tags\\C\\kpts\\4x4x4', 'tags\\C\\eos\\3', 'tags\\C\\eos\\2', 'tags\\C\\eos\\1', 'tags\\C\\kpts\\8x8x8', 'tags\\C\\eos\\5', 'tags\\C\\eos\\4', 'tags\\B\\kpts', 'tags\\C\\pw\\200', 'tags\\B\\eos\\2', 'tags\\B\\pw\\350', 'tags\\B\\eos\\1', 'tags\\B\\kpts\\8x8x8', 'tags\\C\\pw\\300', 'tags\\B\\eos\\4', 'tags\\B\\eos\\5', 'tags\\C\\kpts', 'tags\\D\\pw\\300', 'tags\\B\\kpts\\4x4x4', 'tags\\C\\kpts\\2x2x2', 'tags\\D\\kpts\\4x4x4', 'tags\\B\\pw\\250', 'tags', 'tags\\D\\pw\\400', 'tags\\D\\eos', 'tags\\C\\pw\\400', 'tags\\D\\kpts\\2x2x2', 'tags\\D\\pw', 'tags\\C\\pw\\250', 'tags\\C\\pw\\350', 'tags\\C\\pw', 'tags\\D\\eos\\1', 'tags\\B\\pw\\400', 'tags\\B\\pw', 'tags\\B\\eos', 'tags\\B\\pw\\300', 'tags\\B\\eos\\3', 'tags\\C', 'tags\\B', 'tags\\D', 'tags\\B\\pw\\200'])
-</pre>
-
-<p>
-We can also look at "or". This is done with the <code>union</code> function, which is the set of elements in either set. The logical operator is <code>|</code>.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #8b0000;">import</span> pickle
-
-<span style="color: #8b0000;">with</span> <span style="color: #cd0000;">open</span>(<span style="color: #228b22;">'TAGS.pkl'</span>, <span style="color: #228b22;">'r'</span>) <span style="color: #8b0000;">as</span> f:
-    <span style="color: #8b008b;">TAGS</span> = pickle.loads(f.read())
-
-<span style="color: #8b0000;">print</span> TAGS[<span style="color: #228b22;">'1'</span>].union(TAGS[<span style="color: #228b22;">'2'</span>])
-<span style="color: #8b0000;">print</span> TAGS[<span style="color: #228b22;">'1'</span>] | TAGS[<span style="color: #228b22;">'2'</span>]        <span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">1 or 2</span>
-</pre>
-</div>
-
-<pre class="example">
-set(['tags\\B\\eos\\2', 'tags\\B\\eos\\1', 'tags\\A\\eos\\1', 'tags\\A\\eos\\2', 'tags\\D\\eos\\1', 'tags\\D\\eos\\2', 'tags\\C\\eos\\2', 'tags\\C\\eos\\1'])
-set(['tags\\B\\eos\\2', 'tags\\B\\eos\\1', 'tags\\A\\eos\\1', 'tags\\A\\eos\\2', 'tags\\D\\eos\\1', 'tags\\D\\eos\\2', 'tags\\C\\eos\\2', 'tags\\C\\eos\\1'])
-</pre>
-
-<p>
-There is an <code>xor</code> operator too. xor is not the same as or, it means <code>A xor B</code> means "A or B but not both". The <code>symmetric_difference</code> function gives this behavior. The logical operator is <code>^</code>. 
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #8b0000;">import</span> pickle
-
-<span style="color: #8b0000;">with</span> <span style="color: #cd0000;">open</span>(<span style="color: #228b22;">'TAGS.pkl'</span>, <span style="color: #228b22;">'r'</span>) <span style="color: #8b0000;">as</span> f:
-    <span style="color: #8b008b;">TAGS</span> = pickle.loads(f.read())
-
-<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">I think this is like the xor, A or 2 but not both</span>
-<span style="color: #8b0000;">print</span> TAGS[<span style="color: #228b22;">'A'</span>].symmetric_difference(TAGS[<span style="color: #228b22;">'2'</span>]), <span style="color: #228b22;">'\n'</span>
-<span style="color: #8b0000;">print</span> TAGS[<span style="color: #228b22;">'A'</span>] ^ TAGS[<span style="color: #228b22;">'2'</span>]
-</pre>
-</div>
-
-<pre class="example">
-set(['tags\\A\\pw\\300', 'tags\\A\\pw\\250', 'tags\\A\\eos', 'tags\\B\\eos\\2', 'tags\\A\\eos\\4', 'tags\\A\\kpts\\2x2x2', 'tags\\A\\pw\\400', 'tags\\A\\kpts\\4x4x4', 'tags\\A\\eos\\3', 'tags\\A\\kpts\\8x8x8', 'tags\\A\\pw\\350', 'tags\\A\\eos\\5', 'tags\\D\\eos\\2', 'tags\\A\\kpts', 'tags\\A', 'tags\\C\\eos\\2', 'tags\\A\\eos\\1', 'tags\\A\\pw', 'tags\\A\\pw\\200']) 
-
-set(['tags\\A\\pw\\300', 'tags\\A\\pw\\250', 'tags\\A\\eos', 'tags\\B\\eos\\2', 'tags\\A\\eos\\4', 'tags\\A\\kpts\\2x2x2', 'tags\\A\\pw\\400', 'tags\\A\\kpts\\4x4x4', 'tags\\A\\eos\\3', 'tags\\A\\kpts\\8x8x8', 'tags\\A\\pw\\350', 'tags\\A\\eos\\5', 'tags\\D\\eos\\2', 'tags\\A\\kpts', 'tags\\A', 'tags\\C\\eos\\2', 'tags\\A\\eos\\1', 'tags\\A\\pw', 'tags\\A\\pw\\200'])
-</pre>
-
-
-
-<p>
-To summarize, this is one approach to using tags with the technical infrastructure of the set. The advantage is flexibility, that you do not need to know the full path to a result, provided you know the set of tags that refers to it. You can use the tags in any order.
-</p>
-
-<p>
-There are many alternative approaches to implementing this idea. One could create a sqlite table and do SQL queries. You could also store lists in the dictionary, and use python code to find the matches. The syntax here is varied. Using the functional approach, the syntax gets heavy with all the dot notation. With the logical operators, the syntax is a little lighter. 
-</p>
-<p>Copyright (C) 2014 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2014/03/29/Searching-for-directories-by-tags.org">org-mode source</a><p><p>Org-mode version = 8.2.5h</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2014/03/29/Searching-for-directories-by-tags#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="/blog/category/python/4">« Previous Page</a>
   --  
  <a href="/blog/category/python/6">Next Page »</a>
@@ -1197,11 +1231,11 @@ There are many alternative approaches to implementing this idea. One could creat
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2016/02/08/Interactive-figures-in-blog-posts-with-mpld3/">Interactive figures in blog posts with mpld3</a></li>
       <li><a href="/blog/2016/02/07/Interactive-Bokeh-plots-in-HTML/">Interactive Bokeh plots in HTML</a></li>
       <li><a href="/blog/2016/02/06/Interactive-plots-in-HTML-with-Plotly/">Interactive plots in HTML with Plotly</a></li>
       <li><a href="/blog/2016/01/24/Modern-use-of-helm-sortable-candidates/">Modern use of helm - sortable candidates</a></li>
       <li><a href="/blog/2016/01/17/Side-by-side-figures-in-org-mode-for-different-export-outputs/">Side by side figures in org-mode for different export outputs</a></li>
-      <li><a href="/blog/2016/01/16/Colored-text-in-org-mode-with-export-to-HTML/">Colored text in org-mode with export to HTML</a></li>
     </ul>
   </section>
 
