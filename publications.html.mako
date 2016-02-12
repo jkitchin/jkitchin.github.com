@@ -26,7 +26,7 @@ import sys
 
 reload(sys)
 sys.setdefaultencoding('utf8')
-from scopus.scopus_xml import get_abstract_info, get_html_citation
+from scopus.scopus_xml import get_abstract_info, get_html_citation, get_bibtex
 
 import requests
 import json
@@ -40,12 +40,18 @@ results = resp.json()
 data = [[str(r['eid']), str(r['prism:aggregationType'])] for r in
   results['search-results']["entry"] if str(r['prism:aggregationType']) == 'Journal']
 
-citations = [get_html_citation(eid).encode('utf-8') for eid,type in data]
+citations = [(eid, get_html_citation(eid).encode('utf-8')) for eid,type in data]
+
+for eid, type in data:
+    bibtex = get_bibtex(eid)
+    with open('publications/{}.bib'.format(eid), 'w') as f:
+        f.write(bibtex)
+
 
 %>
 
-    % for citation in citations:
-        <li>${str(citation)}</li>
+    % for eid,citation in citations:
+        <li>${citation} <a href="publications/${eid}.bib}">bibtex</a></li>
     % endfor
 </ol>
 
