@@ -1,3 +1,4 @@
+<%inherit file="site.mako" />
 ${entry['ID']}
 
 <html>
