@@ -3,16 +3,16 @@ from scopus.my_scopus import MY_API_KEY
 from scopus.scopus_search import ScopusSearch
 from scopus.scopus_api import ScopusAbstract
 
-for YEAR in ['2005',
-             '2006',
-             '2007',
-             '2008',
-             '2009',
-             '2010',
-             '2011',
-             '2012',
-             '2013',
-             '2014',
+for YEAR in [#'2005',
+             #'2006',
+             #'2007',
+             #'2008',
+             #'2009',
+             #'2010',
+             #'2011',
+             #'2012',
+             #'2013',
+             #'2014',
              '2015']:
 
     ss = ScopusSearch('(affil(carnegie mellon university and chemical engineering)'
@@ -35,6 +35,7 @@ The authors are linked to their Scopus page, the title linked to the Scopus abst
     '''.format(year=YEAR))
 
         for eid in ss.EIDS:
+            print('{0} - {1}'.format(YEAR, eid))
             ab = ScopusAbstract(eid)
             if ab.aggregationType != 'Journal':
                 continue
