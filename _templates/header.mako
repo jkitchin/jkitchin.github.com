@@ -11,6 +11,9 @@
   <div id="navigation" class="grid_12">
 <%
 def nav_class(path):
+   # this is a hack to build publications/index.html
+   if isinstance(bf.template_context.render_path, tuple):
+       return ""
    render_path = bf.template_context.render_path.rsplit("/index.html")[0]
    if render_path == path or (path == "/" and render_path == "."):
        return "selected"
