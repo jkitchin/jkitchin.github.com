@@ -1,4 +1,8 @@
 # Generate web pages for the publications in a bibtex file.
+import sys
+
+reload(sys)
+sys.setdefaultencoding('utf8')
 
 import os
 from blogofile.cache import bf

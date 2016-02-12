@@ -51,7 +51,7 @@ for eid, type in data:
 %>
 
     % for eid,citation in citations:
-        <li>${citation} <a href="publications/${eid}.bib}">bibtex</a></li>
+        <li>${citation} <a href="publications/${eid}.bib">bibtex</a></li>
     % endfor
 </ol>
 
