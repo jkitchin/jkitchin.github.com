@@ -12,7 +12,8 @@ for YEAR in ['2005',
              '2011',
              '2012',
              '2013',
-             '2014']:
+             '2014',
+             '2015']:
 
     ss = ScopusSearch('(affil(carnegie mellon university and chemical engineering)'
                       ' or au-id(7004596535)) AND pubyear is {}'.format(YEAR))

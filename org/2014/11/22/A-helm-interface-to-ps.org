@@ -1,0 +1,111 @@
+* DONE A helm interface to ps
+  CLOSED: [2014-11-22 Sat 12:57]
+  :PROPERTIES:
+  :categories: helm emacs
+  :date:     2014/11/22 12:57:42
+  :updated:  2014/11/22 15:00:25
+  :END:
+Occassionally, I need to find the PID of a process to kill it or do something else. Usually I do the old-school unix thing  of piping the output of one command (ps) to another command (grep) to filter out interesting lines. Then, I can do something with that output.
+
+#+BEGIN_SRC sh
+ps aux | grep emacs
+#+END_SRC
+
+#+RESULTS:
+: jkitchin         4781   3.1  0.8  2639316  70432 s002  S    12:45PM   0:06.68 /usr/local/Cellar/emacs/HEAD/Emacs.app/Contents/MacOS/Emacs
+: jkitchin         4777   0.0  0.0  2433364    932 s002  S    12:45PM   0:00.00 /bin/bash /usr/local/bin/emacs
+: jkitchin         4874   0.0  0.0  2432784    604   ??  S    12:46PM   0:00.00 grep emacs
+
+Today, I will explore using helm in emacs to do something like that. The idea is to create a helm command that uses the output of ps as candidates, and then you select the process you want through the helm interface, and then select an action.
+
+It is easy enough to get the output of the ps command in emacs like this. Here, we just get the first three results, and specify the output we want.
+
+#+BEGIN_SRC emacs-lisp :results code
+(let ((results (split-string
+		(shell-command-to-string
+		 "ps x -o ruser,pid,command") "\n")))
+  (loop for i from 1 to 3
+	collect (elt results i)))
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC emacs-lisp
+("jkitchin   139 /sbin/launchd" "jkitchin   151 /usr/libexec/UserEventAgent (Aqua)" "jkitchin   152 /usr/sbin/distnoted agent")
+#+END_SRC
+
+These will be the candidates for the helm command. We will create a few actions. One will provide details about the pid, and one could in principle kill the pid or send some signal to it. We will just have these actions create message boxes for us to see helm in action. We will make the kill function interactive, so it allows an arbitrary signal to be sent. The other actions are placeholders for future actions, and so we can show off some shortcuts in helm later.
+
+For the candidates, we will construct a list of cons cells where the car is a line from ps, and that is what will show in the helm selection interface, and the cdr will be the pid which we get by parsing the line to get the second element. When you select an entry in helm, the cdr of that entry (if it exists) is passed to the action function selected.
+
+#+BEGIN_SRC emacs-lisp :results silent
+(defun ps-candidates ()
+  "return a list of cons cells (line . pid) for the output of ps"
+  (loop for line in
+	;; skip the first line which is a header
+	(cdr (split-string
+	      (shell-command-to-string
+	       "ps ax -o ruser,pid,command") "\n"))
+	collect
+	(cons
+	 line
+	 (elt (split-string line) 1))))
+
+(defun ps-details (pid)
+  "give details of PID."
+  (message-box "%s" (shell-command-to-string (format "ps ux %s" pid))))
+
+(defun ps-kill (pid)
+  "Message box instead of killing PID."
+  (let ((SIG (read-string "Kill with signal: ")))
+    (message-box "Killing pid %s with signal %s" pid SIG)))
+
+(defun ps-hello (pid)
+  (message-box "Silly 3rd action for %s" pid))
+
+(defun ps-bye (pid)
+  (message-box "Silly 4th action for %s" pid))
+
+(defun ps-byebye (pid)
+  (message-box "Silly 5th action for %s" pid))
+
+;; the source variable for helm
+(setq helm-source-ps '((name . "ps output")
+		       ;; these are the entries you can select
+		       (candidates . ps-candidates)
+		       ;; these are the actions available for the
+		       ;; selected entry. each function gets the cdr
+		       ;; of the entry selected.
+		       (action . (("details" . ps-details)
+				  ("kill" . ps-kill)
+				  ("hello" . ps-hello)
+				  ("bye" . ps-bye)
+				  ("byb-bye" . ps-byebye)))))
+
+;; now we run the helm command
+(helm :sources '(helm-source-ps))
+#+END_SRC
+
+
+You can navigate the helm interface with the arrows, or C-n (next/down) C-p (previous/up), or by typing in the pattern you want to match. There are only two actions here. The first one is the default action, which you can run by pressing tab or enter. The subtle difference between them is that tab leaves the helm window open, while enter runs the default action and closes the helm window. You can get it back with C-c h r (or M-x helm-resume). 
+
+To get the kill function, you can press C-z to get the action menu, and then press enter. Helm provides a shortcut for this. C-e selects the second action, so when you remember what the second action is and you want it, you can skip the C-z activity. You can access the third action with C-j. There is a command like helm-select-4th-action, but it is not bound to a key, so we have to make one like this.
+
+#+BEGIN_SRC emacs-lisp :results silent
+(define-key helm-map (kbd "C-k") 'helm-select-4th-action)
+#+END_SRC
+
+You can also define a 5th action like this. It does not seem possible to define an arbitrary nth action, because you cannot get an input for n while helm uses the minibuffer. 
+
+#+BEGIN_SRC emacs-lisp :results silent
+(defun 5th-action ()
+ (interactive)
+ (let ((n 5))
+   ;; actions start at 0, so the 5th action is actually indexed at 4
+   (helm-select-nth-action (- n 1))))
+
+(define-key helm-map (kbd "C-l") '5th-action)
+#+END_SRC
+
+That is the proof of concept in using a helm interface to interact with unix commands. There are other actions you might choose, like renice, or maybe it is possible to suspend a job by pid. The real application for this I had in mind was interaction with the Torque queue system, where you might want to modify, kill jobs in the queue system this way. I could also see applications in user management, where you have some well defined functions to run, e.g. checking quotas, changing passwords, etc... Clearly the utility of this approach rests heavily on there being a set of actions you do regularly enough to justify coding them into functions, and often enough you would remember to use your helm command! It is an interesting approach as an alternative to writing shell scripts to do this though.
+
+This post might make more sense if you watch this video of the helm interface in action: http://www.youtube.com/watch?v=3FImB6OwHI0

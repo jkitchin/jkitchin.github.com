@@ -1,0 +1,258 @@
+* Indexing headlines in org files with swish-e with laser-sharp results
+  :PROPERTIES:
+  :categories: emacs,swishe,orgmode
+  :date:     2015/07/06 11:04:43
+  :updated:  2015/07/06 11:04:43
+  :END:
+
+So far, it looks like swish-e is able to do some pretty focused searches on specific content types. However, the return results are not actually that sharp; in the way we have been using swish-e, it can only tell us the document path that matches, not where in the document the match is. To fix that, we need a new approach to what a "document" is, and a new approach to indexing. We will finally use the "-s prog" option in swish-e which runs an external program that prints stuff to stdout for swish-e to index. We will treat each headline in an org file as a "document" but rather than have the path to the file, we will put an org-mode link there that will take us right to the point of interest.
+
+You can see this in action here: https://www.youtube.com/watch?v=bTwXtEb5Ng8
+
+Basically, we need a program to output chunks like this for each headline in an org-file:
+#+BEGIN_EXAMPLE
+Path-Name: [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/ase-db.org") (goto-char 1))]]
+Content-Length: 247
+Document-Type: XML*
+
+<headline><title>Using the ase database module</title><properties><FILE>/Users/jkitchin/blogofile-jkitchin.github.com/_blog/ase-db.org</FILE><BLOCKED></BLOCKED><categories>python, ase</categories><CATEGORY>ase-db</CATEGORY></properties></headline>
+#+END_EXAMPLE
+
+Then we need to tell swish-e to run the program and index its output. Here is the program to do that.
+
+#+BEGIN_SRC emacs-lisp :tangle swish-org-headlines.el :tangle-mode (identity #o755)
+:;exec emacs -batch -l $0 "$@"
+(require 'org)
+(require 'xml)
+(require 'cl)
+
+(add-to-list 'load-path "~/Dropbox/kitchingroup/jmax/elpa/f-20140828.716")
+(add-to-list 'load-path "~/Dropbox/kitchingroup/jmax/elpa/s-20140910.334")
+(add-to-list 'load-path "~/Dropbox/kitchingroup/jmax/elpa/dash-20141201.2206")
+(require 'f)
+
+(defun print-tag (name attrs &optional closingp)
+  "Print an xml tag with symbol NAME and ATTRS (a cons list of (attribute . value)).
+if CLOSINGP print the closing tag instead."
+  (format
+   "<%s%s%s>"
+   (if closingp "/" "")
+   name
+   (if (and attrs (not closingp))
+       (concat
+	" "
+	(mapconcat
+	 (lambda (x)
+	   (format "%s=\"%s\""
+		   (car x)
+		   (xml-escape-string (cdr x))))
+	 attrs
+	 " "))
+     "")))
+
+(defmacro tag (name attributes &rest body)
+  "macro to create an xml tag with NAME, ATTRIBUTES. BODY is executed in the tag."
+  `(format "%s%s%s"
+	   (print-tag ,name ,attributes nil)
+           (concat
+	    ,@body)
+	   (print-tag ,name nil t)))
+
+(defun headline-xml (headline)
+  "Return xml representation of an element HEADLINE."
+  (let ((title (org-element-property :title headline))
+	(properties (save-excursion
+		      (goto-char
+		       (org-element-property :begin headline))
+		      (org-entry-properties))))
+    (tag 'headline ()
+	 (tag 'title () (xml-escape-string (mapconcat 'identity title " ")))
+	 (when properties
+	   (tag 'properties ()
+		(mapconcat
+		 'identity
+		 (loop for (p . v) in properties
+		       collect (tag p () (xml-escape-string v)))
+		 ""))))))
+
+(defun headline-document (headline)
+  "Return the headline \"document\" for swish-e to index."
+  (let ((xml (replace-regexp-in-string
+	      "[^[:ascii:]]" ""
+	      (headline-xml headline))))
+    (format "Path-Name: [[elisp:(progn (find-file \"%s\") (goto-char %s) (show-children))][link]]
+Content-Length: %s
+Document-Type: XML*
+
+%s" (buffer-file-name)
+(org-element-property :begin headline)
+(length xml)
+xml)))
+
+(defun process-file (fname)
+  "Print the `headline-document' for each headline in FNAME."
+  (with-current-buffer (find-file-noselect fname)
+    (mapconcat 'identity
+	       (org-element-map (org-element-parse-buffer)
+		   'headline
+		 (lambda (headline)
+		   (princ (headline-document headline))))
+	       "")))
+
+;; Here is the main work in the script.
+(loop for dir in '("/Users/jkitchin/blogofile-jkitchin.github.com/_blog")
+      do
+      (loop for fname in (f-entries
+			  dir
+			  (lambda (x)
+			    (string=  "org"  (file-name-extension x)))
+			  t)
+	    do (ignore-errors
+		 (princ (process-file fname)))))
+#+END_SRC
+
+Now we need a configuration file:
+
+#+BEGIN_SRC text :tangle swish-org-headlines.conf
+# Example configuration file
+
+# where to save the index
+IndexFile /Users/jkitchin/blogofile-jkitchin.github.com/_blog/index-org-headlines.swish-e
+
+# index all tags for searching
+UndefinedMetaTags auto
+UndefinedXMLAttributes auto
+#+END_SRC
+
+
+And we run the indexer, I did this in an actual shell. For some reason, it was not possible to run here. The output is pretty useful though, as it tells you what MetaNames are searchable.
+
+#+BEGIN_SRC sh
+swish-e -c swish-org-headlines.conf -S prog -i ./swish-org-headlines.el
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+10:17 $ swish-e -c swish-org-headlines.conf -S prog -i ./swish-org-headlines.el
+Indexing Data Source: "External-Program"
+Indexing "./swish-org-headlines.el"
+External Program found: ./swish-org-headlines.el
+**Adding automatic MetaName 'headline' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/writing-exams-in-orgmode.org") (goto-char 18) (show-children))][link]]'
+**Adding automatic MetaName 'title' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/writing-exams-in-orgmode.org") (goto-char 18) (show-children))][link]]'
+**Adding automatic MetaName 'properties' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/writing-exams-in-orgmode.org") (goto-char 18) (show-children))][link]]'
+**Adding automatic MetaName 'file' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/writing-exams-in-orgmode.org") (goto-char 18) (show-children))][link]]'
+**Adding automatic MetaName 'blocked' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/writing-exams-in-orgmode.org") (goto-char 18) (show-children))][link]]'
+**Adding automatic MetaName 'categories' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/writing-exams-in-orgmode.org") (goto-char 18) (show-children))][link]]'
+**Adding automatic MetaName 'date' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/writing-exams-in-orgmode.org") (goto-char 18) (show-children))][link]]'
+**Adding automatic MetaName 'updated' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/writing-exams-in-orgmode.org") (goto-char 18) (show-children))][link]]'
+**Adding automatic MetaName 'category' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/writing-exams-in-orgmode.org") (goto-char 18) (show-children))][link]]'
+**Adding automatic MetaName 'points' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/writing-exams-in-orgmode.org") (goto-char 1391) (show-children))][link]]'
+**Adding automatic MetaName 'tags' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/why-org-mode.org") (goto-char 25) (show-children))][link]]'
+**Adding automatic MetaName 'alltags' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/why-org-mode.org") (goto-char 25) (show-children))][link]]'
+**Adding automatic MetaName 'todo' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/why-org-mode.org") (goto-char 1733) (show-children))][link]]'
+**Adding automatic MetaName 'closed' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/why-org-mode.org") (goto-char 1733) (show-children))][link]]'
+**Adding automatic MetaName 'timestamp_ia' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/pdfsync.org") (goto-char 28) (show-children))][link]]'
+**Adding automatic MetaName 'id' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/org-to-docx-pandoc.org") (goto-char 5056) (show-children))][link]]'
+**Adding automatic MetaName 'custom_id' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/org-db.org") (goto-char 1311) (show-children))][link]]'
+**Adding automatic MetaName 'calculation' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/org-db.org") (goto-char 1311) (show-children))][link]]'
+**Adding automatic MetaName 'volume' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/org-db.org") (goto-char 1311) (show-children))][link]]'
+**Adding automatic MetaName 'total_energy' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/org-db.org") (goto-char 1311) (show-children))][link]]'
+**Adding automatic MetaName 'stress' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/org-db.org") (goto-char 1311) (show-children))][link]]'
+**Adding automatic MetaName 'priority' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 15327) (show-children))][link]]'
+**Adding automatic MetaName 'export_title' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 506769) (show-children))][link]]'
+**Adding automatic MetaName 'export_author' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 506769) (show-children))][link]]'
+**Adding automatic MetaName 'export_file_name' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 506769) (show-children))][link]]'
+**Adding automatic MetaName 'export_date' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 506769) (show-children))][link]]'
+**Adding automatic MetaName 'scheduled' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 516502) (show-children))][link]]'
+**Adding automatic MetaName 'deadline' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 516502) (show-children))][link]]'
+**Adding automatic MetaName 'votes' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 532031) (show-children))][link]]'
+**Adding automatic MetaName 'timestamp' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 571125) (show-children))][link]]'
+**Adding automatic MetaName 'clock' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 21059) (show-children))][link]]'
+**Adding automatic MetaName 'level' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 46582) (show-children))][link]]'
+**Adding automatic MetaName 'correct' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 46582) (show-children))][link]]'
+**Adding automatic MetaName 'permalink' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 61814) (show-children))][link]]'
+**Adding automatic MetaName 'hint' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 340534) (show-children))][link]]'
+**Adding automatic MetaName 'answer' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 355206) (show-children))][link]]'
+**Adding automatic MetaName 'correct-answer' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 377210) (show-children))][link]]'
+**Adding automatic MetaName 'post_filename' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 415454) (show-children))][link]]'
+**Adding automatic MetaName 'ordered' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 423900) (show-children))][link]]'
+**Adding automatic MetaName 'grade' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/add-subheadings-to-headings.org") (goto-char 2822) (show-children))][link]]'
+**Adding automatic MetaName ':export_file_name:' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/add-properties-to-headings.org") (goto-char 2) (show-children))][link]]'
+**Adding automatic MetaName 'firstname' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/org-contacts/referee-contacts.org") (goto-char 155) (show-children))][link]]'
+**Adding automatic MetaName 'lastname' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/org-contacts/referee-contacts.org") (goto-char 155) (show-children))][link]]'
+**Adding automatic MetaName 'email' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/org-contacts/referee-contacts.org") (goto-char 155) (show-children))][link]]'
+**Adding automatic MetaName 'affiliation' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/org-contacts/referee-contacts.org") (goto-char 155) (show-children))][link]]'
+**Adding automatic MetaName 'lettergrade' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/org-report/Slim-Shady-HW1.org") (goto-char 29) (show-children))][link]]'
+**Adding automatic MetaName 'difficulty' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/problem-selection/problem-selection.org") (goto-char 1) (show-children))][link]]'
+Removing very common words...
+no words removed.
+Writing main index...
+Sorting words ...
+Sorting 6,044 words alphabetically
+Writing header ...
+Writing index entries ...
+  Writing word text: Complete
+  Writing word hash: Complete
+  Writing word data: Complete
+6,044 unique words indexed.
+4 properties sorted.
+5,084 files indexed.  1,760,249 total bytes.  368,569 total words.
+Elapsed time: 00:00:37 CPU time: 00:00:01
+Indexing done!
+#+END_EXAMPLE
+
+
+Ok, now for the proof in the approach!
+
+#+BEGIN_SRC sh :results raw
+swish-e -f index-org-headlines.swish-e -w headline=generating
+#+END_SRC
+
+#+RESULTS:
+# SWISH format: 2.4.7
+# Search words: headline=generating
+# Removed stopwords:
+# Number of hits: 9
+# Search time: 0.000 seconds
+# Run time: 0.009 seconds
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/separate-bib.org") (goto-char 1) (show-children))][link]] "separate-bib.org") (goto-char 1) (show-children))][link]]" 393
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 158456) (show-children))][link]] "blog-2014.org") (goto-char 158456) (show-children))][link]]" 229
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 272383) (show-children))][link]] "blog-2014.org") (goto-char 272383) (show-children))][link]]" 400
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 158456) (show-children))][link]] "blog-2014.org") (goto-char 158456) (show-children))][link]]" 229
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 448965) (show-children))][link]] "blog.org") (goto-char 448965) (show-children))][link]]" 389
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/org-db.org") (goto-char 575) (show-children))][link]] "org-db.org") (goto-char 575) (show-children))][link]]" 204
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/org-db.org") (goto-char 575) (show-children))][link]] "org-db.org") (goto-char 575) (show-children))][link]]" 204
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/separate-bib.org") (goto-char 1) (show-children))][link]] "separate-bib.org") (goto-char 1) (show-children))][link]]" 393
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 272383) (show-children))][link]] "blog-2014.org") (goto-char 272383) (show-children))][link]]" 400
+.
+
+
+#+BEGIN_SRC sh :results org raw
+swish-e -f index-org-headlines.swish-e -w todo=TODO
+#+END_SRC
+
+#+RESULTS:
+# SWISH format: 2.4.7
+# Search words: todo=TODO
+# Removed stopwords:
+# Number of hits: 14
+# Search time: 0.000 seconds
+# Run time: 0.010 seconds
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 16933) (show-children))][link]] "blog.org") (goto-char 16933) (show-children))][link]]" 342
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 61231) (show-children))][link]] "blog-2014.org") (goto-char 61231) (show-children))][link]]" 207
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 60802) (show-children))][link]] "blog-2014.org") (goto-char 60802) (show-children))][link]]" 274
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 60289) (show-children))][link]] "blog-2014.org") (goto-char 60289) (show-children))][link]]" 207
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 61568) (show-children))][link]] "blog-2014.org") (goto-char 61568) (show-children))][link]]" 246
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 61231) (show-children))][link]] "blog-2014.org") (goto-char 61231) (show-children))][link]]" 207
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 60802) (show-children))][link]] "blog-2014.org") (goto-char 60802) (show-children))][link]]" 274
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 60289) (show-children))][link]] "blog-2014.org") (goto-char 60289) (show-children))][link]]" 207
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 632875) (show-children))][link]] "blog.org") (goto-char 632875) (show-children))][link]]" 266
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 529123) (show-children))][link]] "blog.org") (goto-char 529123) (show-children))][link]]" 202
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 529087) (show-children))][link]] "blog.org") (goto-char 529087) (show-children))][link]]" 206
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 518108) (show-children))][link]] "blog.org") (goto-char 518108) (show-children))][link]]" 280
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 30559) (show-children))][link]] "blog.org") (goto-char 30559) (show-children))][link]]" 337
+1000 [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 61568) (show-children))][link]] "blog-2014.org") (goto-char 61568) (show-children))][link]]" 246
+.
+
+
+** Summary thoughts
+This could be super useful for a lot of different elements: headlines, src-blocks, links, tables, paragraphs are the main ones that come to mind. You could have pretty focused searches that go straight to the matches!

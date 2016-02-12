@@ -1,0 +1,149 @@
+** Gibbs energy minimization and the NIST webbook
+   :PROPERTIES:
+   :categories: optimization
+   :date:     2013/03/01 13:11:58
+   :updated:  2013/03/06 16:31:14
+   :tags:     thermodynamics
+   :END:
+[[http://matlab.cheme.cmu.edu/2011/12/25/gibbs-energy-minimization-and-the-nist-webbook/][Matlab post]]
+In Post 1536 we used the NIST webbook to compute a temperature dependent Gibbs energy of reaction, and then used a reaction extent variable to compute the equilibrium concentrations of each species for the water gas shift reaction.
+
+Today, we look at the direct minimization of the Gibbs free energy of the species, with no assumptions about stoichiometry of reactions. We only apply the constraint of conservation of atoms. We use the NIST Webbook to provide the data for the Gibbs energy of each species.
+
+As a reminder we consider equilibrium between the species $CO$, $H_2O$, $CO_2$ and $H_2$, at 1000K, and 10 atm total pressure with an initial equimolar molar flow rate of $CO$ and $H_2O$.
+
+#+BEGIN_SRC python :session
+import numpy as np
+
+T = 1000  # K
+R = 8.314e-3 # kJ/mol/K
+
+P = 10.0 # atm, this is the total pressure in the reactor
+Po = 1.0 # atm, this is the standard state pressure
+#+END_SRC
+
+#+RESULTS:
+
+We are going to store all the data and calculations in vectors, so we need to assign each position in the vector to a species. Here are the definitions we use in this work.
+
+#+BEGIN_EXAMPLE
+1  CO
+2  H2O
+3  CO2
+4  H2
+#+END_EXAMPLE
+
+#+BEGIN_SRC python :session
+species = ['CO', 'H2O', 'CO2', 'H2']
+
+# Heats of formation at 298.15 K
+
+Hf298 = [
+    -110.53,  # CO
+    -241.826, # H2O
+    -393.51,  # CO2
+       0.0]   # H2
+
+# Shomate parameters for each species
+#           A          B           C          D          E            F          G       H
+WB = [[25.56759,  6.096130,     4.054656,  -2.671301,  0.131021, -118.0089, 227.3665,   -110.5271],  # CO
+      [30.09200,  6.832514,     6.793435,  -2.534480,  0.082139, -250.8810, 223.3967,   -241.8264],  # H2O
+      [24.99735,  55.18696,   -33.69137,    7.948387, -0.136638, -403.6075, 228.2431,   -393.5224],  # CO2
+      [33.066178, -11.363417,  11.432816,  -2.772874, -0.158558, -9.980797, 172.707974,    0.0]]     # H2
+
+WB = np.array(WB)
+
+# Shomate equations
+t = T/1000
+T_H = np.array([t,  t**2 / 2.0, t**3 / 3.0, t**4 / 4.0, -1.0 / t, 1.0, 0.0, -1.0])
+T_S = np.array([np.log(t), t,  t**2 / 2.0,  t**3 / 3.0, -1.0 / (2.0 * t**2), 0.0, 1.0, 0.0])
+
+H = np.dot(WB, T_H)        # (H - H_298.15) kJ/mol
+S = np.dot(WB, T_S/1000.0) # absolute entropy kJ/mol/K
+
+Gjo = Hf298 + H - T*S      # Gibbs energy of each component at 1000 K
+#+END_SRC
+
+#+RESULTS:
+
+Now, construct the Gibbs free energy function, accounting for the change in activity due to concentration changes (ideal mixing).
+#+BEGIN_SRC python :session
+def func(nj):
+    nj = np.array(nj)
+    Enj = np.sum(nj);
+    Gj =  Gjo / (R * T) + np.log(nj / Enj * P / Po)
+    return np.dot(nj, Gj)
+#+END_SRC
+
+#+RESULTS:
+
+We impose the constraint that all atoms are conserved from the initial conditions to the equilibrium distribution of species. These constraints are in the form of $A_{eq} n = b_{eq}$, where $n$ is the vector of mole numbers for each species.
+
+#+BEGIN_SRC python :session
+Aeq = np.array([[ 1,    0,    1,    0],  # C balance
+                [ 1,    1,    2,    0],  # O balance
+                [ 0,    2,    0,    2]]) # H balance
+
+# equimolar feed of 1 mol H2O and 1 mol CO
+beq = np.array([1,  # mol C fed
+                2,  # mol O fed
+                2]) # mol H fed
+
+def ec1(nj):
+    'conservation of atoms constraint'
+    return np.dot(Aeq, nj) - beq
+#+END_SRC
+
+#+RESULTS:
+
+Now we are ready to solve the problem. 
+
+#+BEGIN_SRC python :session
+from scipy.optimize import fmin_slsqp
+
+n0 = [0.5, 0.5, 0.5, 0.5]  # initial guesses
+N = fmin_slsqp(func, n0, f_eqcons=ec1)
+print N
+#+END_SRC
+
+#+RESULTS:
+: 
+: >>> >>> Optimization terminated successfully.    (Exit mode 0)
+:             Current function value: -91.204832308
+:             Iterations: 2
+:             Function evaluations: 13
+:             Gradient evaluations: 2
+: [ 0.45502309  0.45502309  0.54497691  0.54497691]
+
+*** Compute mole fractions and partial pressures
+
+The pressures here are in good agreement with the pressures found by other methods. The minor disagreement (in the third or fourth decimal place) is likely due to convergence tolerances in the different algorithms used.
+
+#+BEGIN_SRC python :session
+yj = N / np.sum(N)
+Pj = yj * P
+
+for s, y, p in zip(species, yj, Pj):
+    print '{0:10s}: {1:1.2f} {2:1.2f}'.format(s, y, p)
+#+END_SRC
+
+#+RESULTS:
+: 
+: >>> >>> ... ... CO        : 0.23 2.28
+: H2O       : 0.23 2.28
+: CO2       : 0.27 2.72
+: H2        : 0.27 2.72
+
+*** Computing equilibrium constants
+
+We can compute the equilibrium constant for the reaction $CO + H_2O \rightleftharpoons CO_2 + H_2$. Compared to the value of K = 1.44 we found at the end of Post 1536 , the agreement is excellent. Note, that to define an equilibrium constant it is necessary to specify a reaction, even though it is not necessary to even consider a reaction to obtain the equilibrium distribution of species!
+
+#+BEGIN_SRC python :session
+nuj = np.array([-1, -1, 1, 1])  # stoichiometric coefficients of the reaction
+K = np.prod(yj**nuj)
+print K
+#+END_SRC
+
+#+RESULTS:
+: 
+: >>> 1.43446295961
