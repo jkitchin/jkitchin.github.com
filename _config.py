@@ -106,5 +106,5 @@ def slugify(title, delim='-'):
 site.slugify = slugify
 
 
-controllers.photo_gallery.enabled = False
-controllers.bibtex_controller.enabled = True
+#controllers.photo_gallery.enabled = False
+#controllers.bibtex_controller.enabled = True

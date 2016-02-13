@@ -10,10 +10,12 @@ status:
 	cd _deploy
 	ls
 
-publications:
+publications: publications.py
 	python publications.py
 
 dept:
+	emacs -q --batch --eval '(progn (find-file "department.org") (org-html-export-to-html nil nil nil t nil))'
+	mv department.html department.html.mako
 	python dept_publications.py
 
 deploy:

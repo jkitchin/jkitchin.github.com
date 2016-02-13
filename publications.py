@@ -34,6 +34,8 @@ Pick your favorite:
 <li><a href="https://www.growkudos.com/profiles/40205">Kudos</a></li>
 </ul>
 
+<script src="http://syndic8.scopus.com/getMessage?registrationId=EGADEHAELIAMGGAIGGBIEKDDGGCGGLFJMPEJKKGDHL"></script>
+
 <h1>Publications</h1>
 The authors are linked to their Scopus page, the title linked to the Scopus abstract, the journal linked to the Scopus journal page, and the DOI is linked to http://dx.doi.org which normally redirects you to the journal page.
 

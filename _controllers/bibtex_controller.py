@@ -1,12 +1,11 @@
 # Generate web pages for the publications in a bibtex file.
 import sys
-
-reload(sys)
-sys.setdefaultencoding('utf8')
-
 import os
 from blogofile.cache import bf
 from bibtexparser.bparser import BibTexParser
+
+reload(sys)
+sys.setdefaultencoding('utf8')
 
 config = {"name": "Publication gallery",
           "description": "Generates html pages from bibtex entries."}
@@ -43,7 +42,7 @@ def author_string(entry):
 
 
 def citation(entry):
-    '''Generate a simple citation.'''
+    '''Generate a simple html citation.'''
     if entry['ENTRYTYPE'] == 'article':
         s = ''
         s += author_string(entry) + ', '
@@ -65,10 +64,11 @@ def citation(entry):
         s = ''
         s += author_string(entry) + ', '
         s += "{}, ".format(entry.get('chapter', None))
-        s += 'in {0}, {1} ({2}). http://dx.doi.org/{3}'.format(entry['title'],
-                                                               entry['publisher'],
-                                                               entry['year'],
-                                                               entry['doi'])
+        s1 = 'in {0}, {1} ({2}). http://dx.doi.org/{3}'
+        s += s1.format(entry['title'],
+                       entry['publisher'],
+                       entry['year'],
+                       entry['doi'])
     elif entry['ENTRYTYPE'] == 'mastersthesis':
         print entry
         s = '''{0}, {1}, {2} ({3}). Masters thesis.'''.format(entry['author'],
