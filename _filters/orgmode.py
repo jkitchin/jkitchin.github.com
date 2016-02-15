@@ -2,7 +2,7 @@
 import os
 import tempfile
 
-meta = {"name": "org-mode",
+config = {"name": "org-mode",
         "author": "John Kitchin",
         "description": "Renders org-mode formatted text to HTML"}
 
@@ -21,13 +21,13 @@ def run(content):
 
     # run emacs to export it.
     cmd = ("""emacsclient --eval """
-           """'(progn (find-file "{0}")"""
+           """'(progn (with-current-buffer (find-file-noselect "{0}")"""
            """   (re-search-forward "^*")"""
-           """   (let ((html (save-window-excursion (bf-get-post-html))))"""
+           """   (let ((html (save-window-excursion (concat (bf-get-HTML) (bf-copyright)))))"""
            """     (bf-copy-org-to-blog)"""
            """     (save-buffer) (kill-buffer)"""
            """     (with-temp-file "{1}" """
-           """        (insert html))))'""".format(tmp, html_file))
+           """        (insert html)))))'""".format(tmp, html_file))
 
     os.system(cmd)
 
