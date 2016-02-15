@@ -124,9 +124,13 @@ def read_bibtex_entries():
 def write_pages(bibtex_entries):
     'Generate a page for each entry in bibtex_entries'
     for entry in bibtex_entries:
-        bf.template.materialize_template("bibtex_entry.mako",
+        bf.template.materialize_template("publication.mako",
                                          (publications_dir,
                                           entry['ID'] + ".html"),
+                                         {"entry": entry})
+        bf.template.materialize_template("bibtex_entry.mako",
+                                         (publications_dir,
+                                          entry['ID'] + ".bib"),
                                          {"entry": entry})
 
 

@@ -17,11 +17,13 @@ Pick your favorite:
 <li><a href="https://www.growkudos.com/profiles/40205">Kudos</a></li>
 </ul>
 
+<script src="http://syndic8.scopus.com/getMessage?registrationId=EGADEHAELIAMGGAIGGBIEKDDGGCGGLFJMPEJKKGDHL"></script>
+
 
 My Publications:
 <ol>
 % for entry in bibtex_entries:
-<li><a href="${entry['ID']}.html">${citation(entry)}</a></li>
+<li><a href="${entry['ID']}.html">${citation(entry)}</a> <a href="${entry['ID']}.bib">BIBTEX</a> </li>
 % endfor
 </ol>
 </article>

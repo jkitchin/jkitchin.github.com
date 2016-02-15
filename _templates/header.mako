@@ -26,7 +26,7 @@ def nav_class(path):
       <li><a href="${bf.util.site_path_helper(bf.config.blog.path,'archive')}"
              class="${nav_class(bf.util.site_path_helper(bf.config.blog.path,'archive'))}">Archives</a></li>
 
-      <li><a href="${bf.util.site_path_helper('publications.html')}">Publications</a></li>
+      <li><a href="${bf.util.site_path_helper('/publications/index.html')}">Publications</a></li>
 
       <li><a href="${bf.util.site_path_helper('research.html')}"
              class="${nav_class(bf.util.site_path_helper('research.html'))}">Research</a></li>
