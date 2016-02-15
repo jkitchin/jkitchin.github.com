@@ -11,7 +11,6 @@ def run(content):
 
     html_file = tmp.replace('.org', '.html')
 
-
     with open(tmp, 'w') as f:
         f.write(content)
 
