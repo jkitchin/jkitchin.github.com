@@ -25,7 +25,7 @@ Our Publications:
 % for entry in bibtex_entries:
 <li><a href="${entry['ID']}.html">${citation(entry)}</a> <a href="${entry['ID']}.bib">BIBTEX</a>
 % if entry.get('doi', None) is not None:
-<img src="http://api.elsevier.com/content/abstract/citation-count?doi=${entry['doi']}&httpAccept=image/jpeg&apiKey=${apikey}></img></li>
+<img src="http://api.elsevier.com/content/abstract/citation-count?doi=${entry['doi']}&httpAccept=image/jpeg&apiKey=${apikey}"></img></li>
 % endif
 % endfor
 </ol>
