@@ -35,6 +35,6 @@ def run(content):
     with open(html_file, 'r') as f:
         html = f.read()
 
-    os.unlink(tmp)
-    os.unlink(html_file)
+    if os.path.exists(tmp): os.unlink(tmp)
+    if os.path.exists(html_file): os.unlink(html_file)
     return html
