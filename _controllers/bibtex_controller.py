@@ -70,7 +70,6 @@ def citation(entry):
                        entry['year'],
                        entry['doi'])
     elif entry['ENTRYTYPE'] == 'mastersthesis':
-        print entry
         s = '''{0}, {1}, {2} ({3}). Masters thesis.'''.format(entry['author'],
                                                               entry['title'],
                                                               entry['school'],
@@ -78,7 +77,6 @@ def citation(entry):
                                                                         None))
 
     elif entry['ENTRYTYPE'] == 'phdthesis':
-        print entry
         s = '''{0}, {1}, {2} ({3}). PhD thesis.'''.format(entry['author'],
                                                           entry['title'],
                                                           entry['school'],
