@@ -19,8 +19,8 @@ Pick your favorite:
 
 <script src="http://syndic8.scopus.com/getMessage?registrationId=EGADEHAELIAMGGAIGGBIEKDDGGCGGLFJMPEJKKGDHL"></script>
 
-
-My Publications:
+<br>
+Our Publications:
 <ol>
 % for entry in bibtex_entries:
 <li><a href="${entry['ID']}.html">${citation(entry)}</a> <a href="${entry['ID']}.bib">BIBTEX</a> </li>
