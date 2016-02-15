@@ -107,4 +107,4 @@ site.slugify = slugify
 
 
 #controllers.photo_gallery.enabled = False
-#controllers.bibtex_controller.enabled = True
+controllers.bibtex_controller.enabled = True

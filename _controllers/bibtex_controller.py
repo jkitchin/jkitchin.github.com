@@ -97,14 +97,17 @@ def citation(entry):
 
     return s
 
+# * The main controller
 
 def run():
+    'Entry point for the controller'
     bibtex_entries = read_bibtex_entries()
     write_pages(bibtex_entries)
     write_publication_index(bibtex_entries)
 
 
 def read_bibtex_entries():
+    'Return a sorted list of bibtex entries'
     bib_files = [p for p in os.listdir(publications_dir)
                  if p.lower().endswith(".bib")]
 
@@ -119,6 +122,7 @@ def read_bibtex_entries():
 
 
 def write_pages(bibtex_entries):
+    'Generate a page for each entry in bibtex_entries'
     for entry in bibtex_entries:
         bf.template.materialize_template("bibtex_entry.mako",
                                          (publications_dir,
@@ -127,6 +131,7 @@ def write_pages(bibtex_entries):
 
 
 def write_publication_index(bibtex_entries):
+    'Generate the index of all publications'
     bf.template.materialize_template("publication_index.mako",
                                      (publications_dir,
                                       "index.html"),
