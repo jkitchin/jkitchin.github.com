@@ -19,7 +19,7 @@ def run(content):
     cmd = ("""emacsclient --eval """
            """'(progn (find-file "{0}")"""
            """   (re-search-forward "^*")"""
-           """   (let ((html (save-window-excursion (bf-get-HTML))))"""
+           """   (let ((html (save-window-excursion (bf-get-post-html))))"""
            """     (save-buffer) (kill-buffer)"""
            """     (with-temp-file "{1}" """
            """        (insert html))))'""".format(tmp, html_file))
