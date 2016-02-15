@@ -19,10 +19,11 @@ def run(content):
            """'(progn (find-file "{0}")"""
            """   (re-search-forward "^*")"""
            """   (let ((html (save-window-excursion (bf-get-post-html))))"""
+           """     (bf-copy-org-to-blog)"""
            """     (save-buffer) (kill-buffer)"""
            """     (with-temp-file "{1}" """
            """        (insert html))))'""".format(tmp, html_file))
-    print cmd
+
     os.system(cmd)
 
     # read the results in and return them
