@@ -133,6 +133,7 @@ def write_pages(bibtex_entries):
                                           entry['ID'] + ".bib"),
                                          {"entry": entry})
 
+from scopus.my_scopus import MY_API_KEY
 
 def write_publication_index(bibtex_entries):
     'Generate the index of all publications'
@@ -140,4 +141,5 @@ def write_publication_index(bibtex_entries):
                                      (publications_dir,
                                       "index.html"),
                                      {"bibtex_entries": bibtex_entries,
+                                      "apikey": MY_API_KEY,
                                       "citation": citation})
