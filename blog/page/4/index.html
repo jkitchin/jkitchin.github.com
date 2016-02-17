@@ -84,6 +84,757 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="LDAP-lookups-from-Emacs"></div>
+      <h2 class="blog_post_title"><a href="/blog/2015/11/25/LDAP-lookups-from-Emacs/" rel="bookmark" title="Permanent Link to LDAP lookups from Emacs">LDAP lookups from Emacs</a></h2>
+      <p><small><span class="blog_post_date">Posted November 25, 2015 at 09:31 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/helm/'>helm</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2015/11/25/LDAP-lookups-from-Emacs#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+
+<p>
+Now that I have email and Cisco Jabber totally integrated into Emacs it would be nice to tap into the CMU LDAP (Lightweight Directory Access Protocol) service  to find emails and phone numbers. We to use the ldapsearch command-line utility to query our LDAP service like this to find an email address.
+</p>
+
+<p>
+You might like the video explanation here: <a href="https://www.youtube.com/watch?v=N7AaKHRd9uw">https://www.youtube.com/watch?v=N7AaKHRd9uw</a> 
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(shell-command-to-string <span style="color: #008000;">"ldapsearch -x -LLL -h ldap.andrew.cmu.edu -b ou=Person,dc=cmu,dc=edu cn=\"John Kitchin\""</span>)
+</pre>
+</div>
+
+<pre class="example">
+dn: guid=1976CCAA-B465-11D8-8000-080020CC75D3,ou=person,dc=cmu,dc=edu
+objectClass: cmuPerson
+eduPersonPrimaryAffiliation: Faculty
+guid: 1976CCAA-B465-11D8-8000-080020CC75D3
+cmuPrivate: homePostalAddress
+cmuPrivate: homePhone
+cn: John Kitchin
+givenName: John
+sn: Kitchin
+cmuPrimaryCampus: Pittsburgh
+cmuCampus: Pittsburgh
+cmuAndrewId: jkitchin
+cmueduId: jkitchin
+cmuAndrewCommonNamespaceId: jkitchin
+mail: jkitchin@cmu.edu
+eduPersonSchoolCollegeName: CIT - Consolidated
+cmuPersonPrincipalName: jkitchin@ANDREW.CMU.EDU
+postalAddress: DH A207F
+cmuDepartment: Chemical Engineering
+cmuDepartment: MSE: Materials Science &amp; Engineering
+cmuPersonAffiliation: Tenure-Track Faculty
+eduPersonAffiliation: Faculty
+cmuAccount: uid=jkitchin,ou=account,dc=andrew,dc=cmu,dc=edu
+cmuAccount: uid=jkitchin,ou=account,dc=cmu,dc=edu
+cmuActiveDN: uid=jkitchin,ou=account,dc=andrew,dc=cmu,dc=edu
+cmuActiveDN: uid=jkitchin,ou=account,dc=cmu,dc=edu
+title: Professor
+telephoneNumber: +1 412 268 7803
+</pre>
+
+<p>
+We actually get LDIF data from ldapsearch with a lot of details. Next we wrap the output in a function that converts each result from ldapsearch into a p-list that we will use later in a helm function to help us select a match.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">ldap-query</span> (query-string)
+  <span style="color: #036A07;">"Send QUERY-STRING to our ldap server and parse results into a</span>
+<span style="color: #036A07;">list of p-lists for each entry returned."</span>
+  (<span style="color: #0000FF;">interactive</span> <span style="color: #008000;">"sLDAP query: "</span>)
+  (<span style="color: #0000FF;">let</span> ((output (butlast (split-string
+                          (shell-command-to-string
+                           (format (concat  <span style="color: #008000;">"ldapsearch -x -LLL "</span>
+                                            <span style="color: #008000;">"-h ldap.andrew.cmu.edu "</span>
+                                            <span style="color: #008000;">"-b ou=Person,dc=cmu,dc=edu %s"</span>)
+                                   query-string))
+                          <span style="color: #008000;">"\n"</span>)))
+        (lines '())
+        (result '())
+        (results '(())))
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">cleanup trailing lines and ignore initial lines</span>
+    (<span style="color: #0000FF;">loop</span> for line in output
+          do
+          (<span style="color: #0000FF;">cond</span>
+           <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">join lines that run over</span>
+           ((s-starts-with? <span style="color: #008000;">" "</span> line)
+            (<span style="color: #0000FF;">setf</span> (car (last lines))
+                  (concat (car (last lines)) line)))
+           <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">ignore this</span>
+           ((string-match <span style="color: #008000;">"Size limit exceeded"</span> line)
+            nil)
+           (t
+            (add-to-list 'lines line t))))
+
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">now we need to parse the lines. A new entry starts with a dn: line.</span>
+    (<span style="color: #0000FF;">dolist</span> (line lines)
+      (<span style="color: #0000FF;">cond</span>
+       ((s-starts-with? <span style="color: #008000;">"dn:"</span> line)
+        <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">add new entry</span>
+        (add-to-list 'results `(<span style="color: #006FE0;">:dn</span> ,line)))
+       ((string-match <span style="color: #008000;">":"</span> line)
+        (<span style="color: #0000FF;">let*</span> ((s (split-string line <span style="color: #008000;">":"</span>))
+               (prop (intern (concat <span style="color: #008000;">":"</span> (s-trim (car s)))))
+               (val (s-trim (cadr s))))
+          (<span style="color: #0000FF;">setf</span> (car results) (plist-put (car results) prop val))))))
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">last result seems to be nil so we drop it</span>
+    (-filter (<span style="color: #0000FF;">lambda</span> (x) (not (null x))) results)))
+</pre>
+</div>
+
+<pre class="example">
+ldap-query
+</pre>
+
+<p>
+Here is an example of that function:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(ldap-query <span style="color: #008000;">"cn=\"John Kitchin\""</span>)
+</pre>
+</div>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">((<span style="color: #006FE0;">:dn</span> <span style="color: #008000;">"dn: guid=1976CCAA-B465-11D8-8000-080020CC75D3,ou=person,dc=cmu,dc=edu"</span> <span style="color: #006FE0;">:objectClass</span> <span style="color: #008000;">"cmuPerson"</span> <span style="color: #006FE0;">:eduPersonPrimaryAffiliation</span> <span style="color: #008000;">"Faculty"</span> <span style="color: #006FE0;">:guid</span> <span style="color: #008000;">"1976CCAA-B465-11D8-8000-080020CC75D3"</span> <span style="color: #006FE0;">:cmuPrivate</span> <span style="color: #008000;">"homePhone"</span> <span style="color: #006FE0;">:cn</span> <span style="color: #008000;">"John Kitchin"</span> <span style="color: #006FE0;">:givenName</span> <span style="color: #008000;">"John"</span> <span style="color: #006FE0;">:sn</span> <span style="color: #008000;">"Kitchin"</span> <span style="color: #006FE0;">:cmuPrimaryCampus</span> <span style="color: #008000;">"Pittsburgh"</span> <span style="color: #006FE0;">:cmuCampus</span> <span style="color: #008000;">"Pittsburgh"</span> <span style="color: #006FE0;">:cmuAndrewId</span> <span style="color: #008000;">"jkitchin"</span> <span style="color: #006FE0;">:cmueduId</span> <span style="color: #008000;">"jkitchin"</span> <span style="color: #006FE0;">:cmuAndrewCommonNamespaceId</span> <span style="color: #008000;">"jkitchin"</span> <span style="color: #006FE0;">:mail</span> <span style="color: #008000;">"jkitchin@cmu.edu"</span> <span style="color: #006FE0;">:eduPersonSchoolCollegeName</span> <span style="color: #008000;">"CIT - Consolidated"</span> <span style="color: #006FE0;">:cmuPersonPrincipalName</span> <span style="color: #008000;">"jkitchin@ANDREW.CMU.EDU"</span> <span style="color: #006FE0;">:postalAddress</span> <span style="color: #008000;">"DH A207F"</span> <span style="color: #006FE0;">:cmuDepartment</span> <span style="color: #008000;">"MSE"</span> <span style="color: #006FE0;">:cmuPersonAffiliation</span> <span style="color: #008000;">"Tenure-Track Faculty"</span> <span style="color: #006FE0;">:eduPersonAffiliation</span> <span style="color: #008000;">"Faculty"</span> <span style="color: #006FE0;">:cmuAccount</span> <span style="color: #008000;">"uid=jkitchin,ou=account,dc=cmu,dc=edu"</span> <span style="color: #006FE0;">:cmuActiveDN</span> <span style="color: #008000;">"uid=jkitchin,ou=account,dc=cmu,dc=edu"</span> <span style="color: #006FE0;">:title</span> <span style="color: #008000;">"Professor"</span> <span style="color: #006FE0;">:telephoneNumber</span> <span style="color: #008000;">"+1 412 268 7803"</span>))
+</pre>
+</div>
+
+
+<p>
+Now, we wrap a helm function around that to give us a nice menu to select entries from, and a few actions like sending an email, calling, copying the name and email, and seeing the information in a reasonable way. We also add a fallback method in case we don't find what we want and need to do a new search.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">helm-ldap</span> (query-string)
+  (<span style="color: #0000FF;">interactive</span> <span style="color: #008000;">"sLDAP query: "</span>)
+  (helm
+   <span style="color: #006FE0;">:sources</span>
+   `(((name . <span style="color: #008000;">"HELM ldap"</span>)
+      (candidates . ,(mapcar
+                      (<span style="color: #0000FF;">lambda</span> (x)
+                        (cons
+                         (format
+                          <span style="color: #008000;">"%20s|%30s|%30s|%20s|%s"</span>
+                          (s-truncate
+                           20
+                           (<span style="color: #0000FF;">or</span> (plist-get x <span style="color: #006FE0;">:title</span>) <span style="color: #008000;">" "</span>))
+                          (plist-get x <span style="color: #006FE0;">:cn</span>)
+                          (plist-get x <span style="color: #006FE0;">:mail</span>)
+                          (plist-get x <span style="color: #006FE0;">:cmuDisplayAddress</span>)
+                          (<span style="color: #0000FF;">or</span> (plist-get x <span style="color: #006FE0;">:telephoneNumber</span>) <span style="color: #008000;">" "</span>))
+                         x))
+                      (ldap-query
+                       (<span style="color: #0000FF;">if</span> (string-match <span style="color: #008000;">"="</span> query-string)
+                           query-string
+                         (concat <span style="color: #008000;">"cn=*"</span> query-string <span style="color: #008000;">"*"</span>)))))
+      (action . ((<span style="color: #008000;">"Email"</span> . (<span style="color: #0000FF;">lambda</span> (x)
+                              (compose-mail)
+                              (message-goto-to)
+                              (insert (plist-get x <span style="color: #006FE0;">:mail</span>))
+                              (message-goto-subject)))
+                 (<span style="color: #008000;">"Call"</span> . (<span style="color: #0000FF;">lambda</span> (x)
+                             (cisco-call
+                              (plist-get x <span style="color: #006FE0;">:telephoneNumber</span>))))
+                 (<span style="color: #008000;">"Copy Name and email address"</span> . (<span style="color: #0000FF;">lambda</span> (x)
+                                                    (kill-new
+                                                     (format
+                                                      <span style="color: #008000;">"%s &lt;%s&gt;"</span>
+                                                      (plist-get x <span style="color: #006FE0;">:cn</span>)
+                                                      (plist-get x <span style="color: #006FE0;">:mail</span>)))))
+                 (<span style="color: #008000;">"Information"</span> . (<span style="color: #0000FF;">lambda</span> (x)
+                                    (switch-to-buffer
+                                     (get-buffer-create <span style="color: #008000;">"*helm ldap*"</span>))
+                                    (erase-buffer)
+                                    (<span style="color: #0000FF;">dolist</span> (key (<span style="color: #0000FF;">cl-loop</span>
+                                                  for key in x by #'cddr
+                                                  collect key))
+                                      (insert (format <span style="color: #008000;">"|%s | %s|\n"</span>
+                                                      key (plist-get x key))))
+                                    (org-mode)
+                                    (goto-char 0)
+                                    (org-ctrl-c-ctrl-c)
+                                    (insert <span style="color: #008000;">"press q to quit.\n\n"</span>)
+                                    (<span style="color: #0000FF;">setq</span> buffer-read-only t)
+                                    (use-local-map (copy-keymap org-mode-map))
+                                    (local-set-key <span style="color: #008000;">"q"</span>
+                                                   #'(lambda ()
+                                                       (<span style="color: #0000FF;">interactive</span>)
+                                                       (quit-window t))))))))
+     <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">fallback action</span>
+     ((name . <span style="color: #008000;">"New search"</span>)
+      (dummy)
+      (action . (<span style="color: #0000FF;">lambda</span> (x) (helm-ldap x)))))))
+</pre>
+</div>
+
+<pre class="example">
+helm-ldap
+</pre>
+
+<p>
+That is pretty convenient!
+</p>
+
+<p>
+John Kitchin &lt;jkitchin@cmu.edu&gt;</p>
+<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/11/25/LDAP-lookups-from-Emacs.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/11/25/LDAP-lookups-from-Emacs#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
+      <div id="Contextual-help-in-org-mode"></div>
+      <h2 class="blog_post_title"><a href="/blog/2015/11/24/Contextual-help-in-org-mode/" rel="bookmark" title="Permanent Link to Contextual help in org-mode">Contextual help in org-mode</a></h2>
+      <p><small><span class="blog_post_date">Posted November 24, 2015 at 10:08 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2015/11/24/Contextual-help-in-org-mode#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+org-mode is great, plain text and all, but it can be difficult to figure out all the things you can do at any particular place in the buffer. Here, we explore some ideas on making org-mode a bit more discoverable. One way to do this that we explore here is to create a help function that you run, and it tells you about the element that `org-element-context' knows about, then gives you some hints of what you can do there. To do this, we create a series of functions for each kind of element we provide help on.
+</p>
+
+<p>
+You may want to see the video: <a href="https://www.youtube.com/watch?v=99uxJWqZGzA">https://www.youtube.com/watch?v=99uxJWqZGzA</a> 
+</p>
+
+<p>
+The kind of help we want is a description of the element, some commands we can run on the element and what they do, and if there are some key-bindings. We also want to make sure if the user has changed the key-bindings, the right values get shown. Finally, it would be nice to allow users to add their own documentation if they want.
+</p>
+
+<p>
+So, here is the lengthy block of code we use for this purpose. We create a function for each element type that we provide documentation for. We also provide a mechanism for users to add their own notes for future reference. I leverage the help-buffer here to simplify some functional text, e.g. the key commands and clickable functions, as well as history navigation. I could also do most of that in org-mode buffers, with different functionality, but I save that for another day.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">ore-user-directory</span> <span style="color: #008000;">"~/.emacs.d/ore/"</span>
+  <span style="color: #036A07;">"Directory to store user additions to the notes."</span>)
+
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">ore-user-documentation</span> (type)
+  <span style="color: #036A07;">"Return user documentation for org element TYPE if it exists.</span>
+<span style="color: #036A07;">Notes are returned as plain text, and will be rendered in `</span><span style="color: #D0372D;">help-mode</span><span style="color: #036A07;">'."</span>
+  (<span style="color: #0000FF;">let</span> ((fname (expand-file-name (format <span style="color: #008000;">"%s.org"</span> type) ore-user-directory)))
+    (concat
+     <span style="color: #008000;">"User documentation:\n"</span>
+     (<span style="color: #0000FF;">if</span> (file-exists-p fname)
+         (<span style="color: #0000FF;">with-temp-buffer</span>
+           (insert <span style="color: #008000;">"\n"</span>)
+           (insert-file-contents fname)
+           (indent-rigidly (point-min) (point-max) 5)
+           (buffer-string))
+       <span style="color: #008000;">"None defined."</span>)
+     (format  <span style="color: #008000;">"\n\nEdit [[file:%s]]"</span> fname))))
+
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">ore-latex</span> (element)
+  <span style="color: #036A07;">"`</span><span style="color: #D0372D;">ore</span><span style="color: #036A07;">' documentation for latex fragment."</span>
+  (concat
+   (substitute-command-keys <span style="color: #008000;">"You are on a LaTeX fragment or environment.</span>
+
+<span style="color: #008000;">\\[</span><span style="color: #D0372D;">org-toggle-latex-overlays</span><span style="color: #008000;">] or `</span><span style="color: #D0372D;">org-toggle-latex-overlays</span><span style="color: #008000;">' to toggle LaTeX images on it.</span>
+
+<span style="color: #008000;">"</span>)
+   (format  <span style="color: #008000;">"\nClick for details on the face [[face:%s]]\n"</span> (face-at-point))
+   (ore-user-documentation 'latex)))
+
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">ore-link</span> (element)
+  <span style="color: #036A07;">"`</span><span style="color: #D0372D;">ore</span><span style="color: #036A07;">' documentation for org links."</span>
+  (<span style="color: #0000FF;">let*</span> ((link (org-element-context))
+         (type (org-element-property <span style="color: #006FE0;">:type</span> link))
+         (protocols (assoc type org-link-protocols))
+         (follow-func (cadr protocols))
+         (export-func (caddr protocols)))
+    (concat
+     (format
+      (substitute-command-keys <span style="color: #008000;">"You are on a %s link.</span>
+
+<span style="color: #008000;">Link path: %s</span>
+<span style="color: #008000;">%s</span>
+
+<span style="color: #008000;">Clicking on the link will run `</span><span style="color: #D0372D;">%s</span><span style="color: #008000;">'.</span>
+
+<span style="color: #008000;">This link uses this function for export: `</span><span style="color: #D0372D;">%s</span><span style="color: #008000;">'</span>
+
+<span style="color: #008000;">If you are on an image link, you can toggle it with \\[</span><span style="color: #D0372D;">org-toggle-inline-images</span><span style="color: #008000;">] or `</span><span style="color: #D0372D;">org-toggle-inline-images</span><span style="color: #008000;">'.</span>
+
+<span style="color: #008000;">You can toggle the link display with `</span><span style="color: #D0372D;">org-toggle-link-display</span><span style="color: #008000;">'.</span>
+
+<span style="color: #008000;">See Info node `(org) Hyperlinks'.</span>
+
+<span style="color: #008000;">%s</span>
+
+<span style="color: #008000;">%s\n\n"</span>)
+      type
+      (org-element-property <span style="color: #006FE0;">:path</span> link)
+      (format <span style="color: #008000;">"Whole link: %s"</span> (buffer-substring
+                                (org-element-property <span style="color: #006FE0;">:begin</span> link)
+                                (org-element-property <span style="color: #006FE0;">:end</span> link)))
+      (pp-to-string follow-func)
+      (pp-to-string export-func)
+      (format  <span style="color: #008000;">"\nClick for details on the face [[face:%s]]\n"</span> (face-at-point))
+      (ore-user-documentation 'link)))))
+
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">ore-src-block-header-p</span> (element)
+  <span style="color: #036A07;">"Return whether point is in a src-block header."</span>
+  (<span style="color: #0000FF;">and</span> (eq 'src-block (car element))
+       (<span style="color: #0000FF;">save-excursion</span>
+         (<span style="color: #0000FF;">let</span> ((cp (point))
+               (lp (line-number-at-pos)))
+           (goto-char (org-element-property <span style="color: #006FE0;">:begin</span> element))
+           (= lp (line-number-at-pos))))))
+
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">ore-src-block-header</span> (element)
+  <span style="color: #036A07;">"`</span><span style="color: #D0372D;">ore</span><span style="color: #036A07;">' documentation for src-block header."</span>
+  (concat
+   <span style="color: #008000;">"You are in a src-block header.</span>
+
+<span style="color: #008000;">This line tells org-mode that</span>
+<span style="color: #008000;">it is a src-block, and language of the src-block. There are</span>
+<span style="color: #008000;">also optional header arguments. See Info node `(org) Header arguments'</span>
+
+<span style="color: #008000;">"</span>
+   (format <span style="color: #008000;">"The default headers are described here: `</span><span style="color: #D0372D;">org-babel-default-header-args:%s</span><span style="color: #008000;">'</span>
+
+<span style="color: #008000;">"</span> (org-element-property <span style="color: #006FE0;">:language</span> element))
+   (format  <span style="color: #008000;">"\nClick for details on the face [[face:%s]]\n"</span> (face-at-point))
+   (ore-user-documentation 'src-block-header)))
+
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">ore-src-block</span> (element)
+  <span style="color: #036A07;">"`</span><span style="color: #D0372D;">ore</span><span style="color: #036A07;">' documentation for a src-block."</span>
+  (concat
+   (substitute-command-keys <span style="color: #008000;">"You are in a src-block.</span>
+
+<span style="color: #008000;">C-c C-c to execute this block.</span>
+<span style="color: #008000;">\\[</span><span style="color: #D0372D;">org-babel-tangle</span><span style="color: #008000;">]  org-babel-tangle</span>
+
+<span style="color: #008000;">You can edit the block with \\[</span><span style="color: #D0372D;">org-edit-special</span><span style="color: #008000;">] or `</span><span style="color: #D0372D;">org-edit-special</span><span style="color: #008000;">'.</span>
+
+<span style="color: #008000;">See Info node `(org) Working with source code' for more details.\n\n"</span>)
+   (format  <span style="color: #008000;">"\nClick for details on the face [[face:%s]]\n"</span> (face-at-point))
+   (ore-user-documentation 'src-block)))
+
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">ore-headline</span> (element)
+  <span style="color: #036A07;">"`</span><span style="color: #D0372D;">ore</span><span style="color: #036A07;">' documentation for a headline."</span>
+  (concat
+   (<span style="color: #0000FF;">when</span> (bolp)
+     (format  <span style="color: #008000;">"You are at the beginning of a headline.</span>
+
+<span style="color: #008000;">\\[</span><span style="color: #D0372D;">org-cycle</span><span style="color: #008000;">] to cycle Info node `(org) Global and local cycling'.</span>
+
+<span style="color: #008000;">Check `</span><span style="color: #D0372D;">org-use-speed-commands</span><span style="color: #008000;">'\n\n"</span>))
+
+   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">in a headline</span>
+   (substitute-command-keys
+    <span style="color: #008000;">"You are in a headline. You can change:</span>
+
+<span style="color: #008000;"> Visibility with \\[</span><span style="color: #D0372D;">org-cycle</span><span style="color: #008000;">]</span>
+
+<span style="color: #008000;"> TODO state \\[</span><span style="color: #D0372D;">org-shiftleft</span><span style="color: #008000;">] and \\[</span><span style="color: #D0372D;">org-shiftright</span><span style="color: #008000;">] or</span>
+<span style="color: #008000;"> `</span><span style="color: #D0372D;">org-todo</span><span style="color: #008000;">'.</span>
+
+<span style="color: #008000;"> Your current todo sets can be found in `</span><span style="color: #D0372D;">org-todo-sets</span><span style="color: #008000;">'.</span>
+
+<span style="color: #008000;"> Priority \\[</span><span style="color: #D0372D;">org-shiftup</span><span style="color: #008000;">] (`</span><span style="color: #D0372D;">org-priority-up</span><span style="color: #008000;">') and</span>
+<span style="color: #008000;"> \\[</span><span style="color: #D0372D;">org-shiftdown</span><span style="color: #008000;">] (`</span><span style="color: #D0372D;">org-priority-down</span><span style="color: #008000;">')</span>
+
+<span style="color: #008000;"> Tags  \\[</span><span style="color: #D0372D;">org-ctrl-c-ctrl-c</span><span style="color: #008000;">] or `</span><span style="color: #D0372D;">org-set-tags</span><span style="color: #008000;">'</span>
+
+<span style="color: #008000;"> Set a property with \\[</span><span style="color: #D0372D;">org-set-property</span><span style="color: #008000;">] `</span><span style="color: #D0372D;">org-set-property</span><span style="color: #008000;">'.</span>
+
+<span style="color: #008000;"> Delete a property with \\[</span><span style="color: #D0372D;">org-delete-property</span><span style="color: #008000;">] or `</span><span style="color: #D0372D;">org-delete-property</span><span style="color: #008000;">'.</span>
+
+<span style="color: #008000;">"</span>)
+   (format  <span style="color: #008000;">"\nClick for details on the face [[face:%s]]\n"</span> (face-at-point))
+   (ore-user-documentation 'headline)))
+
+
+<span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">timestamp</span>
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">ore-timestamp</span> (element)
+  <span style="color: #036A07;">"`</span><span style="color: #D0372D;">ore</span><span style="color: #036A07;">' documentation for timestamps."</span>
+  (concat
+   (substitute-command-keys <span style="color: #008000;">"You are on a timestamp.</span>
+
+<span style="color: #008000;">If you click on it, you will see the date in the agenda. With the</span>
+<span style="color: #008000;">cursor on the &lt;&gt; or [] \\[</span><span style="color: #D0372D;">org-shiftup</span><span style="color: #008000;">] and \\[</span><span style="color: #D0372D;">org-shiftdown</span><span style="color: #008000;">] will</span>
+<span style="color: #008000;">switch from active to inactive timestamps.</span>
+
+<span style="color: #008000;">You can change the date by putting the cursor on a date part and</span>
+<span style="color: #008000;">using \\[</span><span style="color: #D0372D;">org-shiftup</span><span style="color: #008000;">] and \\[</span><span style="color: #D0372D;">org-shiftdown</span><span style="color: #008000;">] or \\[</span><span style="color: #D0372D;">org-shiftleft</span><span style="color: #008000;">]</span>
+<span style="color: #008000;">and \\[</span><span style="color: #D0372D;">org-shiftright</span><span style="color: #008000;">]</span>
+
+<span style="color: #008000;">See Info node `(org) Dates and times'.</span>
+
+<span style="color: #008000;">"</span>)
+   (format  <span style="color: #008000;">"\nClick for details on the face [[face:%s]]\n"</span> (face-at-point))
+   (ore-user-documentation 'timestamp)))
+
+
+<span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">table table-row table-cell</span>
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">ore-table</span> (element)
+  <span style="color: #036A07;">"`</span><span style="color: #D0372D;">ore</span><span style="color: #036A07;">' documentation for tables."</span>
+  (concat
+   <span style="color: #008000;">"You are in a table.</span>
+
+<span style="color: #008000;">Move cell to cell with [TAB]. When you are in the last cell, TAB adds a new row.</span>
+
+<span style="color: #008000;">Move rows up and down with \\[</span><span style="color: #D0372D;">org-metaup</span><span style="color: #008000;">] and \\[</span><span style="color: #D0372D;">org-metadown</span><span style="color: #008000;">].</span>
+<span style="color: #008000;">Move columns left and right with \\[</span><span style="color: #D0372D;">org-metaleft</span><span style="color: #008000;">] and \\[</span><span style="color: #D0372D;">org-metaright</span><span style="color: #008000;">].</span>
+
+<span style="color: #008000;">Sort a column with \\[</span><span style="color: #D0372D;">org-sort</span><span style="color: #008000;">] `</span><span style="color: #D0372D;">org-sort</span><span style="color: #008000;">'.</span>
+
+<span style="color: #008000;">Insert a row with `</span><span style="color: #D0372D;">org-table-insert-row</span><span style="color: #008000;">'.</span>
+<span style="color: #008000;">Delete a row with `</span><span style="color: #D0372D;">org-table-kill-row</span><span style="color: #008000;">'.</span>
+
+<span style="color: #008000;">Insert a column with `</span><span style="color: #D0372D;">org-table-insert-column</span><span style="color: #008000;">'.</span>
+<span style="color: #008000;">Delete a column with `</span><span style="color: #D0372D;">org-table-delete-column</span><span style="color: #008000;">'.</span>
+
+<span style="color: #008000;">`C-c -     (`</span><span style="color: #D0372D;">org-table-insert-hline</span><span style="color: #008000;">')'</span>
+<span style="color: #008000;">     Insert a horizontal line below current row.  With a prefix</span>
+<span style="color: #008000;">     argument, the line is created above the current line.</span>
+
+<span style="color: #008000;">`C-c &lt;RET&gt;     (`</span><span style="color: #D0372D;">org-table-hline-and-move</span><span style="color: #008000;">')'</span>
+<span style="color: #008000;">     Insert a horizontal line below current row, and move the cursor</span>
+<span style="color: #008000;">     into the row below that line.</span>
+
+<span style="color: #008000;">You can transpose a table with `</span><span style="color: #D0372D;">org-table-transpose-table-at-point</span><span style="color: #008000;">'.</span>
+
+<span style="color: #008000;">Info node `(org) Tables'.</span>
+
+<span style="color: #008000;">"</span>
+   (format  <span style="color: #008000;">"\nClick for details on the face [[face:%s]]\n"</span> (face-at-point))
+   (ore-user-documentation 'table)))
+
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">ore-plain-list</span> (element)
+  <span style="color: #036A07;">"`</span><span style="color: #D0372D;">ore</span><span style="color: #036A07;">' doucmentation for plain lists."</span>
+  (concat
+   (substitute-command-keys
+    <span style="color: #008000;">"You are on a plain list.</span>
+<span style="color: #008000;">See Info node `(org) Plain lists'.</span>
+
+<span style="color: #008000;">"</span>)
+   (format  <span style="color: #008000;">"\nClick for details on the face [[face:%s]]\n"</span> (face-at-point))
+   (ore-user-documentation 'plain-list)))
+
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">ore-item</span> (element)
+  <span style="color: #036A07;">"`</span><span style="color: #D0372D;">ore</span><span style="color: #036A07;">' documentation for items in a list"</span>
+  (concat
+   (substitute-command-keys
+    <span style="color: #008000;">"You are on an item in a list.</span>
+
+<span style="color: #008000;">You can move items up and down with \\[</span><span style="color: #D0372D;">org-metaup</span><span style="color: #008000;">] or `</span><span style="color: #D0372D;">org-metaup</span><span style="color: #008000;">' and \\[</span><span style="color: #D0372D;">org-meta-down</span><span style="color: #008000;">] or `</span><span style="color: #D0372D;">org-metadown</span><span style="color: #008000;">'.</span>
+
+<span style="color: #008000;">You can add a new item with \\[</span><span style="color: #D0372D;">org-meta-return</span><span style="color: #008000;">] or `</span><span style="color: #D0372D;">org-meta-return</span><span style="color: #008000;">'.</span>
+
+<span style="color: #008000;">You can change the indentation of an item with  \\[</span><span style="color: #D0372D;">org-metaleft</span><span style="color: #008000;">] or `</span><span style="color: #D0372D;">org-metaleft</span><span style="color: #008000;">' and \\[</span><span style="color: #D0372D;">org-meta-right</span><span style="color: #008000;">] or `</span><span style="color: #D0372D;">org-meta-right</span><span style="color: #008000;">'.</span>
+
+<span style="color: #008000;">You can change the bullet of the item with  \\[</span><span style="color: #D0372D;">org-shiftleft</span><span style="color: #008000;">] or `</span><span style="color: #D0372D;">org-shiftleft</span><span style="color: #008000;">' and \\[</span><span style="color: #D0372D;">org-shiftright</span><span style="color: #008000;">] or `</span><span style="color: #D0372D;">org-shiftright</span><span style="color: #008000;">'.</span>
+
+<span style="color: #008000;">See Info node `(org) Plain lists' for other things like sorting, cycling, checkboxes, etc...</span>
+
+<span style="color: #008000;">"</span>)
+   (format  <span style="color: #008000;">"\nClick for details on the face [[face:%s]]\n"</span> (face-at-point))
+   (ore-user-documentation 'item)))
+
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">ore-keyword</span> (element)
+  <span style="color: #036A07;">"`</span><span style="color: #D0372D;">ore</span><span style="color: #036A07;">' documentation for a keyword."</span>
+  (concat
+   (substitute-command-keys
+    <span style="color: #008000;">"You are on a keyword.</span>
+
+<span style="color: #008000;">You may need to run \\[</span><span style="color: #D0372D;">org-ctrl-c-ctrl-c</span><span style="color: #008000;">] or `</span><span style="color: #D0372D;">org-ctrl-c-ctrl-c</span><span style="color: #008000;">' to refresh its value if you change it.</span>
+
+<span style="color: #008000;">You can move keywords up and down with \\[</span><span style="color: #D0372D;">org-metaup</span><span style="color: #008000;">] or `</span><span style="color: #D0372D;">org-metaup</span><span style="color: #008000;">' and \\[</span><span style="color: #D0372D;">org-metadown</span><span style="color: #008000;">] or `</span><span style="color: #D0372D;">org-metadown</span><span style="color: #008000;">'.</span>
+
+<span style="color: #008000;">"</span>)
+   (format  <span style="color: #008000;">"\nClick for details on the face [[face:%s]]\n"</span> (face-at-point))
+   (ore-user-documentation 'keyword)))
+
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">ore-paragraph</span> (element)
+  <span style="color: #036A07;">"`</span><span style="color: #D0372D;">ore</span><span style="color: #036A07;">' documentation for a paragraph."</span>
+  (concat
+   (substitute-command-keys
+    <span style="color: #008000;">"You are in a paragraph.</span>
+
+<span style="color: #008000;">You can move a paragraph up with \\[</span><span style="color: #D0372D;">org-metaup</span><span style="color: #008000;">] or `</span><span style="color: #D0372D;">org-metaup</span><span style="color: #008000;">'.</span>
+
+<span style="color: #008000;">You can move a paragraph up with \\[</span><span style="color: #D0372D;">org-metadown</span><span style="color: #008000;">] or `</span><span style="color: #D0372D;">org-metadown</span><span style="color: #008000;">'.</span>
+
+<span style="color: #008000;">You can mark the paragraph with `</span><span style="color: #D0372D;">mark-paragraph</span><span style="color: #008000;">'.</span>
+
+
+<span style="color: #008000;">"</span>)
+   (format  <span style="color: #008000;">"\nClick for details on the face [[face:%s]]\n"</span> (face-at-point))
+   (ore-user-documentation 'paragraph)))
+
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">ore</span> ()
+  <span style="color: #036A07;">"Help function for the org-mode element at point."</span>
+  (<span style="color: #0000FF;">interactive</span>)
+  (<span style="color: #0000FF;">with-help-window</span>
+      (help-buffer)
+    (<span style="color: #0000FF;">let*</span> ((oeap (org-element-context))
+           (ore-func (intern (format <span style="color: #008000;">"ore-%s"</span> (car oeap))))
+           (s (<span style="color: #0000FF;">if</span> (fboundp ore-func)
+                  (funcall ore-func oeap)
+                (format
+                 <span style="color: #008000;">"No documentation found for %s.</span>
+
+<span style="color: #008000;">%s"</span>
+                 (car oeap)
+                 (ore-user-documentation (car oeap))))))
+      <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">There are some special cases.</span>
+      (<span style="color: #0000FF;">cond</span>
+       ((<span style="color: #0000FF;">and</span>  (eq 'src-block (car oeap))
+              (ore-src-block-header-p oeap))
+        (<span style="color: #0000FF;">setq</span> s (ore-src-block-header oeap)))
+
+       ((<span style="color: #0000FF;">or</span> (eq 'table (car oeap))
+            (eq 'table-row (car oeap))
+            (eq 'table-cell (car oeap)))
+        (<span style="color: #0000FF;">setq</span> s (ore-table oeap)))
+
+       ((<span style="color: #0000FF;">or</span> (eq 'latex-fragment (car oeap))
+            (eq 'latex-environment (car oeap)))
+        (<span style="color: #0000FF;">setq</span> s (ore-latex oeap))))
+
+      (princ s)
+      (princ <span style="color: #008000;">"\n\nHere is how org-mode sees the element.\n\n"</span>)
+      (pp oeap))))
+
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">match-next-ore-file</span> (<span style="color: #6434A3;">&amp;optional</span> limit)
+  <span style="color: #036A07;">"Font-lock function to make file links clickable in help-mode."</span>
+  (<span style="color: #0000FF;">when</span>  (re-search-forward <span style="color: #008000;">"\\[\\[file:</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">(</span><span style="color: #008000;">[</span><span style="color: #008000;">^</span><span style="color: #008000;">]]*</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">)</span><span style="color: #008000;">\\]\\]"</span> limit t)
+    (<span style="color: #0000FF;">let*</span> ((fname (expand-file-name
+                   (match-string 1)
+                   ore-user-directory))
+           (beg (match-beginning 0))
+           (end (match-end 0))
+           (find-func `(<span style="color: #0000FF;">lambda</span> ()
+                         (<span style="color: #0000FF;">interactive</span>)
+                         (find-file ,fname))))
+
+      (add-text-properties
+       beg
+       end
+       `(mouse-face
+         highlight
+         display <span style="color: #008000;">"User documentation"</span>
+         local-map ,(<span style="color: #0000FF;">let</span> ((map (copy-keymap help-mode-map)))
+                      (define-key map [mouse-1] find-func)
+                      map)
+         help-echo (format
+                    <span style="color: #008000;">"Click to edit User documentation.\n%s"</span>
+                    fname))))))
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">match-next-ore-face</span> (<span style="color: #6434A3;">&amp;optional</span> limit)
+  <span style="color: #036A07;">"Font-lock function to make face links clickable in help-mode."</span>
+  (<span style="color: #0000FF;">when</span>  (re-search-forward <span style="color: #008000;">"\\[\\[face:</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">(</span><span style="color: #008000;">[</span><span style="color: #008000;">^</span><span style="color: #008000;">]]*</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">)</span><span style="color: #008000;">\\]\\]"</span> limit t)
+    (<span style="color: #0000FF;">let*</span> ((face (match-string 1))
+           (beg (match-beginning 0))
+           (end (match-end 0))
+           (func `(<span style="color: #0000FF;">lambda</span> ()
+                    (<span style="color: #0000FF;">interactive</span>)
+                    (describe-face ,face))))
+
+      (add-text-properties
+       beg
+       end
+       `(mouse-face
+         highlight
+         local-map ,(<span style="color: #0000FF;">let</span> ((map (copy-keymap help-mode-map)))
+                      (define-key map [mouse-1] func)
+                      map)
+         display ,face
+         help-echo (format
+                    <span style="color: #008000;">"Click to show face information.\n%s"</span>
+                    face))))))
+
+(add-hook 'help-mode-hook
+          (<span style="color: #0000FF;">lambda</span> ()
+            (font-lock-add-keywords
+             nil
+             '((match-next-ore-file . font-lock-keyword-face)
+               (match-next-ore-face . font-lock-keyword-face)))))
+
+
+<span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Let's add to the org menu for "Help at point"</span>
+(easy-menu-change
+ '(<span style="color: #008000;">"Org"</span>)
+ <span style="color: #008000;">"Help"</span>
+ '([<span style="color: #008000;">"Help at point"</span> ore])
+ <span style="color: #008000;">"Show/Hide"</span>)
+</pre>
+</div>
+
+<p>
+<a class='org-ref-reference' href="#xu-suppor">xu-suppor</a>   \(e^x\)
+</p>
+
+<div id="outline-container-sec-1" class="outline-2">
+<h2 id="sec-1"><span class="section-number-2">1</span> <span class="todo TODO">TODO</span> elements</h2>
+<div class="outline-text-2" id="text-1">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="right" />
+
+<col  class="right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="right">a</td>
+<td class="right">b</td>
+</tr>
+
+<tr>
+<td class="right">3</td>
+<td class="right">4</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+list (plain/numbered)
+</p>
+<ul class="org-ul">
+<li>add element
+<ul class="org-ul">
+<li>move elements (up/down indent/outdent)
+</li>
+</ul>
+</li>
+<li>
+</li>
+
+<li>item 1
+</li>
+<li>item 2
+</li>
+<li>item 3
+</li>
+</ul>
+
+<p>
+checkbox
+</p>
+<ul class="org-ul">
+<li><code>[&#xa0;]</code> check it
+</li>
+</ul>
+
+
+<div class="figure">
+<p><img src="/media/2015-11-24-Contextual-help-in-org-mode/11-eos.png"> 
+</p>
+</div>
+
+<p>
+<a href="org#External links">org#External links</a>
+</p>
+
+<p>
+<a class='org-ref-reference' href="#lizzit-2001-surfac-ru">lizzit-2001-surfac-ru</a>
+</p>
+
+
+<p>
+
+</p>
+
+<p>
+\(latex_fragment\)
+</p>
+
+<p>
+\(latex fragment\)
+</p>
+
+\begin{equation}
+2-3
+\end{equation}
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(+ 3 4 5)
+</pre>
+</div>
+
+<pre class="example">
+12
+</pre>
+
+<p>
+<span class="timestamp-wrapper"><span class="timestamp">&lt;2015-10-18 Sun&gt;</span></span>   <span class="timestamp-wrapper"><span class="timestamp">[2015-10-18 Sun]</span></span></p>
+</div>
+</div>
+<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/11/24/Contextual-help-in-org-mode.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/11/24/Contextual-help-in-org-mode#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Improving-org-ref-cite-links-with-tooltips"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/11/23/Improving-org-ref-cite-links-with-tooltips/" rel="bookmark" title="Permanent Link to Improving org-ref cite links with tooltips">Improving org-ref cite links with tooltips</a></h2>
       <p><small><span class="blog_post_date">Posted November 23, 2015 at 07:03 AM</span> | categories:
@@ -482,485 +1233,6 @@ Now I can write things like the particle was 60 Å in diameter at a temperature 
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/11/21/Insert-org-entities-into-org-mode-with-helm#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Asynchronously-running-python-blocks-in-org-mode"></div>
-      <h2 class="blog_post_title"><a href="/blog/2015/11/20/Asynchronously-running-python-blocks-in-org-mode/" rel="bookmark" title="Permanent Link to Asynchronously running python blocks in org-mode">Asynchronously running python blocks in org-mode</a></h2>
-      <p><small><span class="blog_post_date">Posted November 20, 2015 at 11:46 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/python/'>python</a>, <a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2015/11/20/Asynchronously-running-python-blocks-in-org-mode#disqus_thread">View Comments</a>
-      <p><small><span class="blog_post_date">Updated November 20, 2015 at 07:30 PM</span>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-If you run long Python blocks from org-mode, you might want to keep working while it runs. Currently Emacs gets blocked and you have to wait patiently.  In this post we consider some ways to avoid this that run our code asynchronously, but still put results where they belong in the org-buffer.
-</p>
-
-<p>
-This is a long post. You may want to see the video: <a href="https://www.youtube.com/watch?v=VDyoN8yipSE">https://www.youtube.com/watch?v=VDyoN8yipSE</a> , or skip to the <a href="#sec-3">end</a> where the best and final version is shown.
-</p>
-
-<div id="outline-container-sec-1" class="outline-2">
-<h2 id="sec-1"><span class="section-number-2">1</span> The async module</h2>
-<div class="outline-text-2" id="text-1">
-<p>
-Here we consider an approach that uses <a href="https://github.com/jwiegley/emacs-async">https://github.com/jwiegley/emacs-async</a> module. The idea is to tangle the Python block at point to a temp file, then asynchronously run it. We capture the output and put it back in the buffer. We use a uuid to find the place to put the results in org-mode format. Here is the code that implements this idea.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">async</span>)
-
-(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-babel-async-execute</span> ()
-  <span style="color: #036A07;">"Run a python block at point asynchrously."</span>
-  (<span style="color: #0000FF;">interactive</span>)
-
-  (<span style="color: #0000FF;">let</span> ((current-file (buffer-file-name))
-        (uuid (org-id-uuid))
-        (temporary-file-directory <span style="color: #008000;">"./"</span>)
-        (tempfile (make-temp-file <span style="color: #008000;">"py-"</span>)))
-
-    (org-babel-tangle '(4) tempfile)
-    (org-babel-remove-result)
-    (<span style="color: #0000FF;">save-excursion</span>
-      (re-search-forward <span style="color: #008000;">"#\\+END_SRC"</span>)
-      (insert (format
-               <span style="color: #008000;">"\n\n#+RESULTS: %s\n: %s"</span>
-               (<span style="color: #0000FF;">or</span> (org-element-property <span style="color: #006FE0;">:name</span> (org-element-context))
-                   <span style="color: #008000;">""</span>)
-               uuid)))
-
-    (<span style="color: #0000FF;">async-start</span>
-     <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">what to start</span>
-     `(<span style="color: #0000FF;">lambda</span> ()
-        <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">now we run the command then cleanup</span>
-        (<span style="color: #0000FF;">prog1</span>
-            (shell-command-to-string (format <span style="color: #008000;">"python %s"</span> ,tempfile))
-          (delete-file ,tempfile)))
-
-     `(<span style="color: #0000FF;">lambda</span> (result)
-        <span style="color: #036A07;">"Code that runs when the async function finishes."</span>
-        (<span style="color: #0000FF;">save-window-excursion</span>
-          (<span style="color: #0000FF;">save-excursion</span>
-            (<span style="color: #0000FF;">save-restriction</span>
-              (<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect ,current-file)
-                (goto-char (point-min))
-                (re-search-forward ,uuid)
-                (beginning-of-line)
-                (kill-line)
-                (insert (mapconcat
-                         (<span style="color: #0000FF;">lambda</span> (x)
-                           (format <span style="color: #008000;">": %s"</span> x))
-                         (butlast (s-split <span style="color: #008000;">"\n"</span> result))
-                         <span style="color: #008000;">"\n"</span>))))))))))
-</pre>
-</div>
-
-<pre class="example">
-org-babel-async-execute
-</pre>
-
-<p>
-Here is a block to test it on. We can run the block, and keep on working while the code runs. The results seem to get inserted correctly at the right point even if I am in another window or frame! We don't get easy access to continuous output of the command. This wouldn't work if we close Emacs, but who does that?
-</p>
-
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #0000FF;">print</span> <span style="color: #008000;">'hello world'</span>
-<span style="color: #0000FF;">import</span> time
-time.sleep(5)
-
-<span style="color: #0000FF;">import</span> os
-<span style="color: #0000FF;">print</span> os.getcwd()
-<span style="color: #0000FF;">print</span> time.asctime()
-</pre>
-</div>
-
-<pre class="example">
-hello world
-/Users/jkitchin/blogofile-jkitchin.github.com/_blog
-Fri Nov 20 10:17:53 2015
-</pre>
-
-<p>
-There are some limitations to this approach. One of them is it assumes the src block is a stand-alone block that will run on its own. That is usually how I run mine, but I could see having other modules that should be tangled out of a file too. I think the script is being run in the current working directory, so it probably will find any local imports it needs.
-</p>
-
-<p>
-You don't get any intermediate feedback on this process. It seems to be possible to do that with a different approach that puts some output in a new buffer, e.g. with start-process. But, you still need some clever code like the async model to know when to insert the results back into this buffer. We consider Emacs processes and sentinels next.
-</p>
-</div>
-</div>
-
-<div id="outline-container-sec-2" class="outline-2">
-<h2 id="sec-2"><span class="section-number-2">2</span> Emacs process approach with tangling</h2>
-<div class="outline-text-2" id="text-2">
-<p>
-We can start a process in Emacs, and attach a sentinel function to it that runs after the process completes. Here is an example of that. We still tangle the src-block here.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-babel-async-execute</span> ()
-  (<span style="color: #0000FF;">interactive</span>)
-  (<span style="color: #0000FF;">let*</span> ((current-file (buffer-file-name))
-        (uuid (org-id-uuid))
-        (temporary-file-directory <span style="color: #008000;">"./"</span>)
-        (tempfile (make-temp-file <span style="color: #008000;">"py-"</span>))
-        (pbuffer (format <span style="color: #008000;">"*%s*"</span> uuid))
-        process)
-
-    (org-babel-tangle '(4) tempfile)
-    (org-babel-remove-result)
-
-    (<span style="color: #0000FF;">save-excursion</span>
-      (re-search-forward <span style="color: #008000;">"#\\+END_SRC"</span>)
-      (insert (format
-               <span style="color: #008000;">"\n\n#+RESULTS: %s\n: %s"</span>
-               (<span style="color: #0000FF;">or</span> (org-element-property <span style="color: #006FE0;">:name</span> (org-element-context))
-                   <span style="color: #008000;">""</span>)
-               uuid)))
-
-    (<span style="color: #0000FF;">setq</span> process (start-process
-                   uuid
-                   pbuffer
-                   <span style="color: #008000;">"python"</span>
-                   tempfile))
-
-    (set-process-sentinel
-     process
-     `(<span style="color: #0000FF;">lambda</span> (process event)
-        (<span style="color: #0000FF;">when</span> (string= <span style="color: #008000;">"finished\n"</span> event)
-          (delete-file ,tempfile)
-          (<span style="color: #0000FF;">save-window-excursion</span>
-            (<span style="color: #0000FF;">save-excursion</span>
-              (<span style="color: #0000FF;">save-restriction</span>
-                (<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect ,current-file)
-                  (goto-char (point-min))
-                  (re-search-forward ,uuid)
-                  (beginning-of-line)
-                  (kill-line)
-                  (insert (mapconcat
-                           (<span style="color: #0000FF;">lambda</span> (x)
-                             (format <span style="color: #008000;">": %s"</span> x))
-                           (split-string
-                            (<span style="color: #0000FF;">with-current-buffer</span> ,pbuffer (buffer-string))
-                            <span style="color: #008000;">"\n"</span>)
-                           <span style="color: #008000;">"\n"</span>)))))))
-        (kill-buffer ,pbuffer)))))
-</pre>
-</div>
-
-<pre class="example">
-org-babel-async-execute
-</pre>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #0000FF;">print</span> <span style="color: #008000;">'hello world'</span>
-<span style="color: #0000FF;">import</span> time
-time.sleep(10)
-
-<span style="color: #0000FF;">import</span> os
-<span style="color: #0000FF;">print</span> os.getcwd()
-<span style="color: #0000FF;">print</span> time.asctime()
-</pre>
-</div>
-
-<pre class="example">
-hello world
-/Users/jkitchin/blogofile-jkitchin.github.com/_blog
-Fri Nov 20 10:20:01 2015
-</pre>
-
-<p>
-That works well from what I can see. There are some limitations. I doubt this will work if you use variables in the src block header. Next we consider an approach that does not do the tangling, and that will show us code output as it goes.
-</p>
-</div>
-</div>
-
-<div id="outline-container-sec-3" class="outline-2">
-<h2 id="sec-3"><a id="ID-D8F2CBB5-31B2-4477-A363-E3C0063214DE" name="ID-D8F2CBB5-31B2-4477-A363-E3C0063214DE"></a><span class="section-number-2">3</span> Emacs process approach with no tangling</h2>
-<div class="outline-text-2" id="text-3">
-<p>
-As an alternative to tangling to a file, here we just copy the code to a file and then run it. This allows us to use :var in the header to pass data in at run time. At the moment, this code only supports printed output from code blocks, not the value for :results.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-babel-async-execute:python</span> ()
-  <span style="color: #036A07;">"Execute the python src-block at point asynchronously.</span>
-<span style="color: #036A07;">:var headers are supported.</span>
-<span style="color: #036A07;">:results output is all that is supported for output.</span>
-
-<span style="color: #036A07;">A new window will pop up showing you the output as it appears,</span>
-<span style="color: #036A07;">and the output in that window will be put in the RESULTS section</span>
-<span style="color: #036A07;">of the code block."</span>
-  (<span style="color: #0000FF;">interactive</span>)
-  (<span style="color: #0000FF;">let*</span> ((current-file (buffer-file-name))
-         (uuid (org-id-uuid))
-         (code (org-element-property <span style="color: #006FE0;">:value</span> (org-element-context)))
-         (temporary-file-directory <span style="color: #008000;">"."</span>)
-         (tempfile (make-temp-file <span style="color: #008000;">"py-"</span>))
-         (pbuffer (format <span style="color: #008000;">"*%s*"</span> uuid))
-         (varcmds (org-babel-variable-assignments:python
-                   (nth 2 (org-babel-get-src-block-info))))
-         process)
-
-    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">get rid of old results, and put a place-holder for the new results to</span>
-    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">come.</span>
-    (org-babel-remove-result)
-
-    (<span style="color: #0000FF;">save-excursion</span>
-      (re-search-forward <span style="color: #008000;">"#\\+END_SRC"</span>)
-      (insert (format
-               <span style="color: #008000;">"\n\n#+RESULTS: %s\n: %s"</span>
-               (<span style="color: #0000FF;">or</span> (org-element-property <span style="color: #006FE0;">:name</span> (org-element-context))
-                   <span style="color: #008000;">""</span>)
-               uuid)))
-
-    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">open the results buffer to see the results in.</span>
-    (switch-to-buffer-other-window pbuffer)
-
-    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Create temp file containing the code.</span>
-    (<span style="color: #0000FF;">with-temp-file</span> tempfile
-      <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">if there are :var headers insert them.</span>
-      (<span style="color: #0000FF;">dolist</span> (cmd varcmds)
-        (insert cmd)
-        (insert <span style="color: #008000;">"\n"</span>))
-      (insert code))
-
-    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">run the code</span>
-    (<span style="color: #0000FF;">setq</span> process (start-process
-                   uuid
-                   pbuffer
-                   <span style="color: #008000;">"python"</span>
-                   tempfile))
-
-    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">when the process is done, run this code to put the results in the</span>
-    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">org-mode buffer.</span>
-    (set-process-sentinel
-     process
-     `(<span style="color: #0000FF;">lambda</span> (process event)
-        (<span style="color: #0000FF;">save-window-excursion</span>
-          (<span style="color: #0000FF;">save-excursion</span>
-            (<span style="color: #0000FF;">save-restriction</span>
-              (<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect ,current-file)
-                (goto-char (point-min))
-                (re-search-forward ,uuid)
-                (beginning-of-line)
-                (kill-line)
-                (insert
-                 (mapconcat
-                  (<span style="color: #0000FF;">lambda</span> (x)
-                    (format <span style="color: #008000;">": %s"</span> x))
-                  (butlast (split-string
-                            (<span style="color: #0000FF;">with-current-buffer</span>
-                                ,pbuffer
-                              (buffer-string))
-                            <span style="color: #008000;">"\n"</span>))
-                  <span style="color: #008000;">"\n"</span>))))))
-        <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">delete the results buffer then delete the tempfile.</span>
-        <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">finally, delete the process.</span>
-        (<span style="color: #0000FF;">when</span> (get-buffer ,pbuffer)
-          (kill-buffer ,pbuffer)
-          (delete-window))
-        (delete-file ,tempfile)
-        (delete-process process)))))
-</pre>
-</div>
-
-<pre class="example">
-org-babel-async-execute:python
-</pre>
-
-<p>
-Let us try it out again.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #0000FF;">print</span> <span style="color: #008000;">'hello world'</span>
-<span style="color: #0000FF;">import</span> time
-time.sleep(1)
-
-<span style="color: #0000FF;">for</span> i <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">range</span>(5):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">print</span> i
-
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   time.sleep(0.5)
-
-
-<span style="color: #0000FF;">import</span> os
-<span style="color: #0000FF;">print</span> os.getcwd()
-<span style="color: #0000FF;">print</span> time.asctime()
-
-<span style="color: #0000FF;">print</span> data
-
-<span style="color: #0000FF;">raise</span> <span style="color: #6434A3;">IOError</span>(<span style="color: #008000;">'No file!'</span>)
-</pre>
-</div>
-
-<pre class="example">
-hello world
-0
-1
-2
-3
-4
-/Users/jkitchin/blogofile-jkitchin.github.com/_blog
-Fri Nov 20 19:30:16 2015
-[1, 3]
-Traceback (most recent call last):
-  File "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/py-84344aa1", line 18, in &lt;module&gt;
-    raise IOError('No file!')
-IOError: No file!
-</pre>
-
-<p>
-It works fine for this simple example. We get to see the output as the code executes, which is a pleasant change from the usual way of running python blocks. There is some support for some header arguments, notably the :var header. I don't use :results value in Python, so for now only output is supported. We even support Exceptions in the output finally!
-</p>
-
-<p>
-Maybe some org-moder's out there can try this and run it through some more rigorous paces?
-</p>
-</div>
-</div>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/11/20/Asynchronously-running-python-blocks-in-org-mode.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/11/20/Asynchronously-running-python-blocks-in-org-mode#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Functional-and-display-math-in-technical-documents"></div>
-      <h2 class="blog_post_title"><a href="/blog/2015/11/19/Functional-and-display-math-in-technical-documents/" rel="bookmark" title="Permanent Link to Functional and display math in technical documents">Functional and display math in technical documents</a></h2>
-      <p><small><span class="blog_post_date">Posted November 19, 2015 at 06:07 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2015/11/19/Functional-and-display-math-in-technical-documents#disqus_thread">View Comments</a>
-      <p><small><span class="blog_post_date">Updated November 19, 2015 at 02:43 PM</span>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-I have been thinking about a way to have functional and readable mathematics in technical documents. It has always bothered me that I have to write a LaTeX version of an equation, and then a separate implementation of the equation in code somewhere. At least twice in my life these separate representations have not agreed!
-</p>
-
-<p>
-One solution might be if my functional code could be converted to LaTeX easily. I explore one simple approach to this here. It is somewhat inspired by this work here <a href="http://oremacs.com/2015/01/23/eltex/">http://oremacs.com/2015/01/23/eltex/</a> on writing LaTeX in emacs-lisp, and from my work with org-mode in mixing narrative text, LaTeX and code.
-</p>
-
-<p>
-The idea is to use emacs-lisp for the code, so it is functional, but provide an alternative output for the <i>same code</i> for a document conversion. In other words, we accept there is more than one version we need: a functional version for working, and a consumption version for presentation. We will generate the consumption version from the functional version.
-</p>
-
-<p>
-I know emacs-lisp is not ideal for mathematics the way we are accustomed to seeing it, but it enables the idea I want to explore here so we will try it.
-</p>
-
-<p>
-Here is the simplest example I could come up with for functional math. We can run it ourselves, and verify it is correct.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(+ 1 2 3)
-</pre>
-</div>
-
-<pre class="example">
-6
-</pre>
-
-<p>
-Now, I can change the meaning of this code temporarily, so that it not only evaluates the form, but also represents the equation and result in LaTeX code. If this was incorporated into a preprocessor of the document, we could have a functional version representing our equations, in code form, and a presentation version generated from this version. The code that follows isn't how I would do this is in some production setting; it is only to show that you can <i>temporarily</i> change the meaning of "+". In a production setting, there would just be (+ 1 2 3) in the text, and a preprocessor would find all the sexps in the text, and replace them with the export format using code like this. At least, that is what I am imagining. It might be feasible to do this already with inline org-babel calls and an org-mode export filter, but I didn't try it here. So, here is the proof of concept code.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">cl-flet</span> ((+ (<span style="color: #0000FF;">lambda</span> (<span style="color: #6434A3;">&amp;rest</span> args)
-               (format
-                <span style="color: #008000;">"$%s = %s$"</span>
-                (mapconcat #'number-to-string args <span style="color: #008000;">" + "</span>)
-                (eval `(+ ,@args))))))
-  (+ 1 2 3))
-</pre>
-</div>
-
-<p>
-\(1 + 2 + 3 = 6\)
-</p>
-
-
-
-<p>
-Here is an example that generates a fraction from a division.
-</p>
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">cl-flet</span> ((/ (<span style="color: #0000FF;">lambda</span> (<span style="color: #6434A3;">&amp;rest</span> args)
-               (format
-                <span style="color: #008000;">"$\\frac{%s}{%s} = %s$"</span>
-                (car args)
-                (mapconcat 'number-to-string (cdr args) <span style="color: #008000;">" \\cdot "</span>)
-                (eval `(/ ,@args))))))
-  (/ 1.0 2.0 3.0))
-</pre>
-</div>
-
-<p>
-\(\frac{1.0}{2.0 \cdot 3.0} = 0.16666666666666666\)
-</p>
-
-<p>
-As a proof of concept, this idea looks feasible, but this implementation has some limitations. Getting this to a complete workable approach would require a lot of work, basically creating transformation functions for many, many kinds of mathematical functions, and a lot of other kinds of logic. For example, (+ 1 2 (+ 3 4)) would not render correctly with the codes above. It isn't even clear what it should render to. I think you want 1 + 2 + (3 + 4) as the rendered output.
-</p>
-
-<p>
-Anyway, it is an interesting idea, one that blurs the lines between code and mathematics. We are so used to the equation representation of mathematics, rather than the code representation that being able to go back and forth seems like a good idea, especially when one is derived from the other.
-</p>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/11/19/Functional-and-display-math-in-technical-documents.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/11/19/Functional-and-display-math-in-technical-documents#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="../3">« Previous Page</a>
   --  
  <a href="../5">Next Page »</a>
@@ -1002,11 +1274,11 @@ Anyway, it is an interesting idea, one that blurs the lines between code and mat
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2016/02/17/Zhongnan-Xu-selected-for-the-2015-16-Dighe-Fellowship-in-Chemical-Engineering/">Zhongnan Xu selected for the 2015-16 Dighe Fellowship in Chemical Engineering</a></li>
+      <li><a href="/blog/2016/02/17/Zhongnan-Xu-successfully-defended-his-PhD/">Zhongnan Xu successfully defended his PhD</a></li>
       <li><a href="/blog/2016/02/15/An-org-mode-filter-for-blogofile/">An org-mode filter for blogofile</a></li>
       <li><a href="/blog/2016/02/09/Calling-remote-code-blocks-in-org-mode/">Calling remote code-blocks in org-mode</a></li>
       <li><a href="/blog/2016/02/08/Interactive-figures-in-blog-posts-with-mpld3/">Interactive figures in blog posts with mpld3</a></li>
-      <li><a href="/blog/2016/02/07/Interactive-Bokeh-plots-in-HTML/">Interactive Bokeh plots in HTML</a></li>
-      <li><a href="/blog/2016/02/06/Interactive-plots-in-HTML-with-Plotly/">Interactive plots in HTML with Plotly</a></li>
     </ul>
   </section>
 
