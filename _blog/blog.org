@@ -1,3 +1,228 @@
+
+
+
+* DONE Adding captions and attributes to figures and tables from code blocks in org-mode
+  CLOSED: [2016-02-26 Fri 12:43]
+  :PROPERTIES:
+  :categories: orgmode
+  :date:     2016/02/26 12:43:37
+  :updated:  2016/02/26 12:43:37
+  :END:
+
+I have wanted for a long time to be able to add captions and attributes to figures and tables generated from code blocks. I brought this up on the mailing list (https://lists.gnu.org/archive/html/emacs-orgmode/2015-11/msg00544.html) and finally, I have figured out a way to do it that seems ok. It is based on the :wrap feature of org-babel.
+
+The idea is to use a function that will wrap the results in additional text. We use this function that will add a caption and attributes.
+
+#+BEGIN_SRC emacs-lisp
+(defun src-decorate (&optional caption attributes)
+  "A wrap function for src blocks."
+  (concat
+   "ORG\n"
+   (when attributes
+     (concat (mapconcat 'identity attributes "\n") "\n"))
+   (when caption
+     (format "#+caption: %s" caption))))
+#+END_SRC
+
+#+RESULTS:
+: src-decorate
+
+Now, we try it out on a figure:
+
+#+BEGIN_SRC python :wrap (src-decorate "A sin wave. Yep, it works. label:fig-sin" '("#+attr_latex: :width 3in" "#+attr_org: :width 300" ))
+import numpy as np
+import matplotlib.pyplot as plt
+
+x = np.linspace(0, 2 * np.pi)
+y = np.sin(x)
+
+plt.plot(x, y)
+plt.savefig('images/sin.png')
+print('[[./images/sin.png' + ']]')
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_ORG
+#+attr_latex: :width 3in
+#+attr_org: :width 300
+#+caption: A sin wave. label:fig-sin
+[[./images/sin.png]]
+#+END_ORG
+
+Success. We can even refer to Fig. ref:fig-sin. Next, we try it on a table.
+
+#+BEGIN_SRC python :results value :wrap (src-decorate "A table of sin data. label:tab-sin" '("#+attr_latex: :placement [H]"))
+import numpy as np
+
+x = np.linspace(0, 2 * np.pi, 5)
+y = np.sin(x)
+
+return [['x', 'y'], None] + list(zip(x, y))
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_ORG
+#+attr_latex: :placement [H]
+#+caption: A table of sin data. label:tab-sin
+|                  x |                       y |
+|--------------------+-------------------------|
+|                0.0 |                     0.0 |
+| 1.5707963267948966 |                     1.0 |
+|  3.141592653589793 |  1.2246467991473532e-16 |
+|   4.71238898038469 |                    -1.0 |
+|  6.283185307179586 | -2.4492935982947064e-16 |
+#+END_ORG
+
+Sweet.  We can refer to Tab. ref:tab-sin too. I have wanted this for a long time.  Perseverance wins again! and org-mode gets better. Hopefully this works with org 8.3 too!
+
+
+* TODO Using ivy-mode to insert citations in org-ref
+  :PROPERTIES:
+  :categories: emacs,orgref,ivy
+  :END:
+Ivy is a new completion engine for Emacs. It comes as part of [[https://github.com/abo-abo/swiper][swiper]]. It is an alternative to helm, which I have used a lot in org-ref. Here we consider an approach to use ivy in org-ref for inserting citations. We will develop an ivy command to query a bibtex file, and either insert a citation, open the entry or the PDF file.
+
+With any completion framework, you need a list of candidates. org-ref provides an alist of citation strings, and all the fields of the corresponding bibtex entry. For example, here is the first entry.
+
+#+BEGIN_SRC emacs-lisp :results code
+(car (orhc-bibtex-candidates))
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC emacs-lisp
+("  |2006-acs-style-guide| , The ACS Style Guide (2006) :test: :word:."
+ ("url" . "http://dx.doi.org/10.1021/bk-2006-STYG")
+ ("doi" . "10.1021/bk-2006-styg")
+ ("pages" . "nil")
+ ("year" . "2006")
+ ("publisher" . "American Chemical Society (ACS)")
+ ("series" . "nil")
+ ("date_added" . "Wed Apr  1 10:17:54 2015")
+ ("keywords" . "test, word")
+ ("title" . "The ACS Style Guide")
+ ("author" . "")
+ ("=type=" . "book")
+ ("=key=" . "2006-acs-style-guide")
+ ("bibfile" . "/Users/jkitchin/Dropbox/bibliography/references.bib")
+ ("position" . 1839))
+#+END_SRC
+
+We use the string to narrow down our selection. Depending on the completion tool, the fields usually get sent to some kind of action function. Upon selection, we will need a few actions:
+1. Insert a citation
+2. Open the bibtex entry
+3. Open the pdf of the entry.
+
+
+First, an insert citation function. This will take a bibtex entry from ivy, and insert a citation. This is only moderately advanced; if you are on a citation, or at the end or beginning, the selected key is inserted appropriately at the end of the citation, and if not a new citation is inserted.
+
+#+BEGIN_SRC emacs-lisp
+(defun looking-forward-cite ()
+  "Return if point is in the position before a citation."
+  (save-excursion
+    (forward-char)
+    (-contains? org-ref-cite-types
+	      (org-element-property
+	       :type
+	       (org-element-context)))))
+
+
+(defun looking-back-cite ()
+  "Return if point is in the position after a citation."
+  (save-excursion
+    (forward-char -1)
+    (-contains? org-ref-cite-types
+		(org-element-property
+		 :type
+		 (org-element-context)))))
+
+
+(defun ivy-bibtex-insert-cite (entry)
+  "Insert a citation for ENTRY.
+ENTRY is selected from `orhc-bibtex-candidates'."
+  (with-current-buffer cb
+    (let ((key (cdr (assoc "=key=" entry))))
+      (cond
+       ;; on a cite
+       ((-contains? org-ref-cite-types
+		    (org-element-property
+		     :type
+		     (org-element-context)))
+	(goto-char (org-element-property :end (org-element-context)))
+	(insert (concat "," key)))
+       ;; at end of a cite
+       ((looking-back-cite)
+	(insert (concat "," key)))
+       ;; right before a cite
+       ((looking-forward-cite)
+	(forward-char)
+	(goto-char (org-element-property :end (org-element-context)))
+	(insert (concat "," key)))
+       ;; insert a new cite
+       (t
+	(insert (concat "cite:" key)))))))
+#+END_SRC
+
+#+RESULTS:
+: ivy-bibtex-insert-cite
+
+Here are two functions to open the PDF and the bibtex entry.
+#+BEGIN_SRC emacs-lisp
+(defun ivy-bibtex-open-pdf (entry)
+  "Open the pdf associated with ENTRY."
+  (let ((pdf (expand-file-name
+	      (format "%s.pdf"
+		      (cdr (assoc "=key=" entry)))
+	      org-ref-pdf-directory)))
+    (if (file-exists-p pdf)
+	(org-open-file pdf)
+      (message "No pdf found for %s" (cdr (assoc "=key=" entry))))))
+
+
+(defun ivy-bibtex-open-entry (entry)
+  (find-file (cdr (assoc "bibfile" entry)))
+  (goto-char (cdr (assoc "position" entry)))
+  (bibtex-beginning-of-entry))
+#+END_SRC
+
+#+RESULTS:
+: ivy-bibtex-open-entry
+
+Finally, our selection function. We tell ivy to ignore order so it does not matter what order the authors are typed in, etc...
+bibliography:~/Dropbox/bibliography/references.bib
+#+BEGIN_SRC emacs-lisp :results silent
+(defun ivy-cite (_)
+  (interactive)
+  (let ((cb (current-buffer))
+	(org-ref-bibtex-files (org-ref-find-bibliography)))
+
+    (ivy-read "Open: " (orhc-bibtex-candidates)
+	      :require-match t
+	      :action '(1
+			("i" ivy-bibtex-insert-cite "Insert citation")
+			("o" ivy-bibtex-open-entry "Open entry")
+			("p" ivy-bibtex-open-pdf "open Pdf")))))
+
+(add-to-list 'ivy-re-builders-alist (cons 'ivy-cite 'ivy--regex-ignore-order))
+#+END_SRC
+
+#+RESULTS:
+
+When you run this command, you get an ivy selection buffer. Start typing some words to find what you want, and press enter to insert the citation.
+
+Alternatively, when you have selected what you want type C-m. This is notable because if you type C-M-m, the selection buffer stays open and you can take advantage of this to insert several citations in succession.
+
+If you forget what the actions are, type M-o and you will get a hydra menu of the actions. See what you want in the selection window? Type C-', and you get an avy like completion where one letter will make the final selection.
+
+C-o will open a hydra menu for navigation and selection.
+
+Overall, ivy seems like an interesting alternative for org-ref. I need to refactor some things in org-ref to enable easier switching between completion engines.  Currently, you can choose between these cite insertion engines:
+
+- org link completion
+- reftex
+- helm-bibtex
+- org-ref-helm-cite
+- ivy
+
 * DONE Pycse is now using Python3
   CLOSED: [2016-02-25 Thu 19:09]
   :PROPERTIES:
@@ -97,191 +322,6 @@ date -g
 : date: illegal option -- g
 : usage: date [-jnu] [-d dst] [-r seconds] [-t west] [-v[+|-]val[ymwdHMS]] ...
 :             [-f fmt date | [[[mm]dd]HH]MM[[cc]yy][.ss]] [+format]
-
-* Asynchronous export
-
-#+BEGIN_SRC sh
-date&
-sleep 5 &
-date &
-#+END_SRC
-#+RESULTS:
-: Mon Feb 22 10:29:46 EST 2016
-: Mon Feb 22 10:29:46 EST 2016
-
-#+BEGIN_SRC emacs-lisp
-(setq org-export-babel-evaluate t org-export-async-debug t)
-#+END_SRC
-#+RESULTS:
-: t
-
-
-* Uncoupling org-ref from helm
-
-#+BEGIN_SRC emacs-lisp
-(require 'org-ref-reftex)
-org-ref-insert-link-function
-#+END_SRC
-
-#+RESULTS:
-: org-ref-insert-cite-link
-
-
-#+BEGIN_SRC emacs-lisp
-(require 'org-ref-helm-bibtex)
-org-ref-insert-link-function
-#+END_SRC
-
-#+RESULTS:
-: org-ref-insert-cite-link
-
-
-* Using ivy-mode to insert citations in org-ref
-  :PROPERTIES:
-  :categories: emacs,orgref,ivy
-  :END:
-Ivy is a new completion engine for Emacs. It comes as part of [[https://github.com/abo-abo/swiper][swiper]]. It is an alternative to helm, which I have used a lot in org-ref. Here we consider an approach to use ivy in org-ref for inserting citations. We will develop an ivy command to query a bibtex file, and either insert a citation, open the entry or the PDF file.
-
-With any completion framework, you need a list of candidates. org-ref provides an alist of citation strings, and all the fields of the corresponding bibtex entry. For example, here is the first entry.
-
-#+BEGIN_SRC emacs-lisp :results code
-(car (orhc-bibtex-candidates))
-#+END_SRC
-
-#+RESULTS:
-#+BEGIN_SRC emacs-lisp
-("  |2006-acs-style-guide| , The ACS Style Guide (2006) :test: :word:."
- ("url" . "http://dx.doi.org/10.1021/bk-2006-STYG")
- ("doi" . "10.1021/bk-2006-styg")
- ("pages" . "nil")
- ("year" . "2006")
- ("publisher" . "American Chemical Society (ACS)")
- ("series" . "nil")
- ("date_added" . "Wed Apr  1 10:17:54 2015")
- ("keywords" . "test, word")
- ("title" . "The ACS Style Guide")
- ("author" . "")
- ("=type=" . "book")
- ("=key=" . "2006-acs-style-guide")
- ("bibfile" . "/Users/jkitchin/Dropbox/bibliography/references.bib")
- ("position" . 1839))
-#+END_SRC
-
-We use the string to narrow down our selection. Depending on the completion tool, the fields usually get sent to some kind of action function. Upon selection, we will need a few actions:
-1. Insert a citation
-2. Open the bibtex entry
-3. Open the pdf of the entry.
-
-
-First, an insert citation function. This will take a bibtex entry from ivy, and insert a citation. This is only moderately advanced; if you are on a citation, or at the end or beginning, the selected key is inserted appropriately at the end of the citation, and if not a new citation is inserted.
-
-#+BEGIN_SRC emacs-lisp
-(defun looking-forward-cite ()
-  "Return if point is in the position before a citation."
-  (save-excursion
-    (forward-char)
-    (-contains? org-ref-cite-types
-	      (org-element-property
-	       :type
-	       (org-element-context)))))
-
-(defun looking-back-cite ()
-  "Return if point is in the position after a citation."
-  (save-excursion
-    (forward-char -1)
-    (-contains? org-ref-cite-types
-		(org-element-property
-		 :type
-		 (org-element-context)))))
-
-(defun ivy-bibtex-insert-cite (entry)
-  "Insert a citation for ENTRY.
-ENTRY is selected from `orhc-bibtex-candidates'."
-  (with-current-buffer cb
-    (let ((key (cdr (assoc "=key=" entry))))
-      (cond
-       ;; on a cite
-       ((-contains? org-ref-cite-types
-		    (org-element-property
-		     :type
-		     (org-element-context)))
-	(goto-char (org-element-property :end (org-element-context)))
-	(insert (concat "," key)))
-       ;; at end of a cite
-       ((looking-back-cite)
-	(insert (concat "," key)))
-       ;; right before a cite
-       ((looking-forward-cite)
-	(forward-char)
-	(goto-char (org-element-property :end (org-element-context)))
-	(insert (concat "," key)))
-       ;; insert a new cite
-       (t
-	(insert (concat "cite:" key)))))))
-#+END_SRC
-
-#+RESULTS:
-: ivy-bibtex-insert-cite
-
-Here are two functions to open the PDF and the bibtex entry.
-#+BEGIN_SRC emacs-lisp
-(defun ivy-bibtex-open-pdf (entry)
-  "Open the pdf associated with ENTRY."
-  (let ((pdf (expand-file-name
-	      (format "%s.pdf"
-		      (cdr (assoc "=key=" entry)))
-	      org-ref-pdf-directory)))
-    (if (file-exists-p pdf)
-	(org-open-file pdf)
-      (message "No pdf found for %s" (cdr (assoc "=key=" entry))))))
-
-
-(defun ivy-bibtex-open-entry (entry)
-  (find-file (cdr (assoc "bibfile" entry)))
-  (goto-char (cdr (assoc "position" entry)))
-  (bibtex-beginning-of-entry))
-
-#+END_SRC
-
-#+RESULTS:
-: ivy-bibtex-open-entry
-
-Finally, our selection function. We tell ivy to ignore order so it does not matter what order the authors are typed in, etc...
-bibliography:~/Dropbox/bibliography/references.bib
-#+BEGIN_SRC emacs-lisp :results silent
-(defun ivy-cite ()
-  (interactive)
-  (let ((cb (current-buffer))
-	(org-ref-bibtex-files (org-ref-find-bibliography)))
-
-    (ivy-read "Open: " (orhc-bibtex-candidates)
-	      :require-match t
-	      :action '(1
-			("i" ivy-bibtex-insert-cite "Insert citation")
-			("o" ivy-bibtex-open-entry "Open entry")
-			("p" ivy-bibtex-open-pdf "open Pdf")))))
-
-(add-to-list 'ivy-re-builders-alist (cons 'ivy-cite 'ivy--regex-ignore-order))
-(setq org-ref-cite-onclick-function 'ivy-cite)
-#+END_SRC
-
-#+RESULTS:
-
-When you run this command, you get an ivy selection buffer. Start typing some words to find what you want, and press enter to insert the citation.
-
-Alternatively, when you have selected what you want type C-m. This is notable because if you type C-M-m, the selection buffer stays open and you can take advantage of this to insert several citations in succession.
-
-If you forget what the actions are, type M-o and you will get a hydra menu of the actions. See what you want in the selection window? Type C-', and you get an avy like completion where one letter will make the final selection.
-
-C-o will open a hydra menu for navigation and selection.
-
-Overall, ivy seems like an interesting alternative for org-ref. I need to refactor some things in org-ref to enable easier switching between completion engines.  Currently, you can choose between these cite insertion engines:
-
-- org link completion
-- reftex
-- helm-bibtex
-- org-ref-helm-cite
-- ivy
 
 
 * DONE Generating an alphabetized list of collaborators from the past five years
@@ -413,70 +453,6 @@ That little bit of code is wrapped in a command-line utility in the scopus Pytho
 : Sneha A. Akhade (Pennsylvania State University), Erik J. Albenze (National Energy Technology Laboratory), Federico Calle-Vallejo (Leiden Institute of Chemistry), Robin Chao (National Energy Technology Laboratory), Krishnan V. Damodaran (University of Pittsburgh), Carmeline J. Dsilva (Princeton University), Adefemi A. Egbebi (URS), John C. Eslick (National Energy Technology Laboratory), Anatoly I. Frenkel (Yeshiva University), Kirk R. Gerdes (National Energy Technology Laboratory), Heine Anton Hansen (Danmarks Tekniske Universitet), David P. Hopkinson (National Energy Technology Laboratory), Thomas Francisco Jaramillo (Fermi National Accelerator Laboratory), Yogesh V. Joshi (Exxon Mobil Research and Engineering), Christopher J. Keturakis (Lehigh University), Marc T M Koper (Leiden Institute of Chemistry), Victor A. Kusuma (National Energy Technology Laboratory), James Landon (University of Kentucky), David R. Luebke (Liquid Ion Solutions), Isabelacostinela Man (Universitatea din Bucuresti), James X. Mao (University of Pittsburgh), José Ignacio Martínez (CSIC - Instituto de Ciencia de Materiales de Madrid (ICMM)), David C M Miller (National Energy Technology Laboratory), Bryan D. Morreale (National Energy Technology Laboratory), Christina R. Myers (National Energy Technology Laboratory), Jens Kehlet Nørskov (Stanford Linear Accelerator Center), Rumyana V. Petrova (International Iberian Nanotechnology Laboratory), Vladimir V. Pushkarev (Dow Corning Corporation), Sumathy Raman (Exxon Mobil Research and Engineering), Kevin P. Resnik (URS), Walter Richard Alesi (National Energy Technology Laboratory), Jan Rossmeisl (Kobenhavns Universitet), Edward M. Sabolsky (West Virginia University), Wei Shi (University of Pittsburgh), Nicholas S. Siefert (National Energy Technology Laboratory), Haiyan Su (Dalian Institute of Chemical Physics Chinese Academy of Sciences), Robert Lee Thompson (University of Pittsburgh Medical Center), Relja Vasić (SUNY College of Nanoscale Science and Engineering), Israel E. Wachs (Lehigh University), John D. Watkins (National Energy Technology Laboratory), Chunrong Yin (United States Department of Energy), Xu Zhou (Liquid Ion Solutions)
 
 
-
-* generating figures and tables with captions and properties
-
-#+BEGIN_SRC python
-print('#+caption: test')
-print('| 4 | 5 |')
-#+END_SRC
-
-#+BEGIN_SRC emacs-lisp
-  (defun ex-aware-wrap ()
-      (if org-export-current-backend
-          (concat "src org :exports results "
-                  ":results  replace "
-"\n#+caption: test"
-                  "\n#+ATTR_LATEX: "
-                  ":environment longtable")
-        "org"))
-(setq org-export-babel-evaluate t)
-#+END_SRC
-
-#+RESULTS:
-: t
-
-#+BEGIN_SRC emacs-lisp :exports results :wrap (ex-aware-wrap)
-(list (+ 1 2) 3 4)
-#+END_SRC
-#+RESULTS:
-#+BEGIN_org
-| 3 | 3 | 4 |
-#+END_org
-
-** prev
-#+name: el_attr
-#+BEGIN_SRC emacs-lisp :var data='(1 2 3)
-(org-babel-format-result
- (concat
-  "#+tblname: test\n"
-  "#+ATTR_LATEX: :environment longtable\n"
-  (orgtbl-to-generic  (list data) (list :lstart "|" :lend "|"  :sep "|" :fmt "%s"))))
-#+END_SRC
-
-#+RESULTS: el_attr
-: #+tblname: test
-: #+ATTR_LATEX: :environment longtable
-: |1|2|3|
-
-
-#+BEGIN_SRC emacs-lisp   :exports results :post el_attr(*this*)
-(list (+ 1 2) 3 3)
-#+END_SRC
-
-#+RESULTS:
-: #+tblname: test
-: #+ATTR_LATEX: :environment longtable
-: |3|3|3|
-
-
-But I cannot figure out how to get the results in org format. If I put
-:results org or raw in I get this output:
-
-#+RESULTS:
-#+tblname: test
-#+ATTR_LATEX: :environment longtable
-|40|51|32|51|32|51|41|
 * tangling
 
 #+BEGIN_SRC python :tangle foo.ml
@@ -520,27 +496,6 @@ cat foo.ml
 : let x = 2
 :
 : let x = 3
-
-
-* Python 3.5 has arrived on my laptop
-
-A new matrix
-#+BEGIN_SRC python
-import numpy as np
-
-a = np.array([1, 2, 3])
-b = np.array([1, 2, 3])
-
-print(a @ b)
-#+END_SRC
-
-#+RESULTS:
-
-#+BEGIN_SRC python
-from pycse import *
-#+END_SRC
-
-#+RESULTS:
 
 * My emacsclient setup			    :sent:
   :PROPERTIES:
