@@ -1,3 +1,244 @@
+* Custom colorization of org-mode links
+
+#+BEGIN_SRC emacs-lisp :results silent
+(org-add-link-type "todo"
+ (lambda (path) (message-box path)))
+#+END_SRC
+
+
+#+BEGIN_SRC emacs-lisp
+(defun colorize-todo-links (&rest _)
+  (save-match-data
+    (let ((s (match-string 0))
+	  (beg (match-beginning 0))
+	  (end (match-end 0)))
+      (message "%s %s\n" s (string= "todo:" (substring s 0 5)))
+      (when (or (string= "todo:" (substring s 0 5))
+		(string= "todo:" (substring s 2 7)))
+	(add-text-properties
+	 beg end
+	 `(face (:foreground "red")))))))
+
+(advice-add 'org-activate-plain-links :after 'colorize-todo-links)
+(advice-add 'org-activate-bracket-links :after 'colorize-todo-links)
+
+;;(advice-remove 'org-activate-plain-links 'colorize-todo-links)
+#+END_SRC
+
+#+RESULTS:
+
+[[todo:ttees]]
+
+a   [[todo:tree]]  and plain todo:for-now.
+    cite:2006-acs-style-guide
+
+and a file:link and a  [[todo:tree]]  and some text cite:2011-mater-genom  todo:test we need stuff.
+
+[[todo:test]]  test  todo:tree .
+
+[[cite:2006-acs-style-guide][test]]
+
+
+#+BEGIN_SRC emacs-lisp
+(org-element-map (org-element-parse-buffer) 'headline
+  (lambda (hline) (org-element-property :raw-value hline)))
+#+END_SRC
+#+RESULTS:
+| Custom colorization of org-mode links |
+
+
+* uncoloring [[file:test.org]] in headlines
+** a headline with a file:
+http://emacs.stackexchange.com/questions/19568/can-i-hack-org-mode-to-not-visually-modify-links-in-headers?rq=1
+
+file:test.org
+
+#+BEGIN_SRC emacs-lisp
+(defun uncolorize-heading-plain-links (&rest _)
+  (save-match-data
+    (let ((s (match-string 0))
+	  (path (match-string 1))
+	  (beg (match-beginning 0))
+	  (end (match-end 0))
+	  (map (make-sparse-keymap)))
+      (message "%s" path)
+      (when (and (org-on-heading-p) (string-match org-plain-link-re s))
+	(define-key map [mouse-1]
+	  (lambda ()
+	    (interactive)
+	    (org-open-at-point-global)))
+	(set-text-properties
+	 beg end
+	 `(face ,(get-text-property (line-beginning-position) 'face)
+		mouse-face 'highlight
+		local-map ,map))))))
+
+(defun uncolorize-heading-bracket-links (&rest _)
+  (save-match-data
+    (let ((s (match-string 0))
+	  (path (match-string 1))
+	  (desc (match-string 2))
+	  (beg (match-beginning 0))
+	  (end (match-end 0))
+	  (map (make-sparse-keymap)))
+      (message "%s" path)
+      (when (and (string-match org-bracket-link-regexp s) (org-on-heading-p))
+	(define-key map [mouse-1]
+	  (lambda ()
+	    (interactive)
+	    (org-open-at-point-global)))
+	(set-text-properties
+	 beg end
+	 `(face ,(get-text-property (line-beginning-position) 'face)
+		mouse-face 'highlight
+		local-map ,map
+		display ,(if desc (substring-no-properties desc 1 -1)
+			   (substring-no-properties path))))))))
+
+(advice-add 'org-activate-plain-links :after 'uncolorize-heading-plain-links)
+(advice-add 'org-activate-bracket-links :after 'uncolorize-heading-bracket-links)
+
+
+;; (advice-add 'org-activate-bracket-links :after 'uncolorize-heading-bracket-links)
+
+
+;;(advice-remove 'org-activate-bracket-links 'uncolorize-heading-bracket-links)
+
+#+END_SRC
+#+RESULTS:
+
+** hl with [[file:test.org]] in it
+
+** hl with [[file:test.org][desc]] in it.
+* Making org links with descriptions helpful in org-ref
+  :PROPERTIES:
+  :categories: orgref,emacs,orgmode
+  :END:
+I came across this question on Emacs StackExchange: http://emacs.stackexchange.com/questions/18644/org-mode-customize-link-display on how to make descriptive links in org-ref more helpful. The problem is that org-mode makes the citation part invisible, and only shows the description, which org-ref uses for pre/post text. There is a partial solution on stack exchange, which I have adapted here to make these special links visible so you can see the key and the pre/post text.
+
+Basically, we just undo the invisibility after the link has been activated, and then add the color back in a function that advises the activate link function. Here is the solution I have put into org-ref.
+
+An important detail:
+1. It was important to save the match data, because it is reused in subsequent font-lock functions in org-mode. The match-data gets changed by the string-match function.
+#+BEGIN_SRC emacs-lisp
+(defun org-ref-make-org-link-cite-key-visible (&rest _)
+  "Make the org-ref cite link visible in descriptive links."
+
+  (save-match-data
+    (let ((s (match-string 1))
+	  (beg (match-beginning 0))
+	  (end (match-end 0))
+	  (cite-re (format "^\\(%s:\\)"
+			   (regexp-opt (-sort
+					(lambda (a b)
+					  (> (length a) (length b)))
+					org-ref-cite-types))))
+	  cite-type)
+
+      (when (and s (string-match cite-re s))
+	(setq cite-type (match-string 1 s))
+	(remove-text-properties beg end
+				'(invisible))
+	(add-text-properties
+	 beg end
+	 `(face (:foreground ,org-ref-cite-color)))))))
+
+(advice-add 'org-activate-bracket-links :after #'org-ref-make-org-link-cite-key-visible)
+#+END_SRC
+
+#+RESULTS:
+
+
+ [[cite:2006-acs-style-guide][Page 5]]
+
+
+cite:2006-acs-style-guide,2007-basic-resear-needs,2010-reprod-resear
+
+
+
+* left superscript
+
+\(^{12}\)C
+
+
+* Autoload languages in org-mode
+
+You normally have to "register" languages in org-mode in the variable `org-babel-load-languages'. Here, we advise org-babel-execute-src-block to check for the language, make sure it is loaded, and if not load it. Basically we just need to get the language type, check if it is in org-babel-load-languages, add it if not and then load the languages.
+
+#+BEGIN_SRC emacs-lisp
+(defadvice org-babel-execute-src-block (around load-language nil activate)
+  "Load language if needed"
+  (let ((language (org-element-property :language (org-element-at-point))))
+    (unless (cdr (assoc (intern language) org-babel-load-languages))
+      (add-to-list 'org-babel-load-languages (cons (intern language) t))
+      (org-babel-do-load-languages 'org-babel-load-languages org-babel-load-languages))
+    ad-do-it))
+#+END_SRC
+
+#+RESULTS:
+: org-babel-execute-src-block
+
+#+BEGIN_SRC emacs-lisp
+(org-babel-do-load-languages 'org-babel-load-languages nil)
+#+END_SRC
+
+#+RESULTS:
+
+#+BEGIN_SRC python
+print(88)
+#+END_SRC
+
+#+RESULTS:
+: 88
+
+#+BEGIN_SRC gnuplot :file test.png
+set key left box
+set samples 50
+set style data points
+
+plot [-10:10] sin(x),atan(x),cos(atan(x))
+#+END_SRC
+
+#+RESULTS:
+[[file:test.png]]
+
+
+* Using :post
+this doesn't work.
+(setq org-export-babel-evaluate t)
+
+#+name: post-wrapper
+#+BEGIN_SRC emacs-lisp :var data="" caption="" attributes="" post-attributes=""
+(concat
+ (when (not (string= "" attributes))
+   (concat (mapconcat 'identity attributes "\n") "\n"))
+ (when (not (string= "" caption))
+   (format "#+caption: %s" caption))
+ (mapconcat
+  'identity
+  (mapcar (lambda (rs) (concat "|" rs "|"))
+	  (loop for row in data
+		collect
+		(mapconcat (lambda (x) (format "%s" x)) row "|")))
+  "\n")
+
+ (when post-attributes
+   (concat "\n" (mapconcat 'identity post-attributes "\n") "\n")))
+#+END_SRC
+
+
+#+BEGIN_SRC python :results value table raw :post post-wrapper(data=*this*, caption="", attributes="", post-attributes='("#+tblfm: $1=$1;%.3f :: $2=$2;%.3f "))
+import numpy as np
+
+return np.matrix([[.123456789, 2], [3, 4]])
+#+END_SRC
+
+#+RESULTS:
+| 0.12345679 | 2 |
+|          3 | 4 |
+#+tblfm: $1=$1;%.3f :: $2=$2;%.3f
+
+
 
 
 
