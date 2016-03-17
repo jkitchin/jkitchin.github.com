@@ -84,6 +84,277 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Restarting-org-babel-sessions-in-org-mode-more-effectively"></div>
+      <h2 class="blog_post_title"><a href="/blog/2015/03/19/Restarting-org-babel-sessions-in-org-mode-more-effectively/" rel="bookmark" title="Permanent Link to Restarting org-babel sessions in org-mode more effectively">Restarting org-babel sessions in org-mode more effectively</a></h2>
+      <p><small><span class="blog_post_date">Posted March 19, 2015 at 06:53 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2015/03/19/Restarting-org-babel-sessions-in-org-mode-more-effectively#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+
+<p>
+In a previous <a href="http://kitchingroup.cheme.cmu.edu/blog/2015/03/12/Making-org-mode-Python-sessions-look-better/">post</a> I eliminated one annoying problem with sessions, which was getting rid of extraneous Python interpreter characters in the output. Another thing that has bothered me is when you close Emacs, or even the session buffer, the session is, of course, lost. That means when you reopen the file, you have to run each block in order to continue your work. There does not seem to be a selective way to do this in org. So, in this post, we consider a simple approach to automate that. We want a function that will run all the blocks in a current session that are above the current point.
+</p>
+
+
+<p>
+The idea is we will go to the beginning of the buffer, find all blocks that match the language of the block we are in, and in the session, and execute them. We can tell if a block is in a session by looking at the :parameters property of the block. Interestingly, if a block is not in a session, then session will be "none", if it is in an unnamed session, session will be nil, and otherwise, session will be the session name.
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="left" />
+
+<col  class="left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="left">scenario</th>
+<th scope="col" class="left">:session value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="left">no session</td>
+<td class="left">"none"</td>
+</tr>
+
+<tr>
+<td class="left">unnamed session</td>
+<td class="left">nil</td>
+</tr>
+
+<tr>
+<td class="left">named session</td>
+<td class="left">"name"</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Here is a function for testing if a block is in a session.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">src-block-in-session-p</span> (<span style="color: #6434A3;">&amp;optional</span> name)
+  <span style="color: #036A07;">"Return if src-block is in a session of NAME.</span>
+<span style="color: #036A07;">NAME may be nil for unnamed sessions."</span>
+  (<span style="color: #0000FF;">let*</span> ((info (org-babel-get-src-block-info))
+         (lang (nth 0 info))
+         (body (nth 1 info))
+         (params (nth 2 info))
+         (session (cdr (assoc <span style="color: #006FE0;">:session</span> params))))
+
+    (<span style="color: #0000FF;">cond</span>
+     <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">unnamed session, both name and session are nil</span>
+     ((and (null session)
+           (null name))
+      t)
+     <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Matching name and session</span>
+     ((and
+       (stringp name)
+       (stringp session)
+       (string= name session))
+      t)
+     <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">no match</span>
+     (t nil))))
+</pre>
+</div>
+
+<p>
+Now, we need to get some information about the current point and block. We will want to run blocks that start before the current point, but not after. We will use org-element-map to find code blocks, and when the language and session of a code block matches the current block, and the block starts at a point earlier than the current point, then we will go to that block, and run it. Here is that code.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-babel-restart-session-to-point</span> (<span style="color: #6434A3;">&amp;optional</span> arg)
+  <span style="color: #036A07;">"Restart session up to the src-block in the current point.</span>
+<span style="color: #036A07;">Goes to beginning of buffer and executes each code block with</span>
+<span style="color: #036A07;">`</span><span style="color: #D0372D;">org-babel-execute-src-block</span><span style="color: #036A07;">' that has the same language and</span>
+<span style="color: #036A07;">session as the current block. ARG has same meaning as in</span>
+<span style="color: #036A07;">`</span><span style="color: #D0372D;">org-babel-execute-src-block</span><span style="color: #036A07;">'."</span>
+  (interactive <span style="color: #008000;">"P"</span>)
+  (<span style="color: #0000FF;">unless</span> (org-in-src-block-p)
+    (<span style="color: #ff0000; font-weight: bold;">error</span> <span style="color: #008000;">"You must be in a src-block to run this command"</span>))
+  (<span style="color: #0000FF;">let*</span> ((current-point (point-marker))
+         (info (org-babel-get-src-block-info))
+         (lang (nth 0 info))
+         (params (nth 2 info))
+         (session (cdr (assoc <span style="color: #006FE0;">:session</span> params))))
+    (<span style="color: #0000FF;">save-excursion</span>
+      (goto-char (point-min))
+      (<span style="color: #0000FF;">while</span> (re-search-forward org-babel-src-block-regexp nil t)
+        <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">goto start of block</span>
+        (goto-char (match-beginning 0))
+        (<span style="color: #0000FF;">let*</span> ((this-info (org-babel-get-src-block-info))
+               (this-lang (nth 0 this-info))
+               (this-params (nth 2 this-info))
+               (this-session (cdr (assoc <span style="color: #006FE0;">:session</span> this-params))))
+            (<span style="color: #0000FF;">when</span>
+                (and
+                 (&lt; (point) (marker-position current-point))
+                 (string= lang this-lang)
+                 (src-block-in-session-p session))
+              (org-babel-execute-src-block arg)))
+        <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">move forward so we can find the next block</span>
+        (forward-line)))))
+</pre>
+</div>
+
+
+<p>
+In the course of testing this, I found this function a little helpful to kill the current session so we start fresh.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-babel-kill-session</span> ()
+  <span style="color: #036A07;">"Kill session for current code block."</span>
+  (interactive)
+  (<span style="color: #0000FF;">unless</span> (org-in-src-block-p)
+    (<span style="color: #ff0000; font-weight: bold;">error</span> <span style="color: #008000;">"You must be in a src-block to run this command"</span>))
+  (<span style="color: #0000FF;">save-window-excursion</span>
+    (org-babel-switch-to-session)
+    (kill-buffer)))
+</pre>
+</div>
+
+<p>
+And also this one to remove all results in the buffer. This not at all selective, it removes results for session and non-session blocks.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-babel-remove-result-buffer</span> ()
+  <span style="color: #036A07;">"Remove results from every code block in buffer."</span>
+  (interactive)
+  (<span style="color: #0000FF;">save-excursion</span>
+    (goto-char (point-min))
+    (<span style="color: #0000FF;">while</span> (re-search-forward org-babel-src-block-regexp nil t)
+      (org-babel-remove-result))))
+</pre>
+</div>
+
+<p>
+Ok, now for some testing. The rest of this post is pretty boring, just some blocks of mixed session and non-session to see if they get run. Skip to the <a href="#sec-1">1</a>.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #0000FF;">def</span> <span style="color: #006699;">f</span>(x):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">y</span> = 4 * x
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> y
+
+<span style="color: #0000FF;">print</span>(f(d))
+</pre>
+</div>
+
+<pre class="example">
+16
+</pre>
+
+<p>
+Let us put a non-session block in this buffer for testing.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #BA36A5;">a</span> = 5
+<span style="color: #0000FF;">print</span>(a)
+</pre>
+</div>
+
+<p>
+Now, some more named session blocks.
+</p>
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #0000FF;">print</span> f(5)
+</pre>
+</div>
+
+<pre class="example">
+20
+</pre>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #0000FF;">print</span> <span style="color: #008000;">'ok'</span>
+</pre>
+</div>
+
+<pre class="example">
+ok
+</pre>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #0000FF;">print</span> 2
+</pre>
+</div>
+
+<pre class="example">
+2
+</pre>
+
+<p>
+An unnamed session that should not get run in restarting the named test session.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #0000FF;">print</span> 886
+</pre>
+</div>
+
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #0000FF;">print</span> f(6)
+</pre>
+</div>
+
+<pre class="example">
+24
+</pre>
+
+<div id="outline-container-sec-1" class="outline-2">
+<h2 id="sec-1"><span class="section-number-2">1</span> Summary</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+This works pretty well so far.  It would be nice to consider making C-c C-c do this automatically, if the session does not exist, and maybe to take a prefix arg that would restart the session. Maybe on another day ;)
+</p>
+</div>
+</div>
+<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/03/19/Restarting-org-babel-sessions-in-org-mode-more-effectively.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/03/19/Restarting-org-babel-sessions-in-org-mode-more-effectively#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Clickable-links-for-Twitter-handles-in-Emacs"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/03/18/Clickable-links-for-Twitter-handles-in-Emacs/" rel="bookmark" title="Permanent Link to Clickable links for Twitter handles in Emacs">Clickable links for Twitter handles in Emacs</a></h2>
       <p><small><span class="blog_post_date">Posted March 18, 2015 at 12:20 PM</span> | categories:
@@ -601,131 +872,6 @@ a + b =  5
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/03/12/Making-org-mode-Python-sessions-look-better#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Updating-Multiple-RESULTS-blocks-in-org-mode"></div>
-      <h2 class="blog_post_title"><a href="/blog/2015/03/11/Updating-Multiple-RESULTS-blocks-in-org-mode/" rel="bookmark" title="Permanent Link to Updating Multiple RESULTS blocks in org-mode">Updating Multiple RESULTS blocks in org-mode</a></h2>
-      <p><small><span class="blog_post_date">Posted March 11, 2015 at 05:33 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2015/03/11/Updating-Multiple-RESULTS-blocks-in-org-mode#disqus_thread">View Comments</a>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-
-<p>
-There was a recent question on the org-mode mailing list about getting multiple named block results to update when a named code block is run. I suppose you might want to do this if you need to see the results in more than one place. org-mode (at the moment) only updates the first named block that it finds from the beginning of the buffer. Challenge accepted ;)
-</p>
-
-<p>
-Here is a function that will update all the named RESULTS blocks. The idea is to make a hook function that runs after you run a block. The hook function will get the block name, and if there is one, find all the named results in the buffer and update them.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">update-results</span> ()
-  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">get name of src block</span>
-  (<span style="color: #0000FF;">let</span> ((name (org-element-property <span style="color: #006FE0;">:name</span> (org-element-at-point)))
-        (results)
-        (begin))
-    (<span style="color: #0000FF;">when</span> name
-      (setq results
-            (<span style="color: #0000FF;">save-excursion</span>
-              (goto-char (org-babel-find-named-result name))
-              (forward-line)
-              (buffer-substring
-               (point) (org-element-property <span style="color: #006FE0;">:end</span> (org-element-at-point)))))
-      (<span style="color: #0000FF;">save-excursion</span>
-        (goto-char (point-min))
-        (<span style="color: #0000FF;">while</span> (setq begin (org-babel-find-named-result name (point)))
-          (goto-char begin)
-          (forward-line)
-          (setf (buffer-substring
-                 (point)
-                 (org-element-property <span style="color: #006FE0;">:end</span> (org-element-at-point)))
-                results))))))
-
-(add-hook 'org-babel-after-execute-hook 'update-results)
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="left" />
-
-<col  class="left" />
-</colgroup>
-<tbody>
-<tr>
-<td class="left">update-results</td>
-<td class="left">(lambda nil (org-refresh-images))</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-Now let us test it out. Here is an unnamed block that should be ignored.
-</p>
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #0000FF;">print</span> 4
-</pre>
-</div>
-
-<pre class="example">
-4
-</pre>
-
-<p>
-Here we have a named results block from a code block we will see later.
-</p>
-<pre class="example">
-[0.0825119635983067, 0.12793443834890417, 0.5235765147357154]
-</pre>
-
-<p>
-Here is our named code block that just prints three random numbers.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python" id="testcode"><span style="color: #0000FF;">import</span> random
-
-<span style="color: #0000FF;">print</span> [random.random() <span style="color: #0000FF;">for</span> i <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">range</span>(3)]
-</pre>
-</div>
-
-<pre class="example">
-[0.0825119635983067, 0.12793443834890417, 0.5235765147357154]
-</pre>
-
-<p>
-Swell, everytime I run the block, the named results get updated everywhere! It isn't tested more than this post, so I would spend some time trying out your use cases before doing anything mission critical. Your mileage might vary. For example, if you have a named block outside a narrowed region it is not clear to me it would update. In other words, there might be other corners where this doesn't update like you thing.
-</p>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/03/11/Updating-Multiple-RESULTS-blocks-in-org-mode.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/03/11/Updating-Multiple-RESULTS-blocks-in-org-mode#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="../17">« Previous Page</a>
   --  
  <a href="../19">Next Page »</a>
@@ -767,11 +913,11 @@ Swell, everytime I run the block, the named results get updated everywhere! It i
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2016/03/16/Getting-graphical-feedback-as-tooltips-in-Emacs/">Getting graphical feedback as tooltips in Emacs</a></li>
       <li><a href="/blog/2016/03/03/New-publication-in-International-Journal-of-Quantum-Chemistry/">New publication in International Journal of Quantum Chemistry</a></li>
       <li><a href="/blog/2016/02/26/Adding-captions-and-attributes-to-figures-and-tables-from-code-blocks-in-org-mode/">Adding captions and attributes to figures and tables from code blocks in org-mode</a></li>
       <li><a href="/blog/2016/02/25/Pycse-is-now-using-Python3/">Pycse is now using Python3</a></li>
       <li><a href="/blog/2016/02/20/Generating-an-alphabetized-list-of-collaborators-from-the-past-five-years/">Generating an alphabetized list of collaborators from the past five years</a></li>
-      <li><a href="/blog/2016/02/17/Zhongnan-Xu-selected-for-the-2015-16-Dighe-Fellowship-in-Chemical-Engineering/">Zhongnan Xu selected for the 2015-16 Dighe Fellowship in Chemical Engineering</a></li>
     </ul>
   </section>
 
