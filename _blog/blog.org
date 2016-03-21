@@ -1,4 +1,5 @@
-* TODO Org teleport headlines
+* DONE Org teleport headlines
+  CLOSED: [2016-03-18 Fri 08:48]
   :PROPERTIES:
   :categories: emacs,orgmode
   :date:     2016/03/18 08:47:14
@@ -90,96 +91,243 @@ Now we add some new speed commands to help us out. I think we should be able to 
 
 #+RESULTS:
 : done
+
 * TODO A better tab in org-mode for Python blocks.
   :PROPERTIES:
   :ID:       47FE9730-983C-4732-953B-E7D5D2E36FED
   :categories: emacs,orgmode
   :END:
-We write a lot of Python code in org-mode. In python-mode TAB does nice things like indenting code, and we would like that in org-mode too. The problem is org-mode also makes heavy use of TAB for too many other useful things to give up. What we really want is TAB to act differently in Python blocks, and the same everywhere else.
+We write a lot of Python code in org-mode. In python-mode TAB does nice things like indenting code, and we would like that in org-mode too. The problem is org-mode also makes heavy use of TAB for too many other useful things to give it up. What we really want is TAB to act differently in Python blocks, and the same everywhere else.
 
-Enter the [[http://endlessparentheses.com/define-context-aware-keys-in-emacs.html][context aware keybindings]]. We bind a menu-item to TAB that uses a filter function to determine what it does. If the filter function evaluates to t then it is run, and otherwise the usual meaning of TAB is used.
+Enter the [[http://endlessparentheses.com/define-context-aware-keys-in-emacs.html][context aware keybindings]]. We bind a menu-item to TAB that uses a filter function to determine what it does. If the filter function evaluates to t then it is run, and otherwise the usual meaning of TAB is used. There is also the convenient function =org-babel-do-key-sequence-in-edit-buffer= which will let us make TAB act like it does in python-mode!
 
 #+BEGIN_SRC emacs-lisp
 (define-key org-mode-map (kbd "<tab>")
   '(menu-item "org-mode-tab" nil
-	     :filter (lambda (&optional _)
-		       (when
-			   (and
-			    (org-in-src-block-p t)
-			    (string= "python"
-				     (org-element-property
-				      :language
-				      (org-element-context))))
-			 (insert "    ")))))
+	      :filter (lambda (&optional _)
+			(when
+			    (and
+			     (org-in-src-block-p t)
+			     (string= "python"
+				      (org-element-property
+				       :language
+				       (org-element-context))))
+			  (org-babel-do-key-sequence-in-edit-buffer
+			   (kbd "<tab>"))))))
+
+;; this doesn't work as expected, there are too many lines put in.
+;; (define-key org-mode-map (kbd "C-j")
+;;   '(menu-item "org-mode-ret" nil
+;;	      :filter (lambda (&optional _)
+;;			(when
+;;			    (and
+;;			     (org-in-src-block-p t)
+;;			     (string= "python"
+;;				      (org-element-property
+;;				       :language
+;;				       (org-element-context))))
+;;			  (org-babel-do-key-sequence-in-edit-buffer
+;;			   (kbd ""))))))
 #+END_SRC
 
 #+RESULTS:
-| menu-item | org-mode-tab | nil | :filter | (lambda (&optional _) (when (and (org-in-src-block-p t) (string= python (org-element-property :language (org-element-context)))) (insert     ))) |
+| menu-item | org-mode-ret | nil | :filter | (lambda (&optional _) (when (and (org-in-src-block-p t) (string= python (org-element-property :language (org-element-context)))) (org-babel-do-in-edit-buffer (newline) (indent-relative)) t)) |
 
-* TODO Displaying image overlays on image filenames
+While we are improving things... Ken Mankoff on the org-mode mailing list pointed out this gem for commenting in src blocks: https://lists.gnu.org/archive/html/emacs-orgmode/2013-11/msg00318.html.
+
+#+BEGIN_SRC emacs-lisp :results none
+;; allow comment region in the code edit buffer (according to language)
+(defun my-org-comment-dwim (&optional arg)
+  (interactive "P")
+  (or (org-babel-do-key-sequence-in-edit-buffer (kbd "M-;"))
+      (comment-dwim arg)))
+
+;; make `C-c C-v C-x M-;' more convenient
+(define-key org-mode-map
+  (kbd "M-;") 'my-org-comment-dwim)
+#+END_SRC
+
+Now, if you select a region you can comment/uncomment it, or if on a line, add a comment to the line (usually at the end).
+
+#+BEGIN_SRC python
+for i in range(5):
+
+
+#+END_SRC
+
+* TODO Equation image tooltips over LaTeX fragments in org-mode
+  :PROPERTIES:
+  :ID:       603BDAF5-59DA-48F4-97F7-4C19F00AAE80
+  :categories: emacs,orgmode
+  :END:
+
+This post has one  goal: to fontify LaTeX fragments in org-mode and make tooltips with the rendered equations. I previously looked at doing something like this with the [[http://kitchingroup.cheme.cmu.edu/blog/2015/10/09/Automatic-latex-image-toggling-when-cursor-is-on-a-fragment/][cursor]], but now I want to try with the mouse.
+
+=org-latex-regexps= contains regexp patterns We will use those to build a function that matches fragments, and puts some text properties on the match to make them clickable. What we need to do then, is make a function for font-lock that will put a tool tip on our fragments, and generate the image for us on the fly. I am going to set a property containing the fragment string on the text during font-lock, and we will use that property in the tool-tip. So, first the tooltip function. We store the images in calculatable names so we can reuse them. We also provide options to make the images larger so they are easier to see.
+
+#+BEGIN_SRC emacs-lisp
+(defun latex-fragment-tooltip (object window position)
+  (save-excursion
+    (goto-char position)
+    (let* ((f (concat temporary-file-directory
+		      "latex-tooltip-"
+		      (md5 (get-text-property (point) 'latex-fragment))
+		      ".png"))
+	   (png))
+      (unless (file-exists-p f)
+	(message "creating image for %s. Please wait."
+		 (get-text-property (point) 'latex-fragment))
+	(org-create-formula-image
+	 (get-text-property (point) 'latex-fragment)
+	 f
+	 '(:foreground default :background default
+		       :scale 4.0 :html-foreground "Black"
+		       :html-background "Transparent" :html-scale 4.0
+		       :matchers
+		       ("begin" "$1" "$" "$$" "\\(" "\\["))
+	 (current-buffer)
+	 org-latex-create-formula-image-program)
+	(message ""))
+      (propertize
+       " " 'display
+       (create-image f)))))
+#+END_SRC
+
+#+RESULTS:
+: latex-fragment-tooltip
+
+Now, we need to propertize the fragments. We use one function for that here, and this function will be called via font-lock. Basically we just put the fragment as a property for easy retrieval by the tooltip function.
+
+#+BEGIN_SRC emacs-lisp
+(defun propertize-fragment ()
+  (put-text-property
+   (match-beginning 0) (match-end 0)
+   'latex-fragment (match-string-no-properties 0))
+  (put-text-property
+   (match-beginning 0) (match-end 0)
+   'help-echo 'latex-fragment-tooltip))
+#+END_SRC
+
+#+RESULTS:
+: propertize-fragment
+
+Now a series of functions to propertize different types of LaTeX fragments. The regexps are approximately those found in org-latex-regexps, but not exactly. I found those caused some org-eldoc errors in these src blocks presumably from the non-ascii characters in them. They don't cause problems otherwise.
+
+#+BEGIN_SRC emacs-lisp
+(defun next-latex-overlay-1 (limit)
+  "Overlay images on \(eqn\) up to LIMIT."
+  (while (re-search-forward "\\\\(.*?\\\\)" limit t)
+    (propertize-fragment)))
+
+(defun next-latex-overlay-2 (limit)
+  "Overlay images on \[eqn\] up to LIMIT."
+  (while (re-search-forward "\\\\\\[.*?\\\\\\]" limit t)
+    (propertize-fragment)))
+
+(defun next-latex-overlay-3 (limit)
+  "Overlay images on $$eqn$$ up to LIMIT."
+  (while (re-search-forward "\\$\\$[^$]*?\\$\\$" limit t)
+    (propertize-fragment)))
+
+(defun next-latex-overlay-4 (limit)
+  "Overlay images on $eqn$ up to LIMIT.
+this is less robust than useing \(\)"
+  (while (re-search-forward "\\b\\$[^$]+?\\$\\b" limit t)
+    (propertize-fragment)))
+#+END_SRC
+
+#+RESULTS:
+: next-latex-overlay-4
+
+Finally, add the font lock keywords.
+
+#+BEGIN_SRC emacs-lisp :results silent
+(font-lock-add-keywords
+ nil
+ '((next-latex-overlay-1 0 font-lock-keywords)
+   (next-latex-overlay-2 0 font-lock-keywords)
+   (next-latex-overlay-3 0 font-lock-keywords)
+   (next-latex-overlay-4 0 font-lock-keywords)))
+#+END_SRC
+
+Now, we get tooltips of equation images!
+
+\[\int_0^x 500 dx\]
+
+1. $e^{x^2}$
+
+2. $$\exp{x^2}$$
+
+3. \(\frac{2}{3x}\)
+
+4. \[\log{4x}\]
+
+This is primarily limited to one line equations that are easily matched.
+
+* Displaying image overlays on image filenames in Emacs
   :PROPERTIES:
   :LAST-EDITED: [2015-08-01 Sat 12:00:23]
   :ID:       49936AE7-B874-4EC7-9102-20DF8A3218A2
   :categories: emacs,orgmode
+  :date:     2016/03/21 11:21:19
+  :updated:  2016/03/21 11:21:19
   :END:
 It has always bothered me a little that I have to add a file image after code blocks in org-mode to see the results. That extra work... I also don't like having to explicitly print the figure in the code, since that is the extra work, just in a different place. Today I look into two approaches to this. First, we consider something like tooltips, and second just putting overlays of image files right on the file name. The plus side of this is no extra work. The downside is they won't export; that will still take the extra work, but you needed that for the caption anyway for now.
+
+Here is a video illustrating the code in this post: https://www.youtube.com/watch?v=VuAnwCERM0U
 
 Here is a test.
 #+BEGIN_SRC python
 import matplotlib.pyplot as plt
-plt.plot([-0, 1, 2, 4, 16])
+plt.plot([0, 1, 2, 4, 16])
 plt.savefig("test-fig.png")
 #+END_SRC
 
 #+RESULTS:
 
+[[./test-fig.png]]
+
 ** Tooltip approach
-Building on our [[http://kitchingroup.cheme.cmu.edu/blog/2016/03/16/Getting-graphical-feedback-as-tooltips-in-Emacs/][previous approach]] of graphical tooltips, we try that here to show the images. I would like the image to show in the tooltip but I still have not figured out why it doesn't.
+Building on our [[http://kitchingroup.cheme.cmu.edu/blog/2016/03/16/Getting-graphical-feedback-as-tooltips-in-Emacs/][previous approach]] of graphical tooltips, we try that here to show the images. I have solved the issue of why the images didn't show in the tooltips before; it was related to how Emacs was built. I used to build it with "cocoa" support so it integrates well in OSX. Here, I have build it with gtk3, and the tooltips work with images.
 
 #+BEGIN_SRC emacs-lisp :results silent
+(defvar image-tooltip-re (concat  "\\(?3:'\\|\"\\)\\(?1:.*\\."
+				  (regexp-opt '("png" "PNG" "JPG" "jpeg"
+						"jpg" "JPEG" "eps" "EPS"))
+				  "\\)\\(?:\\3\\)")
+  "Regexp to match image filenames in quotes")
+
 (defun image-tooltip (window object position)
   (save-excursion
     (goto-char position)
-    (let ((re (concat  "\\(?:'\\|\"\\)\\(.*\\."
-		       (regexp-opt '("png" "PNG" "JPG" "jpeg"
-				     "jpg" "JPEG" "eps" "EPS"))
-		       "\\)\\(?:'\\|\"\\)"))
-	  beg end imgfile img s)
-      (while (not (looking-at re))
+    (let (beg end imgfile img s)
+      (while (not (looking-at image-tooltip-re))
 	(forward-char -1))
-      (setq imgfile (match-string 1))
+      (setq imgfile (match-string-no-properties 1))
       (when (file-exists-p imgfile)
 	(setq img (create-image (expand-file-name imgfile)
 				'imagemagick nil :width 200))
-	(message "%s" (propertize "Look in the minibuffer"
-				  'display img))))))
+	(propertize "Look in the minibuffer"
+		    'display img)))))
 
 (font-lock-add-keywords
  nil
- `((,(concat  "\\(?3:'\\|\"\\)\\(.*\\."
-	      (regexp-opt '("png" "PNG" "JPG" "jpeg"
-			    "jpg" "JPEG" "eps" "EPS"))
-	      "\\)\\(?:\\3\\)")
+ `((,image-tooltip-re
     0 '(face font-lock-keyword-face
 	     help-echo image-tooltip))))
+
+(font-lock-fontify-buffer)
 #+END_SRC
 
 Now these both have tooltips on them: "test-fig.png"  and  'test-fig.png'.
-
 
 ** The overlay approach
 
 We might alternatively prefer to put overlays in the buffer. Here we make that happen.
 
 #+BEGIN_SRC emacs-lisp :results silent
-(defvar img-regex (concat  "\\(?:'\\|\"\\)\\(.*\\."
-			   (regexp-opt '("png" "PNG" "JPG" "jpeg"
-					 "jpg" "JPEG" "eps" "EPS"))
-			   "\\)\\(?:'\\|\"\\)")
-  "image regex in quotes.")
-
 (defun next-image-overlay (&optional limit)
-  (when (re-search-forward img-regex limit t)
+  (when (re-search-forward image-tooltip-re limit t)
     (setq beg (match-beginning 0)
 	  end (match-end 0)
 	  imgfile (match-string 1))
@@ -192,7 +340,6 @@ We might alternatively prefer to put overlays in the buffer. Here we make that h
       (overlay-put ov 'org-image-overlay t)
       (overlay-put ov 'modification-hooks
 		   (list 'org-display-inline-remove-overlay)))))
-
 
 (font-lock-add-keywords
  nil
@@ -215,132 +362,17 @@ You may want to remove those overlays. Here is one way. Note they come back if y
 #+END_SRC
 #+RESULTS:
 
-
 I know you want to do that so here is:
-#+BEGIN_SRC emacs-lisp
+#+BEGIN_SRC emacs-lisp :results silent
 (font-lock-remove-keywords
  nil
  '((next-image-overlay (0  'font-lock-keyword-face t))))
+
+(ov-clear 'org-image-overlay)
 #+END_SRC
 
-#+RESULTS:
 
 Note you still have to clear the overlays. Font lock doesn't seem to do that for you I think.
-
-* TODO Equation image tooltips over LaTeX fragments in org-mode
-  :PROPERTIES:
-  :ID:       603BDAF5-59DA-48F4-97F7-4C19F00AAE80
-  :categories: emacs,orgmode
-  :END:
-
-This post has one  goal: to fontify LaTeX fragments in org-mode. I previously looked at doing something like this with the [[http://kitchingroup.cheme.cmu.edu/blog/2015/10/09/Automatic-latex-image-toggling-when-cursor-is-on-a-fragment/][cursor]], but now I want to try with the mouse. I want the highlighting so they stand out more clearly from text, and it would be nice to make them clickable to toggle the image.
-
-The variable org-latex-regexps contains a list of lists which seem to contain regular expressions for latex fragments. The inline LaTeX  doesn't seem to be covered there. These don't seem to be affected by the preview code, but it is still nice to see them in the text. Rasmus pointed out that the inline fragments can contain all kinds of things that aren't even previewable!
-
-`org-latex-regexps' contains regexp patterns We will use those to build a function that matches fragments, and puts some text properties on the match to make them clickable.
-
-Given a fragment, we can get a preview like this.
-
-#+BEGIN_SRC emacs-lisp
-(let ((f (make-temp-file "ltx" nil ".png")))
-  (org-create-formula-image "$e^x$"
-			    f
-			    nil (current-buffer)
-			    org-latex-create-formula-image-program)
- f)
-#+END_SRC
-
-What we need to do then, is make a function for font-lock that will put a tool tip on our fragments, and generate the image for us on the fly. I am going to set a property on the text during font-lock, and we will use that property in the tool-tip. So, first the tooltip function.
-
-#+BEGIN_SRC emacs-lisp
-(defun latex-fragment-tooltip (object window position)
-  (save-excursion
-    (goto-char position)
-    (let* ((f (concat temporary-file-directory
-		      (md5 (get-text-property (point) 'latex-fragment))
-		      ".png"))
-	   (png))
-      (unless (file-exists-p f)
-	(org-create-formula-image
-	 (get-text-property (point) 'latex-fragment)
-	 f
-	 '(:foreground default :background default
-		      :scale 4.0 :html-foreground "Black"
-		      :html-background "Transparent" :html-scale 4.0
-		      :matchers
-		      ("begin" "$1" "$" "$$" "\\(" "\\["))
-	 (current-buffer)
-	 org-latex-create-formula-image-program))
-      (message (propertize
-		" " 'display
-		(create-image f))))))
-#+END_SRC
-
-#+RESULTS:
-: latex-fragment-tooltip
-
-Now, we need to propertize the fragments.
-
-#+BEGIN_SRC emacs-lisp
-(defun propertize-fragment ()
-  (put-text-property
-   (match-beginning 0) (match-end 0)
-   'latex-fragment (match-string-no-properties 0))
-  (put-text-property
-   (match-beginning 0) (match-end 0)
-   'help-echo 'latex-fragment-tooltip))
-
-(defun next-latex-overlay-1 (limit)
-  "Overlay images on \(eqn\) up to LIMIT."
-  (while (re-search-forward "\\\\([^ ]*?\\\\)" limit t)
-    (propertize-fragment)))
-
-(defun next-latex-overlay-2 (limit)
-  "Overlay images on \[eqn\] up to LIMIT."
-  (while (re-search-forward "\\\\\\[[^ ]*?\\\\\\]" limit t)
-    (propertize-fragment)))
-
-(defun next-latex-overlay-3 (limit)
-  "Overlay images on $$eqn$$ up to LIMIT."
-  (while (re-search-forward "\\$\\$[^ ]*?\\$\\$" limit t)
-    (propertize-fragment)))
-
-(defun next-latex-overlay-4 (limit)
-  "Overlay images on $eqn$ up to LIMIT.
-this is less robust than useing \(\)"
-  (while (re-search-forward "\\([^$]\\|^\\)\\(\\(\\$\\([^	\n,;.$][^$\n]*?\\(\n[^$\n]*?\\)\\{0,2\\}[^	\n,.$]\\)\\$\\)\\)\\([-	.,?;:'\") ]\\|$\\)" limit t)
-    (propertize-fragment)))
-
-(defun next-latex-overlay-5 (limit)
-  "Overlay images on latex math environments up to LIMIT."
-  (while (re-search-forward
-	  "^[ \\t]*\\(\\\\begin{\\([a-zA-Z0-9\\*]+\\)[^\\000]+?\\\\end{\\2}\\)"
-	  limit t)
-    (propertize-fragment)))
-#+END_SRC
-
-Finally, add the font lock keywords.
-
-#+BEGIN_SRC emacs-lisp
-(font-lock-add-keywords
- nil
- '((next-latex-overlay-1 0 font-lock-keywords)
-   (next-latex-overlay-2 0 font-lock-keywords)
-   (next-latex-overlay-3 0 font-lock-keywords)
-   (next-latex-overlay-4 0 font-lock-keywords)
-   (next-latex-overlay-5 0 font-lock-keywords)))
-#+END_SRC
-
-
-
-\[\int_0^x 5 dx\]
-
-\[\int_0^x 500 dx\]
-
-1. $\exp{x^2}$
-2. $$\exp{2x}$$
-3. \(\exp{3x}\)
-4. \[\exp{4x}\]
 
 
 * TODO Numbering lines in a a table
@@ -525,10 +557,10 @@ Why not use html/xml for this kind of markup? There are some strong opinions out
 #+BEGIN_SRC emacs-lisp
 ;;* test
 ;;** testt
-(defun  ()
-    (interactive)
-  (message
-   "
+(defun lispy-help ()
+  (interactive)
+  (with-help-window (help-buffer)
+    (princ "
 f: step in list                b: back
 h: next form at higher level   g: goto        s: sexp down w: sexp up
 j: next form at this level     a: ace-symbol  n: new copy  N: narrow   >: slurp
@@ -538,21 +570,18 @@ G: jump to tag                                c: clone     d: switch cursor
 e: eval                        E: eval/insert i: indent
 C-1: documentation             C-2: args
 O: one-liner                   M: multi-liner
------------------------------------------------------
+---------------------------------------------------------------------------------
 xe: edebug        xd: lambda->defun      xl: defun->lambda  xr: eval/replace
 xf: flatten       xc: if->cond           xi: cond->if
------------------------------------------------------
+---------------------------------------------------------------------------------
 oh: left/out   ol: right/out
 oj: move 1st   ok: move last
------------------------------------------------------
+---------------------------------------------------------------------------------
 V: Visit file  2V:
 J: forward outline K: backward outline L: outline child
-"))
+")))
 
 (define-key lispy-mode-map (kbd "?") 'lispy-help)
-
-(+ (debug) 4 5)
-
 #+END_SRC
 
 #+RESULTS:
