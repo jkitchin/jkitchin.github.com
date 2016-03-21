@@ -84,6 +84,198 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="An-alternative-approach-to-including-org-source-in-blog-posts"></div>
+      <h2 class="blog_post_title"><a href="/blog/2015/05/09/An-alternative-approach-to-including-org-source-in-blog-posts/" rel="bookmark" title="Permanent Link to An alternative approach to including org-source in blog posts">An alternative approach to including org-source in blog posts</a></h2>
+      <p><small><span class="blog_post_date">Posted May 09, 2015 at 01:50 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2015/05/09/An-alternative-approach-to-including-org-source-in-blog-posts#disqus_thread">View Comments</a>
+      <p><small><span class="blog_post_date">Updated May 09, 2015 at 02:58 PM</span>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+When you publish a Matlab m-file to HTML, Matlab includes the m-file source as an html comment in the output. They also provide a nice function called grabcode that will take a url, and open the source code in the editor. Today, we try a similar approach for org-mode.
+</p>
+
+<p>
+This post is not totally self-contained. I have my own emacs-lisp module that converts org-mode to blogofile posts, and so far I have not made it broadly available. This is also a super exploratory idea, so I am just going to show the changes I need to make to my setup to get to the evaluation of the idea.
+</p>
+
+<p>
+The idea is pretty simple, we just insert the current buffer string into an HTML comment. I just modify the bf-get-post-html function lightly to do that. This is a somewhat pathological example since there are html comments in the post! So, we will encode all the dashes to get around that.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">browse-url</span>)
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">bf-get-post-html</span> ()
+  <span style="color: #036A07;">"Return a string containing the YAML header, the post html, my</span>
+<span style="color: #036A07;">copyright line, and a link to the org-source code."</span>
+  (<span style="color: #0000FF;">interactive</span>)
+  (<span style="color: #0000FF;">let</span> ((org-source (buffer-string))
+        (url-to-org (bf-get-url-to-org-source))
+        (yaml (bf-get-YAML-heading))
+        (body (bf-get-HTML)))
+
+    (<span style="color: #0000FF;">with-temp-buffer</span>
+      (insert yaml)
+      (insert body)
+      (insert
+       (format <span style="color: #008000;">"&lt;p&gt;Copyright (C) %s by John Kitchin. See the &lt;a href=\"/copying.html\"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;"</span>
+               (format-time-string <span style="color: #008000;">"%Y"</span>)))
+      (insert (format <span style="color: #008000;">"&lt;p&gt;&lt;a href=\"%s\"&gt;org-mode source&lt;/a&gt;&lt;p&gt;"</span>
+                      url-to-org))
+      (insert (format <span style="color: #008000;">"&lt;p&gt;Org-mode version = %s&lt;/p&gt;"</span> (org-version)))
+      <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">this is the only new code we need to add.</span>
+      (insert (format <span style="color: #008000;">"</span>
+<span style="color: #008000;">&lt;!--</span>
+<span style="color: #008000;">  ##### SOURCE BEGIN #####</span>
+<span style="color: #008000;">%s</span>
+<span style="color: #008000;">##### SOURCE END #####</span>
+<span style="color: #008000;">--&gt;"</span> (browse-url-url-encode-chars org-source <span style="color: #008000;">"[-]"</span>)))
+      <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">return value</span>
+      (buffer-string))))
+</pre>
+</div>
+
+<p>
+By itself, that has limited value to me. So, let's also create a grab-org-source function to get the embedded source and open it in a buffer. This might be a naive approach, we just use a regexp to find the source boundaries and open it in a new buffer. We have to unescape the dashes, which appear as %2D in the comments. Here is our function.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">grab-org-source</span> (url)
+  <span style="color: #036A07;">"Extract org-source from URL to a buffer named *grab-org-source*."</span>
+  (<span style="color: #0000FF;">interactive</span> <span style="color: #008000;">"sURL: "</span>)
+  (switch-to-buffer (get-buffer-create <span style="color: #008000;">"*grab-org-source*"</span>))
+  (erase-buffer)
+  (org-mode)
+  (insert
+   (<span style="color: #0000FF;">with-current-buffer</span>
+       (url-retrieve-synchronously url)
+     (<span style="color: #0000FF;">let</span> (start)
+       (re-search-forward
+        <span style="color: #008000;">"</span>
+<span style="color: #008000;">&lt;!--</span>
+<span style="color: #008000;">  ##### SOURCE BEGIN #####</span>
+<span style="color: #008000;">"</span> nil t)
+       (<span style="color: #0000FF;">setq</span> start (point))
+       (re-search-forward <span style="color: #008000;">"##### SOURCE END #####</span>
+<span style="color: #008000;">--&gt;"</span> nil t)
+       (buffer-substring start (match-beginning 0)))))
+  (goto-char (point-min))
+  (<span style="color: #0000FF;">while</span> (search-forward <span style="color: #008000;">"%2D"</span> nil t)
+    (replace-match <span style="color: #008000;">"-"</span>))
+  (goto-char (point-min)))
+</pre>
+</div>
+
+<p>
+This concludes my basic proof of concept. I think there is a general escaping challenge in this approach, because it isn't clear if you can put really arbitrary stuff in an html comment, e.g. you cannot put &#x2013;&gt;! I am going to try incorporating this into my posts and see what other issues come up in the future.
+</p>
+<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/05/09/An-alternative-approach-to-including-org-source-in-blog-posts.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
+<!--
+  ##### SOURCE BEGIN #####
+* DONE An alternative approach to including org%2Dsource in blog posts
+  CLOSED: [2015%2D05%2D09 Sat 13:57]
+  :PROPERTIES:
+  :categories: orgmode
+  :date:     2015/05/09 13:50:18
+  :updated:  2015/05/09 14:58:24
+  :END:
+When you publish a Matlab m%2Dfile to HTML, Matlab includes the m%2Dfile source as an html comment in the output. They also provide a nice function called grabcode that will take a url, and open the source code in the editor. Today, we try a similar approach for org%2Dmode.
+
+This post is not totally self%2Dcontained. I have my own emacs%2Dlisp module that converts org%2Dmode to blogofile posts, and so far I have not made it broadly available. This is also a super exploratory idea, so I am just going to show the changes I need to make to my setup to get to the evaluation of the idea.
+
+The idea is pretty simple, we just insert the current buffer string into an HTML comment. I just modify the bf%2Dget%2Dpost%2Dhtml function lightly to do that. This is a somewhat pathological example since there are html comments in the post! So, we will encode all the dashes to get around that.
+
+#+BEGIN_SRC emacs%2Dlisp
+(require 'browse%2Durl)
+(defun bf%2Dget%2Dpost%2Dhtml ()
+  "Return a string containing the YAML header, the post html, my
+copyright line, and a link to the org%2Dsource code."
+  (interactive)
+  (let ((org%2Dsource (buffer%2Dstring))
+	(url%2Dto%2Dorg (bf%2Dget%2Durl%2Dto%2Dorg%2Dsource))
+	(yaml (bf%2Dget%2DYAML%2Dheading))
+	(body (bf%2Dget%2DHTML)))
+
+    (with%2Dtemp%2Dbuffer
+      (insert yaml)
+      (insert body)
+      (insert
+       (format "<p>Copyright (C) %s by John Kitchin. See the <a href=\"/copying.html\">License</a> for information about copying.<p>"
+	       (format%2Dtime%2Dstring "%Y")))
+      (insert (format "<p><a href=\"%s\">org%2Dmode source</a><p>"
+		      url%2Dto%2Dorg))
+      (insert (format "<p>Org%2Dmode version = %s</p>" (org%2Dversion)))
+      ;; this is the only new code we need to add.
+      (insert (format "
+<!%2D%2D
+  ##### SOURCE BEGIN #####
+%s
+##### SOURCE END #####
+%2D%2D>" (browse%2Durl%2Durl%2Dencode%2Dchars org%2Dsource "[%2D]")))
+      ;; return value
+      (buffer%2Dstring))))
+#+END_SRC
+
+By itself, that has limited value to me. So, let's also create a grab%2Dorg%2Dsource function to get the embedded source and open it in a buffer. This might be a naive approach, we just use a regexp to find the source boundaries and open it in a new buffer. We have to unescape the dashes, which appear as %2D in the comments. Here is our function.
+
+#+BEGIN_SRC emacs%2Dlisp
+(defun grab%2Dorg%2Dsource (url)
+  "Extract org%2Dsource from URL to a buffer named *grab%2Dorg%2Dsource*."
+  (interactive "sURL: ")
+  (switch%2Dto%2Dbuffer (get%2Dbuffer%2Dcreate "*grab%2Dorg%2Dsource*"))
+  (erase%2Dbuffer)
+  (org%2Dmode)
+  (insert
+   (with%2Dcurrent%2Dbuffer
+       (url%2Dretrieve%2Dsynchronously url)
+     (let (start)
+       (re%2Dsearch%2Dforward
+	"
+<!%2D%2D
+  ##### SOURCE BEGIN #####
+" nil t)
+       (setq start (point))
+       (re%2Dsearch%2Dforward "##### SOURCE END #####
+%2D%2D>" nil t)
+       (buffer%2Dsubstring start (match%2Dbeginning 0)))))
+  (goto%2Dchar (point%2Dmin))
+  (while (search%2Dforward "%2D" nil t)
+    (replace%2Dmatch "%2D"))
+  (goto%2Dchar (point%2Dmin)))
+#+END_SRC
+
+This concludes my basic proof of concept. I think there is a general escaping challenge in this approach, because it isn't clear if you can put really arbitrary stuff in an html comment, e.g. you cannot put %2D%2D>! I am going to try incorporating this into my posts and see what other issues come up in the future.
+
+##### SOURCE END #####
+-->
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/05/09/An-alternative-approach-to-including-org-source-in-blog-posts#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Restarting-org-babel-sessions-in-org-mode-more-effectively"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/03/19/Restarting-org-babel-sessions-in-org-mode-more-effectively/" rel="bookmark" title="Permanent Link to Restarting org-babel sessions in org-mode more effectively">Restarting org-babel sessions in org-mode more effectively</a></h2>
       <p><small><span class="blog_post_date">Posted March 19, 2015 at 06:53 PM</span> | categories:
@@ -729,120 +921,6 @@ Swell, everytime I run the block, the named results get updated everywhere! It i
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/03/11/Updating-Multiple-RESULTS-blocks-in-org-mode#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="org-mode-links-meet-hydra"></div>
-      <h2 class="blog_post_title"><a href="/blog/2015/02/22/org-mode-links-meet-hydra/" rel="bookmark" title="Permanent Link to org-mode links meet hydra">org-mode links meet hydra</a></h2>
-      <p><small><span class="blog_post_date">Posted February 22, 2015 at 07:06 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/hydra/'>hydra</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2015/02/22/org-mode-links-meet-hydra#disqus_thread">View Comments</a>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-I have played with a lot of options to give org-mode links extra functionality. Here are a few of the ideas I have looked at so far.
-</p>
-
-<ol class="org-ol">
-<li><a href="http://kitchingroup.cheme.cmu.edu/blog/2013/10/21/Enabling-right-clicks-in-org-mode-links/">Enabling right clicks on links</a> 
-</li>
-<li>A home made minibuffer menu in org-ref
-</li>
-<li>A helm buffer in org-ref
-</li>
-</ol>
-
-<p>
-Here, I want to explore a hydra menu for a link. The idea is pretty simple, we need functions that do something with the link at point, and a hydra interface to call them. This turned out to be a little tricky. I could not get the path from the link in the link lambda function, and we need a way to pass the path to the function. I use a global variable for that. I wish there was another way to do that, but this does actually work. We illustrate it here with a more functional doi link.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">doi-crossref</span> ()
-  <span style="color: #036A07;">"Search DOI in CrossRef."</span>
-  (interactive)
-  (browse-url
-   (format
-    <span style="color: #008000;">"http://search.crossref.org/?q=%s"</span> *doi-hydra-path*)))
-
-(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">doi-google-scholar</span> ()
-  <span style="color: #036A07;">"Google scholar the doi."</span>
-  (interactive)
-  (browse-url
-   (format
-    <span style="color: #008000;">"http://scholar.google.com/scholar?q=%s"</span> *doi-hydra-path*)))
-
-(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">doi-pubmed</span> ()
-  <span style="color: #036A07;">"Pubmed the doi."</span>
-  (interactive)
-  (browse-url
-   (format
-    <span style="color: #008000;">"http://www.ncbi.nlm.nih.gov/pubmed/?term=%s"</span>
-    (url-hexify-string *doi-hydra-path*))))
-
- (defhydra doi-hydra ()
-   <span style="color: #008000;">"org-ref"</span>
-   (<span style="color: #008000;">"c"</span> doi-crossref <span style="color: #008000;">"Crossref"</span>)
-   (<span style="color: #008000;">"g"</span> doi-google-scholar <span style="color: #008000;">"Google Scholar"</span>)
-   (<span style="color: #008000;">"p"</span> doi-pubmed <span style="color: #008000;">"Pubmed"</span>))
-
-(org-add-link-type <span style="color: #008000;">"doi"</span>
-  (<span style="color: #0000FF;">lambda</span> (path) (setq *doi-hydra-path* path) (doi-hydra/body)))
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="left" />
-
-<col  class="left" />
-
-<col  class="left" />
-
-<col  class="left" />
-</colgroup>
-<tbody>
-<tr>
-<td class="left">lambda</td>
-<td class="left">(path)</td>
-<td class="left">(setq <b>doi-hydra-path</b> path)</td>
-<td class="left">(doi-hydra/body)</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-Now for a test, <a href="10.1021/jp047349j">10.1021/jp047349j</a>.
-</p>
-
-<p>
-It works fine, when you click on a link, you get a minibuffer menu with context hints, and pressing any other key than is defined simply cancels the command.
-</p>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/02/22/org-mode-links-meet-hydra.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/02/22/org-mode-links-meet-hydra#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="/blog/category/orgmode/6">« Previous Page</a>
   --  
  <a href="/blog/category/orgmode/8">Next Page »</a>
@@ -884,11 +962,11 @@ It works fine, when you click on a link, you get a minibuffer menu with context 
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2016/03/21/Displaying-image-overlays-on-image-filenames-in-Emacs/">Displaying image overlays on image filenames in Emacs</a></li>
       <li><a href="/blog/2016/03/18/Org-teleport-headlines/">Org teleport headlines</a></li>
       <li><a href="/blog/2016/03/16/Getting-graphical-feedback-as-tooltips-in-Emacs/">Getting graphical feedback as tooltips in Emacs</a></li>
       <li><a href="/blog/2016/03/03/New-publication-in-International-Journal-of-Quantum-Chemistry/">New publication in International Journal of Quantum Chemistry</a></li>
       <li><a href="/blog/2016/02/26/Adding-captions-and-attributes-to-figures-and-tables-from-code-blocks-in-org-mode/">Adding captions and attributes to figures and tables from code blocks in org-mode</a></li>
-      <li><a href="/blog/2016/02/25/Pycse-is-now-using-Python3/">Pycse is now using Python3</a></li>
     </ul>
   </section>
 
