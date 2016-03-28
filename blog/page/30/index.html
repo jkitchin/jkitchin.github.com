@@ -84,6 +84,249 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Showing-what-data-went-into-a-code-block-on-export"></div>
+      <h2 class="blog_post_title"><a href="/blog/2014/09/22/Showing-what-data-went-into-a-code-block-on-export/" rel="bookmark" title="Permanent Link to Showing what data went into a code block on export">Showing what data went into a code block on export</a></h2>
+      <p><small><span class="blog_post_date">Posted September 22, 2014 at 12:25 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2014/09/22/Showing-what-data-went-into-a-code-block-on-export#disqus_thread">View Comments</a>
+      <p><small><span class="blog_post_date">Updated September 22, 2014 at 12:33 PM</span>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+Sometimes I define variables in the header of a code block and then use the code to analyze the data. In org-mode this is super, and you can read the file and easily see what is going on. 
+</p>
+
+<p>
+When you export the file, however, the information is lost, and in the exported result you cannot see what data went into a code block, or figure out where it is from. 
+</p>
+
+<p>
+Today we examine how to get that information into exported code. First, we setup a simple example that will do what need.
+</p>
+
+<table id="tbl-data" border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="right" />
+
+<col  class="right" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="right">x</th>
+<th scope="col" class="right">y</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="right">1</td>
+<td class="right">1</td>
+</tr>
+
+<tr>
+<td class="right">2</td>
+<td class="right">4</td>
+</tr>
+
+<tr>
+<td class="right">3</td>
+<td class="right">9</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Now a code block that has a defined variable in the header that uses data from the table defined above.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python" id="print-table"><span style="color: #8b0000;">return</span> data
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="right" />
+
+<col  class="right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="right">1</td>
+<td class="right">1</td>
+</tr>
+
+<tr>
+<td class="right">2</td>
+<td class="right">4</td>
+</tr>
+
+<tr>
+<td class="right">3</td>
+<td class="right">9</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+During export, org-mode does some interesting things to the document, including removing the headers from the code blocks, which makes it impossible to access them inside the export. The headers are apparently removed during org-babel-exp-process-buffer. It does not appear possible to advise this function because it processes the whole buffer at once, and we need to save data for each code block.  
+</p>
+
+<p>
+So, we will have to preprocess the buffer to get the parameters on each block, and then put the parameters in the export afterwards. For this, we can use a filter. We will preprocess the buffer to get names of tables, and parameters of src-blocks. (I suppose we could put this preprocessing in the advice function, but I tend to avoid advice when possible).
+</p>
+
+<p>
+Here is how we can get a list of the table-names indicating their name or that they are results (results are enclosed in ()).
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(org-element-map (org-element-parse-buffer) 'table
+  (<span style="color: #8b0000;">lambda</span> (element)     
+    (or (org-element-property <span style="color: #cd0000;">:name</span> element) (org-element-property <span style="color: #cd0000;">:results</span> element))))
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="left" />
+
+<col  class="left" />
+
+<col  class="left" />
+
+<col  class="left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="left">tbl-data</td>
+<td class="left">(print-table)</td>
+<td class="left">()</td>
+<td class="left">()</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Similarly, here is the list of parameters for each block.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(org-element-map (org-element-parse-buffer) 'src-block
+  (<span style="color: #8b0000;">lambda</span> (element)     
+    (org-element-property <span style="color: #cd0000;">:parameters</span> element)))
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="left">:var data=tbl-data :results value</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Now, we combine them with filters to modify the output. First, we preprocess to get each list, and then in the filter, we will pop off each value and insert the data. We will also get the language for each code block, and add that in the export. We use a filter because we are not modified the transcoded text, simply adding some new text in front of it.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">ox-mrkup-filter-table</span> (text back-end info)
+  (<span style="color: #8b0000;">let</span> ((tblname (pop tblnames)))
+    (message <span style="color: #228b22;">"tblname is \"%s\""</span> tblname)
+    ; <span style="color: #ff0000; font-weight: bold;">pop does not remove nil from the list, so we do it here.</span>
+    (<span style="color: #8b0000;">when</span> (null tblname) (setq tblnames (cdr tblnames)))
+    (<span style="color: #8b0000;">cond</span>
+     ((listp tblname)  ; <span style="color: #ff0000; font-weight: bold;">from results</span>
+      (concat (format <span style="color: #228b22;">"&lt;br&gt;Results: %s"</span> (car tblname)) text))
+     ((null tblname)   ; <span style="color: #ff0000; font-weight: bold;">no name</span>
+      text)
+     (t ; <span style="color: #ff0000; font-weight: bold;">everything else</span>
+      (concat (format <span style="color: #228b22;">"&lt;br&gt;Table name: %s"</span> tblname) text)))))
+
+(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">ox-mrkup-filter-src-block</span> (text back-end info)
+  (<span style="color: #8b0000;">let</span> ((params (pop src-params))
+        (lang (pop src-langs)))
+    (<span style="color: #8b0000;">when</span> (null params) (setq src-params (cdr src-params)))
+    (<span style="color: #8b0000;">if</span> params  
+        (concat (format <span style="color: #228b22;">"&lt;pre&gt;Language = %s\nParameters = %s&lt;/pre&gt;"</span> lang params) text)
+      text)))
+
+;; <span style="color: #ff0000; font-weight: bold;">preprocess to get table names, src parameters and languages.</span>
+(<span style="color: #8b0000;">let</span> ((tblnames (org-element-map (org-element-parse-buffer) 'table
+                  (<span style="color: #8b0000;">lambda</span> (element)     
+                    (or (org-element-property <span style="color: #cd0000;">:name</span> element)                    
+                        (org-element-property <span style="color: #cd0000;">:results</span> element)))))
+
+      (src-params (org-element-map (org-element-parse-buffer) 'src-block
+                    (<span style="color: #8b0000;">lambda</span> (element)     
+                      (org-element-property <span style="color: #cd0000;">:parameters</span> element))))
+
+      (src-langs (org-element-map (org-element-parse-buffer) 'src-block
+                    (<span style="color: #8b0000;">lambda</span> (element)     
+                      (org-element-property <span style="color: #cd0000;">:language</span> element))))
+
+      ;; <span style="color: #ff0000; font-weight: bold;">register the filters</span>
+      (org-export-filter-table-functions '(ox-mrkup-filter-table))
+      (org-export-filter-src-block-functions '(ox-mrkup-filter-src-block)))
+
+  ;; <span style="color: #ff0000; font-weight: bold;">and export the result</span>
+  (browse-url (org-export-to-file 'html <span style="color: #228b22;">"custom-src-table-export-3.html"</span>)))
+</pre>
+</div>
+
+<pre class="example">
+#&lt;process open custom-src-table-export-3.html&gt;
+</pre>
+
+
+<p>
+Here is the resulting html file: <a href="/media/2014-09-22-Showing-what-data-went-into-a-code-block-on-export/custom-src-table-export-3.html">custom-src-table-export-3.html</a> which shows the new export behavior. It might not be too difficult to make links between the parameters and the tables, but it would require parsing the :parameters string. For now, this makes it easy enough to read in HTML where the data is coming from (assuming fluency in org-mode header arguments!).
+</p>
+
+<p>
+Special thanks to Aaron Ecay, and Charles Berry on the org-mode mailing list for pointing me towards a solution. 
+</p>
+<p>Copyright (C) 2014 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2014/09/22/Showing-what-data-went-into-a-code-block-on-export.org">org-mode source</a><p><p>Org-mode version = 8.2.7c</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2014/09/22/Showing-what-data-went-into-a-code-block-on-export#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Getting-information-about-named-tables-in-exported-org-files"></div>
       <h2 class="blog_post_title"><a href="/blog/2014/09/21/Getting-information-about-named-tables-in-exported-org-files/" rel="bookmark" title="Permanent Link to Getting information about named tables in exported org-files">Getting information about named tables in exported org-files</a></h2>
       <p><small><span class="blog_post_date">Posted September 21, 2014 at 02:34 PM</span> | categories:
@@ -1094,361 +1337,6 @@ You can do what you want here. Like add text.
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2014/09/13/Make-some-org-sections-read-only#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Randomize-a-list-in-Emacs"></div>
-      <h2 class="blog_post_title"><a href="/blog/2014/09/06/Randomize-a-list-in-Emacs/" rel="bookmark" title="Permanent Link to Randomize a list in Emacs">Randomize a list in Emacs</a></h2>
-      <p><small><span class="blog_post_date">Posted September 06, 2014 at 10:08 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs-lisp/'>emacs_lisp</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2014/09/06/Randomize-a-list-in-Emacs#disqus_thread">View Comments</a>
-      <p><small><span class="blog_post_date">Updated September 06, 2014 at 03:11 PM</span>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-
-<p>
-I have an application where I have a list of userids, and I want to randomize the order of the list. Today, I explore some ways to do that. The first idea is to simply mimic the algorithm in Python's random.shuffle algorithm.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python">    <span style="color: #8b0000;">def</span> <span style="color: #8b2323;">shuffle</span>(<span style="color: #8b0000;">self</span>, x, <span style="color: #000000; background-color: #cccccc; font-weight: bold;">random</span>=<span style="color: #8b0000;">None</span>):
-        <span style="color: #228b22;">"""x, random=random.random -&gt; shuffle list x in place; return None.</span>
-
-<span style="color: #228b22;">        Optional arg random is a 0-argument function returning a random</span>
-<span style="color: #228b22;">        float in [0.0, 1.0); by default, the standard random.random.</span>
-
-<span style="color: #228b22;">        """</span>
-
-        <span style="color: #8b0000;">if</span> random <span style="color: #8b0000;">is</span> <span style="color: #8b0000;">None</span>:
-            <span style="color: #000000; background-color: #cccccc; font-weight: bold;">random</span> = <span style="color: #8b0000;">self</span>.random
-        <span style="color: #000000; background-color: #cccccc; font-weight: bold;">_int</span> =<span style="color: #cd0000;"> int</span>
-        <span style="color: #8b0000;">for</span> i <span style="color: #8b0000;">in</span><span style="color: #cd0000;"> reversed(xrange</span>(<span style="color: #000000; background-color: #cccccc; font-weight: bold;">1</span>,<span style="color: #cd0000;"> len</span>(x))):
-            <span style="color: #ff0000; font-weight: bold;"># pick an element in x[:i+1] with which to exchange x[i]</span>
-            <span style="color: #000000; background-color: #cccccc; font-weight: bold;">j</span> = _int(random() * (i+<span style="color: #000000; background-color: #cccccc; font-weight: bold;">1</span>))
-            x[i], <span style="color: #000000; background-color: #cccccc; font-weight: bold;">x</span>[j] = x[j], x[i]
-</pre>
-</div>
-
-<p>
-It looks like we loop through the elements, and swap them at random.
-</p>
-
-<p>
-We have a similar feature for xrange in emacs-lisp:
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(number-sequence 1 5)
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="right" />
-
-<col  class="right" />
-
-<col  class="right" />
-
-<col  class="right" />
-
-<col  class="right" />
-</colgroup>
-<tbody>
-<tr>
-<td class="right">1</td>
-<td class="right">2</td>
-<td class="right">3</td>
-<td class="right">4</td>
-<td class="right">5</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-Note that number-sequence includes the last value, unlike xrange. And for reverse:
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(reverse (number-sequence 1 5))
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="right" />
-
-<col  class="right" />
-
-<col  class="right" />
-
-<col  class="right" />
-
-<col  class="right" />
-</colgroup>
-<tbody>
-<tr>
-<td class="right">5</td>
-<td class="right">4</td>
-<td class="right">3</td>
-<td class="right">2</td>
-<td class="right">1</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-Of course, we can select random numbers:
-</p>
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(random 5) ; <span style="color: #ff0000; font-weight: bold;">random between 0 and 5</span>
-</pre>
-</div>
-
-<pre class="example">
-4
-</pre>
-
-<p>
-Last, we need to work out how to swap to elements. It looks like this will swap elements 2 and 3. We store element 3 temporarily, set 3 to 2, and then set 2 to the temporarily stored value of 3.
-</p>
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">let*</span> ((L '(1 2 3 4))
-       (tmp (nth 3 L)))
-  (setf (nth 3 L) (nth 2 L))
-  (setf (nth 2 L) tmp)
-L)
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="right" />
-
-<col  class="right" />
-
-<col  class="right" />
-
-<col  class="right" />
-</colgroup>
-<tbody>
-<tr>
-<td class="right">1</td>
-<td class="right">2</td>
-<td class="right">4</td>
-<td class="right">3</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-So, now we can shuffle our list.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(setq userids '(user1 user2 user3 user4 user5 user6))
-
-(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">swap</span> (LIST el1 el2)
-  <span style="color: #228b22;">"in LIST swap indices EL1 and EL2 in place"</span>
-  (<span style="color: #8b0000;">let</span> ((tmp (nth el1 LIST)))
-    (setf (nth el1 LIST) (nth el2 LIST))
-    (setf (nth el2 LIST) tmp)))
-
-;; <span style="color: #ff0000; font-weight: bold;">now run the loop</span>
-(loop for i in (reverse (number-sequence 1 (1- (length userids))))
-      do (<span style="color: #8b0000;">let</span> ((j (random (+ i 1))))
-           (swap userids i j)))
-
-userids
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="left" />
-
-<col  class="left" />
-
-<col  class="left" />
-
-<col  class="left" />
-
-<col  class="left" />
-
-<col  class="left" />
-</colgroup>
-<tbody>
-<tr>
-<td class="left">user4</td>
-<td class="left">user6</td>
-<td class="left">user3</td>
-<td class="left">user2</td>
-<td class="left">user1</td>
-<td class="left">user5</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-The order has certainly changed. It is a little difficult to tell how randomized it actually is, but what is important for my application is that the order is different each time I use it. It looks like this will accomplish that objective. I think this basically implements the algorithm in the Python random.shuffle code. That code does something a little differently. It generates a random float between 0-1, multiplies it by i + 1, and converts the result to an integer. We directly get an integer in the range of 0 to i + 1. I think the result is practically the same.
-</p>
-
-<p>
-Finally, let us wrap the whole thing up in a nice neat function for future use. We will use elt instead of nth so it works for arrays too.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">swap</span> (LIST el1 el2)
-  <span style="color: #228b22;">"in LIST swap indices EL1 and EL2 in place"</span>
-  (<span style="color: #8b0000;">let</span> ((tmp (elt LIST el1)))
-    (setf (elt LIST el1) (elt LIST el2))
-    (setf (elt LIST el2) tmp)))
-
-
-(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">shuffle</span> (LIST)
-  <span style="color: #228b22;">"Shuffle the elements in LIST.</span>
-<span style="color: #228b22;">shuffling is done in place."</span>
-  (loop for i in (reverse (number-sequence 1 (1- (length LIST))))
-        do (<span style="color: #8b0000;">let</span> ((j (random (+ i 1))))
-             (swap LIST i j)))
-  LIST)
-</pre>
-</div>
-
-<pre class="example">
-shuffle
-</pre>
-
-<p>
-Example usage for a list:
-</p>
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(shuffle '(user1 user2 user3 user4 user5 user6))
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="left" />
-
-<col  class="left" />
-
-<col  class="left" />
-
-<col  class="left" />
-
-<col  class="left" />
-
-<col  class="left" />
-</colgroup>
-<tbody>
-<tr>
-<td class="left">user4</td>
-<td class="left">user2</td>
-<td class="left">user3</td>
-<td class="left">user5</td>
-<td class="left">user6</td>
-<td class="left">user1</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-And for a vector:
-</p>
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(shuffle [user1 user2 user3 user4 user5 user6])
-</pre>
-</div>
-
-<pre class="example">
-[user3 user2 user6 user4 user5 user1]
-</pre>
-
-<div id="outline-container-sec-1" class="outline-2">
-<h2 id="sec-1"><span class="section-number-2">1</span> Addendum</h2>
-<div class="outline-text-2" id="text-1">
-<p>
-Artur at <a href="http://endlessparentheses.com">http://endlessparentheses.com</a> suggested one can use psetf to swap values. Thanks for the tip, I was not aware of that cool function. It evaluates the values first, then sets them, so there is no need for a temporary storage of a value! Here is an example usage. We could rewrite our swap function like this if we wanted.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">let</span> ((LIST '(1 2 3 4 5)))
-  (psetf (elt LIST 2) (elt LIST 1)
-         (elt LIST 1) (elt LIST 2))
-LIST)
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="right" />
-
-<col  class="right" />
-
-<col  class="right" />
-
-<col  class="right" />
-
-<col  class="right" />
-</colgroup>
-<tbody>
-<tr>
-<td class="right">1</td>
-<td class="right">3</td>
-<td class="right">2</td>
-<td class="right">4</td>
-<td class="right">5</td>
-</tr>
-</tbody>
-</table>
-</div>
-</div>
-<p>Copyright (C) 2014 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2014/09/06/Randomize-a-list-in-Emacs.org">org-mode source</a><p><p>Org-mode version = 8.2.7c</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2014/09/06/Randomize-a-list-in-Emacs#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="../29">« Previous Page</a>
   --  
  <a href="../31">Next Page »</a>
@@ -1490,11 +1378,11 @@ LIST)
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2016/03/28/Another-approach-to-embedded-molecular-data-in-org-mode/">Another approach to embedded molecular data in org-mode</a></li>
       <li><a href="/blog/2016/03/26/A-molecule-link-for-org-mode/">A molecule link for org-mode</a></li>
       <li><a href="/blog/2016/03/21/Displaying-image-overlays-on-image-filenames-in-Emacs/">Displaying image overlays on image filenames in Emacs</a></li>
       <li><a href="/blog/2016/03/18/Org-teleport-headlines/">Org teleport headlines</a></li>
       <li><a href="/blog/2016/03/16/Getting-graphical-feedback-as-tooltips-in-Emacs/">Getting graphical feedback as tooltips in Emacs</a></li>
-      <li><a href="/blog/2016/03/03/New-publication-in-International-Journal-of-Quantum-Chemistry/">New publication in International Journal of Quantum Chemistry</a></li>
     </ul>
   </section>
 

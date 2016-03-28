@@ -84,6 +84,180 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Integrating-swish-e-and-Emacs"></div>
+      <h2 class="blog_post_title"><a href="/blog/2015/06/25/Integrating-swish-e-and-Emacs/" rel="bookmark" title="Permanent Link to Integrating swish-e and Emacs">Integrating swish-e and Emacs</a></h2>
+      <p><small><span class="blog_post_date">Posted June 25, 2015 at 10:37 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2015/06/25/Integrating-swish-e-and-Emacs#disqus_thread">View Comments</a>
+      <p><small><span class="blog_post_date">Updated June 25, 2015 at 11:10 AM</span>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+
+<p>
+<a href="http://swish-e.org">swish-e</a> is a software package that indexes files on your computer, and then allows you to search the index. Spotlight on my Mac is not working too well (sometimes not at all), and I want some more flexibility so today we try getting swish-e up and running and integrated with Emacs. I don't know that swish-e is the best tool for this available, but it has been on my radar a <i>long</i> time (probably since 2003 from this <a href="http://joshr.com/src/docs/HowToIndexAnything.pdf">article</a> ), and it was easy to setup and use.
+</p>
+
+<p>
+I use homebrew, so installation was this simple:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-sh">brew install swish-e
+</pre>
+</div>
+
+<p>
+To test things out, I will only index org-files. I have these all over the place, and they are not all in my org-mode agenda. So, finding them quickly would be awesome.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-text"># Example configuration file
+
+# Tell Swish-e what to directories to index
+IndexDir /Users/jkitchin/Dropbox
+IndexDir "/Users/jkitchin/Box Sync"
+IndexDir /Users/jkitchin/blogofile-jkitchin.github.com
+
+# where to save the index
+IndexFile /Users/jkitchin/.swish-e/index.swish-e
+
+# What to index
+IndexOnly .org
+
+# Tell Swish-e that .txt files are to use the text parser.
+IndexContents TXT* .org
+
+# Otherwise, use the HTML parser
+DefaultContents HTML*
+
+# Ask libxml2 to report any parsing errors and warnings or
+# any UTF-8 to 8859-1 conversion errors
+ParserWarnLevel 9
+</pre>
+</div>
+
+<p>
+Now, we create our index.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-sh">swish-e -c ~/.swish-e/swish.conf
+</pre>
+</div>
+
+<pre class="example">
+Indexing Data Source: "File-System"
+Indexing "/Users/jkitchin/Dropbox"
+Indexing "/Users/jkitchin/Box Sync"
+Indexing "/Users/jkitchin/blogofile-jkitchin.github.com"
+Removing very common words...
+no words removed.
+Writing main index...
+Sorting words ...
+Sorting 130,109 words alphabetically
+Writing header ...
+Writing index entries ...
+  Writing word text: ...  Writing word text:  10%  Writing word text:  20%  Writing word text:  30%  Writing word text:  40%  Writing word text:  50%  Writing word text:  60%  Writing word text:  70%  Writing word text:  80%  Writing word text:  90%  Writing word text: 100%  Writing word text: Complete
+  Writing word hash: ...  Writing word hash:  10%  Writing word hash:  20%  Writing word hash:  30%  Writing word hash:  40%  Writing word hash:  50%  Writing word hash:  60%  Writing word hash:  70%  Writing word hash:  80%  Writing word hash:  90%  Writing word hash: 100%  Writing word hash: Complete
+  Writing word data: ...  Writing word data:   9%  Writing word data:  19%  Writing word data:  29%  Writing word data:  39%  Writing word data:  49%  Writing word data:  59%  Writing word data:  69%  Writing word data:  79%  Writing word data:  89%  Writing word data:  99%  Writing word data: Complete
+130,109 unique words indexed.
+Sorting property: swishdocpath                            Sorting property: swishtitle                              Sorting property: swishdocsize                            Sorting property: swishlastmodified                       4 properties sorted.
+3,208 files indexed.  54,104,974 total bytes.  8,038,594 total words.
+Elapsed time: 00:00:16 CPU time: 00:00:13
+Indexing done!
+</pre>
+
+
+<p>
+Now an example search. I have been looking into the Energy frontier research centers, and I want to find my notes on it. Here is a little query. I use a special output format to keep things simple for the parsing later, just the rank and path, separated by a tab.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-sh">swish-e -f ~/.swish-e/index.swish-e -x <span style="color: #008000;">'%r\t%p\n'</span> -w efrc
+</pre>
+</div>
+<pre class="example">
+# SWISH format: 2.4.7
+# Search words: efrc
+# Removed stopwords:
+# Number of hits: 2
+# Search time: 0.000 seconds
+# Run time: 0.008 seconds
+1000	/Users/jkitchin/Dropbox/org-mode/journal.org
+471	/Users/jkitchin/Dropbox/org-mode/proposals.org
+.
+</pre>
+
+<p>
+Now, for the integration with Emacs. We just get that output in a string, split it, and get the parts we want.  I think I will use helm to provide a selection buffer to these results. We need a list of cons cells (string . candidate). Then we write an interactive helm function. We provide two sources. One for the initial query, and another to start a new search, in case you don't find what you want.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">helm-swish-e-candidates</span> (query)
+  <span style="color: #036A07;">"Generate a list of cons cells (swish-e result . path)."</span>
+  (<span style="color: #0000FF;">let*</span> ((result (shell-command-to-string
+                  (format <span style="color: #008000;">"swish-e -f ~/.swish-e/index.swish-e -x \"%%r\t%%p\n\" -w %s"</span>
+                          (shell-quote-argument query))))
+         (lines (s-split <span style="color: #008000;">"\n"</span> result t))
+         (candidates '()))
+    (<span style="color: #0000FF;">loop</span> for line in lines
+          unless (<span style="color: #0000FF;">or</span>  (s-starts-with? <span style="color: #008000;">"#"</span> line)
+                      (s-starts-with? <span style="color: #008000;">"."</span> line))
+          collect (cons line (cdr (s-split <span style="color: #008000;">"\t"</span> line))))))
+
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">helm-swish-e</span> (query)
+  <span style="color: #036A07;">"Run a swish-e query and provide helm selection buffer of the results."</span>
+  (<span style="color: #0000FF;">interactive</span> <span style="color: #008000;">"sQuery: "</span>)
+  (helm <span style="color: #006FE0;">:sources</span> `(((name . ,(format <span style="color: #008000;">"swish-e: %s"</span> query))
+                    (candidates . ,(helm-swish-e-candidates query))
+                    (action . ((<span style="color: #008000;">"open"</span> . (<span style="color: #0000FF;">lambda</span> (f)
+                                           (find-file (car f)))))))
+                   ((name . <span style="color: #008000;">"New search"</span>)
+                    (dummy)
+                    (action . ((<span style="color: #008000;">"search"</span> . (<span style="color: #0000FF;">lambda</span> (f)
+                                             (helm-swish-e helm-pattern)))))))))
+</pre>
+</div>
+
+<pre class="example">
+helm-swish-e
+</pre>
+
+<p>
+Now I can run M-x helm-swish-e and enter "efrc AND computing infrastructure" to find org files containing those words, then press enter to find the file. Nice and easy. I have not tested the query syntax very fully, but so far it is working fine!
+</p>
+<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/06/25/Integrating-swish-e-and-Emacs.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/06/25/Integrating-swish-e-and-Emacs#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Conditional-hydra-menus"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/06/24/Conditional-hydra-menus/" rel="bookmark" title="Permanent Link to Conditional hydra menus">Conditional hydra menus</a></h2>
       <p><small><span class="blog_post_date">Posted June 24, 2015 at 07:31 AM</span> | categories:
@@ -551,83 +725,6 @@ Check it out: @johnkitchin. Of course, you can make your clicking function more 
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/03/18/Clickable-links-for-Twitter-handles-in-Emacs#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Update-on-org-ref-it-is-now-all-emacs-lisp"></div>
-      <h2 class="blog_post_title"><a href="/blog/2015/03/16/Update-on-org-ref-it-is-now-all-emacs-lisp/" rel="bookmark" title="Permanent Link to Update on org-ref - it is now all emacs-lisp">Update on org-ref - it is now all emacs-lisp</a></h2>
-      <p><small><span class="blog_post_date">Posted March 16, 2015 at 08:51 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/orgref/'>orgref</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2015/03/16/Update-on-org-ref-it-is-now-all-emacs-lisp#disqus_thread">View Comments</a>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-
-<p>
-The <a href="https://github.com/jkitchin/org-ref">org-ref</a> code is finally all in emacs-lisp! This should make it much easier to install, and is another step closer to getting org-ref into MELPA. Previously, I had written the most significant code in org-mode source blocks that were intended to be tangled out. I found this was not really portable, because what gets tangled depends on your org-mode setup. I had to specifically set example blocks to not tangle, or org-ref would not work for other people, and if I forgot to set a block to tangle, it also would not work for others. That should not happen again now, since there is no more tangling.
-</p>
-
-
-<p>
-There are some relatively new features in org-ref:
-</p>
-<ol class="org-ol">
-<li>New colored org-ref links to differentiate them from other
-org-links. Citations are greenish, refs and labels are maroonish.
-</li>
-<li>Context messages about links. With your cursor on a cite, ref or label link
-you will get a context message, e.g. a formatted citation, some context about
-the label a ref refers to, or a count of the labels in the mini-buffer.
-</li>
-<li>There is now an org-ref menu in the Org menu.
-</li>
-<li>There is a new org-ref-help function that opens an org-file of org-ref
-documentation.
-</li>
-<li>Pretty thorough integration of helm throughout org-ref, and some integration
-of hydra.
-</li>
-<li>A few utility libraries: doi-utils, isbn, wos, pubmed, arxiv, jmax-bibtex, sci-id,
-x2bib. Not all these are new, but if you didn't know about them, check them out.
-</li>
-<li>Cask integration. This mostly provides access to testing and dependencies
-right now. org-ref is also now tested continuously at
-<a href="https://travis-ci.org/jkitchin/org-ref">https://travis-ci.org/jkitchin/org-ref</a> .
-</li>
-</ol>
-
-<p>
-org-ref is basically feature complete I think (which is to say that once again, I do not have any big ideas for new features ;). There are some places where it could be refactored a little, e.g. there are some bibtex only functions in org-ref.el that really should go into jmax-bibtex.el (which also could be renamed). This is a very low priority though, because things are working fine as far as I can tell.
-</p>
-
-<p>
-What does it need before going into MELPA? Probably some tests would be a good idea. On Travis, all that is really tested is that it loads with no errors. I would like to see some stability on my end, e.g. at least a week where no commits get made, and no errors are reported. And finally, I would like to make sure I have some time to handle issues that come up when a broader audience is trying it out.
-</p>
-
-<p>
-My target date to get this in MELPA is June 1, 2015. Try out the new org-ref, and let me know how it goes!</p>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/03/16/Update-on-org-ref---it-is-now-all-emacs-lisp.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/03/16/Update-on-org-ref-it-is-now-all-emacs-lisp#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="/blog/category/emacs/8">« Previous Page</a>
   --  
  <a href="/blog/category/emacs/10">Next Page »</a>
@@ -669,11 +766,11 @@ My target date to get this in MELPA is June 1, 2015. Try out the new org-ref, an
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2016/03/28/Another-approach-to-embedded-molecular-data-in-org-mode/">Another approach to embedded molecular data in org-mode</a></li>
       <li><a href="/blog/2016/03/26/A-molecule-link-for-org-mode/">A molecule link for org-mode</a></li>
       <li><a href="/blog/2016/03/21/Displaying-image-overlays-on-image-filenames-in-Emacs/">Displaying image overlays on image filenames in Emacs</a></li>
       <li><a href="/blog/2016/03/18/Org-teleport-headlines/">Org teleport headlines</a></li>
       <li><a href="/blog/2016/03/16/Getting-graphical-feedback-as-tooltips-in-Emacs/">Getting graphical feedback as tooltips in Emacs</a></li>
-      <li><a href="/blog/2016/03/03/New-publication-in-International-Journal-of-Quantum-Chemistry/">New publication in International Journal of Quantum Chemistry</a></li>
     </ul>
   </section>
 
