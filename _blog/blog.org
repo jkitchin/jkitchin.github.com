@@ -1,3 +1,263 @@
+* Jump to a tagged src block
+  :PROPERTIES:
+  :categories: emacs,orgmode
+  :date:     2016/03/30 14:26:35
+  :updated:  2016/03/30 14:26:35
+  :END:
+If you have a lot of src-blocks in your org-file, it might be nice to "tag" them and be able to jump around between them using tag expressions, or by the name of the block, language etc... Here we develop a way to do that and create a handy function to jump to blocks in the current buffer.
+
+First, we look at how to "tag" a src-block. One way is to use a header like this:
+
+#+BEGIN_EXAMPLE
+#+header: :tags cool idiom two
+#+END_EXAMPLE
+
+These are not tags in the usual org-mode sense, they are just a space separated list of words we will later treat as tags. We can get the tags on a src-block with this function.
+
+#+header: :tags cool idiom two
+#+BEGIN_SRC emacs-lisp
+(defun src-block-tags (src-block)
+  "Return tags for SRC-BLOCK (an org element)."
+  (let* ((headers (-flatten
+		   (mapcar 'org-babel-parse-header-arguments
+			   (org-element-property :header src-block))))
+	 (tags (cdr (assoc :tags headers))))
+    (when tags
+      (split-string tags))))
+#+END_SRC
+
+#+RESULTS:
+: src-block-tags
+
+Now, we make a src-block with the tags "test" "one" and "idiom", and see how to tell if the block matches the tag expression "test+idiom".
+
+#+header: :tags test one idiom
+#+name: tag-matcher
+#+BEGIN_SRC emacs-lisp
+(let* ((lexical-binding nil)
+       (todo-only nil)
+       (tags-list (src-block-tags (org-element-context)))
+       (tag-expression "test+idiom"))
+  (eval (cdr (org-make-tags-matcher tag-expression))))
+
+#+END_SRC
+#+RESULTS: tag-matcher
+: t
+
+It does, so we wrap that up into a function that tells us if a src-block matches some tag expression.
+
+#+header: :tags one
+#+BEGIN_SRC emacs-lisp
+(defun src-block-match-tag-expression-p (src-block tag-expression)
+  "Determine if SRC-BLOCK matches TAG-EXPRESSION."
+  (let* ((lexical-binding nil)
+	 (todo-only nil)
+	 (tags-list (src-block-tags src-block)))
+    (eval (cdr (org-make-tags-matcher tag-expression)))))
+#+END_SRC
+#+RESULTS:
+: src-block-match-tag-expression-p
+
+Here we test that on a block tagged "one three" on the expression "one-two" which means tagged one and not two.
+#+header: :tags one three
+#+BEGIN_SRC emacs-lisp
+(src-block-match-tag-expression-p (org-element-context) "one-two")
+#+END_SRC
+#+RESULTS:
+: t
+
+Those are the main pieces we need to jump around. We just need a selection tool with a list of filtered candidates. We get a list of src-block candidates to choose from in the next block as an example. Here we get blocks tagged one but not two. We can incorporate this into a selection backend like helm or ivy.
+
+#+BEGIN_SRC emacs-lisp :results code
+(org-element-map (org-element-parse-buffer) 'src-block
+  (lambda (src-block)
+    (when (src-block-match-tag-expression-p src-block "one-two")
+      ;; Get a string and marker
+      (cons
+       (format "%15s|%15s|%s"
+	       (org-element-property :name src-block)
+	       (org-element-property :language src-block)
+	       (org-element-property :header src-block))
+       (org-element-property :begin src-block)))))
+#+END_SRC
+#+RESULTS:
+
+#+BEGIN_SRC emacs-lisp
+(("    tag-matcher|     emacs-lisp|(:tags test one idiom)" . 1222)
+ ("            nil|     emacs-lisp|(:tags one)" . 1641)
+ ("            nil|     emacs-lisp|(:tags one three)" . 2120))
+#+END_SRC
+
+Now let us put that into ivy. We will ask for an expression to filter the blocks on, and then use ivy to narrow what is left, and the only action is to jump to the position of the selected block. You can start with a tag expression, or press enter to get all the tags. Then you can use ivy to further narrow by language, block name, or other tags.
+
+#+header: :tags three
+#+BEGIN_SRC emacs-lisp
+(defun ivy-jump-to-src (tag-expression)
+  (interactive "sTag expression: ")
+  (ivy-read "Select: "
+	    (org-element-map (org-element-parse-buffer) 'src-block
+	      (lambda (src-block)
+		(when (src-block-match-tag-expression-p src-block tag-expression)
+		  ;; Get a string and marker
+		  (cons
+		   (format "%15s|%15s|%s"
+			   (org-element-property :name src-block)
+			   (org-element-property :language src-block)
+			   (org-element-property :header src-block))
+		   (org-element-property :begin src-block)))))
+	    :require-match t
+	    :action '(1
+		      ("j" (lambda (pos) (interactive) (goto-char pos))))))
+#+END_SRC
+
+#+RESULTS:
+: ivy-jump-to-src
+
+For fun, here is a python block just for testing.
+#+BEGIN_SRC python
+print(42)
+#+END_SRC
+
+#+RESULTS:
+: 42
+
+That is it! It seems to work ok. There are some variations that might be preferrable, like putting the tags in as params in the src-block header to avoid needing a separate header line. It isn't clear how much I would use this, and it is slow if you have /a lot/ of src blocks in a /large/org-file because of the parsing. (how large? I noticed a notable lag on my 22,800 line org-file this is in ;).
+
+* Moonshot
+#+BEGIN_SRC emacs-lisp
+(defun future (&rest args) "Carnegie Mellon University")
+(defun need (&rest args) "Carnegie Mellon University")
+(defun requires (&rest args) "Carnegie Mellon University")
+(defun past (&rest args) "Carnegie Mellon University")
+(defun integrated (&rest args) "Carnegie Mellon University")
+(defun investment (&rest args) "Carnegie Mellon University")
+(defun improvement (&rest args) "Carnegie Mellon University")
+(defun roots (&rest args) "Carnegie Mellon University")
+(defun collaboration (&rest args) "Carnegie Mellon University")
+(defun enhance (&rest args) "Carnegie Mellon University")
+(defun research-agent (&rest args) "Carnegie Mellon University")
+#+END_SRC
+
+#+RESULTS:
+: research-agent
+
+#+BEGIN_SRC emacs-lisp
+(future
+ (need (integrated 'research 'data 'methods 'learning))
+ (need (enhance (research-agent) 'artificial-intelligence))
+ (requires (investment 'sustained)
+	   (improvement 'continuous 'education 'research 'software 'hardware))
+ (requires (collaboration
+	    'multidisciplinary
+	    'humanities 'sciences 'engineering 'computing))
+ (past (roots 'of 'AI 'human-computer-interaction)))
+
+(future (> years-from-now 10)
+ (goal (integrate 'research 'data 'methods 'learning))
+ (goal (loop for attr in '(machine-readable reusable)
+          do (enable research attr))
+ (goal (with (enhance (research-agent) 'artificial-intelligence)
+         (leverage 'human 'ingenuity)
+         (maximize 'human-learning 'research-productivity))
+ (requires (investment 'sustained)
+                (continuous-improvement 'education 'research
+                                    'software 'hardware))
+ (requires (collaboration
+            'multidisciplinary
+                'humanities 'sciences 'arts 'engineering 'computing))
+ (given (@CMU origin 'of 'AI 'human-computer-interaction))
+ (compute (optimal-reason-place-and-team)))
+
+#+END_SRC
+
+#+RESULTS:
+: Carnegie Mellon University
+
+* Psychedelic medicines
+http://cen.acs.org/articles/94/i13/Psychedelic-compounds-like-ecstasy-just.html
+
+** The molecules in the article
+*** Ibogaine
+
+#+BEGIN_SRC sh :var smiles=ibogaine :file ibogaine.svg :exports output
+echo $smiles | obabel -ismi -osvg
+#+END_SRC
+
+#+RESULTS:
+[[file:ibogaine.svg]]
+
+*** MDMA
+#+BEGIN_SRC sh :var smiles=mdma :file mdma.svg :exports output
+echo $smiles | obabel -ismi -osvg
+#+END_SRC
+
+#+RESULTS:
+[[file:mdma.svg]]
+
+*** THC
+#+BEGIN_SRC sh :var smiles=thc :file thc.svg :exports output
+echo $smiles | obabel -ismi -osvg
+#+END_SRC
+
+#+RESULTS:
+[[file:thc.svg]]
+
+*** Ketamine
+#+BEGIN_SRC sh :var smiles=ketamine :file ketamine.svg :exports output
+echo $smiles | obabel -ismi -osvg
+#+END_SRC
+
+#+RESULTS:
+[[file:ketamine.svg]]
+
+*** Psilocybin
+#+BEGIN_SRC sh :var smiles=psilocybin :file psilocybin.svg :exports output
+echo $smiles | obabel -ismi -osvg
+#+END_SRC
+
+#+RESULTS:
+[[file:psilocybin.svg]]
+
+** Molecule database
+
+#+BEGIN_SRC emacs-lisp
+(add-to-list 'org-structure-template-alist
+	     '("mol"
+	       "#+header:\n#+name:?\n#+begin_molecule\n\n#+end_molecule\n"))
+#+END_SRC
+
+
+#+header: :src https://pubchem.ncbi.nlm.nih.gov/compound/197060#section=Names-and-Identifiers
+#+header: :format smiles
+#+name: ibogaine
+#+begin_molecule
+CCC1CC2CC3C1N(C2)CCC4=C3NC5=C4C=C(C=C5)OC
+#+end_molecule
+
+#+header: :src https://pubchem.ncbi.nlm.nih.gov/compound/ketamine :format smiles
+#+name: ketamine
+#+begin_molecule
+CNC1(CCCCC1=O)C2=CC=CC=C2Cl
+#+end_molecule
+
+
+#+header: :src https://pubchem.ncbi.nlm.nih.gov/compound/1615#section=Names-and-Identifiers :format smiles
+#+name: mdma
+#+begin_molecule
+CC(CC1=CC2=C(C=C1)OCO2)NC
+#+end_molecule
+
+#+header: :src https://pubchem.ncbi.nlm.nih.gov/compound/16078#section=Names-and-Identifiers :format smiles
+#+name: THC
+#+begin_molecule
+CCCCCC1=CC2=C(C3C=C(CCC3C(O2)(C)C)C)C(=C1)O
+#+end_molecule
+
+#+header: :src https://pubchem.ncbi.nlm.nih.gov/compound/10624#section=Names-and-Identifiers :format smiles
+#+name: psilocybin
+#+begin_molecule
+CN(C)CCC1=CNC2=C1C(=CC=C2)OP(=O)(O)O
+#+end_molecule
 
 * DONE Another approach to embedded molecular data in org-mode
   CLOSED: [2016-03-28 Mon 11:25]
@@ -238,6 +498,50 @@ H          4.61163        5.51902       -0.04152
 H          3.11230        5.15092        0.84340
 H          3.11643        5.14660       -0.93127
 #+end_molecule
+
+* Export table from src-block
+
+#+name: mytable
+| a | b |
+| 1 | 2 |
+| 3 | 4 |
+
+
+#+BEGIN_SRC emacs-lisp
+(save-excursion
+  (org-open-link-from-string "[[mytable]]")
+  (while (not (org-table-p)) (forward-line))
+  (org-table-export "mytable.csv" "orgtbl-to-csv"))
+#+END_SRC
+#+RESULTS:
+: Export done.
+
+#+BEGIN_SRC sh
+cat mytable.csv
+#+END_SRC
+#+RESULTS:
+: a,b
+: 1,2
+: 3,4
+
+
+* element cost
+
+#+BEGIN_SRC python
+import numpy as np
+
+cost = np.array([5.0, 10.0])
+N1 = np.array([1, 2])
+N2 = 3 * N1
+
+print((cost * N1).sum() / N1.sum())
+print((cost * N2).sum() / N2.sum())
+#+END_SRC
+#+RESULTS:
+: 8.33333333333
+: 8.33333333333
+
+
 * DONE A molecule link for org-mode
   CLOSED: [2016-03-26 Sat 15:28]
   :PROPERTIES:
