@@ -1,4 +1,259 @@
-* OMG A Lisp that runs python
+* More on Hy and why I think it is a big deal
+  :PROPERTIES:
+  :categories: python,emacs,hylang
+  :date:     2016/03/31 13:41:43
+  :updated:  2016/03/31 13:41:43
+  :END:
+[[http://kitchingroup.cheme.cmu.edu/blog/2016/03/30/OMG-A-Lisp-that-runs-python/][Yesterday]] I talked about [[https://github.com/hylang/hy][hylang]], a Lisp that basically compiles to and runs Python code. Today, I want to show a few reasons why this is a great idea, and an important one. Below I give a few examples of why the hylang approach is better (in my opinion of course) than Python with a few examples of things I have always wanted in Python but couldn't get.
+
+** Editing with hy-mode and lispy
+There is a major mode for Hy: https://github.com/hylang/hy-mode also on MELPA. It gives us some syntax highlighting and better access to a REPL.
+
+Let's load lispy (https://github.com/abo-abo/lispy) for it so we also get amazing editing. I always wanted to use lispy style navigation and editing in Python, but the whitespace and indentation did not make it that easy. Problem solved with these. @abo-abo already added basic eval support for Hy to lispy since the post yesterday (https://github.com/abo-abo/lispy/commit/f7f71e38e241d92b6add05be6628ac987067b11c); Thanks!
+
+#+BEGIN_SRC emacs-lisp :results silent
+(add-hook 'hy-mode-hook
+	  (lambda ()
+	    (lispy-mode 1)))
+#+END_SRC
+
+** Python with no whitespace, or commas in lists
+You can still use indentation (it is good style), but this works!
+#+BEGIN_SRC hy
+(for [x [0 1 2 3 4 5]]
+(if (> x 3) (print "too big")
+(print x)))
+#+END_SRC
+
+#+RESULTS:
+: 0
+: 1
+: 2
+: 3
+: too big
+: too big
+
+This looks nicer.
+#+BEGIN_SRC hy
+(for [x [0 1 2 3 4 5]]
+  (if (> x 3)
+    (print "too big")
+    (print x)))
+#+END_SRC
+
+#+RESULTS:
+: 0
+: 1
+: 2
+: 3
+: too big
+: too big
+
+This is a big deal too. Using Python in sessions in org-mode has always been a little complicated by the indentation and whitespace, especially with nested loops and functions. That problem is probably gone.
+
+** No confusion in expressions in statements
+In Python you can do this:
+#+BEGIN_SRC python
+a = 5
+print(a)
+print(a + 5)
+#+END_SRC
+
+#+RESULTS:
+: 5
+: 10
+
+But not this:
+#+BEGIN_SRC python
+print(a=5)
+print(a + 5)
+#+END_SRC
+
+#+RESULTS:
+:   File "<stdin>", line 1
+:    print(a=5)
+:           ^
+: SyntaxError: invalid syntax
+
+You can't put assignment statements and expression statements anywhere you want, they are only legal syntax in some places. For example, a=5 above actually looks like the print function has an argument of a that set to 5. Not true in Lisp; there are only expressions! So this works fine.
+
+#+BEGIN_SRC hy
+(print (setv a 5))
+(print (+ a 5))
+#+END_SRC
+
+#+RESULTS:
+: 5
+: 10
+
+I just like this style of simple syntax.
+
+** Proper multiline lambda functions
+Python syntax fundamentally limits you to one line lambdas. Not so for Hy. Let's use one in a filter to print even numbers. Here is an example with a two-liner but you could make them more complicated. In Python, you have to make a separate function for this. That isn't terrible, but if it is never used for anything else, it could be avoided.
+
+#+name: lambda
+#+BEGIN_SRC hy
+(setv a [0 1 2 3 4 5 6 7 8])
+
+(defn display [list filter]
+  (for [x list] (if (filter x) (print x))))
+
+(display a (lambda [x]
+             (= (% x 2) 0)))
+#+END_SRC
+
+#+RESULTS:
+: 0
+: 2
+: 4
+: 6
+: 8
+
+** Macros and Extensible syntax
+It is not easy to get real macro (code expansion) behavior in Python. Yes, there are decorators, and closures, and related things that get close to it. But there are not lisp-like macros.
+
+Here is a (too) simple macro to allow for infix notation. It only works for two arguments, but could be extended for multiple arguments.
+#+BEGIN_SRC hy
+(defmacro infix [code]
+  (quasiquote ((unquote (get code 1))
+               (unquote (get code 0))
+               (unquote (get code 2)))))
+
+(print (infix (1 + 1)))
+#+END_SRC
+#+RESULTS:
+: 2
+
+If we want new syntax we can get it!
+#+BEGIN_SRC hy
+(defreader $ [code]
+  (quasiquote
+   ((unquote (get code 1))
+    (unquote (get code 0))
+    (unquote (get code 2)))))
+
+(print #$(1 + 1))
+#+END_SRC
+
+#+RESULTS:
+: 2
+
+Why is this nice? Here is a math example that shows why you might want to change syntax.
+
+*** Some math
+See http://kitchingroup.cheme.cmu.edu/blog/2013/02/07/Solving-Bessel-s-Equation-numerically/ for the Python version of solving the Bessel equation numerically. Here we do it with hylang.
+
+Why would we want infix notation? Here is a good reason. The prefix notation is not easy to read. Compare:
+
+#+BEGIN_SRC python
+dzdx = 1.0 / x**2 * (-x * z - (x**2 - nu**2) * y)
+#+END_SRC
+
+to
+
+#+BEGIN_SRC hy
+(setv dzdx (* (/ 1.0 (** x 2)) (- (* (* -1 x) z) (* (- (** x 2) (** nu 2)) y))))
+#+END_SRC
+
+The infix notation is simpler to read. Still, the code below is not that hard to figure out, especially if there was a generalized infix notation that allowed (with parens for explicit operation precedence):
+
+#+BEGIN_SRC hy
+(setv dzdx (nfx (1.0 / x**2) * ((-x * z) - ((x**2 - nu**2) * y))))
+#+END_SRC
+
+So, here is the hylang equivalent to my previous Python version.
+
+#+BEGIN_SRC hy
+(import [numpy :as np])
+(import [scipy.integrate [odeint]])
+(import [scipy.special [jn]])
+(import [matplotlib.pyplot :as plt])
+
+(defn fbessel [Y x]
+  "System of 1st order ODEs for the Bessel equation."
+  (setv nu 0.0)
+  (setv y (get Y 0))
+  (setv z (get Y 1))
+
+  (setv dydx z)
+  (setv dzdx (* (/ 1.0 (** x 2)) (- (* (* -1 x) z) (* (- (** x 2) (** nu 2)) y))))
+  [dydx dzdx])
+
+(setv x0 1e-15)
+(setv y0 1.0)
+(setv z0 0.0)
+(setv Y0 [y0 z0])
+
+(setv xspan (np.linspace 1e-15 10))
+(setv sol (odeint fbessel Y0 xspan))
+(setv s (list-comp (get x 0) [x sol]))
+
+(plt.plot xspan s :label "Numerical solution")
+(plt.plot xspan (jn 0 xspan) "r--" :label "Analytical solution")
+(plt.legend :loc "best")
+
+(plt.savefig "hy-ode.png")
+#+END_SRC
+
+#+RESULTS:
+: 2016-03-30 21:51:34.936 Python[95268:d13] CoreText performance note: Client called CTFontCreateWithName() using name "Lucida Grande" and got font with PostScript name "LucidaGrande". For best performance, only use PostScript names when calling this API.
+: 2016-03-30 21:51:34.937 Python[95268:d13] CoreText performance note: Set a breakpoint on CTFontLogSuboptimalRequest to debug.
+
+[[./hy-ode.png]]
+
+I wish I could put multiple pairs in setv. The use of list comprehension for the slices on the array are a little odd. I am not sure if there is a nicer syntax for that (this is only the 2nd day I have used hylang). Otherwise it looks really good to me, except for that prefix math.
+
+** Interoperability with Python
+http://docs.hylang.org/en/latest/tutorial.html#hy-python-interop
+
+Write Hy code and use it in Python. Use Python code in Hy. Repeat. Sweet.
+
+** Integration of emacs and Hy
+
+This isn't so beautiful but it illustrates  a pretty awesome integration of Hy(python) into Emacs!
+
+#+BEGIN_SRC emacs-lisp
+(defmacro hy (body)
+  `(let* ((temporary-file-directory ".")
+	  (tempfile (make-temp-file "hy-")))
+     (message (format "code: %S" ,body))
+     (with-temp-file tempfile
+       (mapc (lambda (form) (insert (format "%s" form))) ,body))
+     (read (unwind-protect
+	       (shell-command-to-string
+		(format "hy %s" tempfile))
+	     (delete-file tempfile)))))
+
+(aref (hy '((import numpy)
+	    (setv a (numpy.array [1 2 3]))
+	    (setv b (numpy.array [1 2 3]))
+	    (print (* a b))))
+      1)
+#+END_SRC
+
+#+RESULTS:
+: 4
+
+This isn't perfect, and there are many ways it could break down. But if you are careful to make the output "read"able, you can literally embed Hy code in Emacs lisp and use the results, a total win for Science! I feel like it might need something like progn, but that would not change what this does dramatically.
+
+** Hypster and Hy Society.
+http://notes.pault.ag/hy-survival-guide/  ROTFL. *ironically* of course ;)
+
+And the @hylang Twitter account is run by Hy Society. Nice.
+
+** What do we still need?
+
+1. Experience. Hy seems relatively young compared to other Lisps. It isn't clear yet if this could work like Python does at scale in research. I sure look forward to finding out though!
+2. Proper infix notation for engineering math. I could live with no operator precedence if it led to a quicker solution for now. As long as something like (1.0 / x**2 * (-x * z - (x**2 - nu**2) * y)) is legal!
+3. A proper integration with org-mode and the REPL.
+4. Toolchains like emacs-lisp has. I just love those. Killer debugging, access to hyperlinked documentation, code navigation, ... Maybe integration with something like SLIME or CIDER? Hyder?
+5. Use it in a proper big project to find out where the limitations are, maybe Hycse as a companion to Pycse (http://kitchingroup.cheme.cmu.edu/pycse/)? or a rewrite of http://kitchingroup.cheme.cmu.edu/dft-book/ in Hy?
+
+Overall, I am pretty excited about this project. The syntax is a bit reminiscent of Clojure, and Racket, the former by design. Lots of new ideas still seem to be percolating in, so there is likely good stuff to see in the future!
+
+I haven't used it enough to see the warts yet, but already the top issues I had with Python are largely addressed, so I see this as a way to continue progress with all the benefits of Python.
+* DONE OMG A Lisp that runs python
+  CLOSED: [2016-03-30 Wed 17:10]
   :PROPERTIES:
   :categories: python,lisp
   :date:     2016/03/30 17:10:17
@@ -98,6 +353,8 @@ Wow. I am not sure what the warnings are, I seem to get them on my Mac for some 
 #+END_EXAMPLE
 
 I may not be able to sleep tonight...
+
+Ascii art courtesy of http://chris.com/ascii/index.php?art=people/body%20parts/brains and http://www.ascii-code.com/ascii-art/weapons/explosives.php.
 * DONE Jump to a tagged src block
   CLOSED: [2016-03-30 Wed 14:26]
   :PROPERTIES:
