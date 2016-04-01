@@ -1,0 +1,109 @@
+
+
+#+BEGIN_SRC emacs-lisp :tangle ob-hy.el
+(require 'ob)
+
+(declare-function slime-eval "ext:slime" (sexp &optional package))
+
+(defvar org-babel-tangle-lang-exts)
+(add-to-list 'org-babel-tangle-lang-exts '("hy" . "hy"))
+
+(defvar org-babel-default-header-args:hy '())
+(defvar org-babel-header-args:hy '((package . :any)))
+#+END_SRC
+
+#+RESULTS:
+: org-babel-header-args:hy
+
+
+I don't really know how to get a "value", I only know how to get the output. It seems like some trickery with stdout is needed, or an actual interaction with a repl.
+
+#+BEGIN_SRC emacs-lisp
+(defun org-babel-expand-body:hy (body params)
+  "Expand BODY according to PARAMS, return the expanded body."
+  (let* ((vars (mapcar #'cdr (org-babel-get-header params :var)))
+	 (result-params (cdr (assoc :result-params params)))
+	 (print-level nil)
+	 (print-length nil)
+	 (body (org-babel-trim
+		(if (> (length vars) 0)
+		    (concat "(let ["
+			    (mapconcat
+			     (lambda (var)
+			       (format
+				"%S (quote %S)"
+				(car var)
+				(cdr var)))
+			     vars "\n      ")
+			    "]\n" body ")")
+		  body))))
+    (message body)
+    (cond ;; ((or (member "code" result-params)
+     ;;      (member "pp" result-params))
+     ;;  (format "(do %s)"
+     ;;		   body))
+     ;; if (:results output), collect printed output
+     ((member "python" result-params)
+      body)
+     ((member "output" result-params)
+      (format "(print (do %s\n))" body))
+     (t body))))
+#+END_SRC
+
+#+RESULTS:
+: org-babel-expand-body:hy
+
+
+#+BEGIN_SRC emacs-lisp
+(defun org-babel-execute:hy (body params)
+  "Execute a block of hy code with Babel."
+  (let* ((temporary-file-directory ".")
+	 (tempfile (make-temp-file "hy-"))
+	 result
+	 (result-params (cdr (assoc :result-params params)))
+	 (body (org-babel-expand-body:hy body params)))
+
+    (message body)
+    (with-temp-file tempfile
+      (insert body))
+
+    (unwind-protect
+	(progn
+	  (cond ((member "python" result-params)
+		 (setq result (shell-command-to-string
+			       (format "hy2py %s" tempfile))))
+		((member "ast" result-params)
+		 (setq result (shell-command-to-string
+			       (format "hy2py -a %s" tempfile))))
+
+		(t
+		 (setq result (shell-command-to-string
+			       (format "hy %s" tempfile)))))
+
+	  (org-babel-result-cond result-params
+	    result
+	    (condition-case nil (org-babel-script-escape result)
+	      (error result))))
+      (delete-file tempfile))))
+
+(provide 'ob-hy)
+
+#+END_SRC
+
+#+RESULTS:
+: ob-hy
+
+
+#+BEGIN_SRC hy :results python
+(import numpy)
+(setv a (numpy.array [1 2 3]))
+(print (* a a))
+(list-comp (* 2 x) [x (range 3)])
+#+END_SRC
+
+#+RESULTS:
+: from hy.core.language import range
+: import numpy
+: a = numpy.array([1L, 2L, 3L])
+: print((a * a))
+: [(2L * x) for x in range(3L)]
