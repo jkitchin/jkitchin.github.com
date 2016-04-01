@@ -1,0 +1,193 @@
+* ob-hy.el - or better integration of hylang in org-mode
+  :PROPERTIES:
+  :categories: emacs,orgmode,hylang
+  :date:     2016/04/01 19:31:37
+  :updated:  2016/04/01 19:31:37
+  :END:
+The point of this post is to develop and test a more substantial integration of Hy into org-mode. We develop ob-hy.el here. This is based off of ob-clojure.el.
+
+The next few blocks will get tangled to ob-hy.el. First, some variables.
+
+#+BEGIN_SRC emacs-lisp :tangle ob-hy.el
+(require 'ob)
+
+(add-to-list 'org-structure-template-alist
+             '("hy" "#+BEGIN_SRC hy\n?\n#+END_SRC" "<src lang=\"hy\">\n?\n</src>"))
+
+(defvar org-babel-tangle-lang-exts)
+(add-to-list 'org-babel-tangle-lang-exts '("hy" . "hy"))
+
+(defvar org-babel-default-header-args:hy '())
+(defvar org-babel-header-args:hy '((:results . "output")))
+#+END_SRC
+
+#+RESULTS:
+: org-babel-header-args:hy
+
+Next a function to expand the code body. This will allow us to pass vars in the header.
+
+#+BEGIN_SRC emacs-lisp :tangle ob-hy.el
+(defun org-babel-expand-body:hy (body params)
+  "Expand BODY according to PARAMS, return the expanded body."
+  (let* ((vars (mapcar #'cdr (org-babel-get-header params :var)))
+	 (result-params (cdr (assoc :result-params params)))
+	 (print-level nil)
+	 (print-length nil)
+	 (body (org-babel-trim
+		(if (> (length vars) 0)
+		    (concat "(let ["
+			    (mapconcat
+			     (lambda (var)
+			       (format
+				"%S (quote %S)"
+				(car var)
+				(cdr var)))
+			     vars "\n      ")
+			    "]\n" body ")")
+		  body))))
+    (when (not (member "output" result-params))
+      (setq body (format "(print (do  %s\n))" body)))
+    body))
+#+END_SRC
+
+#+RESULTS:
+: org-babel-expand-body:hy
+
+And a function to execute the body. We still use a simple approach to write the code to a temp-file, execute it, capture the output, and delete the file. This limits things to
+
+#+BEGIN_SRC emacs-lisp :tangle ob-hy.el
+(defun org-babel-execute:hy (body params)
+  "Execute a block of hy code with Babel."
+  (let* ((temporary-file-directory ".")
+	 (tempfile (make-temp-file "hy-"))
+	 result
+	 (result-params (cdr (assoc :result-params params)))
+	 (body (org-babel-expand-body:hy body params)))
+
+    (with-temp-file tempfile
+      (insert body))
+
+    (unwind-protect
+	(progn
+	  (cond
+	   ((member "body" result-params)
+	    (setq result body))
+	   ((member "python" result-params)
+	    (setq result (shell-command-to-string
+			  (format "hy2py %s" tempfile))))
+	   ((member "ast" result-params)
+	    (setq result (shell-command-to-string
+			  (format "hy2py -a -np %s" tempfile))))
+	   (t
+	    (setq result (shell-command-to-string
+			  (format "hy %s" tempfile)))))
+
+	  (org-babel-result-cond result-params
+	    result
+	    (condition-case nil (org-babel-script-escape result)
+	      (error result))))
+      (delete-file tempfile))))
+
+(provide 'ob-hy)
+#+END_SRC
+
+#+RESULTS:
+: ob-hy
+
+Now we tangle and load those blocks.
+#+BEGIN_SRC emacs-lisp
+(org-babel-tangle)
+(load-file "ob-hy.el")
+#+END_SRC
+
+#+RESULTS:
+: t
+
+Next, we do some tests. They are all simple tests.
+
+** Tests
+
+*** Simple
+#+BEGIN_SRC hy
+(print "Hy world")
+#+END_SRC
+
+#+RESULTS:
+: Hy world
+
+We can see how this turns into Python:
+
+#+BEGIN_SRC hy :results python
+(print "Hy world")
+#+END_SRC
+
+#+RESULTS:
+: print(u'Hy world')
+
+or the AST:
+
+#+BEGIN_SRC hy :results ast
+(print "Hy world")
+#+END_SRC
+
+#+RESULTS:
+: Module(
+:     body=[Expr(value=Call(func=Name(id='print'), args=[Str(s=u'Hy world')], keywords=[], starargs=None, kwargs=None))])
+:
+:
+
+Let's test :results value. It is not quite the value since we seem to get everything that is output from the script, but if you don't print stuff, it seems to get it right.
+
+#+BEGIN_SRC hy :results value
+"test"
+(+ 1 2 3)
+#+END_SRC
+
+#+RESULTS:
+: 6
+
+*** vars in header
+
+Here we test out adding variables to the header lines.
+
+#+name: hy-world
+#+BEGIN_SRC hy :var data="world"
+(print "Hy" data)
+#+END_SRC
+
+#+RESULTS: hy-world
+: Hy world
+
+Interesting, I am not sure where the space between them comes from. Let's check out the :results body option. It will show us the hy script that gets run.
+
+#+BEGIN_SRC hy :var data="world" :results body
+(print "Hy" data)
+#+END_SRC
+
+#+RESULTS:
+: (let [data (quote "world")]
+: (print "Hy" data))
+
+Nothing obvious about the space there. We can test out passing block results in here.
+
+#+BEGIN_SRC hy :var data=hy-world
+(print data)
+#+END_SRC
+
+#+RESULTS:
+: Hy  world
+:
+
+Here is the body of that:
+
+#+BEGIN_SRC hy :var data=hy-world :results body
+(print data)
+#+END_SRC
+
+#+RESULTS:
+: (let [data (quote "Hy world
+: ")]
+: (print data))
+
+** Summary
+It works well enough to make testing in org-mode pretty convenient. I can't think of anything else it "needs" right now, although communication with a repl might make it faster, and sessions are not supported at the moment. Saving that for another day ;)

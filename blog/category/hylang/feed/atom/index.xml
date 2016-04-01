@@ -7,12 +7,307 @@
   <title type="text">The Kitchin Research Group</title>
   <subtitle type="text">Chemical Engineering at Carnegie Mellon University</subtitle>
 
-  <updated>2016-04-01T17:58:42Z</updated>
+  <updated>2016-04-01T23:31:52Z</updated>
   <generator uri="http://blogofile.com/">Blogofile</generator>
 
   <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog" />
   <id>http://jkitchin.github.io/blog/feed/atom/</id>
   <link rel="self" type="application/atom+xml" href="http://jkitchin.github.io/blog/feed/atom/" />
+  <entry>
+    <author>
+      <name></name>
+      <uri>http://jkitchin.github.io/blog</uri>
+    </author>
+    <title type="html"><![CDATA[ob-hy.el - or better integration of hylang in org-mode]]></title>
+    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2016/04/01/ob-hy-el-or-better-integration-of-hylang-in-org-mode" />
+    <id>http://jkitchin.github.io/blog/2016/04/01/ob-hy-el-or-better-integration-of-hylang-in-org-mode</id>
+    <updated>2016-04-01T19:31:37Z</updated>
+    <published>2016-04-01T19:31:37Z</published>
+    <category scheme="http://jkitchin.github.io/blog" term="orgmode" />
+    <category scheme="http://jkitchin.github.io/blog" term="emacs" />
+    <category scheme="http://jkitchin.github.io/blog" term="hylang" />
+    <summary type="html"><![CDATA[ob-hy.el - or better integration of hylang in org-mode]]></summary>
+    <content type="html" xml:base="http://jkitchin.github.io/blog/2016/04/01/ob-hy-el-or-better-integration-of-hylang-in-org-mode"><![CDATA[
+
+
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#sec-1">1. Tests</a>
+<ul>
+<li><a href="#sec-1-1">1.1. Simple</a></li>
+<li><a href="#sec-1-2">1.2. vars in header</a></li>
+</ul>
+</li>
+<li><a href="#sec-2">2. Summary</a></li>
+</ul>
+</div>
+</div>
+<p>
+The point of this post is to develop and test a more substantial integration of Hy into org-mode. We develop ob-hy.el here. This is based off of ob-clojure.el.
+</p>
+
+<p>
+The next few blocks will get tangled to ob-hy.el. First, some variables.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">ob</span>)
+
+(add-to-list 'org-structure-template-alist
+             '(<span style="color: #008000;">"hy"</span> <span style="color: #008000;">"#+BEGIN_SRC hy\n?\n#+END_SRC"</span> <span style="color: #008000;">"&lt;src lang=\"hy\"&gt;\n?\n&lt;/src&gt;"</span>))
+
+(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">org-babel-tangle-lang-exts</span>)
+(add-to-list 'org-babel-tangle-lang-exts '(<span style="color: #008000;">"hy"</span> . <span style="color: #008000;">"hy"</span>))
+
+(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">org-babel-default-header-args:hy</span> '())
+(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">org-babel-header-args:hy</span> '((<span style="color: #006FE0;">:results</span> . <span style="color: #008000;">"output"</span>)))
+</pre>
+</div>
+
+<pre class="example">
+org-babel-header-args:hy
+</pre>
+
+<p>
+Next a function to expand the code body. This will allow us to pass vars in the header.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-babel-expand-body:hy</span> (body params)
+  <span style="color: #036A07;">"Expand BODY according to PARAMS, return the expanded body."</span>
+  (<span style="color: #0000FF;">let*</span> ((vars (mapcar #'cdr (org-babel-get-header params <span style="color: #006FE0;">:var</span>)))
+         (result-params (cdr (assoc <span style="color: #006FE0;">:result-params</span> params)))
+         (print-level nil)
+         (print-length nil)
+         (body (org-babel-trim
+                (<span style="color: #0000FF;">if</span> (&gt; (length vars) 0)
+                    (concat <span style="color: #008000;">"(let ["</span>
+                            (mapconcat
+                             (<span style="color: #0000FF;">lambda</span> (var)
+                               (format
+                                <span style="color: #008000;">"%S (quote %S)"</span>
+                                (car var)
+                                (cdr var)))
+                             vars <span style="color: #008000;">"\n      "</span>)
+                            <span style="color: #008000;">"]\n"</span> body <span style="color: #008000;">")"</span>)
+                  body))))
+    (<span style="color: #0000FF;">when</span> (not (member <span style="color: #008000;">"output"</span> result-params))
+      (<span style="color: #0000FF;">setq</span> body (format <span style="color: #008000;">"(print (do  %s\n))"</span> body)))
+    body))
+</pre>
+</div>
+
+<pre class="example">
+org-babel-expand-body:hy
+</pre>
+
+<p>
+And a function to execute the body. We still use a simple approach to write the code to a temp-file, execute it, capture the output, and delete the file. This limits things to
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-babel-execute:hy</span> (body params)
+  <span style="color: #036A07;">"Execute a block of hy code with Babel."</span>
+  (<span style="color: #0000FF;">let*</span> ((temporary-file-directory <span style="color: #008000;">"."</span>)
+         (tempfile (make-temp-file <span style="color: #008000;">"hy-"</span>))
+         result
+         (result-params (cdr (assoc <span style="color: #006FE0;">:result-params</span> params)))
+         (body (org-babel-expand-body:hy body params)))
+
+    (<span style="color: #0000FF;">with-temp-file</span> tempfile
+      (insert body))
+
+    (<span style="color: #0000FF;">unwind-protect</span>
+        (<span style="color: #0000FF;">progn</span>
+          (<span style="color: #0000FF;">cond</span>
+           ((member <span style="color: #008000;">"body"</span> result-params)
+            (<span style="color: #0000FF;">setq</span> result body))
+           ((member <span style="color: #008000;">"python"</span> result-params)
+            (<span style="color: #0000FF;">setq</span> result (shell-command-to-string
+                          (format <span style="color: #008000;">"hy2py %s"</span> tempfile))))
+           ((member <span style="color: #008000;">"ast"</span> result-params)
+            (<span style="color: #0000FF;">setq</span> result (shell-command-to-string
+                          (format <span style="color: #008000;">"hy2py -a -np %s"</span> tempfile))))
+           (t
+            (<span style="color: #0000FF;">setq</span> result (shell-command-to-string
+                          (format <span style="color: #008000;">"hy %s"</span> tempfile)))))
+
+          (<span style="color: #0000FF;">org-babel-result-cond</span> result-params
+            result
+            (<span style="color: #0000FF;">condition-case</span> nil (org-babel-script-escape result)
+              (<span style="color: #ff0000; font-weight: bold;">error</span> result))))
+      (delete-file tempfile))))
+
+(<span style="color: #0000FF;">provide</span> '<span style="color: #D0372D;">ob-hy</span>)
+</pre>
+</div>
+
+<pre class="example">
+ob-hy
+</pre>
+
+<p>
+Now we tangle and load those blocks.
+</p>
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(org-babel-tangle)
+(load-file <span style="color: #008000;">"ob-hy.el"</span>)
+</pre>
+</div>
+
+<pre class="example">
+t
+</pre>
+
+<p>
+Next, we do some tests. They are all simple tests.
+</p>
+
+<div id="outline-container-sec-1" class="outline-2">
+<h2 id="sec-1"><span class="section-number-2">1</span> Tests</h2>
+<div class="outline-text-2" id="text-1">
+</div><div id="outline-container-sec-1-1" class="outline-3">
+<h3 id="sec-1-1"><span class="section-number-3">1.1</span> Simple</h3>
+<div class="outline-text-3" id="text-1-1">
+<div class="org-src-container">
+
+<pre class="src src-hy">(<span style="color: #006FE0;">print</span> <span style="color: #008000;">"Hy world"</span>)
+</pre>
+</div>
+
+<pre class="example">
+Hy world
+</pre>
+
+<p>
+We can see how this turns into Python:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-hy">(<span style="color: #006FE0;">print</span> <span style="color: #008000;">"Hy world"</span>)
+</pre>
+</div>
+
+<pre class="example">
+print(u'Hy world')
+</pre>
+
+<p>
+or the AST:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-hy">(<span style="color: #006FE0;">print</span> <span style="color: #008000;">"Hy world"</span>)
+</pre>
+</div>
+
+<pre class="example">
+Module(
+    body=[Expr(value=Call(func=Name(id='print'), args=[Str(s=u'Hy world')], keywords=[], starargs=None, kwargs=None))])
+</pre>
+
+<p>
+Let's test :results value. It is not quite the value since we seem to get everything that is output from the script, but if you don't print stuff, it seems to get it right.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-hy"><span style="color: #008000;">"test"</span>
+(<span style="color: #006FE0;">+</span> 1 2 3)
+</pre>
+</div>
+
+<pre class="example">
+6
+</pre>
+</div>
+</div>
+
+<div id="outline-container-sec-1-2" class="outline-3">
+<h3 id="sec-1-2"><span class="section-number-3">1.2</span> vars in header</h3>
+<div class="outline-text-3" id="text-1-2">
+<p>
+Here we test out adding variables to the header lines.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-hy" id="hy-world">(<span style="color: #006FE0;">print</span> <span style="color: #008000;">"Hy"</span> data)
+</pre>
+</div>
+
+<pre class="example">
+Hy world
+</pre>
+
+<p>
+Interesting, I am not sure where the space between them comes from. Let's check out the :results body option. It will show us the hy script that gets run.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-hy">(<span style="color: #006FE0;">print</span> <span style="color: #008000;">"Hy"</span> data)
+</pre>
+</div>
+
+<pre class="example">
+(let [data (quote "world")]
+(print "Hy" data))
+</pre>
+
+<p>
+Nothing obvious about the space there. We can test out passing block results in here.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-hy">(<span style="color: #006FE0;">print</span> data)
+</pre>
+</div>
+
+<pre class="example">
+Hy  world
+</pre>
+
+<p>
+Here is the body of that:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-hy">(<span style="color: #006FE0;">print</span> data)
+</pre>
+</div>
+
+<pre class="example">
+(let [data (quote "Hy world
+")]
+(print data))
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-sec-2" class="outline-2">
+<h2 id="sec-2"><span class="section-number-2">2</span> Summary</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+It works well enough to make testing in org-mode pretty convenient. I can't think of anything else it "needs" right now, although communication with a repl might make it faster, and sessions are not supported at the moment. Saving that for another day ;)
+</p>
+</div>
+</div>
+<p>Copyright (C) 2016 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2016/04/01/ob-hy.el---or-better-integration-of-hylang-in-org-mode.org">org-mode source</a></p>
+<p>Org-mode version = 8.2.10</p>]]></content>
+  </entry>
   <entry>
     <author>
       <name></name>
