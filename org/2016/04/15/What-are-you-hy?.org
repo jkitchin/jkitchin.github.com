@@ -1,0 +1,221 @@
+* What are you hy?
+  :PROPERTIES:
+  :categories: hylang
+  :date:     2016/04/15 08:46:02
+  :updated:  2016/04/15 09:49:15
+  :END:
+
+Hy lets us do things that either aren't possible, or definitely aren't easy in Python. You may have drank the Python Koolaid  and don't think those things are necessary, but we have Hy-C, and we took a sip of that just now, so let's see what we can do.
+
+#+attr_html: :width 3in
+#+attr_org: :width 300
+[[./hyss.png]]
+
+We can have functions that are punctuation!
+
+#+BEGIN_SRC hy
+(defn ! [arg] (not arg))
+
+(print (! True))
+(print (! False))
+#+END_SRC
+
+#+RESULTS:
+: False
+: True
+
+How about that function that just returns something truthy? Shouldn't those end in a question-mark? They can and sometimes do. Not a problem when you are hy.
+
+#+BEGIN_SRC hy
+(defn string? [s]
+ (isinstance s str))
+
+(print (string? 4))
+(print (string? "4"))        ;; haha. strings in hy like "4" are unicode, not a str.
+(print (string? (str "4")))
+#+END_SRC
+
+#+RESULTS:
+: False
+: False
+: True
+: False
+
+Isn't that better than is_a_string?
+
+Underscores. Pfffft.... Dashes in names are awesome. Unless you hate your pinky and are shifty.
+
+#+BEGIN_SRC hy
+(defn 100-yard- [x]
+  "Funniest function name ever. Don't do this at home."
+  (.format "You ran that in {} seconds! New World Record!" 9.42))
+
+(print (100-yard- 2))
+#+END_SRC
+
+#+RESULTS:
+: You ran that in 9.42 seconds! New World Record!
+
+Why not build code with code? Here is a fun way to add up only the even numbers in a list. wHy? wHy?? Because we can, and it leads to other interesting opportunities!
+
+#+BEGIN_SRC hy
+(import hy)
+(let [a [1 2 3 4 5 6]
+      code '()]
+  (+= code `(+))  ;; add an operator
+  (for [n a]
+    (when (even? n)
+      (+= code `(~(hy.models.integer.HyInteger n)))))
+  (print code)
+
+  (print (eval code)))
+#+END_SRC
+
+#+RESULTS:
+: (u'+' 2L 4L 6L)
+: 12
+
+Ok, that isn't so beautiful, but it shows we can generate code and then execute it. We could also do that like we do in python where you build up the list of even numbers, and then sum them. It's the beginning of macros.
+
+But I can't live without objects! How else can you encapsulate data? Let's see how and give you some closure to get on with programming. (yea, the puns get worse ;).
+
+This next example illustrates a closure which we can use to encapsulate data. We use let to create a context with the variable i defined. i doesn't exist outside the context, but the lambda function created inside it retains access to the variable i.
+
+#+BEGIN_SRC hy
+(def counter
+  (let [i [0]]
+    (lambda [] (assoc i 0 (+ 1 (get i 0))) (get i 0))))
+
+(print (counter))
+(print (counter))
+
+;; i is not a global var!
+(try
+ (print i)
+ (except [e NameError] (print "i is not defined here!")))
+#+END_SRC
+
+#+RESULTS:
+: 1
+: 2
+: i is not defined here!
+
+Yes, the use of a list to store the counter is wonky; it is because of namespaces in Python. We get around the issue with a list here, that stores the data. Thanks Paul Tagliamonte (the resident Hypster) for the tip. Apparently Python scoping doesn't work enough here, but the list approach does, as does creating class instances to store the counter. Hylarious.
+
+Let's check out a macro. First, here is a code example. A common pattern is to save a value in a let statement temporarily, so we can reuse it in other expressions.
+
+#+BEGIN_SRC hy
+(let [x (> 2 0)]
+  (if x
+    (print (.format "{}" x))
+   (print (.format "{}" x))))
+
+;; a one line version for comparison
+(let [x (< 2 0)] (if x (print (.format "{}" x)) (print (.format "{}" x))))
+#+END_SRC
+
+#+RESULTS:
+: True
+: False
+
+That example has a lot of parentheses, and it might nice if there were fewer parentheses. There is a macro form to deal with this (it is actually defined in the hylang contrib directory, but it is short so we look at it here). This is called an anaphoric macro, because it captures a variable called "it" for reuse later in the macro. With the aif macro we can eliminate the use of the let statement in production code, eliminating a set of parentheses, and also the temporary variable.
+
+#+BEGIN_SRC hy
+(defmacro aif [test-form then-form &optional else-form]
+  `(let [it ~test-form]
+     (if it ~then-form ~else-form)))
+
+;; In this code, it is bound to the first form value.
+(print (aif (> 2 0) (.format "{}" it) (.format "{}" it)))
+(print (aif (< 2 0) (.format "{}" it) (.format "{}" it)))
+
+;; How does it work? By expanding to code.
+(print (macroexpand '(aif (< 2 0) (.format "{}" it) (.format "{}" it))))
+#+END_SRC
+
+#+RESULTS:
+: True
+: False
+: ((u'fn' [] (u'setv' u'it' (u'<' 2L 0L)) (u'if' u'it' (u'.format' u'{}' u'it') (u'.format' u'{}' u'it'))))
+
+Here is how you would do this in a regular program if you wanted to use the contrib library in hy.
+#+BEGIN_SRC hy
+(require hy.contrib.anaphoric)
+
+(print (ap-if (> 2 0) (.format "{}" it) (.format "{}" it)))
+#+END_SRC
+
+#+RESULTS:
+: True
+
+Macros are useful for changing syntax and simplifying code. That works because the code in the macro is like data that can be manipulated and selectively evaluated. Here is an example of manipulating code like that. We start with an expression to add two numbers, and then modify it to be a multiplication.
+
+#+BEGIN_SRC hy
+(setv code '(+ 5 6))
+(print (eval code))
+
+;; change + to *
+(assoc code 0 '*)
+(print code)
+(print (eval code))
+#+END_SRC
+
+#+RESULTS:
+: 11
+: (u'*' 5L 6L)
+: 30
+
+That is an indication that we can do some very interesting things with Lisp! Let's be fair and show this can also be done in Python. We just have to parse out the AST, and then we can manipulate it and get back to code. It isn't pretty, but doable.
+
+#+BEGIN_SRC python
+import ast
+
+# parse the statement
+p = ast.parse("print 5 + 6")
+
+exec compile(p, "<string>", "exec")
+print ast.dump(p)
+
+# Change + to *
+p.body[0].values[0].op = ast.Mult()
+
+print
+exec compile(p, "<string>", "exec")
+print ast.dump(p)
+#+END_SRC
+
+#+RESULTS:
+: 11
+: Module(body=[Print(dest=None, values=[BinOp(left=Num(n=5), op=Add(), right=Num(n=6))], nl=True)])
+:
+: 30
+: Module(body=[Print(dest=None, values=[BinOp(left=Num(n=5), op=Mult(), right=Num(n=6))], nl=True)])
+
+That is not as clear as what we did in hy! Why? Because we had to transform the Python to AST, and manipulate it. In Lisp, the code is already in the abstract tree form, and we manipulate it more directly. It is easier to reason about.
+
+I bet you didn't think we could use a hy program /for more than one thing/. Sure we may want to run it, but maybe we would like a different representation of the program than the code too.  Here we define two macros that both take a program as input. One simply evaluates the program, so we can use it. The other takes the program, and outputs a LaTeX representation of it. It only converts a division expression correctly (and only if all the arguments are numbers and not other expressions), but it illustrates that we can use a program as data, and do different things with it!
+
+#+BEGIN_SRC hy
+(defmacro run [body] `(eval ~body))
+
+(defmacro latex [body]
+  `(cond
+   [(= (car ~body) '/)
+    (.format "\(\\frac{{{0}}} {{{1}}}\)"
+            (get ~body 1)
+            (.join " \\cdot " (list-comp (str x) [x (cut ~body 2)])))]
+   [true (raise (Exception "Unsupported program"))]))
+
+(setv code '(/ 1 2 4.0))
+
+(print (run code))
+(print (latex code))
+#+END_SRC
+
+#+RESULTS:
+: 0.125
+: \(\frac{1} {2 \cdot 4.0}\)
+
+It is possible to do something kind of like this in Python. In [[http://kitchingroup.cheme.cmu.edu/blog/2015/05/16/Python-data-structures-to-lisp/][this post]] I put a lisp function onto the base classes of objects so you could transform Python objects to lisp representations.
+
+Well, that is probably enough Hy-C for the day. I am still playing around to figure out what kinds of things can we do with Hy that aren't easy or feasible in Python. These are a few of my favorite examples! If you have other cool things you do, put them in a comment hyre!
