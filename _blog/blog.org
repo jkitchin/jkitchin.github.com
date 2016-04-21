@@ -1,3 +1,343 @@
+
+* matalbbin
+
+#+BEGIN_SRC matlab :tangle myfunc.m
+function myfunc
+    disp('External function')
+end
+#+END_SRC
+
+
+#+BEGIN_SRC emacs-lisp
+(org-babel-tangle)
+#+END_SRC
+#+RESULTS:
+| myfunc.m |
+
+#+BEGIN_SRC matlab
+myfunc()
+#+END_SRC
+#+RESULTS:
+#+begin_example
+
+                            < M A T L A B (R) >
+                  Copyright 1984-2013 The MathWorks, Inc.
+                     R2013a (8.1.0.604) 64-bit (maci64)
+                             February 15, 2013
+
+
+To get started, type one of these: helpwin, helpdesk, or demo.
+For product information, visit www.mathworks.com.
+
+>> External function
+>>
+#+end_example
+
+#+BEGIN_SRC emacs-lisp
+(defvar matlab-cli-file-path "/Applications/MATLAB_R2013a.app/bin/matlab")
+(defvar matlab-cli-arguments '("-nosplash" "-nodesktop"))
+(defun run-matlab ()
+  "Run an inferior instance of `matlab-cli' inside Emacs."
+  (interactive)
+  (let* ((matlab-program matlab-cli-file-path)
+         (buffer (comint-check-proc "Matlab")))
+    ;; pop to the "*Matlab*" buffer if the process is dead, the
+    ;; buffer is missing or it's got the wrong mode.
+    (pop-to-buffer-same-window
+     (if (or buffer (not (derived-mode-p 'matlab-mode))
+             (comint-check-proc (current-buffer)))
+         (get-buffer-create (or buffer "*Matlab*"))
+       (current-buffer)))
+    ;; create the comint process if there is no buffer.
+    (unless buffer
+      (apply 'make-comint-in-buffer "Matlab" buffer
+             matlab-program matlab-cli-arguments))))
+
+(setq comint-prompt-regexp ">> ")
+
+(run-matlab)
+
+(comint-simple-send (get-buffer-process "*Matlab*") "disp('t')")
+(accept-process-output (get-buffer-process "*Matlab*"))
+
+
+(defun mymode--output-filter (process string)
+  (let ((buffer (process-buffer process)))
+    (when (buffer-live-p buffer)
+      (with-current-buffer buffer
+        (goto-char (point-max))
+        (forward-line 0)
+        (when (mymode-looking-at-prompt)
+          (do-something)
+          (goto-char (point-max)))))))
+(set-process-filter 'mymode--output-filter)
+
+#+END_SRC
+#+RESULTS:
+: run-matlab
+
+
+* exception handling tips and tricks
+
+Here is a usage pattern I deal with a lot. I want to change into some directory temporarily, do something there, and when I cam done change back to the directory I was in. If there are never errors, no problem. If there are any errors however, we have to deal with them and make sure we still get back to our original directory, "or bad things can happen"™, like in the next step of your program creating files in the wrong place.
+
+Python provides some tools to handle this, using exception handling. Here is a minimal example that shows what we want. We try some code, and then handle exceptions, and finally change back to where we started.
+
+#+BEGIN_SRC python
+import os
+
+print(os.getcwd())
+try:
+    cwd = os.getcwd()
+    os.chdir('/tmp')
+    with open('non-existant-file') as f:
+        print(f.read())
+except IOError, e:
+    print('    Caught an IOError:' + str(e))
+except Exception, e:
+    print('    ' + str(e))
+    print('    In ' + os.getcwd())
+else:
+    print('No exceptions occurred!')
+finally:
+    os.chdir(cwd)
+
+print(os.getcwd())
+#+END_SRC
+
+#+RESULTS:
+: /Users/jkitchin/blogofile-jkitchin.github.com/_blog
+:     Caught an IOError:[Errno 2] No such file or directory: 'non-existant-file'
+: /Users/jkitchin/blogofile-jkitchin.github.com/_blog
+
+So, that works, but has the smell of context-management, that is, we want to perform some actions in a "context" which is some other directory and we want to restore the previous context afterwards. My preference of context manager is a class with __enter__ and __exit__ methods. In __enter__ we change directory, and on __exit__ we handle any exceptions and go back.
+
+We put this into a python module called cm.py. This is more verbose than the original try block, but it is reusable as we will see.
+
+#+BEGIN_SRC python :tangle cm.py
+import os
+
+class current_directory:
+    def __init__(self, newdir, handler=None):
+        """newdir is where we change to.
+        handler is a function that will handle exceptions.
+        It has a signature of handler(exception_type, exception_value, traceback).
+        It should return True if the exception was handled, and False otherwise.
+
+        """
+        self.cwd = os.getcwd()
+        self.newdir = newdir
+        self.handler = handler
+        print('init: ', os.getcwd())
+
+    def __str__(self):
+        s = 'current_directory CM (dir: {0} contextdir: {1} handler: {2})'
+        return s.format(self.cwd, self.newdir, self.handler)
+
+    def __enter__(self):
+        # Enter the directory
+        os.chdir(self.newdir)
+        print('entered: ', os.getcwd())
+
+    def __exit__(self, type, value, traceback):
+        # return to where we came from first.
+        os.chdir(self.cwd)
+        print('exited: ', os.getcwd())
+        if type is not None:
+            if self.handler is not None:
+                return self.handler(self, type, value, traceback)
+            else:
+                return False
+        else:
+            return True
+#+END_SRC
+
+
+Now we use it like this. Here is an example with no exceptions, and no handler.
+
+#+BEGIN_SRC python
+from cm import current_directory
+import os
+
+with current_directory('/tmp'):
+    print(os.getcwd())
+#+END_SRC
+#+RESULTS:
+: ('init: ', '/Users/jkitchin/blogofile-jkitchin.github.com/_blog')
+: ('entered: ', '/private/tmp')
+: /private/tmp
+: ('exited: ', '/Users/jkitchin/blogofile-jkitchin.github.com/_blog')
+
+Here, we pass a handler function to the context manager so we can handle any exceptions that come up.
+
+#+BEGIN_SRC python
+from cm import current_directory
+import os
+
+def handler(self, e, v, tr):
+    if isinstance(v, IOError):
+        # self is the context manager, and we can access information in it
+        print(self)
+        print('    Caught an IOError in ' + os.getcwd())
+        return True
+    else:
+        print((e, v, tr))
+        return False
+
+# We can nest context managers
+with current_directory('/tmp', handler),\
+     open('non-existant-file') as f:
+    print(f.read())
+
+print(os.getcwd())
+#+END_SRC
+
+#+RESULTS:
+: ('init: ', '/Users/jkitchin/blogofile-jkitchin.github.com/_blog')
+: ('entered: ', '/private/tmp')
+: ('exited: ', '/Users/jkitchin/blogofile-jkitchin.github.com/_blog')
+: current_directory CM (dir: /Users/jkitchin/blogofile-jkitchin.github.com/_blog contextdir: /tmp handler: <function handler at 0x1004a0668>)
+:     Caught an IOError in /Users/jkitchin/blogofile-jkitchin.github.com/_blog
+: /Users/jkitchin/blogofile-jkitchin.github.com/_blog
+
+That is approximately the same amount of code as we previously had, but the error handling is done differently. We don't have to handle the directory changing ourselves with this context manager, but we still do have handle exception handling.
+
+
+
+
+
+
+
+
+
+
+
+* Nested context managers		    :sent:
+  :PROPERTIES:
+  :SENT-ON:  Tue Apr 19 11:46:21 2016
+  :TO:       jboes@andrew.cmu.edu
+  :Message-ID: [[mu4e:msgid:m2oa95bnzo.fsf@andrew.cmu.edu][Nested context managers (Tue Apr 19 11:46:21 2016)]]
+  :END:
+
+#+BEGIN_SRC python
+from __future__ import print_function
+
+class cd:
+    """Context manager for changing directories.
+
+    On entering, store initial location, change to the desired directory,
+    creating it if needed.  On exit, change back to the original directory.
+
+    Example:
+    with cd('path/to/a/calculation'):
+        calc = Jasp(args)
+        calc.get_potential energy()
+    """
+
+    def __init__(self, working_directory):
+        self.origin = os.getcwd()
+        self.wd = working_directory
+
+    def __enter__(self):
+        # make directory if it doesn't already exist
+        if not os.path.isdir(self.wd):
+            os.makedirs(self.wd)
+
+        # now change to new working dir
+        os.chdir(self.wd)
+
+    def __exit__(self, *args):
+        os.chdir(self.origin)
+        return False  # allows body exceptions to propagate out.
+
+
+class unwind:
+    def __init__(self,  exception_handler=None):
+        self.exception_handler = exception_handler
+
+    def __enter__(self):
+        pass
+
+    def __exit__(self, *args):
+        print(args)
+        if self.exception_handler:
+            self.exception_handler(*args)
+        return True
+
+
+
+import os
+
+
+print(os.getcwd())
+with unwind(), cd('/tmp'):
+    print(os.getcwd())
+    raise Exception('boom')
+
+print(os.getcwd())
+
+
+print()
+def f(a, b, c): print ("test", a, b, c)
+
+with unwind(lambda a,b,c: print("lambda: ",a,b,c)), cd('/tmp'):
+    print(os.getcwd())
+    raise Exception('boom')
+
+print(os.getcwd())
+
+print()
+def f(a, b, c): print ("test", a, b, c)
+
+with unwind(f), \
+     cd('/tmp'):
+    print()rint(os.getcwd())
+    raise Exception('boom')
+
+print(os.getcwd())
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+/Users/jkitchin/blogofile-jkitchin.github.com/_blog
+/private/tmp
+(<type 'exceptions.Exception'>, Exception('boom',), <traceback object at 0x1004b2440>)
+/Users/jkitchin/blogofile-jkitchin.github.com/_blog
+
+/private/tmp
+(<type 'exceptions.Exception'>, Exception('boom',), <traceback object at 0x1004b24d0>)
+lambda:  <type 'exceptions.Exception'> boom <traceback object at 0x1004b24d0>
+/Users/jkitchin/blogofile-jkitchin.github.com/_blog
+
+/private/tmp
+(<type 'exceptions.Exception'>, Exception('boom',), <traceback object at 0x1004b23f8>)
+test <type 'exceptions.Exception'> boom <traceback object at 0x1004b23f8>
+/Users/jkitchin/blogofile-jkitchin.github.com/_blog
+#+end_example
+
+These don't seem to work as expected.
+
+#+BEGIN_SRC python
+try:
+   1 / 0
+
+finally:
+   print 'done'
+
+#+END_SRC
+
+#+RESULTS:
+
+#+BEGIN_SRC python
+try:
+    raise KeyboardInterrupt
+finally:
+    print 'Goodbye, world!'
+
+#+END_SRC
+
+#+RESULTS:
+
 * closures in elisp
 
 #+BEGIN_SRC emacs-lisp
@@ -52,7 +392,24 @@ So cool!
 
 http://letoverlambda.com/index.cl/guest/chap6.html
 
-#+BEGIN_SRC emacs-lisp :results value
+
+#+BEGIN_SRC emacs-lisp
+(setq x 4)
+#+END_SRC
+
+#+RESULTS:
+: 4
+
+
+#+BEGIN_SRC emacs-lisp
+(+ x 9)
+#+END_SRC
+
+#+RESULTS:
+: 13
+
+This will not work unless evaluated with lexical-binding
+#+BEGIN_SRC emacs-lisp :results value :lexical t
 ;; Graham's alambda
 (defmacro alambda (parms &rest body)
   `(cl-labels ((self ,parms ,@body))
@@ -77,7 +434,6 @@ http://letoverlambda.com/index.cl/guest/chap6.html
 #+END_SRC
 
 #+RESULTS:
-:
 : 23
 
 
