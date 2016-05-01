@@ -1,4 +1,5 @@
-* Another approach to docstrings and validation of args and kwargs in Python
+* DONE Another approach to docstrings and validation of args and kwargs in Python
+  CLOSED: [2016-04-30 Sat 10:28]
   :PROPERTIES:
   :categories: python
   :date:     2016/04/30 10:22:30
@@ -279,9 +280,431 @@ print calc
 : Class getattribute invoked on  (<__main__.JASP object at 0x1006b1350>, 'owd')
 : <__main__.JASP object at 0x1006b1350>
 
-** Metaclass approach
-http://stackoverflow.com/questions/3467526/attaching-a-decorator-to-all-functions-within-a-class
 
+* Decorating vasp
+This uses my version of vasp.py
+
+#+BEGIN_SRC python
+from jasp import *
+from jasp.vasp import *
+from ase import Atoms, Atom
+
+co = Atoms([Atom('C',[0,   0, 0]),
+            Atom('O',[1.2, 0, 0])],
+            cell=(6., 6., 6.))
+
+calc = Vasp('/tmp/simple-co', #output dir
+            xc='PBE',  # the exchange-correlation functional
+            nbands=6,  # number of bands
+            encut=350, # planewave cutoff
+            ismear=1,  # Methfessel-Paxton smearing
+            sigma=0.01,# very small smearing factor for a molecule
+            verbose=True, debug=logging.DEBUG,
+            atoms=co)
+
+print calc.write_kpoints()
+#+END_SRC
+
+#+RESULTS:
+
+
+#+BEGIN_SRC sh
+ls /tmp/simple-co
+#+END_SRC
+
+#+RESULTS:
+: KPOINTS
+
+* Decorating ase.calculators.vasp
+rats, this is not likely to work.
+#+BEGIN_SRC python
+from jasp import *
+import os
+
+def cd(func):
+    def inner(self, *args, **kwargs):
+        print('starting in {}'.format(os.getcwd()))
+        print('running {}'.format(func.__name__))
+        os.chdir(self.vaspdir)
+        print('entering in {}'.format(os.getcwd()))
+        try:
+            res = func(self, *args, **kwargs)
+            return res
+        finally:
+            os.chdir(self.cwd)
+            print('exited to {}'.format(os.getcwd()))
+    return inner
+
+for attr in Vasp.__dict__:
+    if attr != '__init__' and callable(getattr(Vasp, attr)):
+        #print attr
+        setattr(Vasp, attr, cd(getattr(Vasp, attr)))
+
+
+def JASP(wd, **kwargs):
+    calc = Jasp(**kwargs)
+    calc.vaspdir = wd
+    calc.cwd = os.getcwd()
+    return calc
+try:
+    v = JASP('/tmp/JASP')
+except:
+    pass
+
+#print dir(v)
+#print v.clean()
+
+#+END_SRC
+
+#+RESULTS:
+: starting in /Users/jkitchin/blogofile-jkitchin.github.com/_blog
+: running set
+
+* Adding a metaclass to Vasp?
+
+#+BEGIN_SRC python
+import os
+import types
+
+class WithCurrentDirectory(type):
+   """Metaclass that decorates all of its methods except __init__."""
+   def __new__(cls, name, bases, attrs):
+      return super(WithCurrentDirectory, cls).__new__(cls, name, bases, attrs)
+
+   def __init__(cls, name, bases, attrs):
+      """Decorate all the methods of the class instance with the classmethod cd.
+
+      We skip __init__ because that is where the attributes are actually set.
+      It is an error to access them before they are set.
+      """
+      for attr_name, attr_value in attrs.iteritems():
+         if attr_name != '__init__' and isinstance(attr_value, types.FunctionType):
+            setattr(cls, attr_name, cls.cd(attr_value) )
+
+
+   @classmethod
+   def cd(cls, func):
+      """Decorator to temporarily run cls.func in the directory stored in cls.wd.
+
+      The working directory is restored to the original directory afterwards.
+      """
+      def wrapper(self, *args, **kwargs):
+         if self.verbose:
+            print('\nRunning {}'.format(func.__name__))
+            print("Started in {}".format(os.getcwd()))
+         os.chdir(self.wd)
+         if self.verbose:
+            print("  Entered {}".format(os.getcwd()))
+         try:
+            result = func(self, *args, **kwargs)
+            if self.verbose:
+               print('  {}'.format(result))
+            return result
+         except Exception, e:
+            # this is where you would use an exception handling function
+            print('  Caught {}'.format(e))
+            pass
+         finally:
+            os.chdir(self.owd)
+            if self.verbose:
+               print("  Exited to {}\n".format(os.getcwd()))
+
+      wrapper.__name__ = func.__name__
+      wrapper.__doc__ = func.__doc__
+      return wrapper
+
+from jasp import *
+
+os.environ['VASP_PP_PATH'] = '/users/jkitchin/src/Vasp'
+
+class JASP(Vasp, object):
+   __metaclass__ = WithCurrentDirectory
+   def __init__(self,
+                wd, verbose=True,
+                atoms=None,
+                ,**kwargs):
+      Vasp.__init__(self, **kwargs)
+      self.verbose = verbose
+      self.vaspdir = wd
+      self.cwd = os.getcwd()
+
+      if not os.path.isdir(wd):
+         os.makedirs(wd)
+
+      if atoms is not None:
+         atoms.calc = self
+
+from ase import Atoms, Atom
+
+co = Atoms([Atom('C',[0,   0, 0]),
+            Atom('O',[1.2, 0, 0])],
+            cell=(6., 6., 6.))
+
+calc = JASP('/tmp/simple-co', #output dir
+            xc='PBE',  # the exchange-correlation functional
+            nbands=6,  # number of bands
+            encut=350, # planewave cutoff
+            ismear=1,  # Methfessel-Paxton smearing
+            sigma=0.01,# very small smearing factor for a molecule
+            atoms=co)
+
+print calc.prepare_input_files()
+print calc.get_atoms()
+#+END_SRC
+
+#+RESULTS:
+: None
+: Atoms(symbols='CO', positions=..., cell=[6.0, 6.0, 6.0], pbc=[False,
+:       False, False], calculator=JASP(...))
+
+#+BEGIN_SRC sh
+ls /tmp/simple-co
+#+END_SRC
+
+#+RESULTS:
+
+* Automatic decorating of class methods to run them in a context
+  :PROPERTIES:
+  :categories: python
+  :date:     2016/05/01 09:16:29
+  :updated:  2016/05/01 09:16:29
+  :END:
+
+We [[http://kitchingroup.cheme.cmu.edu/blog/2016/04/28/Managing-contexts-Python-vs-hy/][previously examined]] approaches to running code in a context. With hy, we even managed to remove the need for a with statement through the use of a macro that expanded behind the scenes to manage the context. In our jasp code, we frequently need a context manager that temporarily changes the working directory to run some code, then changes back. The use of the context manager was a design decision to avoid decorating every single function. Why? There are a lot of functions that need decorating, and they are spread over a lot of files. Not all of the entries from the next block are methods, but most of them are.
+
+#+BEGIN_SRC python
+from jasp import *
+
+c = Vasp()
+print(dir(c))
+#+END_SRC
+
+#+RESULTS:
+: ['__doc__', '__init__', '__module__', '__repr__', '__str__', 'add_to_db', 'archive', 'atoms', 'bader', 'bool_params', 'calculate', 'calculation_required', 'check_state', 'chgsum', 'clean', 'clone', 'create_metadata', 'dict', 'dict_params', 'exp_params', 'float_params', 'get_atoms', 'get_beefens', 'get_bz_k_points', 'get_charge_density', 'get_default_number_of_electrons', 'get_dipole_moment', 'get_eigenvalues', 'get_elapsed_time', 'get_electronic_temperature', 'get_elf', 'get_energy_components', 'get_fermi_level', 'get_forces', 'get_ibz_k_points', 'get_ibz_kpoints', 'get_infrared_intensities', 'get_k_point_weights', 'get_local_potential', 'get_magnetic_moment', 'get_magnetic_moments', 'get_name', 'get_nearest_neighbor_table', 'get_neb', 'get_nonselfconsistent_energies', 'get_number_of_bands', 'get_number_of_electrons', 'get_number_of_grid_points', 'get_number_of_ionic_steps', 'get_number_of_iterations', 'get_number_of_spins', 'get_occupation_numbers', 'get_orbital_occupations', 'get_potential_energy', 'get_property', 'get_pseudo_density', 'get_pseudo_wavefunction', 'get_pseudopotentials', 'get_required_memory', 'get_spin_polarized', 'get_stress', 'get_valence_electrons', 'get_version', 'get_vibrational_frequencies', 'get_vibrational_modes', 'get_xc_functional', 'initialize', 'input_params', 'int_params', 'is_neb', 'job_in_queue', 'json', 'list_params', 'name', 'nbands', 'org', 'output_template', 'plot_neb', 'positions', 'post_run_hooks', 'prepare_input_files', 'pretty_json', 'python', 'read', 'read_convergence', 'read_default_number_of_electrons', 'read_dipole', 'read_eigenvalues', 'read_electronic_temperature', 'read_energy', 'read_fermi', 'read_forces', 'read_ibz_kpoints', 'read_incar', 'read_k_point_weights', 'read_kpoints', 'read_ldau', 'read_magnetic_moment', 'read_magnetic_moments', 'read_metadata', 'read_nbands', 'read_number_of_electrons', 'read_number_of_iterations', 'read_occupation_numbers', 'read_outcar', 'read_potcar', 'read_relaxed', 'read_stress', 'read_version', 'read_vib_freq', 'register_post_run_hook', 'register_pre_run_hook', 'restart', 'restart_load', 'results', 'run', 'run_counts', 'set', 'set_atoms', 'set_nbands', 'set_results', 'special_params', 'string_params', 'strip', 'strip_warnings', 'todict', 'track_output', 'update', 'write_incar', 'write_kpoints', 'write_metadata', 'write_potcar', 'write_sort_file', 'xml']
+
+The use of a context manager is really useful for a single calculation, and it saves us a lot of boilerplate code to manage changing directories. It limits us though for looping through calculations. We are stuck with traditional for loops that have the with statement embedded in them. We also cannot get too functional, e.g. with list comprehension.
+
+In other words, this is ok:
+
+#+BEGIN_SRC python
+E = []
+for d in np.linspace(1, 1.5):
+    atoms = Atoms(...,d)
+    with jasp('calculated-name-{}'.format(d),
+              ...,
+              atoms=atoms) as calc:
+        E.append(atoms.get_potential_energy())
+
+#+END_SRC
+
+But this code is not possible:
+
+#+BEGIN_SRC python
+bond_lengths = np.linspace(1, 1.5)
+
+A = [Atoms(...,d) for d in bond_lengths]
+
+calcs = [JASP('calculated-name-{}'.format(d),...,atoms=atoms)
+         for d, atoms in zip(bond-lengths, A)]
+
+E = [atoms.get_potential_energy() for atoms in A]
+#+END_SRC
+
+It is not legal syntax to embed a with statement inside a list comprehension. The code will not work because to get the potential energy we have to switch into the calculation directory and read it from a file there, then switch back.
+
+To make that possible, we need to decorate the class functions so that the right thing happens when needed. I still do not want to decorate each function manually. Although there is a case to make for it, as I mentioned earlier, the functions are all over the place, and numerous. Now is not the time to fix it.
+
+Instead, we consider a solution that will automatically decorate class functions for us! Enter the Metaclass. This is a class that modifies how classes are created. The net effect of the code below is our Calculator class now has all functions automatically decorated with a function that changes to the working directory, runs the function, and then ensures we change back even in the event of an exception. This approach is adapted from http://stackoverflow.com/questions/3467526/attaching-a-decorator-to-all-functions-within-a-class.
+
+I am pretty sure this is the right way to do this. We cannot simply decorate the functions of ase.calculators.vasp.Vasp because our decorator needs access to the directory defined in a /class instance/. That is what the __init__ method of the metaclass enables.
+
+We will put this code into a library called meta_calculator.py for reuse in later examples.
+
+#+BEGIN_SRC python :tangle meta_calculator.py
+import os
+import types
+
+class WithCurrentDirectory(type):
+   """Metaclass that decorates all of its methods except __init__."""
+   def __new__(cls, name, bases, attrs):
+      return super(WithCurrentDirectory, cls).__new__(cls, name, bases, attrs)
+
+   def __init__(cls, name, bases, attrs):
+      """Decorate all the methods of the class instance with the classmethod cd.
+
+      We skip __init__ because that is where the attributes are actually set.
+      It is an error to access them before they are set.
+      """
+      for attr_name, attr_value in attrs.iteritems():
+         if attr_name != '__init__' and isinstance(attr_value, types.FunctionType):
+            setattr(cls, attr_name, cls.cd(attr_value))
+
+
+   @classmethod
+   def cd(cls, func):
+      """Decorator to temporarily run cls.func in the directory stored in cls.wd.
+
+      The working directory is restored to the original directory afterwards.
+      """
+      def wrapper(self, *args, **kwargs):
+         if self.verbose:
+            print('\nRunning {}'.format(func.__name__))
+            print("Started in {}".format(os.getcwd()))
+         os.chdir(self.wd)
+         if self.verbose:
+            print("  Entered {}".format(os.getcwd()))
+         try:
+            result = func(self, *args, **kwargs)
+            if self.verbose:
+               print('  {}'.format(result))
+            return result
+         except Exception, e:
+            # this is where you would use an exception handling function
+            print('  Caught {}'.format(e))
+            pass
+         finally:
+            os.chdir(self.owd)
+            if self.verbose:
+               print("  Exited to {}\n".format(os.getcwd()))
+
+      wrapper.__name__ = func.__name__
+      wrapper.__doc__ = func.__doc__
+      return wrapper
+
+
+class Calculator(object):
+   """Class we use for a calculator.
+
+   Every method is decorated by the metaclass so it runs in the working
+   directory defined by the class instance.
+
+   """
+
+   __metaclass__ = WithCurrentDirectory
+
+   def __init__(self, wd, verbose=False):
+      self.owd = os.getcwd()
+      self.wd = wd
+      self.verbose = verbose
+      if not os.path.isdir(wd):
+         os.makedirs(wd)
+
+
+   def create_input(self, **kwargs):
+      with open('INCAR', 'w') as f:
+         for key, val in kwargs.iteritems():
+            f.write('{} = {}\n'.format(key, val))
+
+
+   def exc(self):
+      "This raises an exception to see what happens"
+      1 / 0
+
+   def read_input(self):
+      with open('INCAR', 'r') as f:
+         return f.read()
+
+   def __str__(self):
+      return 'In {}. Contains: {}'.format(os.getcwd(),
+                                          os.listdir('.'))
+#+END_SRC
+
+#+RESULTS:
+
+Here is how we might use it.
+
+#+BEGIN_SRC python
+from meta_calculator import *
+
+c = Calculator('/tmp/calc-1', verbose=True)
+print c.create_input(xc='PBE', encut=450)
+print c.read_input()
+print c.exc()
+print c
+#+END_SRC
+#+RESULTS:
+#+begin_example
+
+Running create_input
+Started in /Users/jkitchin/blogofile-jkitchin.github.com/_blog
+  Entered /private/tmp/calc-1
+  None
+  Exited to /Users/jkitchin/blogofile-jkitchin.github.com/_blog
+
+None
+
+Running read_input
+Started in /Users/jkitchin/blogofile-jkitchin.github.com/_blog
+  Entered /private/tmp/calc-1
+  xc = PBE
+encut = 450
+
+  Exited to /Users/jkitchin/blogofile-jkitchin.github.com/_blog
+
+xc = PBE
+encut = 450
+
+
+Running exc
+Started in /Users/jkitchin/blogofile-jkitchin.github.com/_blog
+  Entered /private/tmp/calc-1
+  Caught integer division or modulo by zero
+  Exited to /Users/jkitchin/blogofile-jkitchin.github.com/_blog
+
+None
+
+Running __str__
+Started in /Users/jkitchin/blogofile-jkitchin.github.com/_blog
+  Entered /private/tmp/calc-1
+  In /private/tmp/calc-1. Contains: ['INCAR']
+  Exited to /Users/jkitchin/blogofile-jkitchin.github.com/_blog
+
+In /private/tmp/calc-1. Contains: ['INCAR']
+#+end_example
+
+As we can see, in each function call, we evidently do change into the path that /tmp/calc-1 points to (it is apparently /private/tmp on Mac OSX), runs the method, and then changes back out, even when exceptions occur.
+
+Here is a functional approach to using our new calculator.
+#+BEGIN_SRC python
+from meta_calculator import *
+
+encuts = [100, 200, 300, 400]
+calcs = [Calculator('encut-{}'.format(encut)) for encut in encuts]
+
+# list-comprehension for the side-effect
+[calc.create_input(encut=encut) for calc,encut in zip(calcs, encuts)]
+
+inputs = [calc.read_input() for calc in calcs]
+
+print(inputs)
+print([calc.wd for calc in calcs])
+#+END_SRC
+#+RESULTS:
+: ['encut = 100\n', 'encut = 200\n', 'encut = 300\n', 'encut = 400\n']
+: ['encut-100', 'encut-200', 'encut-300', 'encut-400']
+
+Sweet. And here is our evidence that the directories got created and have the files in them.
+
+#+BEGIN_SRC sh
+find . -type f -print | grep "encut-[1-4]00" | xargs -n 1 -I {} -i bash -c 'echo {}; cat {}; echo'
+#+END_SRC
+#+RESULTS:
+#+begin_example
+./encut-100/INCAR
+encut = 100
+
+./encut-200/INCAR
+encut = 200
+
+./encut-300/INCAR
+encut = 300
+
+./encut-400/INCAR
+encut = 400
+
+#+end_example
+
+This looks like another winner that will be making its way into [[https://github.com/jkitchin/jasp][jasp]] soon. I guess it will require at least some minor surgery on a class in ase.calculators.vasp. It might be time to move a copy of it all the way into jasp.
 * Automatic actions when entering an org heading
   :LOGBOOK:
   CLOCK: [2016-04-26 Tue 11:28]--[2016-04-26 Tue 11:28] =>  0:00
