@@ -1,3 +1,357 @@
+* When in python do as Pythonistas unless...
+  :PROPERTIES:
+  :categories: python
+  :date:     2016/05/06 19:46:51
+  :updated:  2016/05/06 19:46:51
+  :END:
+
+Many lisps have a when/unless conditional syntax that works like this:
+
+#+BEGIN_SRC emacs-lisp :results output
+(when t (print "when evaluated"))
+
+(unless nil (print "unless evaluated"))
+#+END_SRC
+
+#+RESULTS:
+:
+: "when evaluated"
+:
+: "unless evaluated"
+
+Those are actually just macros that expand to the more verbose if function:
+
+#+BEGIN_SRC emacs-lisp :results code
+(macroexpand '(unless nil (print "unless evaluated")))
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC emacs-lisp
+(if nil nil
+  (print "unless evaluated"))
+#+END_SRC
+
+In Python, we only have this syntax for this kind of construct:
+
+#+BEGIN_SRC python
+if True: print "when equivalent"
+
+if not False: print "unless equivalent"
+#+END_SRC
+
+#+RESULTS:
+: when equivalent
+: unless equivalent
+
+I thought is would be fun to get as close as possible to the lisp syntax in Python. It is not that easy though. The benefit of a macro is we do not evaluate the arguments until they need to be evaluated. In Python, all arguments of functions are immediately evaluated.
+
+One way to avoid this is to put code inside a function. Then it will not be executed until the function is called. So, here is an example of how to get an unless function in Python that conditionally evaluates a function.
+
+#+BEGIN_SRC python
+def unless(condition, f):
+    if not condition:
+        return f()
+
+def func():
+    return "executed. Condition was not true."
+
+
+print unless(1 > 0, func)
+
+print unless(1 < 0, func)
+#+END_SRC
+
+#+RESULTS:
+: None
+: executed. Condition was not true.
+
+That is close, but requires us to wrap our code in a function. There does not seem to be any alternative though. It thought maybe a context manager could be used, but there does not seem to be a way to bypass the execution of the code (https://www.python.org/dev/peps/pep-0377/). Still, it might be a useful way to change how to think about doing some things differently in Python.
+
+
+* vasp test
+
+
+#+BEGIN_SRC python
+from ase.calculators.vasp import Vasp
+from ase import Atom, Atoms
+import os
+
+os.chdir('/tmp')
+co = Atoms([Atom('C',[0,   0, 0]),
+            Atom('O',[1.2, 0, 0])],
+            cell=(6., 6., 6.))
+
+calc = Vasp(xc='PBE',  # the exchange-correlation functional
+            nbands=6,  # number of bands
+            encut=350, # planewave cutoff
+            ismear='10.0',  # Methfessel-Paxton smearing
+            sigma=0.01,# very small smearing factor for a molecule
+            lhfcalc=0.2)
+
+calc.spinpol=False
+
+co.set_calculator(calc)
+
+calc.write_incar(co)
+print calc
+
+print open('/tmp/INCAR').read()
+
+#+END_SRC
+
+#+RESULTS:
+
+* Pelican link
+#+BEGIN_SRC emacs-lisp
+(org-add-link-type
+ "pelican"
+ (lambda (path) (org-open-file path))
+ ;; ; export
+ (lambda (path desc backend)
+   (cond
+    ((eq backend 'html)
+     (format "{filename}/%s" (file-relative-name path))))))
+#+END_SRC
+
+
+Link to internal content pelican:/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org
+
+#+BEGIN_SRC sh
+pwd
+#+END_SRC
+
+#+RESULTS:
+: /Users/jkitchin/blogofile-jkitchin.github.com/_blog
+
+exports to:
+<p>
+Link to internal content {filename}/blog.org
+</p>
+
+
+
+[[foo bar]]
+* Import arxiv pdfs
+
+#+BEGIN_SRC emacs-lisp
+(with-temp-buffer
+  (insert (shell-command-to-string (format "%s %s -"
+					   pdftotext-executable
+					   "~/Desktop/1409.7985.pdf")))
+  (goto-char (point-min))
+  (let ((matches '()))
+    (while (re-search-forward "arxiv:\\(.*?\\..*?\\)v" nil t)
+      ;; I don't know how to avoid a trailing . on some dois with the
+      ;; expression above, so if it is there, I chomp it off here.
+      (let ((m (match-string 1)))
+	(cl-pushnew m matches :test #'equal)
+	))
+    matches))
+#+END_SRC
+
+#+RESULTS:
+| 1409.7985 |
+
+
+#+BEGIN_SRC emacs-lisp
+(arxiv-get-bibtex-entry (arxiv-get-bibliographic-code "1409.7985"))
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+
+@ARTICLE{2014arXiv1409.7985S,
+   author = {{Sim}, Y. and {Routledge}, B. and {Smith}, N.~A.},
+    title = "{The Utility of Text: The Case of Amicus Briefs and the Supreme Court}",
+  journal = {ArXiv e-prints},
+archivePrefix = "arXiv",
+   eprint = {1409.7985},
+ primaryClass = "cs.CL",
+ keywords = {Computer Science - Computation and Language, Computer Science - Artificial Intelligence, Computer Science - Computer Science and Game Theory, Computer Science - Learning},
+     year = 2014,
+    month = sep,
+   adsurl = {http://adsabs.harvard.edu/abs/2014arXiv1409.7985S},
+  adsnote = {Provided by the SAO/NASA Astrophysics Data System}
+}
+
+#+end_example
+
+
+* A better monkey patch by decoration
+
+None other than Guido van Rossum brought up ways to monkey patch a class here:
+https://mail.python.org/pipermail/python-dev/2008-January/076194.html. I use monkey patching in jasp /everywhere/. Here I add some functionality
+
+#+BEGIN_SRC python
+def monkeypatch_method(cls):
+    def decorator(func):
+        setattr(cls, func.__name__, func)
+        s = ('\n\nMonkey-patch defined in '
+             '{f.func_code.co_filename} '
+             'at line {f.func_code.co_firstlineno}')
+        func.__doc__ +=  s.format(f=func)
+        return func
+    return decorator
+
+from ase.calculators.vasp import Vasp
+
+@monkeypatch_method(Vasp)
+def newfunc(self, a, b):
+    "Return a + b."
+    return a + b
+
+help(Vasp.newfunc)
+
+c = Vasp()
+print c.newfunc(1, 2)
+help(c.newfunc)
+#+END_SRC
+
+
+
+
+#+BEGIN_SRC python
+def monkeypatch_class(name, bases, namespace):
+    assert len(bases) == 1, "Exactly one base class required"
+    base = bases[0]
+    for name, value in namespace.iteritems():
+        if name != "__metaclass__":
+            setattr(base, name, value)
+    return base
+
+# To use:
+
+from ase.calculators.vasp import Vasp
+
+class VASP(Vasp):
+    __metaclass__ = monkeypatch_class
+
+    def newfunc(self):
+        return 'done'
+
+#This adds <method1>, <method2>, etc. to <someclass>, and makes
+#<newclass> a local alias for <someclass>.
+
+v = VASP()
+
+print v.newfunc()
+#+END_SRC
+
+#+RESULTS:
+: done
+
+
+
+
+
+
+* GOOD Subclassing ase.calculators.vasp
+this lets me add some kwargs to Vasp. Now if I can combine this with the metaclass and restart, we might be good!
+
+#+BEGIN_SRC python
+import os
+import types
+
+class WithCurrentDirectory(type):
+   """Metaclass that decorates all of its methods except __init__."""
+   def __new__(cls, name, bases, attrs):
+      return super(WithCurrentDirectory, cls).__new__(cls, name, bases, attrs)
+
+   def __init__(cls, name, bases, attrs):
+      """Decorate all the methods of the class instance with the classmethod cd.
+
+      We skip __init__ because that is where the attributes are actually set.
+      It is an error to access them before they are set.
+      """
+      print bases, bases[0], dir(bases[0])
+      print bases, bases[1], dir(bases[1])
+      print 'atts: ',attrs
+      for attr_name, attr_value in attrs.iteritems():
+         if attr_name != '__init__' and isinstance(attr_value, types.FunctionType):
+            setattr(cls, attr_name, cls.cd(attr_value))
+            print 'set ',cls, attr_name
+
+      # hack for this example
+      for attr_name,attr_value in bases[1].__dict__.iteritems():
+         if isinstance(attr_value, types.FunctionType):
+            setattr(cls, attr_name, cls.cd(attr_value))
+
+   @classmethod
+   def cd(cls, func):
+      """Decorator to temporarily run cls.func in the directory stored in cls.wd.
+
+      The working directory is restored to the original directory afterwards.
+      """
+      print cls, func; import sys; sys.exit()
+      def wrapper(self, *args, **kwargs):
+         if self.verbose:
+            print('\nRunning {}'.format(func.__name__))
+            print("Started in {}".format(os.getcwd()))
+         os.chdir(self.wd)
+         if self.verbose:
+            print("  Entered {}".format(os.getcwd()))
+         try:
+            result = func(self, *args, **kwargs)
+            if self.verbose:
+               print('  {}'.format(result))
+            return result
+         except Exception, e:
+            # this is where you would use an exception handling function
+            print('  Caught {}'.format(e))
+            pass
+         finally:
+            os.chdir(self.owd)
+            if self.verbose:
+               print("  Exited to {}\n".format(os.getcwd()))
+
+      wrapper.__name__ = func.__name__
+      wrapper.__doc__ = func.__doc__
+      return wrapper
+
+#from jasp import *
+import jasp.jasp_extensions  # adds some of the jasp extensions
+import logging
+from ase import Atom, Atoms
+import ase.calculators.vasp
+
+class VASP(object, ase.calculators.vasp.Vasp):
+    __metaclass__ = WithCurrentDirectory
+    def __init__(self, wd,
+                 verbose=True,
+                 debug=None,
+                 atoms=None,
+                 ,**kwargs):
+        self.wd = wd
+        self.verbose = verbose
+        ase.calculators.vasp.Vasp.__init__(self, **kwargs)
+        atoms.calc = self
+
+
+
+co = Atoms([Atom('C',[0,   0, 0]),
+            Atom('O',[1.2, 0, 0])],
+            cell=(6., 6., 6.))
+
+calc = VASP('/tmp/simple-co', #output dir
+            xc='PBE',  # the exchange-correlation functional
+            nbands=6,  # number of bands
+            encut=350, # planewave cutoff
+            ismear=1,  # Methfessel-Paxton smearing
+            sigma=0.01,# very small smearing factor for a molecule
+            verbose=True, debug=logging.DEBUG,
+            atoms=co)
+
+print calc
+
+#+END_SRC
+
+#+RESULTS:
+: (<type 'object'>, <class ase.calculators.vasp.Vasp at 0x1068f5460>) <type 'object'> ['__class__', '__delattr__', '__doc__', '__format__', '__getattribute__', '__hash__', '__init__', '__new__', '__reduce__', '__reduce_ex__', '__repr__', '__setattr__', '__sizeof__', '__str__', '__subclasshook__']
+: (<type 'object'>, <class ase.calculators.vasp.Vasp at 0x1068f5460>) ase.calculators.vasp.Vasp ['__doc__', '__init__', '__module__', '__repr__', '__str__', 'add_to_db', 'archive', 'bader', 'calculate', 'calculation_required', 'check_state', 'chgsum', 'clean', 'clone', 'create_metadata', 'dict', 'get_atoms', 'get_beefens', 'get_bz_k_points', 'get_charge_density', 'get_default_number_of_electrons', 'get_dipole_moment', 'get_eigenvalues', 'get_elapsed_time', 'get_electronic_temperature', 'get_elf', 'get_energy_components', 'get_fermi_level', 'get_forces', 'get_ibz_k_points', 'get_ibz_kpoints', 'get_infrared_intensities', 'get_k_point_weights', 'get_local_potential', 'get_magnetic_moment', 'get_magnetic_moments', 'get_name', 'get_nearest_neighbor_table', 'get_neb', 'get_nonselfconsistent_energies', 'get_number_of_bands', 'get_number_of_electrons', 'get_number_of_grid_points', 'get_number_of_ionic_steps', 'get_number_of_iterations', 'get_number_of_spins', 'get_occupation_numbers', 'get_orbital_occupations', 'get_potential_energy', 'get_property', 'get_pseudo_density', 'get_pseudo_wavefunction', 'get_pseudopotentials', 'get_required_memory', 'get_spin_polarized', 'get_stress', 'get_valence_electrons', 'get_version', 'get_vibrational_frequencies', 'get_vibrational_modes', 'get_xc_functional', 'initialize', 'is_neb', 'job_in_queue', 'json', 'name', 'org', 'plot_neb', 'post_run_hooks', 'prepare_input_files', 'pretty_json', 'python', 'read', 'read_convergence', 'read_default_number_of_electrons', 'read_dipole', 'read_eigenvalues', 'read_electronic_temperature', 'read_energy', 'read_fermi', 'read_forces', 'read_ibz_kpoints', 'read_incar', 'read_k_point_weights', 'read_kpoints', 'read_ldau', 'read_magnetic_moment', 'read_magnetic_moments', 'read_metadata', 'read_nbands', 'read_number_of_electrons', 'read_number_of_iterations', 'read_occupation_numbers', 'read_outcar', 'read_potcar', 'read_relaxed', 'read_stress', 'read_version', 'read_vib_freq', 'register_post_run_hook', 'register_pre_run_hook', 'restart_load', 'results', 'run', 'set', 'set_atoms', 'set_nbands', 'set_results', 'strip', 'strip_warnings', 'todict', 'update', 'write_incar', 'write_kpoints', 'write_metadata', 'write_potcar', 'write_sort_file', 'xml']
+: atts:  {'__module__': '__main__', '__metaclass__': <class '__main__.WithCurrentDirectory'>, '__init__': <function __init__ at 0x10692fcf8>}
+: <class '__main__.WithCurrentDirectory'> <function pretty_print at 0x106918230>
+
+
 * DONE Another approach to docstrings and validation of args and kwargs in Python
   CLOSED: [2016-04-30 Sat 10:28]
   :PROPERTIES:
@@ -168,302 +522,9 @@ xc(s)
 The benefit of this approach is no change in the syntax we are used to. We still get access to docstrings via tools like pydoc. It should not be too hard to get helpful tooltips in Emacs for this, using pydoc to access the docstrings. This might be the winner.
 
 It is up for debate if we should use assert or Exceptions. If anyone uses python with -O the assert statements are ignored. That might not be desirable though. Maybe it would be better to use Exceptions, with a user customizable variable that determines if validation is performed.
-* A new idea for context managing in a class
-  :PROPERTIES:
-  :categories: python
-  :END:
 
-One of the key innovations in our [[https://github.com/jkitchin/jasp][Python interface to Vasp]] was the use of a context manager to automatically change directories temporarily for calculations, and change back when done, even if exceptions were raised. We use a context manager for that. It has served us well, and we even recently improved exception handling in it to avoid the need for most try/except blocks inside the context manager.
-
-There are still some nagging issues though: 1) you can only use the calculator in the context. Outside of it, none of the files it needs are in the current working directory. 2) the context manager forces a layer of indentation that is unavoidable. I would like it if the calculator could take the necessary context with it, and do the right thing from anywhere. I made a design decision when I chose the context manager solution not to decorate every single function because there are a lot of them, and it seemed like a maintenance issue.
-
-** Decorator on the class
-http://stackoverflow.com/questions/6307761/how-can-i-decorate-all-functions-of-a-class-without-typing-it-over-and-over-for
-
-
-
-
-
-** __getattr__
-
-While I have been digging into contexts, decorators, and functional programming, I came up with an idea to embed the code for this in the class where attributes are accessed. The idea is to decorate the function that gets called when it is accessed.
-
-http://stackoverflow.com/questions/371753/python-using-getattribute-method
-
-#+BEGIN_SRC python
-import os
-from jasp import *
-
-os.environ['VASP_PP_PATH'] = '/Users/jkitchin/src/VASP/'
-
-class Meta(type):
-    def __getattribute__(*args):
-        print "Metaclass getattribute invoked"
-        return type.__getattribute__(*args)
-
-class JASP(object):
-    __metaclass__ = Meta
-    def __init__(self, wd, **kwargs):
-        self.owd = os.getcwd()
-        self.wd = wd
-
-        if not os.path.isdir(self.wd):
-            os.makedirs(self.wd)
-
-        os.chdir(wd)
-        try:
-            self.calc = Jasp(**kwargs)
-            self.calc.cwd = self.owd     # compatibility
-            self.calc.vaspdir = self.wd  # compatibility
-        finally:
-            os.chdir(self.owd)
-
-    def __getattribute__(*args):
-        print "Class getattribute invoked on ", args
-        return object.__getattribute__(*args)
-
-    # def __getattribute__(self, attr):
-    #     """Transfer attr to the calculator.
-
-    #     this mostly works, not for __str__.
-
-    #     """
-    #     calc = object.__getattribute__('calc')
-
-
-    #     f = getattr(self.calc, attr)
-    #     def inner(*args, **kwargs):
-    #         print('started in {}'.format(os.getcwd()))
-    #         print('inner: args {}, kwargs {}'.format(args, kwargs))
-    #         os.chdir(self.wd)
-    #         print('Entered {}'.format(os.getcwd()))
-    #         try:
-    #             res = f(*args, **kwargs)
-    #             return res
-    #         finally:
-    #             os.chdir(self.owd)
-    #             print('Entered {}'.format(os.getcwd()))
-    #     return inner
-
-#    def __str__(self):
-#        # this needs wrapped to get the right path.
-#        return self.calc.__str__()
-
-##################################################################
-
-from ase import Atoms, Atom
-
-co = Atoms([Atom('C',[0,   0, 0]),
-            Atom('O',[1.2, 0, 0])],
-            cell=(6., 6., 6.))
-
-
-calc = JASP('/tmp/co-atoms',
-            xc='PBE',    # the exchange-correlation functional
-            nbands=6,    # number of bands
-            encut=350,   # planewave cutoff
-            ismear=1,    # Methfessel-Paxton smearing
-            sigma=0.01,  # very small smearing factor for a molecule
-            atoms=co)
-
-
-#print calc.get_atoms()
-print calc
-#+END_SRC
-
-#+RESULTS:
-: Class getattribute invoked on  (<__main__.JASP object at 0x1006b1350>, 'wd')
-: Class getattribute invoked on  (<__main__.JASP object at 0x1006b1350>, 'owd')
-: Class getattribute invoked on  (<__main__.JASP object at 0x1006b1350>, 'calc')
-: Class getattribute invoked on  (<__main__.JASP object at 0x1006b1350>, 'wd')
-: Class getattribute invoked on  (<__main__.JASP object at 0x1006b1350>, 'calc')
-: Class getattribute invoked on  (<__main__.JASP object at 0x1006b1350>, 'owd')
-: <__main__.JASP object at 0x1006b1350>
-
-
-* Decorating vasp
-This uses my version of vasp.py
-
-#+BEGIN_SRC python
-from jasp import *
-from jasp.vasp import *
-from ase import Atoms, Atom
-
-co = Atoms([Atom('C',[0,   0, 0]),
-            Atom('O',[1.2, 0, 0])],
-            cell=(6., 6., 6.))
-
-calc = Vasp('/tmp/simple-co', #output dir
-            xc='PBE',  # the exchange-correlation functional
-            nbands=6,  # number of bands
-            encut=350, # planewave cutoff
-            ismear=1,  # Methfessel-Paxton smearing
-            sigma=0.01,# very small smearing factor for a molecule
-            verbose=True, debug=logging.DEBUG,
-            atoms=co)
-
-print calc.write_kpoints()
-#+END_SRC
-
-#+RESULTS:
-
-
-#+BEGIN_SRC sh
-ls /tmp/simple-co
-#+END_SRC
-
-#+RESULTS:
-: KPOINTS
-
-* Decorating ase.calculators.vasp
-rats, this is not likely to work.
-#+BEGIN_SRC python
-from jasp import *
-import os
-
-def cd(func):
-    def inner(self, *args, **kwargs):
-        print('starting in {}'.format(os.getcwd()))
-        print('running {}'.format(func.__name__))
-        os.chdir(self.vaspdir)
-        print('entering in {}'.format(os.getcwd()))
-        try:
-            res = func(self, *args, **kwargs)
-            return res
-        finally:
-            os.chdir(self.cwd)
-            print('exited to {}'.format(os.getcwd()))
-    return inner
-
-for attr in Vasp.__dict__:
-    if attr != '__init__' and callable(getattr(Vasp, attr)):
-        #print attr
-        setattr(Vasp, attr, cd(getattr(Vasp, attr)))
-
-
-def JASP(wd, **kwargs):
-    calc = Jasp(**kwargs)
-    calc.vaspdir = wd
-    calc.cwd = os.getcwd()
-    return calc
-try:
-    v = JASP('/tmp/JASP')
-except:
-    pass
-
-#print dir(v)
-#print v.clean()
-
-#+END_SRC
-
-#+RESULTS:
-: starting in /Users/jkitchin/blogofile-jkitchin.github.com/_blog
-: running set
-
-* Adding a metaclass to Vasp?
-
-#+BEGIN_SRC python
-import os
-import types
-
-class WithCurrentDirectory(type):
-   """Metaclass that decorates all of its methods except __init__."""
-   def __new__(cls, name, bases, attrs):
-      return super(WithCurrentDirectory, cls).__new__(cls, name, bases, attrs)
-
-   def __init__(cls, name, bases, attrs):
-      """Decorate all the methods of the class instance with the classmethod cd.
-
-      We skip __init__ because that is where the attributes are actually set.
-      It is an error to access them before they are set.
-      """
-      for attr_name, attr_value in attrs.iteritems():
-         if attr_name != '__init__' and isinstance(attr_value, types.FunctionType):
-            setattr(cls, attr_name, cls.cd(attr_value) )
-
-
-   @classmethod
-   def cd(cls, func):
-      """Decorator to temporarily run cls.func in the directory stored in cls.wd.
-
-      The working directory is restored to the original directory afterwards.
-      """
-      def wrapper(self, *args, **kwargs):
-         if self.verbose:
-            print('\nRunning {}'.format(func.__name__))
-            print("Started in {}".format(os.getcwd()))
-         os.chdir(self.wd)
-         if self.verbose:
-            print("  Entered {}".format(os.getcwd()))
-         try:
-            result = func(self, *args, **kwargs)
-            if self.verbose:
-               print('  {}'.format(result))
-            return result
-         except Exception, e:
-            # this is where you would use an exception handling function
-            print('  Caught {}'.format(e))
-            pass
-         finally:
-            os.chdir(self.owd)
-            if self.verbose:
-               print("  Exited to {}\n".format(os.getcwd()))
-
-      wrapper.__name__ = func.__name__
-      wrapper.__doc__ = func.__doc__
-      return wrapper
-
-from jasp import *
-
-os.environ['VASP_PP_PATH'] = '/users/jkitchin/src/Vasp'
-
-class JASP(Vasp, object):
-   __metaclass__ = WithCurrentDirectory
-   def __init__(self,
-                wd, verbose=True,
-                atoms=None,
-                ,**kwargs):
-      Vasp.__init__(self, **kwargs)
-      self.verbose = verbose
-      self.vaspdir = wd
-      self.cwd = os.getcwd()
-
-      if not os.path.isdir(wd):
-         os.makedirs(wd)
-
-      if atoms is not None:
-         atoms.calc = self
-
-from ase import Atoms, Atom
-
-co = Atoms([Atom('C',[0,   0, 0]),
-            Atom('O',[1.2, 0, 0])],
-            cell=(6., 6., 6.))
-
-calc = JASP('/tmp/simple-co', #output dir
-            xc='PBE',  # the exchange-correlation functional
-            nbands=6,  # number of bands
-            encut=350, # planewave cutoff
-            ismear=1,  # Methfessel-Paxton smearing
-            sigma=0.01,# very small smearing factor for a molecule
-            atoms=co)
-
-print calc.prepare_input_files()
-print calc.get_atoms()
-#+END_SRC
-
-#+RESULTS:
-: None
-: Atoms(symbols='CO', positions=..., cell=[6.0, 6.0, 6.0], pbc=[False,
-:       False, False], calculator=JASP(...))
-
-#+BEGIN_SRC sh
-ls /tmp/simple-co
-#+END_SRC
-
-#+RESULTS:
-
-* Automatic decorating of class methods to run them in a context
+* DONE Automatic decorating of class methods to run them in a context
+  CLOSED: [2016-05-01 Sun 09:16]
   :PROPERTIES:
   :categories: python
   :date:     2016/05/01 09:16:29

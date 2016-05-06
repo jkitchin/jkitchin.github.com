@@ -6672,3 +6672,397 @@ from pycse import nlinfit
 
 nlinfit(
 #+END_SRC
+
+* NOTGOOD Decorating ase.calculators.vasp :archive:
+  :PROPERTIES:
+  :ARCHIVE_TIME: 2016-05-02 Mon 11:31
+  :ARCHIVE_FILE: ~/blogofile-jkitchin.github.com/_blog/blog.org
+  :ARCHIVE_CATEGORY: blog
+  :END:
+rats, this is not likely to work.
+#+BEGIN_SRC python
+from jasp import *
+import os
+
+def cd(func):
+    def inner(self, *args, **kwargs):
+        print('starting in {}'.format(os.getcwd()))
+        print('running {}'.format(func.__name__))
+        os.chdir(self.vaspdir)
+        print('entering in {}'.format(os.getcwd()))
+        try:
+            res = func(self, *args, **kwargs)
+            return res
+        finally:
+            os.chdir(self.cwd)
+            print('exited to {}'.format(os.getcwd()))
+    return inner
+
+for attr in Vasp.__dict__:
+    if attr != '__init__' and callable(getattr(Vasp, attr)):
+        #print attr
+        setattr(Vasp, attr, cd(getattr(Vasp, attr)))
+
+
+def JASP(wd, **kwargs):
+    calc = Jasp(**kwargs)
+    calc.vaspdir = wd
+    calc.cwd = os.getcwd()
+    return calc
+try:
+    v = JASP('/tmp/JASP')
+except:
+    pass
+
+#print dir(v)
+#print v.clean()
+
+#+END_SRC
+
+#+RESULTS:
+: starting in /Users/jkitchin/blogofile-jkitchin.github.com/_blog
+: running set
+
+* MAYBE Adding a metaclass to Vasp?
+  :PROPERTIES:
+  :ARCHIVE_TIME: 2016-05-02 Mon 11:31
+  :ARCHIVE_FILE: ~/blogofile-jkitchin.github.com/_blog/blog.org
+  :ARCHIVE_CATEGORY: blog
+  :END:
+
+#+BEGIN_SRC python
+import os
+import types
+
+class WithCurrentDirectory(type):
+   """Metaclass that decorates all of its methods except __init__."""
+   def __new__(cls, name, bases, attrs):
+      return super(WithCurrentDirectory, cls).__new__(cls, name, bases, attrs)
+
+   def __init__(cls, name, bases, attrs):
+      """Decorate all the methods of the class instance with the classmethod cd.
+
+      We skip __init__ because that is where the attributes are actually set.
+      It is an error to access them before they are set.
+      """
+      for attr_name, attr_value in attrs.iteritems():
+         if attr_name != '__init__' and isinstance(attr_value, types.FunctionType):
+            setattr(cls, attr_name, cls.cd(attr_value) )
+
+
+   @classmethod
+   def cd(cls, func):
+      """Decorator to temporarily run cls.func in the directory stored in cls.wd.
+
+      The working directory is restored to the original directory afterwards.
+      """
+      def wrapper(self, *args, **kwargs):
+         if self.verbose:
+            print('\nRunning {}'.format(func.__name__))
+            print("Started in {}".format(os.getcwd()))
+         os.chdir(self.wd)
+         if self.verbose:
+            print("  Entered {}".format(os.getcwd()))
+         try:
+            result = func(self, *args, **kwargs)
+            if self.verbose:
+               print('  {}'.format(result))
+            return result
+         except Exception, e:
+            # this is where you would use an exception handling function
+            print('  Caught {}'.format(e))
+            pass
+         finally:
+            os.chdir(self.owd)
+            if self.verbose:
+               print("  Exited to {}\n".format(os.getcwd()))
+
+      wrapper.__name__ = func.__name__
+      wrapper.__doc__ = func.__doc__
+      return wrapper
+
+from jasp import *
+
+os.environ['VASP_PP_PATH'] = '/users/jkitchin/src/Vasp'
+
+class JASP(Vasp, object):
+   __metaclass__ = WithCurrentDirectory
+   def __init__(self,
+                wd, verbose=True,
+                atoms=None,
+                ,**kwargs):
+      Vasp.__init__(self, **kwargs)
+      self.verbose = verbose
+      self.vaspdir = wd
+      self.cwd = os.getcwd()
+
+      if not os.path.isdir(wd):
+         os.makedirs(wd)
+
+      if atoms is not None:
+         atoms.calc = self
+
+from ase import Atoms, Atom
+
+co = Atoms([Atom('C',[0,   0, 0]),
+            Atom('O',[1.2, 0, 0])],
+            cell=(6., 6., 6.))
+
+calc = JASP('/tmp/simple-co', #output dir
+            xc='PBE',  # the exchange-correlation functional
+            nbands=6,  # number of bands
+            encut=350, # planewave cutoff
+            ismear=1,  # Methfessel-Paxton smearing
+            sigma=0.01,# very small smearing factor for a molecule
+            atoms=co)
+
+print calc.prepare_input_files()
+print calc.get_atoms()
+#+END_SRC
+
+#+RESULTS:
+: None
+: Atoms(symbols='CO', positions=..., cell=[6.0, 6.0, 6.0], pbc=[False,
+:       False, False], calculator=JASP(...))
+
+#+BEGIN_SRC sh
+ls /tmp/simple-co
+#+END_SRC
+
+#+RESULTS:
+
+* MAYBE/GOOD Decorating vasp
+  :PROPERTIES:
+  :ARCHIVE_TIME: 2016-05-02 Mon 11:31
+  :ARCHIVE_FILE: ~/blogofile-jkitchin.github.com/_blog/blog.org
+  :ARCHIVE_CATEGORY: blog
+  :END:
+This uses my version of vasp.py. I think I would like to avoid this.
+
+#+BEGIN_SRC python
+from jasp import *
+from jasp.vasp import *
+from ase import Atoms, Atom
+
+co = Atoms([Atom('C',[0,   0, 0]),
+            Atom('O',[1.2, 0, 0])],
+            cell=(6., 6., 6.))
+
+calc = Vasp('/tmp/simple-co', #output dir
+            xc='PBE',  # the exchange-correlation functional
+            nbands=6,  # number of bands
+            encut=350, # planewave cutoff
+            ismear=1,  # Methfessel-Paxton smearing
+            sigma=0.01,# very small smearing factor for a molecule
+            verbose=True, debug=logging.DEBUG,
+            atoms=co)
+
+print calc.write_kpoints()
+#+END_SRC
+
+#+RESULTS:
+
+
+#+BEGIN_SRC sh
+ls /tmp/simple-co
+#+END_SRC
+
+#+RESULTS:
+: KPOINTS
+
+* A new idea for context managing in a class
+  :PROPERTIES:
+  :categories: python
+  :ARCHIVE_TIME: 2016-05-02 Mon 11:32
+  :ARCHIVE_FILE: ~/blogofile-jkitchin.github.com/_blog/blog.org
+  :ARCHIVE_CATEGORY: blog
+  :END:
+
+One of the key innovations in our [[https://github.com/jkitchin/jasp][Python interface to Vasp]] was the use of a context manager to automatically change directories temporarily for calculations, and change back when done, even if exceptions were raised. We use a context manager for that. It has served us well, and we even recently improved exception handling in it to avoid the need for most try/except blocks inside the context manager.
+
+There are still some nagging issues though: 1) you can only use the calculator in the context. Outside of it, none of the files it needs are in the current working directory. 2) the context manager forces a layer of indentation that is unavoidable. I would like it if the calculator could take the necessary context with it, and do the right thing from anywhere. I made a design decision when I chose the context manager solution not to decorate every single function because there are a lot of them, and it seemed like a maintenance issue.
+
+** Decorator on the class
+http://stackoverflow.com/questions/6307761/how-can-i-decorate-all-functions-of-a-class-without-typing-it-over-and-over-for
+
+* Managing class method contexts via __getattribute__
+  :PROPERTIES:
+  :ARCHIVE_TIME: 2016-05-02 Mon 11:32
+  :ARCHIVE_FILE: ~/blogofile-jkitchin.github.com/_blog/blog.org
+  :ARCHIVE_CATEGORY: blog
+  :END:
+
+This is only going to partially work. Some things like __str__ can only be modified by a metaclass I think.
+
+While I have been digging into contexts, decorators, and functional programming, I came up with an idea to embed the code for this in the class where attributes are accessed. The idea is to decorate the function that gets called when it is accessed.
+
+http://stackoverflow.com/questions/371753/python-using-getattribute-method
+
+#+BEGIN_SRC python
+import os
+from ase.calculators.vasp import Vasp
+import collections
+import jasp.jasp_extensions
+os.environ['VASP_PP_PATH'] = '/Users/jkitchin/src/VASP/'
+
+class JASP(Vasp, object):
+
+    def __init__(self, wd,
+                 debug=None,
+                 atoms=None,
+                 verbose=False,
+                 ,**kwargs):
+
+        self.debug = debug
+        self.verbose = verbose
+        self.atoms = atoms
+
+        # store directory this instance was created in
+        self.owd = os.getcwd()
+
+        # store the directory where the results are
+        self.wd = wd
+
+        self.cwd = self.owd     # compatibility
+        self.vaspdir = self.wd  # compatibility
+
+        # make the directory where the results are if it doesn't exist.
+        if not os.path.isdir(self.wd):
+            os.makedirs(self.wd)
+
+        try:
+            os.chdir(wd)
+            super(JASP, self).__init__(**kwargs)
+            if atoms is not None:
+                atoms.calc = self
+        finally:
+            os.chdir(self.owd)
+
+
+    def __getattribute__(self, attr):
+
+        if attr == '__init__':
+            return self.__init__
+
+        f = super(JASP, self).__getattribute__(attr)
+        #f = object.__getattribute__(self, attr)
+
+        if isinstance(f, collections.Callable):
+            def inner(*args, **kwargs):
+                if self.verbose:
+                    print('\nstarted in {}'.format(os.getcwd()))
+                    print('inner: args {}, kwargs {}'.format(args, kwargs))
+                os.chdir(self.wd)
+                if self.verbose: print('  Entered {}'.format(os.getcwd()))
+                try:
+                    res = f(*args, **kwargs)
+                    return res
+                finally:
+                    os.chdir(self.owd)
+                    if self.verbose:
+                        print('  Exited to {}\n\n'.format(os.getcwd()))
+            return inner
+        else:
+            return f
+
+    def add(self, a, b):
+        return a + b
+
+
+##################################################################
+
+from ase import Atoms, Atom
+
+co = Atoms([Atom('C', [0,   0, 0]),
+            Atom('O', [1.2, 0, 0])],
+            cell=(6., 6., 6.))
+
+
+calc = JASP('/tmp/co-atoms',
+            xc='PBE',    # the exchange-correlation functional
+            nbands=6,    # number of bands
+            encut=350,   # planewave cutoff
+            ismear=1,    # Methfessel-Paxton smearing
+            sigma=0.01,  # very small smearing factor for a molecule
+            atoms=co)
+
+
+# print calc.get_atoms()
+# print calc.add(4, 5)
+
+print calc
+
+
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+False
+: -----------------------------
+  VASP calculation from /Users/jkitchin/blogofile-jkitchin.github.com/_blog
+  converged: None
+  Energy = nan eV
+
+  Unit cell vectors (angstroms)
+        x       y     z      length
+  a0 [ 6.000  0.000  0.000] 6.000
+  a1 [ 0.000  6.000  0.000] 6.000
+  a2 [ 0.000  0.000  6.000] 6.000
+  a,b,c,alpha,beta,gamma (deg):6.000 6.000 6.000 90.0 90.0 90.0
+  Unit cell volume = 216.000 Ang^3
+  Stress was not computed
+ Atom#  sym       position [x,y,z]tag  rmsForce constraints
+   0    C   [0.000      0.000      0.000]  0   nan      T T T
+   1    O   [1.200      0.000      0.000]  0   nan      T T T
+--------------------------------------------------
+
+INCAR Parameters:
+-----------------
+        nbands: 6
+        ismear: 1
+         encut: 350
+         sigma: 0.01
+        magmom: None
+          kpts: (1, 1, 1)
+    reciprocal: False
+            xc: PBE
+           txt: -
+         gamma: False
+
+Pseudopotentials used:
+----------------------
+C: potpaw_PBE/C/POTCAR (git-hash: 2272d6745da89a3d872983542cef1d18750fc952)
+O: potpaw_PBE/O/POTCAR (git-hash: 9a0489b46120b0cad515d935f44b5fbe3a3b1dfa)
+#+end_example
+
+
+#+BEGIN_SRC python
+class D(object):
+    def __init__(self):
+        self.test = 20
+        self.test2 = 21
+
+    def __getattribute__(self,name):
+
+        print 'looked up ', name
+        return object.__getattribute__(self, name)
+
+    def add(self, a, b):
+        return a + b
+
+    def __str__(self):
+        return "DD"
+
+
+d = D()
+
+print d
+print d.add(1, 2)
+print d.test2
+#+END_SRC
+#+RESULTS:
+: DD
+: looked up  add
+: 3
+: looked up  test2
+: 21
