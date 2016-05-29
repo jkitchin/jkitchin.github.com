@@ -84,6 +84,249 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Showing-what-data-went-into-a-code-block-on-export"></div>
+      <h2 class="blog_post_title"><a href="/blog/2014/09/22/Showing-what-data-went-into-a-code-block-on-export/" rel="bookmark" title="Permanent Link to Showing what data went into a code block on export">Showing what data went into a code block on export</a></h2>
+      <p><small><span class="blog_post_date">Posted September 22, 2014 at 12:25 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2014/09/22/Showing-what-data-went-into-a-code-block-on-export#disqus_thread">View Comments</a>
+      <p><small><span class="blog_post_date">Updated September 22, 2014 at 12:33 PM</span>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+Sometimes I define variables in the header of a code block and then use the code to analyze the data. In org-mode this is super, and you can read the file and easily see what is going on. 
+</p>
+
+<p>
+When you export the file, however, the information is lost, and in the exported result you cannot see what data went into a code block, or figure out where it is from. 
+</p>
+
+<p>
+Today we examine how to get that information into exported code. First, we setup a simple example that will do what need.
+</p>
+
+<table id="tbl-data" border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="right" />
+
+<col  class="right" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="right">x</th>
+<th scope="col" class="right">y</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="right">1</td>
+<td class="right">1</td>
+</tr>
+
+<tr>
+<td class="right">2</td>
+<td class="right">4</td>
+</tr>
+
+<tr>
+<td class="right">3</td>
+<td class="right">9</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Now a code block that has a defined variable in the header that uses data from the table defined above.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python" id="print-table"><span style="color: #8b0000;">return</span> data
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="right" />
+
+<col  class="right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="right">1</td>
+<td class="right">1</td>
+</tr>
+
+<tr>
+<td class="right">2</td>
+<td class="right">4</td>
+</tr>
+
+<tr>
+<td class="right">3</td>
+<td class="right">9</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+During export, org-mode does some interesting things to the document, including removing the headers from the code blocks, which makes it impossible to access them inside the export. The headers are apparently removed during org-babel-exp-process-buffer. It does not appear possible to advise this function because it processes the whole buffer at once, and we need to save data for each code block.  
+</p>
+
+<p>
+So, we will have to preprocess the buffer to get the parameters on each block, and then put the parameters in the export afterwards. For this, we can use a filter. We will preprocess the buffer to get names of tables, and parameters of src-blocks. (I suppose we could put this preprocessing in the advice function, but I tend to avoid advice when possible).
+</p>
+
+<p>
+Here is how we can get a list of the table-names indicating their name or that they are results (results are enclosed in ()).
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(org-element-map (org-element-parse-buffer) 'table
+  (<span style="color: #8b0000;">lambda</span> (element)     
+    (or (org-element-property <span style="color: #cd0000;">:name</span> element) (org-element-property <span style="color: #cd0000;">:results</span> element))))
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="left" />
+
+<col  class="left" />
+
+<col  class="left" />
+
+<col  class="left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="left">tbl-data</td>
+<td class="left">(print-table)</td>
+<td class="left">()</td>
+<td class="left">()</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Similarly, here is the list of parameters for each block.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(org-element-map (org-element-parse-buffer) 'src-block
+  (<span style="color: #8b0000;">lambda</span> (element)     
+    (org-element-property <span style="color: #cd0000;">:parameters</span> element)))
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="left">:var data=tbl-data :results value</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Now, we combine them with filters to modify the output. First, we preprocess to get each list, and then in the filter, we will pop off each value and insert the data. We will also get the language for each code block, and add that in the export. We use a filter because we are not modified the transcoded text, simply adding some new text in front of it.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">ox-mrkup-filter-table</span> (text back-end info)
+  (<span style="color: #8b0000;">let</span> ((tblname (pop tblnames)))
+    (message <span style="color: #228b22;">"tblname is \"%s\""</span> tblname)
+    ; <span style="color: #ff0000; font-weight: bold;">pop does not remove nil from the list, so we do it here.</span>
+    (<span style="color: #8b0000;">when</span> (null tblname) (setq tblnames (cdr tblnames)))
+    (<span style="color: #8b0000;">cond</span>
+     ((listp tblname)  ; <span style="color: #ff0000; font-weight: bold;">from results</span>
+      (concat (format <span style="color: #228b22;">"&lt;br&gt;Results: %s"</span> (car tblname)) text))
+     ((null tblname)   ; <span style="color: #ff0000; font-weight: bold;">no name</span>
+      text)
+     (t ; <span style="color: #ff0000; font-weight: bold;">everything else</span>
+      (concat (format <span style="color: #228b22;">"&lt;br&gt;Table name: %s"</span> tblname) text)))))
+
+(<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">ox-mrkup-filter-src-block</span> (text back-end info)
+  (<span style="color: #8b0000;">let</span> ((params (pop src-params))
+        (lang (pop src-langs)))
+    (<span style="color: #8b0000;">when</span> (null params) (setq src-params (cdr src-params)))
+    (<span style="color: #8b0000;">if</span> params  
+        (concat (format <span style="color: #228b22;">"&lt;pre&gt;Language = %s\nParameters = %s&lt;/pre&gt;"</span> lang params) text)
+      text)))
+
+;; <span style="color: #ff0000; font-weight: bold;">preprocess to get table names, src parameters and languages.</span>
+(<span style="color: #8b0000;">let</span> ((tblnames (org-element-map (org-element-parse-buffer) 'table
+                  (<span style="color: #8b0000;">lambda</span> (element)     
+                    (or (org-element-property <span style="color: #cd0000;">:name</span> element)                    
+                        (org-element-property <span style="color: #cd0000;">:results</span> element)))))
+
+      (src-params (org-element-map (org-element-parse-buffer) 'src-block
+                    (<span style="color: #8b0000;">lambda</span> (element)     
+                      (org-element-property <span style="color: #cd0000;">:parameters</span> element))))
+
+      (src-langs (org-element-map (org-element-parse-buffer) 'src-block
+                    (<span style="color: #8b0000;">lambda</span> (element)     
+                      (org-element-property <span style="color: #cd0000;">:language</span> element))))
+
+      ;; <span style="color: #ff0000; font-weight: bold;">register the filters</span>
+      (org-export-filter-table-functions '(ox-mrkup-filter-table))
+      (org-export-filter-src-block-functions '(ox-mrkup-filter-src-block)))
+
+  ;; <span style="color: #ff0000; font-weight: bold;">and export the result</span>
+  (browse-url (org-export-to-file 'html <span style="color: #228b22;">"custom-src-table-export-3.html"</span>)))
+</pre>
+</div>
+
+<pre class="example">
+#&lt;process open custom-src-table-export-3.html&gt;
+</pre>
+
+
+<p>
+Here is the resulting html file: <a href="/media/2014-09-22-Showing-what-data-went-into-a-code-block-on-export/custom-src-table-export-3.html">custom-src-table-export-3.html</a> which shows the new export behavior. It might not be too difficult to make links between the parameters and the tables, but it would require parsing the :parameters string. For now, this makes it easy enough to read in HTML where the data is coming from (assuming fluency in org-mode header arguments!).
+</p>
+
+<p>
+Special thanks to Aaron Ecay, and Charles Berry on the org-mode mailing list for pointing me towards a solution. 
+</p>
+<p>Copyright (C) 2014 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2014/09/22/Showing-what-data-went-into-a-code-block-on-export.org">org-mode source</a><p><p>Org-mode version = 8.2.7c</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2014/09/22/Showing-what-data-went-into-a-code-block-on-export#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Getting-information-about-named-tables-in-exported-org-files"></div>
       <h2 class="blog_post_title"><a href="/blog/2014/09/21/Getting-information-about-named-tables-in-exported-org-files/" rel="bookmark" title="Permanent Link to Getting information about named tables in exported org-files">Getting information about named tables in exported org-files</a></h2>
       <p><small><span class="blog_post_date">Posted September 21, 2014 at 02:34 PM</span> | categories:
@@ -7819,91 +8062,6 @@ EwIz2uBmwEnsOLQ4M5W3lTBmet9iVKsT
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2014/08/19/Storing-solutions-to-homework-problems-in-an-org-file-with-encrypted-headlines#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Find-the-most-recent-timestamp-that-is-not-in-the-future"></div>
-      <h2 class="blog_post_title"><a href="/blog/2014/08/17/Find-the-most-recent-timestamp-that-is-not-in-the-future/" rel="bookmark" title="Permanent Link to Find the most recent timestamp that is not in the future">Find the most recent timestamp that is not in the future</a></h2>
-      <p><small><span class="blog_post_date">Posted August 17, 2014 at 09:42 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2014/08/17/Find-the-most-recent-timestamp-that-is-not-in-the-future#disqus_thread">View Comments</a>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-In a previous post, we looked at a way to jump to a timestamp (<a href="http://kitchingroup.cheme.cmu.edu/blog/2014/08/14/Jump-to-most-recent-timestamp-in-an-org-document">post</a> ). A limitation of that post was that our definition of "most recent" included timestamps in the future. Here we further constrain the definition to mean the most recent that is not in the future. 
-</p>
-
-<p>
-We will do that by getting the list of timestamps, then filtering out future ones.
-</p>
-
-<p>
-Here is a list of time-stamps
-</p>
-<ol class="org-ol">
-<li><span class="timestamp-wrapper"><span class="timestamp">[2014-08-17 Sun]</span></span>
-</li>
-<li><span class="timestamp-wrapper"><span class="timestamp">&lt;2014-08-17 Sun 08:23&gt;</span></span>
-</li>
-<li><span class="timestamp-wrapper"><span class="timestamp">&lt;2014-08-17 Sun 09:23&gt;</span></span> 
-</li>
-<li><span class="timestamp-wrapper"><span class="timestamp">[2014-08-18 Mon]</span></span>
-</li>
-<li><span class="timestamp-wrapper"><span class="timestamp">[2014-08-17 Sun 13:00]</span></span>
-</li>
-<li><span class="timestamp-wrapper"><span class="timestamp">[2014-08-16 Sat 13:00]</span></span>
-</li>
-</ol>
-
-<p>
-Here is the code that filters out future timestamps. As I write this it is <span class="timestamp-wrapper"><span class="timestamp">&lt;2014-08-17 Sun 08:31&gt;</span></span>.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">let</span> ((now (<span style="color: #8b0000;">with-temp-buffer</span>
-             ;; <span style="color: #ff0000; font-weight: bold;">sachac suggested this way to get a timestamp of "now"</span>
-             (org-insert-time-stamp (org-read-date t t <span style="color: #228b22;">"."</span>) t)
-             (buffer-string))))
-  (remove-if (<span style="color: #8b0000;">lambda</span> (entry) (org-time&gt; (car entry) now))
-             (cl-sort
-              (org-element-map (org-element-parse-buffer) 'timestamp
-                (<span style="color: #8b0000;">lambda</span> (timestamp)
-                  (cons (org-element-property <span style="color: #cd0000;">:raw-value</span> timestamp) (org-element-property <span style="color: #cd0000;">:begin</span> timestamp))))
-              'org-time&gt; <span style="color: #cd0000;">:key</span> 'car)))
-</pre>
-</div>
-
-<p>
-((<span class="timestamp-wrapper"><span class="timestamp">&lt;2014-08-17 Sun 08:31&gt;</span></span> . 811) (<span class="timestamp-wrapper"><span class="timestamp">&lt;2014-08-17 Sun 08:23&gt;</span></span> . 613) (<span class="timestamp-wrapper"><span class="timestamp">[2014-08-17 Sun]</span></span> . 593) (<span class="timestamp-wrapper"><span class="timestamp">[2014-08-16 Sat 13:00]</span></span> . 712))
-</p>
-
-
-<p>
-You can see that only past timestamps show up in the list, and they are sorted with the most recent timestamp. The <code>remove-if</code> function is in 'cl, which is loaded in my init files. You may have to require that if you don't load it in your init files.</p>
-<p>Copyright (C) 2014 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2014/08/17/Find-the-most-recent-timestamp-that-is-not-in-the-future.org">org-mode source</a><p><p>Org-mode version = 8.2.7c</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2014/08/17/Find-the-most-recent-timestamp-that-is-not-in-the-future#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="/blog/category/orgmode/10">« Previous Page</a>
   --  
  <a href="/blog/category/orgmode/12">Next Page »</a>
@@ -7945,11 +8103,11 @@ You can see that only past timestamps show up in the list, and they are sorted w
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2016/05/29/Expanding-orgmode-py-to-get-better-org-python-integration/">Expanding orgmode.py to get better org-python integration</a></li>
       <li><a href="/blog/2016/05/06/When-in-python-do-as-Pythonistas-unless/">When in python do as Pythonistas unless...</a></li>
       <li><a href="/blog/2016/05/01/Automatic-decorating-of-class-methods-to-run-them-in-a-context/">Automatic decorating of class methods to run them in a context</a></li>
       <li><a href="/blog/2016/04/30/Another-approach-to-docstrings-and-validation-of-args-and-kwargs-in-Python/">Another approach to docstrings and validation of args and kwargs in Python</a></li>
       <li><a href="/blog/2016/04/29/Enough-with-the-hyperbole-hy-does-things-that-are-not-as-easy-in-Python/">Enough with the hyperbole - hy does things that are not as easy in Python</a></li>
-      <li><a href="/blog/2016/04/28/Managing-contexts-Python-vs-hy/">Managing contexts - Python vs hy</a></li>
     </ul>
   </section>
 
