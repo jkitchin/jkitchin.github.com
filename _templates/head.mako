@@ -1,4 +1,10 @@
-  <title>${bf.config.blog.name}</title>
+% if post is not UNDEFINED:
+<title>${post.title}</title>
+% elif category is not UNDEFINED:
+<title>${bf.config.blog.name}: ${category}</title>
+% else:
+<title>${bf.config.blog.name}</title>
+% endif
   <meta name="google-site-verification" content="CGcacJdHc2YoZyI0Vey9XRA5qwhhFDzThKJezbRFcJ4" />
   <meta name="description" content="${bf.config.blog.description}">
 %if bf.config.site.author:
