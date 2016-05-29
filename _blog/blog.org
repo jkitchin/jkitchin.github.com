@@ -1,4 +1,545 @@
-* When in python do as Pythonistas unless...
+* Getting stdout and value in Python blocks
+
+
+#+name: attr_wrap
+#+BEGIN_SRC emacs-lisp :var data="" :results output
+(let ((n 0))
+  (while (string-match "\\*\\(.*\\)\\*" data n)
+    (replace-match "\1" nil nil data)
+    (setq n (match-end 0))))
+(message
+#+END_SRC
+
+#+BEGIN_SRC python :post attr_wrap(data=*this*)
+print('*/tmp/image.png*')
+#+END_SRC
+
+#+RESULTS:
+
+
+
+#+BEGIN_SRC python
+import matplotlib.pyplot as plt
+
+plt.plot([5, 6, 7, 8])
+
+figs = list(map(plt.figure, plt.get_fignums()))
+#print(figs)
+
+
+#for i in plt.get_fignums():
+#    plt.figure(i)
+#    plt.savefig('figure%d.png' % i)
+#+END_SRC
+#+RESULTS:
+: y
+
+so i can get the figures. they need to be saved, and put in the buffer to see them inline. if saved, they need unique, reproducible filenames. probably hash-n.png in a directory. unless the code-block has a name. then name-1.png
+
+IDea 2: patch matplotlib.pyplot.savefig
+
+https://github.com/jkitchin/pycse/blob/master/pycse/publish.py
+
+* DONE Expanding orgmode.py to get better org-python integration
+  CLOSED: [2016-05-29 Sun 15:51]
+  :PROPERTIES:
+  :categories: orgmode,python
+  :date:     2016/05/29 14:03:34
+  :updated:  2016/05/29 15:51:52
+  :END:
+
+I have only ever been about 80% satisfied with Python/org-mode integration. I have developed a particular workflow that I like a lot, and works well for solving scientific and engineering problems. I typically use stand-alone Python blocks, i.e. not sessions. I tend to use print statements to create output that I want to see, e.g. the value of a calculation. I also tend to create multiple figures in a single block, which I want to display in the buffer. This workflow is represented extensively in [[http://kitchingroup.cheme.cmu.edu/pycse/][PYCSE]] and [[https://github.com/jkitchin/dft-book][dft-book]] which collectively have 700+ src blocks! So I use it alot ;)
+
+There are some deficiencies though. For one, I have had to hand build any figures/tables that are generated from the code blocks. That means duplicating filenames, adding the captions, etc... It is not that easy to update captions from the code blocks, and there has been limited ability to use markup in the output.
+
+Well finally I had some ideas to change this. The ideas are:
+
+1. Patch matplotlib so that savefig actually returns a figure link that can be printed to the output. savefig works the same otherwise.
+
+2. Patch matplotlib.pyplot.show to save the figure, and print a figure link in thhe output.
+
+3. Create special functions to generate org tables and figures.
+
+4. Create some other functions to generate some blocks and elements.
+
+Then we could just import the library in our Python scripts (or add it as a prologue) and get this nice functionality. You can find the code for this here:
+
+https://github.com/jkitchin/pycse/blob/master/pycse/orgmode.py
+
+Finally, it seems like a good idea to specify that we want our results to be an org drawer. This makes the figures/tables export, and allows us to generate math and other markup in our programs. That has the downside of making exported results not be in the "verbatim" markup I am used to, but that may be solvable in other ways. We can make the org drawer output the default like this:
+
+#+BEGIN_SRC emacs-lisp
+(setq org-babel-default-header-args:python
+      (cons '(:results . "output org drawer replace")
+	    (assq-delete-all :results org-babel-default-header-args)))
+#+END_SRC
+
+With these, using Python blocks in org-mode gets quite a bit better!
+
+Here is the first example, with savefig. I have the savefig function return the link, so we have to print it. We use this feature later. The figure is automatically inserted to the buffer. Like magic!
+
+Here is a fun figure from http://matplotlib.org/xkcd/examples/pie_and_polar_charts/polar_scatter_demo.html
+#+BEGIN_SRC python :results org drawer
+import pycse.orgmode
+
+import numpy as np
+import matplotlib.pyplot as plt
+plt.xkcd()
+
+N = 150
+r = 2 * np.random.rand(N)
+theta = 2 * np.pi * np.random.rand(N)
+area = 200 * r**2 * np.random.rand(N)
+colors = theta
+
+ax = plt.subplot(111, polar=True)
+c = plt.scatter(theta, r, c=colors, s=area, cmap=plt.cm.hsv)
+c.set_alpha(0.75)
+
+print(plt.savefig('test.png'))
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+[[file:test.png]]
+:END:
+
+How about another example with show. This just prints the link directly. It seems to make sense to do it that way. This is from http://matplotlib.org/xkcd/examples/showcase/xkcd.html.
+
+#+BEGIN_SRC python
+import pycse.orgmode as org
+
+from matplotlib import pyplot as plt
+import numpy as np
+
+plt.xkcd()
+
+fig = plt.figure()
+ax = fig.add_subplot(1, 1, 1)
+ax.spines['right'].set_color('none')
+ax.spines['top'].set_color('none')
+plt.xticks([])
+plt.yticks([])
+ax.set_ylim([-30, 10])
+
+data = np.ones(100)
+data[70:] -= np.arange(30)
+
+plt.annotate(
+    'THE DAY I REALIZED\nI COULD COOK BACON\nWHENEVER I WANTED',
+    xy=(70, 1), arrowprops=dict(arrowstyle='->'), xytext=(15, -10))
+
+plt.plot(data)
+
+plt.xlabel('time')
+plt.ylabel('my overall health')
+plt.show()
+
+# An intermediate result
+print('Some intermediate result for x - 4 = 6:')
+x = 6 + 4
+org.fixed_width('x = {}'.format(x))
+
+# And another figure
+fig = plt.figure()
+ax = fig.add_subplot(1, 1, 1)
+ax.bar([-0.125, 1.0-0.125], [0, 100], 0.25)
+ax.spines['right'].set_color('none')
+ax.spines['top'].set_color('none')
+ax.xaxis.set_ticks_position('bottom')
+ax.set_xticks([0, 1])
+ax.set_xlim([-0.5, 1.5])
+ax.set_ylim([0, 110])
+ax.set_xticklabels(['CONFIRMED BY\nEXPERIMENT', 'REFUTED BY\nEXPERIMENT'])
+plt.yticks([])
+
+plt.title("CLAIMS OF SUPERNATURAL POWERS")
+
+plt.show()
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+[[file:pyshow/56bc77cfebd90f8a1cb22421c1c4f2c4a05fedeb.png]]
+Some intermediate result for x - 4 = 6:
+: x = 10
+[[file:pyshow/2daee706d3b906a25914a6ca975906047af7fa35.png]]
+:END:
+
+See, the figures show where they belong, with intermediate results that have some formatting, and they export correctly. Nice.
+
+
+** A Figure from Python
+
+It has been a long desire of mine to generate full figures with captions from code blocks, and to get them where I want like this one:
+
+#+RESULTS: fig-1
+:RESULTS:
+#+CAPTION: An italicized /histogram/ of 10000 points
+#+LABEL: fig:1
+#+ATTR_LATEX: :width 3in
+#+ATTR_HTML: :width 300
+#+ATTR_ORG: :width 300
+[[file:smarts.png]]
+:END:
+
+Here is the code to generate the full figure. Note we use the output of savefig as the filename. That lets us save some intermediate variable construction. That seems nice.
+
+#+name: fig-1
+#+BEGIN_SRC python
+import pycse.orgmode as org
+import matplotlib.pyplot as plt
+plt.xkcd()
+
+import numpy as np
+import matplotlib.mlab as mlab
+import matplotlib.pyplot as plt
+
+# example data
+mu = 100 # mean of distribution
+sigma = 15 # standard deviation of distribution
+x = mu + sigma * np.random.randn(10000)
+
+num_bins = 50
+# the histogram of the data
+n, bins, patches = plt.hist(x, num_bins, normed=1, facecolor='green', alpha=0.5)
+# add a 'best fit' line
+y = mlab.normpdf(bins, mu, sigma)
+plt.plot(bins, y, 'r--')
+plt.xlabel('Smarts')
+plt.ylabel('Probability')
+plt.title(r'Histogram of IQ: $\mu=100$, $\sigma=15$')
+
+# Tweak spacing to prevent clipping of ylabel
+plt.subplots_adjust(left=0.15)
+
+org.figure(plt.savefig('smarts.png'),
+           label='fig:1',
+           caption='An italicized /histogram/ of {} points'.format(len(x)),
+           attributes=[('LATEX', ':width 3in'),
+                       ('HTML', ':width 300'),
+                       ('ORG', ':width 300')])
+#+END_SRC
+
+That is pretty awesome. You cannot put figures in more than one place like this, and you might not want to mix results with this, but it is still pretty awesome!
+
+** An example table.
+Finally, I have wanted the same thing for tables. Here is the resulting table.
+
+#+RESULTS: table-1
+:RESULTS:
+#+TBLNAME: table-1
+#+CAPTION: Dependence of the energy on the encut value.
+|   <5> |        <11> |
+| ENCUT | Energy (eV) |
+|-------+-------------|
+|   100 |      11.233 |
+|   200 |      21.233 |
+|   300 |      31.233 |
+|   400 |      41.233 |
+|   500 |      51.233 |
+:END:
+
+Here is the code block that generated it.
+
+#+name: table-1
+#+BEGIN_SRC python :results org drawer
+import pycse.orgmode as org
+
+data = [['<5>', '<11>'],  # Column aligners
+        ['ENCUT', 'Energy (eV)'],
+        None]
+
+for encut in [100, 200, 300, 400, 500]:
+    data += [[encut, 1.233 + 0.1 * encut]]
+
+org.table(data,
+          name='table-1',
+          caption='Dependence of the energy on the encut value.')
+
+#+END_SRC
+
+
+The only obvious improvement on this is similar to getting images to redisplay after running a code block, it might be nice to reformat tables to make sure they are pretty looking. Otherwise this is good.
+
+
+Let's go ahead and try that. Here we narrow down to the results, and align the tables in that region.
+
+#+BEGIN_SRC emacs-lisp
+(defun org-align-visible-tables ()
+  "Align all the tables in the results."
+  (let ((location (org-babel-where-is-src-block-result)) start)
+    (when location
+      (setq start (- location 1))
+      (save-restriction
+	(save-excursion
+	  (goto-char location) (forward-line 1)
+	  (narrow-to-region start (org-babel-result-end))
+	  (goto-char (point-min))
+	  (while (re-search-forward org-table-any-line-regexp nil t)
+	    (save-excursion (org-table-align))
+	    (or (looking-at org-table-line-regexp)
+		(forward-char 1)))
+	  (re-search-forward org-table-any-border-regexp nil 1))))))
+
+(add-hook 'org-babel-after-execute-hook
+	  (lambda () (org-align-visible-tables)))
+#+END_SRC
+#+RESULTS:
+| lambda | nil | (org-align-visible-tables) |
+| lambda | nil | (org-refresh-images)       |
+
+And that seems to solve that problem now too!
+
+** Miscellaneous outputs
+Here are some examples of getting org-output from the pycse.orgmode module.
+
+#+BEGIN_SRC python
+import pycse.orgmode as org
+
+org.verbatim('One liner verbatim')
+
+org.verbatim('''multiline
+output
+   with indentation
+       at a few levels
+that is verbatim.''')
+
+org.fixed_width('your basic result')
+
+org.fixed_width('''your
+  basic
+    result
+on a few lines.''')
+
+# A latex block
+org.latex('\(e^{i\pi} - 1 = 0\)')
+
+org.org(r'The equation is \(E = h \nu\).')
+
+#+END_SRC
+#+RESULTS:
+:RESULTS:
+=One liner=
+
+#+BEGIN_EXAMPLE
+multiline
+output
+   with indentation
+       at a few levels
+that is verbatim.
+#+END_EXAMPLE
+
+: your basic result
+: your
+:   basic
+:     result
+: on a few lines.
+
+#+BEGIN_LATEX
+\(e^{i\pi} - 1 = 0\)
+#+END_LATEX
+
+The equation is \(E = h \nu\).
+:END:
+
+** Summary
+This looks promising to me. There are a few things to get used to, like always having org output, and some minor differences in making figures. On the whole this looks like a big improvement though! I look forward to working with it more.
+* error catching
+#+BEGIN_SRC emacs-lisp
+(defun pydoc-user-modules ()
+  "Return a list of strings for user-installed modules."
+  (mapcar
+   'symbol-name
+   (read
+    (shell-command-to-string
+     "python -c \"import pipp; mods = sorted([i.key for i in pip.get_installed_distributions()]); print('({})'.format(' '.join(['\"{}\"'.format(x) for x in mods])))  \""))))
+
+(condition-case err
+    (pydoc-user-modules)
+  (wrong-type-argument
+   (princ (format "Error caught: %s" err))
+   '()))
+#+END_SRC
+
+#+RESULTS:
+| t |
+
+#+BEGIN_SRC emacs-lisp
+(setq baz 34)
+
+(condition-case err
+    (if (eq baz 35)
+        t
+      ;; This is a call to the function error.
+      (error "Rats!  The variable %s was %s, not 35" 'baz baz))
+  ;; This is the handler; it is not a form.
+  (error (princ (format "The error was: %s" err))
+         2))
+#+END_SRC
+
+#+RESULTS:
+: 2
+
+* links in src
+
+in comments they do not export.
+#+BEGIN_SRC emacs-lisp
+(princ "Hello World!")  ;; [[http://stackoverflow.com/blabla1234][Got this from SO.]]
+(princ "Hello World!")  ;; <a href="http://stackoverflow.com/blabla1234">
+#+END_SRC
+
+#+RESULTS:
+: Hello World!
+
+* python 2
+#+BEGIN_SRC emacs-lisp
+(defun org-babel-execute:python2 (body params)
+  (let ((org-babel-python-command "/Users/jkitchin/Library/Enthought/Canopy_64bit/User/bin/python2"))
+    (org-babel-execute:python body params)))
+
+#+END_SRC
+
+
+#+BEGIN_SRC python2
+print 'Hello'
+#+END_SRC
+#+RESULTS:
+: Hello
+
+
+* Getting tooltips on Vasp keywords
+  :PROPERTIES:
+  :categories: python,vasp,lisp,emacs
+  :END:
+
+We do a lot of molecular simulations, and I do a fair bit of teaching people how to do molecular simulations, particularly using Vasp for density functional theory calculations. One of the limitations I have come across is the disconnect between documentation and simulations. The documentation for Vasp is on webpages, and not accessible from Python, or Emacs. This makes it also difficult to validate parameters, or easily access what the parameters do, and what values they can take. =jasp= has been a workhorse for us for a while, but it is time to consider a rewrite (you can see the work in progress here: https://github.com/jkitchin/vasp).  I have a few goals for this:
+
+1. Use the ase Calculator interface with native support of ase-db
+2. Make functional programming possible, and especially to enable hy for molecular simulation
+3. Simplify the interface and maintenance - no list of keywords
+4. Add validation and documentation to the keywords
+
+I am going to talk about the 4th point here. I started a vasp.validate module. It has functions and docstrings for many keywords. It has a function called keywords that returns ... wait for it ... a list of keywords defined in the module, in a form easy for Lisp to digest. Here it is.
+
+#+BEGIN_SRC python
+from vasp.validate import keywords
+print keywords()
+#+END_SRC
+
+#+RESULTS:
+: ("ediffg" "encut" "ibrion" "isif" "ismear" "ispin" "nsw" "prec" "sigma" "xc")
+
+That function will keep the list up to date based on what is defined in the module. We can access the docstring of each keyword like this.
+
+#+BEGIN_SRC python
+from vasp.validate import ibrion
+print(ibrion.__doc__)
+#+END_SRC
+
+#+RESULTS:
+: IBRION determines how the ions are updated and moved.
+
+We can get these functionally into Emacs like this:
+
+#+BEGIN_SRC emacs-lisp
+(defun vasp-keywords ()
+  "Returns a list of vasp keywords."
+  (read
+   (shell-command-to-string
+    "python -c \"from vasp.validate import keywords; print keywords()\"")))
+
+(vasp-keywords)
+#+END_SRC
+
+#+RESULTS:
+| ediffg | encut | ibrion | isif | ismear | ispin | nsw | prec | sigma | xc |
+
+And we can get to the docstrings in Emacs too.
+
+#+BEGIN_SRC emacs-lisp
+(defun vaspdoc (keyword)
+  "Get docstring for KEYWORD."
+  (shell-command-to-string
+   (format
+    "python -c \"from vasp.validate import %s; print(%s.__doc__)\""
+    keyword keyword)))
+
+(vaspdoc "ibrion")
+#+END_SRC
+#+RESULTS:
+: IBRION determines how the ions are updated and moved.
+
+We can put these together with font-lock to provide tooltips. First, here is a regexp that will find the words we want.
+
+#+BEGIN_SRC emacs-lisp
+(defvar *vasp-keywords-regex*
+  (regexp-opt (vasp-keywords))
+  "Regexp for vasp keywords.")
+#+END_SRC
+#+RESULTS:
+: *vasp-keywords-regex*
+
+Now we use this recipe to provide tooltips and clickable text for the keywords we know how to validate and have documentation for. We modify the docstring a bit, so only the first line is the tooltip, and clicking on the keyword opens a pydoc window of the full docstring.
+
+#+BEGIN_SRC emacs-lisp
+(defun vasp-tooltip-1 (window object position)
+  "Get the one line tooltip for the keyword under point."
+  (save-excursion
+    (goto-char position)
+    (car (s-split "\n" (vaspdoc (thing-at-point 'word))))))
+
+(defun next-vasp-keyword (&optional limit)
+  "Find vasp keywords."
+  (while (re-search-forward *vasp-keywords-regex* limit t)
+    (flyspell-delete-region-overlays (match-beginning 0)
+				     (match-end 0))
+    (let ((map (make-sparse-keymap)))
+      (define-key map [mouse-1]
+	(lambda ()
+	  (interactive)
+	  (pydoc (format "vasp.validate.%s" (thing-at-point 'word)))))
+      (add-text-properties
+       (match-beginning 0)
+       (match-end 0)
+       (list
+	'help-echo 'vasp-tooltip
+	'local-map map
+	'face 'font-lock-keyword-face
+	'mouse-face 'highlight)))))
+
+(font-lock-add-keywords
+ nil
+ `((next-vasp-keyword 0 font-lock-keyword-face)) t)
+#+END_SRC
+
+
+Here is a list of the currently defined keywords to test out the idea.
+
+ediffg encut ibrion isif ismear ispin nsw prec sigma xc
+
+Here it is in Python, to get a sense for how it is going to look. cite:2006-acs-style-guide,2007-basic-resear-needs,2010-reprod-resear,2011-mater-genom
+
+#+BEGIN_SRC python
+from vasp import Vasp
+
+calc = Vasp('some-dir',
+            encut=350,
+            xc='pbe',
+            sigma=0.2,
+            ibrion=2)
+#+END_SRC
+
+This looks like it will be great. Now to integrate the validation code into vasp.py and give it a shot!
+
+#+BEGIN_SRC hy
+(import vasp [Vasp])
+
+(setv calc (Vasp "some-dir" :encut 450))
+#+END_SRC
+
+* DONE When in python do as Pythonistas unless...
+  CLOSED: [2016-05-06 Fri 19:46]
   :PROPERTIES:
   :categories: python
   :date:     2016/05/06 19:46:51
@@ -245,7 +786,7 @@ print v.newfunc()
 
 
 
-* GOOD Subclassing ase.calculators.vasp
+* Subclassing ase.calculators.vasp
 this lets me add some kwargs to Vasp. Now if I can combine this with the metaclass and restart, we might be good!
 
 #+BEGIN_SRC python
@@ -818,87 +1359,6 @@ post-command-hook
 
 
 
-* and macro/dfn
-
-#+BEGIN_SRC hy
-(defmacro ∧ [&rest args] `(and ~@args))
-
-(defn ∧1 [&rest args] (and ~@args))
-
-(print (∧1 1 1 0))
-
-#+END_SRC
-
-#+RESULTS:
-#+begin_example
-Traceback (most recent call last):
-  File "/Users/jkitchin/Library/Enthought/Canopy_64bit/User/bin/hy", line 9, in <module>
-    load_entry_point('hy', 'console_scripts', 'hy')()
-  File "/Users/jkitchin/tmp/hyenv/hy/hy/cmdline.py", line 341, in hy_main
-    sys.exit(cmdline_handler("hy", sys.argv))
-  File "/Users/jkitchin/tmp/hyenv/hy/hy/cmdline.py", line 329, in cmdline_handler
-    return run_file(options.args[0])
-  File "/Users/jkitchin/tmp/hyenv/hy/hy/cmdline.py", line 211, in run_file
-    pretty_error(import_file_to_module, "__main__", filename)
-  File "/Users/jkitchin/tmp/hyenv/hy/hy/cmdline.py", line 184, in pretty_error
-    return func(*args, **kw)
-  File "/Users/jkitchin/tmp/hyenv/hy/hy/importer.py", line 79, in import_file_to_module
-    eval(ast_compile(_ast, fpath, "exec"), mod.__dict__)
-  File "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/hy-3882W6U", line 5, in <module>
-    (print (∧1 1 1 0))
-  File "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/hy-3882W6U", line 3, in hy_1_kco
-    (defn ∧1 [&rest args] (and ~@args))
-NameError: global name 'unquote_splice' is not defined
-#+end_example
-
-#+BEGIN_SRC hy
-(setv ∧ (lambda [&rest args] (eval `(and ~@args))))
-
-(print (∧ 0 1))
-
-
-
-#+END_SRC
-#+RESULTS:
-#+begin_example
-Traceback (most recent call last):
-  File "/Users/jkitchin/Library/Enthought/Canopy_64bit/User/bin/hy", line 9, in <module>
-    load_entry_point('hy', 'console_scripts', 'hy')()
-  File "/Users/jkitchin/tmp/hyenv/hy/hy/cmdline.py", line 341, in hy_main
-    sys.exit(cmdline_handler("hy", sys.argv))
-  File "/Users/jkitchin/tmp/hyenv/hy/hy/cmdline.py", line 329, in cmdline_handler
-    return run_file(options.args[0])
-  File "/Users/jkitchin/tmp/hyenv/hy/hy/cmdline.py", line 211, in run_file
-    pretty_error(import_file_to_module, "__main__", filename)
-  File "/Users/jkitchin/tmp/hyenv/hy/hy/cmdline.py", line 184, in pretty_error
-    return func(*args, **kw)
-  File "/Users/jkitchin/tmp/hyenv/hy/hy/importer.py", line 79, in import_file_to_module
-    eval(ast_compile(_ast, fpath, "exec"), mod.__dict__)
-  File "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/hy-3882Xtz", line 3, in <module>
-    (print (∧ 0 1))
-  File "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/hy-3882Xtz", line 1, in <lambda>
-    (setv ∧ (lambda [&rest args] (eval `(and ~@args))))
-  File "/Users/jkitchin/tmp/hyenv/hy/hy/importer.py", line 116, in hy_eval
-    _ast, expr = hy_compile(hytree, module_name, get_expr=True)
-  File "/Users/jkitchin/tmp/hyenv/hy/hy/compiler.py", line 2595, in hy_compile
-    result = compiler.compile(tree)
-  File "/Users/jkitchin/tmp/hyenv/hy/hy/compiler.py", line 433, in compile
-    ret = self.compile_atom(_type, tree)
-  File "/Users/jkitchin/tmp/hyenv/hy/hy/compiler.py", line 425, in compile_atom
-    ret = _compile_table[atom_type](self, atom)
-  File "/Users/jkitchin/tmp/hyenv/hy/hy/compiler.py", line 2006, in compile_expression
-    ret = self.compile_atom(fn, expression)
-  File "/Users/jkitchin/tmp/hyenv/hy/hy/compiler.py", line 425, in compile_atom
-    ret = _compile_table[atom_type](self, atom)
-  File "/Users/jkitchin/tmp/hyenv/hy/hy/compiler.py", line 1759, in compile_logical_or_and_and_operator
-    values = list(map(self.compile, expression))
-  File "/Users/jkitchin/tmp/hyenv/hy/hy/compiler.py", line 447, in compile
-    raise HyCompileError(Exception("Unknown type: `%s'" % _type))
-hy.errors.HyCompileError: Internal Compiler Bug 😱
-⤷ Exception: Unknown type: `<type 'long'>'
-Compilation traceback:
-No traceback available. 😟
-#+end_example
 
 
 * pdfview
@@ -2426,7 +2886,7 @@ H          3.11230        5.15092        0.84340
 H          3.11643        5.14660       -0.93127
 #+end_molecule
 
-* Export table from src-block
+* Export table from src-block to csv
 
 #+name: mytable
 | a | b |
@@ -2450,23 +2910,6 @@ cat mytable.csv
 : a,b
 : 1,2
 : 3,4
-
-
-* element cost
-
-#+BEGIN_SRC python
-import numpy as np
-
-cost = np.array([5.0, 10.0])
-N1 = np.array([1, 2])
-N2 = 3 * N1
-
-print((cost * N1).sum() / N1.sum())
-print((cost * N2).sum() / N2.sum())
-#+END_SRC
-#+RESULTS:
-: 8.33333333333
-: 8.33333333333
 
 
 * DONE A molecule link for org-mode
@@ -14770,25 +15213,25 @@ return ([['Name', 'h-index', 'aif', '#first', '#last', 'N', 'cites', 'created'],
 #+END_SRC
 
 #+RESULTS:
-| Name                                  | h-index |  aif | #first | #last |   N | cites | created      |
-|---------------------------------------+---------+------+--------+-------+-----+-------+--------------|
-| Lars C. Grabow                        |      17 | 15.7 |     10 |     2 |  32 |  1084 | (2005 11 28) |
-| John R. Kitchin                       |      18 | 19.7 |     10 |    35 |  56 |  3428 | (2005 12 3)  |
-| Eranda Nikolla                        |      10 | 36.3 |      7 |     6 |  19 |   696 | (2006 9 14)  |
-| Nathaniel Aaron Deskins               |      14 | 14.6 |      8 |     2 |  29 |   853 | (2005 11 28) |
-| Andreas Heyden                        |      15 | 12.0 |      6 |    26 |  46 |  2349 | (2014 7 8)   |
-| Cynthia Lo                            |       8 |  5.9 |      0 |    16 |  24 |   216 | (2011 6 5)   |
-| Rachel B. Getman                      |       9 | 75.8 |      7 |     3 |  14 |   719 | (2007 3 18)  |
-| Elizabeth J. Biddinger                |      12 | 12.4 |      6 |     2 |  21 |   639 | (2006 10 22) |
-| Jesse Q. Bond                         |      11 | 52.0 |      4 |     3 |  14 |  1249 | (2010 5 21)  |
-| Líney Árnadõttir |       6 |  5.0 |      3 |     0 |  12 |   119 | (2005 12 1)  |
-| Heather J. Kulik                      |      10 | 12.3 |     13 |     3 |  18 |   344 | (2006 9 14)  |
-| Bihter Padak                          |       3 |  0.0 |      1 |     1 |   3 |    93 | (2006 12 27) |
-| Yuriy Román-Leshkov            |      17 | 32.6 |      7 |    26 |  40 |  3265 | (2006 8 9)   |
-| Michael J. Janik                      |      24 |  9.3 |     11 |    33 |  88 |  1729 | (2005 12 4)  |
-| Jeffrey P. Greeley                    |      36 | 23.6 |     14 |    22 | 108 |  5473 | (2014 7 26)  |
-| Suljo Linic                           |      29 | 33.1 |     13 |    28 |  47 |  3246 | (2005 11 28) |
-| Rohan Mishra                          |       6 |  7.4 |      6 |     0 |  20 |   106 | (2011 2 10)  |
+| Name                    | h-index |  aif | #first | #last |   N | cites | created      |
+|-------------------------+---------+------+--------+-------+-----+-------+--------------|
+| Lars C. Grabow          |      17 | 15.7 |     10 |     2 |  32 |  1084 | (2005 11 28) |
+| John R. Kitchin         |      18 | 19.7 |     10 |    35 |  56 |  3428 | (2005 12 3)  |
+| Eranda Nikolla          |      10 | 36.3 |      7 |     6 |  19 |   696 | (2006 9 14)  |
+| Nathaniel Aaron Deskins |      14 | 14.6 |      8 |     2 |  29 |   853 | (2005 11 28) |
+| Andreas Heyden          |      15 | 12.0 |      6 |    26 |  46 |  2349 | (2014 7 8)   |
+| Cynthia Lo              |       8 |  5.9 |      0 |    16 |  24 |   216 | (2011 6 5)   |
+| Rachel B. Getman        |       9 | 75.8 |      7 |     3 |  14 |   719 | (2007 3 18)  |
+| Elizabeth J. Biddinger  |      12 | 12.4 |      6 |     2 |  21 |   639 | (2006 10 22) |
+| Jesse Q. Bond           |      11 | 52.0 |      4 |     3 |  14 |  1249 | (2010 5 21)  |
+| Líney Árnadõttir        |       6 |  5.0 |      3 |     0 |  12 |   119 | (2005 12 1)  |
+| Heather J. Kulik        |      10 | 12.3 |     13 |     3 |  18 |   344 | (2006 9 14)  |
+| Bihter Padak            |       3 |  0.0 |      1 |     1 |   3 |    93 | (2006 12 27) |
+| Yuriy Román-Leshkov     |      17 | 32.6 |      7 |    26 |  40 |  3265 | (2006 8 9)   |
+| Michael J. Janik        |      24 |  9.3 |     11 |    33 |  88 |  1729 | (2005 12 4)  |
+| Jeffrey P. Greeley      |      36 | 23.6 |     14 |    22 | 108 |  5473 | (2014 7 26)  |
+| Suljo Linic             |      29 | 33.1 |     13 |    28 |  47 |  3246 | (2005 11 28) |
+| Rohan Mishra            |       6 |  7.4 |      6 |     0 |  20 |   106 | (2011 2 10)  |
 
 
 None of Cynthia Lo's first author papers are showing up.
