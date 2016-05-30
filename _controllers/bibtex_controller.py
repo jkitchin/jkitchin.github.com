@@ -4,8 +4,8 @@ import os
 from blogofile.cache import bf
 from bibtexparser.bparser import BibTexParser
 
-reload(sys)
-sys.setdefaultencoding('utf8')
+#reload(sys)
+#sys.setdefaultencoding('utf8')
 
 config = {"name": "Publication gallery",
           "description": "Generates html pages from bibtex entries."}
@@ -116,7 +116,7 @@ def read_bibtex_entries():
             entries += bp.get_entry_list()
 
     return sorted(entries, reverse=True,
-                  key=lambda entry: entry.get('year', 0))
+                  key=lambda entry: int(entry.get('year', 0)))
 
 
 def write_pages(bibtex_entries):

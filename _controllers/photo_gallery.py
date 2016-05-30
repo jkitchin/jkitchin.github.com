@@ -13,7 +13,7 @@ photos_dir = os.path.join("img")
 
 def run():
     photos = read_photos()
-    print '*****************************  photos = ', photos
+    print('*****************************  photos = ', photos)
     write_pages(photos)
     write_photo_index(photos)
 
@@ -27,7 +27,7 @@ def read_photos():
 
 def write_pages(photos):
     for photo in photos:
-        print '######################### {}'.format(photo)
+        print('######################### {}'.format(photo))
         bf.template.materialize_template("photo.mako",
                                          (photos_dir, photo + ".html"),
                                          {"photo": photo})
