@@ -84,6 +84,217 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Integrating-swish-e-and-Emacs"></div>
+      <h2 class="blog_post_title"><a href="/blog/2015/06/25/Integrating-swish-e-and-Emacs/" rel="bookmark" title="Permanent Link to Integrating swish-e and Emacs">Integrating swish-e and Emacs</a></h2>
+      <p><small><span class="blog_post_date">Posted June 25, 2015 at 10:37 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2015/06/25/Integrating-swish-e-and-Emacs#disqus_thread">View Comments</a>
+      <p><small><span class="blog_post_date">Updated June 25, 2015 at 11:10 AM</span>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+
+<p>
+<a href="http://swish-e.org">swish-e</a> is a software package that indexes files on your computer, and then allows you to search the index. Spotlight on my Mac is not working too well (sometimes not at all), and I want some more flexibility so today we try getting swish-e up and running and integrated with Emacs. I don't know that swish-e is the best tool for this available, but it has been on my radar a <i>long</i> time (probably since 2003 from this <a href="http://joshr.com/src/docs/HowToIndexAnything.pdf">article</a> ), and it was easy to setup and use.
+</p>
+
+<p>
+I use homebrew, so installation was this simple:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-sh">brew install swish-e
+</pre>
+</div>
+
+<p>
+To test things out, I will only index org-files. I have these all over the place, and they are not all in my org-mode agenda. So, finding them quickly would be awesome.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-text"># Example configuration file
+
+# Tell Swish-e what to directories to index
+IndexDir /Users/jkitchin/Dropbox
+IndexDir "/Users/jkitchin/Box Sync"
+IndexDir /Users/jkitchin/blogofile-jkitchin.github.com
+
+# where to save the index
+IndexFile /Users/jkitchin/.swish-e/index.swish-e
+
+# What to index
+IndexOnly .org
+
+# Tell Swish-e that .txt files are to use the text parser.
+IndexContents TXT* .org
+
+# Otherwise, use the HTML parser
+DefaultContents HTML*
+
+# Ask libxml2 to report any parsing errors and warnings or
+# any UTF-8 to 8859-1 conversion errors
+ParserWarnLevel 9
+</pre>
+</div>
+
+<p>
+Now, we create our index.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-sh">swish-e -c ~/.swish-e/swish.conf
+</pre>
+</div>
+
+<pre class="example">
+Indexing Data Source: "File-System"
+Indexing "/Users/jkitchin/Dropbox"
+Indexing "/Users/jkitchin/Box Sync"
+Indexing "/Users/jkitchin/blogofile-jkitchin.github.com"
+Removing very common words...
+no words removed.
+Writing main index...
+Sorting words ...
+Sorting 130,109 words alphabetically
+Writing header ...
+Writing index entries ...
+  Writing word text: ...
+  Writing word text:  10%
+  Writing word text:  20%
+  Writing word text:  30%
+  Writing word text:  40%
+  Writing word text:  50%
+  Writing word text:  60%
+  Writing word text:  70%
+  Writing word text:  80%
+  Writing word text:  90%
+  Writing word text: 100%
+  Writing word text: Complete
+  Writing word hash: ...
+  Writing word hash:  10%
+  Writing word hash:  20%
+  Writing word hash:  30%
+  Writing word hash:  40%
+  Writing word hash:  50%
+  Writing word hash:  60%
+  Writing word hash:  70%
+  Writing word hash:  80%
+  Writing word hash:  90%
+  Writing word hash: 100%
+  Writing word hash: Complete
+  Writing word data: ...
+  Writing word data:   9%
+  Writing word data:  19%
+  Writing word data:  29%
+  Writing word data:  39%
+  Writing word data:  49%
+  Writing word data:  59%
+  Writing word data:  69%
+  Writing word data:  79%
+  Writing word data:  89%
+  Writing word data:  99%
+  Writing word data: Complete
+130,109 unique words indexed.
+Sorting property: swishdocpath                            
+Sorting property: swishtitle                              
+Sorting property: swishdocsize                            
+Sorting property: swishlastmodified                       
+4 properties sorted.
+3,208 files indexed.  54,104,974 total bytes.  8,038,594 total words.
+Elapsed time: 00:00:16 CPU time: 00:00:13
+Indexing done!
+</pre>
+
+
+<p>
+Now an example search. I have been looking into the Energy frontier research centers, and I want to find my notes on it. Here is a little query. I use a special output format to keep things simple for the parsing later, just the rank and path, separated by a tab.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-sh">swish-e -f ~/.swish-e/index.swish-e -x <span style="color: #008000;">'%r\t%p\n'</span> -w efrc
+</pre>
+</div>
+<pre class="example">
+# SWISH format: 2.4.7
+# Search words: efrc
+# Removed stopwords:
+# Number of hits: 2
+# Search time: 0.000 seconds
+# Run time: 0.008 seconds
+1000	/Users/jkitchin/Dropbox/org-mode/journal.org
+471	/Users/jkitchin/Dropbox/org-mode/proposals.org
+.
+</pre>
+
+<p>
+Now, for the integration with Emacs. We just get that output in a string, split it, and get the parts we want.  I think I will use helm to provide a selection buffer to these results. We need a list of cons cells (string . candidate). Then we write an interactive helm function. We provide two sources. One for the initial query, and another to start a new search, in case you don't find what you want.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">helm-swish-e-candidates</span> (query)
+  <span style="color: #036A07;">"Generate a list of cons cells (swish-e result . path)."</span>
+  (<span style="color: #0000FF;">let*</span> ((result (shell-command-to-string
+                  (format <span style="color: #008000;">"swish-e -f ~/.swish-e/index.swish-e -x \"%%r\t%%p\n\" -w %s"</span>
+                          (shell-quote-argument query))))
+         (lines (s-split <span style="color: #008000;">"\n"</span> result t))
+         (candidates '()))
+    (<span style="color: #0000FF;">loop</span> for line in lines
+          unless (<span style="color: #0000FF;">or</span>  (s-starts-with? <span style="color: #008000;">"#"</span> line)
+                      (s-starts-with? <span style="color: #008000;">"."</span> line))
+          collect (cons line (cdr (s-split <span style="color: #008000;">"\t"</span> line))))))
+
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">helm-swish-e</span> (query)
+  <span style="color: #036A07;">"Run a swish-e query and provide helm selection buffer of the results."</span>
+  (<span style="color: #0000FF;">interactive</span> <span style="color: #008000;">"sQuery: "</span>)
+  (helm <span style="color: #006FE0;">:sources</span> `(((name . ,(format <span style="color: #008000;">"swish-e: %s"</span> query))
+                    (candidates . ,(helm-swish-e-candidates query))
+                    (action . ((<span style="color: #008000;">"open"</span> . (<span style="color: #0000FF;">lambda</span> (f)
+                                           (find-file (car f)))))))
+                   ((name . <span style="color: #008000;">"New search"</span>)
+                    (dummy)
+                    (action . ((<span style="color: #008000;">"search"</span> . (<span style="color: #0000FF;">lambda</span> (f)
+                                             (helm-swish-e helm-pattern)))))))))
+</pre>
+</div>
+
+<pre class="example">
+helm-swish-e
+</pre>
+
+<p>
+Now I can run M-x helm-swish-e and enter "efrc AND computing infrastructure" to find org files containing those words, then press enter to find the file. Nice and easy. I have not tested the query syntax very fully, but so far it is working fine!
+</p>
+<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/06/25/Integrating-swish-e-and-Emacs.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/06/25/Integrating-swish-e-and-Emacs#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Conditional-hydra-menus"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/06/24/Conditional-hydra-menus/" rel="bookmark" title="Permanent Link to Conditional hydra menus">Conditional hydra menus</a></h2>
       <p><small><span class="blog_post_date">Posted June 24, 2015 at 07:31 AM</span> | categories:
@@ -477,7 +688,7 @@ That doesn't look too bad. Now, anytime I open an org-mode file with an email ad
       <div id="ox-pandoc-org-mode-+-org-ref-to-docx-with-bibliographies"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/06/11/ox-pandoc-org-mode-+-org-ref-to-docx-with-bibliographies/" rel="bookmark" title="Permanent Link to ox-pandoc - org-mode + org-ref to docx with bibliographies">ox-pandoc - org-mode + org-ref to docx with bibliographies</a></h2>
       <p><small><span class="blog_post_date">Posted June 11, 2015 at 12:58 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/pandoc/'>pandoc</a>, <a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/docx/'>docx</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/docx/'>docx</a>, <a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/pandoc/'>pandoc</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2015/06/11/ox-pandoc-org-mode-+-org-ref-to-docx-with-bibliographies#disqus_thread">View Comments</a>
       <p><small><span class="blog_post_date">Updated June 12, 2015 at 11:19 AM</span>
       </small></p>
@@ -600,145 +811,6 @@ Here is the word document that results from this file: <a href="/media/2015-06-1
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/06/11/ox-pandoc-org-mode-+-org-ref-to-docx-with-bibliographies#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="A-python-version-of-the-s-exp-bibtex-entry"></div>
-      <h2 class="blog_post_title"><a href="/blog/2015/06/11/A-python-version-of-the-s-exp-bibtex-entry/" rel="bookmark" title="Permanent Link to A python version of the s-exp bibtex entry">A python version of the s-exp bibtex entry</a></h2>
-      <p><small><span class="blog_post_date">Posted June 11, 2015 at 10:02 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/bibtex/'>bibtex</a>, <a href='/blog/category/ref/'>ref</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2015/06/11/A-python-version-of-the-s-exp-bibtex-entry#disqus_thread">View Comments</a>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-
-<p>
-In this <a href="http://kitchingroup.cheme.cmu.edu/blog/2015/06/10/A-sexp-version-of-a-bibtex-entry/">post</a> we explored representing a bibtex entry in lisp s-exp notation, and showed interesting things that enables. Here, I explore something similar in Python. The s-exp notation in Python is really more like tuples. It looks almost identical, except we need a lot of commas for the Python syntax. One significant difference in Python is we need to define the functions in advance because otherwise the function symbols are undefined. Similar to lisp, we can define the field functions at run-time in a loop. We have to use an eval statement, which some Pythonistas find distasteful, but it is not that different to me than what we did in lisp.
-</p>
-
-<p>
-The syntax for "executing" the data structure is quite different than in lisp, because this data is <i>not</i> code in Python. Instead, we have to deconstruct the data, knowing that the function is the first object, and it takes the remaining arguments in the tuple.
-</p>
-
-<p>
-Here is the proof of concept:
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #0000FF;">def</span> <span style="color: #006699;">article</span>(bibtex_key, *args):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #008000;">"Return the bibtex formatted entry"</span>
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> <span style="color: #008000;">',\n'</span>.join([<span style="color: #008000;">'@article{{{0}}}'</span>.<span style="color: #006FE0;">format</span>(bibtex_key)] +[arg[0](arg[1]) <span style="color: #0000FF;">for</span> arg <span style="color: #0000FF;">in</span> args[0]] + [<span style="color: #008000;">'}'</span>])
-
-<span style="color: #BA36A5;">fields</span> = (<span style="color: #008000;">"author"</span>, <span style="color: #008000;">"title"</span>, <span style="color: #008000;">"journal"</span>, <span style="color: #008000;">"pages"</span>, <span style="color: #008000;">"number"</span>, <span style="color: #008000;">"doi"</span>, <span style="color: #008000;">"url"</span>, <span style="color: #008000;">"eprint"</span>, <span style="color: #008000;">"year"</span>)
-
-<span style="color: #0000FF;">for</span> f <span style="color: #0000FF;">in</span> fields:
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #006FE0;">locals</span>()[f] = <span style="color: #006FE0;">eval</span> (<span style="color: #008000;">'lambda x: "  {0} = {{{1}}}".format("'</span> + f + <span style="color: #008000;">'", x)'</span>)
-
-<span style="color: #BA36A5;">entry</span> = (article, <span style="color: #008000;">"hallenbeck-2013-effec-o2"</span>,
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>    (author, <span style="color: #008000;">"Hallenbeck, Alexander P. and Kitchin, John R."</span>),
-         (title, <span style="color: #008000;">"Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a primary-amine based polymeric \ce{CO_2} sorbent"</span>),
-         (journal, <span style="color: #008000;">"Industrial \&amp; Engineering Chemistry Research"</span>),
-         (pages, <span style="color: #008000;">"10788-10794"</span>),
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>    (year, 2013),
-         (number, 31),
-         (doi, <span style="color: #008000;">"10.1021/ie400582a"</span>),
-         (url, <span style="color: #008000;">"http://pubs.acs.org/doi/abs/10.1021/ie400582a"</span>),
-         (eprint, <span style="color: #008000;">"http://pubs.acs.org/doi/pdf/10.1021/ie400582a"</span>))
-
-
-<span style="color: #0000FF;">print</span> entry[0](entry[1], entry[2:])
-</pre>
-</div>
-
-<pre class="example">
-@article{hallenbeck-2013-effec-o2},
-  author = {Hallenbeck, Alexander P. and Kitchin, John R.},
-  title = {Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a primary-amine based polymeric \ce{CO_2} sorbent},
-  journal = {Industrial \&amp; Engineering Chemistry Research},
-  pages = {10788-10794},
-  year = {2013},
-  number = {31},
-  doi = {10.1021/ie400582a},
-  url = {http://pubs.acs.org/doi/abs/10.1021/ie400582a},
-  eprint = {http://pubs.acs.org/doi/pdf/10.1021/ie400582a},
-}
-</pre>
-
-<p>
-We can still get specific fields out. Since we used a tuple here, it is not quite as nice as using a dictionary, but it is neither too bad, and it can be wrapped in a reasonably convenient function.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #0000FF;">def</span> <span style="color: #006699;">article</span>(bibtex_key, *args):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #008000;">"Return the bibtex formatted entry"</span>
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> <span style="color: #008000;">',\n'</span>.join([<span style="color: #008000;">'@article{{{0}}}'</span>.<span style="color: #006FE0;">format</span>(bibtex_key)] +[arg[0](arg[1]) <span style="color: #0000FF;">for</span> arg <span style="color: #0000FF;">in</span> args[0]] + [<span style="color: #008000;">'}'</span>])
-
-<span style="color: #BA36A5;">fields</span> = (<span style="color: #008000;">"author"</span>, <span style="color: #008000;">"title"</span>, <span style="color: #008000;">"journal"</span>, <span style="color: #008000;">"pages"</span>, <span style="color: #008000;">"number"</span>, <span style="color: #008000;">"doi"</span>, <span style="color: #008000;">"url"</span>, <span style="color: #008000;">"eprint"</span>, <span style="color: #008000;">"year"</span>)
-
-<span style="color: #0000FF;">for</span> f <span style="color: #0000FF;">in</span> fields:
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #006FE0;">locals</span>()[f] = <span style="color: #006FE0;">eval</span> (<span style="color: #008000;">'lambda x: "  {0} = {{{1}}}".format("'</span> + f + <span style="color: #008000;">'", x)'</span>)
-
-<span style="color: #BA36A5;">entry</span> = (article, <span style="color: #008000;">"hallenbeck-2013-effec-o2"</span>,
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>    (author, <span style="color: #008000;">"Hallenbeck, Alexander P. and Kitchin, John R."</span>),
-         (title, <span style="color: #008000;">"Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a primary-amine based polymeric \ce{CO_2} sorbent"</span>),
-         (journal, <span style="color: #008000;">"Industrial \&amp; Engineering Chemistry Research"</span>),
-         (pages, <span style="color: #008000;">"10788-10794"</span>),
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>    (year, 2013),
-         (number, 31),
-         (doi, <span style="color: #008000;">"10.1021/ie400582a"</span>),
-         (url, <span style="color: #008000;">"http://pubs.acs.org/doi/abs/10.1021/ie400582a"</span>),
-         (eprint, <span style="color: #008000;">"http://pubs.acs.org/doi/pdf/10.1021/ie400582a"</span>))
-
-
-<span style="color: #0000FF;">for</span> field <span style="color: #0000FF;">in</span> entry[2:]:
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">if</span> field[0] == author:
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">print</span> field
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">get_field</span>(entry, field):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">for</span> element <span style="color: #0000FF;">in</span> entry[2:]:
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">if</span> element[0] == field:
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> element[1]
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">else</span>:
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> <span style="color: #D0372D;">None</span>
-
-<span style="color: #0000FF;">print</span> get_field(entry, title)
-<span style="color: #0000FF;">print</span> get_field(entry, <span style="color: #008000;">"bad"</span>)
-</pre>
-</div>
-
-<pre class="example">
-(&lt;function &lt;lambda&gt; at 0x1005975f0&gt;, 'Hallenbeck, Alexander P. and Kitchin, John R.')
-Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a primary-amine based polymeric \ce{CO_2} sorbent
-None
-</pre>
-
-<p>
-So, it seems Python can do some things like lisp in treating functions like first-class objects that can be used as functions, or keys. I still like the lisp s-exp better, but this is an interesting idea for Python too.
-</p>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/06/11/A-python-version-of-the-s-exp-bibtex-entry.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/06/11/A-python-version-of-the-s-exp-bibtex-entry#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="../18">« Previous Page</a>
   --  
  <a href="../20">Next Page »</a>
@@ -780,11 +852,11 @@ So, it seems Python can do some things like lisp in treating functions like firs
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2016/06/14/Using-prefix-args-in-ivy-actions/">Using prefix args in ivy actions</a></li>
       <li><a href="/blog/2016/06/14/New-publication-in-International-Journal-on-Digital-Libraries/">New publication in International Journal on Digital Libraries</a></li>
       <li><a href="/blog/2016/06/13/Dynamic-sorting-with-ivy/">Dynamic sorting with ivy</a></li>
       <li><a href="/blog/2016/05/30/Writing-lisp-code-from-Python/">Writing lisp code from Python</a></li>
       <li><a href="/blog/2016/05/29/Expanding-orgmode-py-to-get-better-org-python-integration/">Expanding orgmode.py to get better org-python integration</a></li>
-      <li><a href="/blog/2016/05/06/When-in-python-do-as-Pythonistas-unless/">When in python do as Pythonistas unless...</a></li>
     </ul>
   </section>
 
