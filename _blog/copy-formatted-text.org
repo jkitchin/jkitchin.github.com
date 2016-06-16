@@ -1,0 +1,173 @@
+* Copy formatted html
+
+
+
+* Copy formatted org-mode text from Emacs to other applications
+  :PROPERTIES:
+  :categories: emacs,rtf
+  :date:     2016/06/16 11:46:39
+  :updated:  2016/06/16 11:46:39
+  :END:
+
+I do a lot of writing in org-mode and I thought it would be great if I could copy text from an org-file and paste it /with formatting/ into other applications, e.g. Word, Gmail, etc....  Curiosity got the better of me and I wondered how this is done in other applications. It works by creating a [[https://www.safaribooksonline.com/library/view/rtf-pocket-guide/9781449302047/ch01.html][Rich Text Format]] version of what you want to copy and then putting that on the clipboard. It isn't quite enough to just copy it, it needs to go in the clipboard as an RTF datatype. On Mac OSX I used [[http://osxdaily.com/2007/03/05/manipulating-the-clipboard-from-the-command-line/][pbcopy]] to make that happen. 
+
+Check out this video of this post in action: https://www.youtube.com/watch?v=irkmQnggVpE
+
+One simple strategy to do this from org-mode is to generate HTML by export, and then convert it to RTF with a utility, e.g. textutil. For example like this. 
+
+#+BEGIN_SRC emacs-lisp
+(defun formatted-copy ()
+  "Export region to HTML, and copy it to the clipboard."
+  (interactive)
+  (save-window-excursion
+    (let* ((buf (org-export-to-buffer 'html "*Formatted Copy*" nil nil t t))
+	   (html (with-current-buffer buf (buffer-string))))
+      (with-current-buffer buf
+	(shell-command-on-region
+	 (point-min)
+	 (point-max)
+	 "textutil -stdin -format html -convert rtf -stdout | pbcopy")) 
+      (kill-buffer buf))))
+
+(global-set-key (kbd "H-w") 'formatted-copy)
+#+END_SRC
+
+#+RESULTS:
+: formatted-copy
+
+This works well for everything but equations and images. Citations leave a bit to be desired, but improving this is still a challenge. 
+
+Let us try this on some text. Some *bold*, /italic/, _underline_, +struck+ and =verbatim= text to copy. Here are some example Formulas: H_{2}O ionizes to form H^{+}. We simply must have an equation: \(e^{i\pi} + 1 = 0\) [fn:1]. We should also have a citation cite:kitchin-2015-examp and multiple citations cite:kitchin-2016-autom-data,kitchin-2015-data-surfac-scien [fn:2].
+
+A code block:
+
+#+BEGIN_SRC python :results output org drawer :exports both
+import pycse.orgmode as org
+import numpy as np
+import matplotlib.pyplot as plt
+
+x = np.linspace(0, 60, 500)
+plt.figure(figsize=(4, 2))
+plt.plot(np.exp(-0.1 * x) * np.cos(x),
+         np.exp(-0.1 * x) * np.sin(x))
+org.figure(plt.savefig('spiral.png'),
+           caption='A spiral.',
+           attributes=[['org', ':width 100']])
+print('')
+org.table([['H1', 'H2'], None, [1, 2], [2, 4]],
+          caption='A simple table')
+print('')
+org.result(6 * 7)
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+#+CAPTION: A spiral.
+#+ATTR_org: :width 100
+[[file:spiral.png]]
+
+#+CAPTION: A simple table
+| H1 | H2 |
+|----+----|
+|  1 |  2 |
+|  2 |  4 |
+
+: 42
+:END:
+
+In summary, this simple approach to generating RTF from exported HTML works really well for the simplest markups. To improve on getting figures in, getting cross-references, captions, proper references, etc... will require a more sophisticated export approach, and probably one that exports RTF directly. That is a big challenge for another day!
+
+bibliography:~/Dropbox/bibliography/references.bib
+
+* ox-rtf
+We can do a little better if we try exporting to RTF directly. To do that, we need an RTF exporter. The strategy I came up with is to create a derived org-mode exporter backend that exports a highlighted region as RTF to a temporary buffer, and then runs pbcopy on that buffer to get it on the clipboard. Then, I can switch to Word, and paste it in with Word formatting! 
+
+Most of the org-elements are pretty easy to convert to RTF. For code blocks though I copy the code to a temporary buffer and use pygmentize to generate RTF like this.
+
+#+BEGIN_SRC emacs-lisp
+(format "pygmentize -f rtf -l %s" lang)
+#+END_SRC
+
+and for LaTeX fragments I reuse the org-machinery for generating images of the equations.
+
+To enable what I do in this post, grab ox-rtf.el [[https://github.com/jkitchin/scimax/blob/master/ox-rtf.el][here]]. It provides `ox-rtf-formatted-copy' and `ox-rtf-export-to-rtf-and-open'.  
+
+Check out how this post exports to RTF:  [[file:copy-formatted-text.rtf]]
+
+** Some examples for copying
+Here is some example text:
+
+Some *bold*, /italic/, _underline_, +struck+ and =verbatim= text to copy. Here are some example sub/superscripts: H_{2}O with no H^{+} in it. We simply must have an equation: \(e^{i\pi} -1 = 0\) [fn:1]. We should also have a citation cite:kitchin-2015-examp and multiple citations cite:kitchin-2016-autom-data,kitchin-2015-data-surfac-scien [fn:2].
+
+A code block:
+
+#+BEGIN_SRC python :results output org drawer :exports both
+import pycse.orgmode as org
+import numpy as np
+import matplotlib.pyplot as plt
+
+x = np.linspace(0, 60, 500)
+plt.figure(figsize=(4, 2))
+plt.plot(np.exp(-0.1 * x) * np.cos(x),
+         np.exp(-0.1 * x) * np.sin(x))
+org.figure(plt.savefig('spiral.png'),
+           caption='A spiral.',
+           attributes=[['org', ':width 100']])
+print('')
+org.table([['H1', 'H2'], None, [1, 2], [2, 4]],
+          caption='A simple table')
+print('')
+org.result(6 * 7)
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+#+CAPTION: A spiral.
+#+ATTR_org: :width 100
+[[file:spiral.png]]
+
+#+CAPTION: A simple table
+| H1 | H2 |
+|----+----|
+|  1 |  2 |
+|  2 |  4 |
+
+: 42
+:END:
+
+Here are some formatted references.
+
+1. John R. Kitchin, /Examples of Effective Data Sharing in Scientific Publishing/, *ACS Catalysis*, 5(6), pp. 3894-3899 (2015). doi:10.1021/acscatal.5b00538.
+
+2.  John R. Kitchin;  Ana E. Van Gulick and  Lisa D. Zilinski, /Automating Data Sharing Through Authoring Tools/, *International Journal on Digital Libraries*, pp. 1--6 (2016). doi:10.1007/s00799-016-0173-7.
+
+** Things to come
+Here are a few ideas for improvement.
+
+1. An org-ref RTF exporter, with formatted references
+2. Colors are a little fragile and leak - there should be one color table
+3. Fonts leak a little - there should also be one font table
+4. Proper figure and table export with captions and cross-references
+5. The rest of the org elements.
+
+
+** Some additional setup
+
+This sets the format of the articles in the citations. Unfortunately, at this time the org-markup is not expanded.
+
+#+BEGIN_SRC emacs-lisp
+(setq org-ref-bibliography-entry-format
+      '(("article" . "%a, %t, /%j/, *%v(%n)*, %p (%y). http://dx.doi.org/%D")))
+#+END_SRC
+
+#+RESULTS:
+: ((article . %a, %t, /%j/, *%v(%n)*, %p (%y). http://dx.doi.org/%D))
+
+
+* Footnotes
+
+[fn:3] There will be some need for options to highlight to control the themes. For consistency with LaTeX it might be good to consider pygments (http://pygments.org/docs/formatters/#RtfFormatter)
+
+[fn:2] This is another place where configuration will be required for bibliography style. Also, some checks to join neighboring footnotes.
+
+[fn:1] There are probably some ways to get better images for equations. To get equation numbers and references to them will probably require a two pass build process.
