@@ -2,14 +2,15 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents">
 <ul>
-<li><a href="#orgheadline1">1. Scientific publishing</a></li>
-<li><a href="#orgheadline4">2. Build interactive apps</a>
+<li><a href="#orgheadline1">1. Scientific research</a></li>
+<li><a href="#orgheadline2">2. Scientific publishing</a></li>
+<li><a href="#orgheadline5">3. Build interactive apps</a>
 <ul>
-<li><a href="#orgheadline2">2.1. org-ref</a></li>
-<li><a href="#orgheadline3">2.2. contacts</a></li>
+<li><a href="#orgheadline3">3.1. org-ref</a></li>
+<li><a href="#orgheadline4">3.2. contacts</a></li>
 </ul>
 </li>
-<li><a href="#orgheadline5">3. Teaching</a></li>
+<li><a href="#orgheadline6">4. Teaching</a></li>
 </ul>
 </div>
 </div>
@@ -26,8 +27,17 @@ Scimax builds on Emacs, <a href="http://orgmode.org">org-mode</a> and programmin
 </p>
 
 <div id="outline-container-orgheadline1" class="outline-2">
-<h2 id="orgheadline1"><span class="section-number-2">1</span> Scientific publishing</h2>
+<h2 id="orgheadline1"><span class="section-number-2">1</span> Scientific research</h2>
 <div class="outline-text-2" id="text-1">
+<p>
+We use scimax as an electronic notebook in all our research. scimax lets us integrate narrative text with citations about what we are trying to do with data and code to perform analysis. scimax integrates project/task management tools and distributed version control tools to enable collaboration in our group.
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgheadline2" class="outline-2">
+<h2 id="orgheadline2"><span class="section-number-2">2</span> Scientific publishing</h2>
+<div class="outline-text-2" id="text-2">
 <p>
 We write all our scientific manuscripts using scimax. After the documents are written, we use scimax to convert them to the format required by publishers (usually LaTeX). These manuscripts and their supporting information files contain all the data, code and analysis we used in the papers so others can see what we did, and even reuse the data/code.
 </p>
@@ -67,26 +77,26 @@ Finally, this blog is written using scimax.
 </div>
 </div>
 
-<div id="outline-container-orgheadline4" class="outline-2">
-<h2 id="orgheadline4"><span class="section-number-2">2</span> Build interactive apps</h2>
-<div class="outline-text-2" id="text-2">
+<div id="outline-container-orgheadline5" class="outline-2">
+<h2 id="orgheadline5"><span class="section-number-2">3</span> Build interactive apps</h2>
+<div class="outline-text-2" id="text-3">
 <p>
 We have built two significant apps on top of the tools in scimax.
 </p>
 </div>
 
-<div id="outline-container-orgheadline2" class="outline-3">
-<h3 id="orgheadline2"><span class="section-number-3">2.1</span> org-ref</h3>
-<div class="outline-text-3" id="text-2-1">
+<div id="outline-container-orgheadline3" class="outline-3">
+<h3 id="orgheadline3"><span class="section-number-3">3.1</span> org-ref</h3>
+<div class="outline-text-3" id="text-3-1">
 <p>
 org-ref is a bibliography management tool similar to Endnote. It provides tools to insert citations and bibliographies in documents. The citations are hyper-functional, and connect your documents to external search engines, locally stored pdf files, etc.
 </p>
 </div>
 </div>
 
-<div id="outline-container-orgheadline3" class="outline-3">
-<h3 id="orgheadline3"><span class="section-number-3">2.2</span> contacts</h3>
-<div class="outline-text-3" id="text-2-2">
+<div id="outline-container-orgheadline4" class="outline-3">
+<h3 id="orgheadline4"><span class="section-number-3">3.2</span> contacts</h3>
+<div class="outline-text-3" id="text-3-2">
 <p>
 This is a contact manager for scimax. It allows you to quickly find contacts, email them, call them, etc. It can mine your email database for contact information
 </p>
@@ -94,11 +104,11 @@ This is a contact manager for scimax. It allows you to quickly find contacts, em
 </div>
 </div>
 
-<div id="outline-container-orgheadline5" class="outline-2">
-<h2 id="orgheadline5"><span class="section-number-2">3</span> Teaching</h2>
-<div class="outline-text-2" id="text-3">
+<div id="outline-container-orgheadline6" class="outline-2">
+<h2 id="orgheadline6"><span class="section-number-2">4</span> Teaching</h2>
+<div class="outline-text-2" id="text-4">
 <p>
-<a href="https://github.com/jkitchin/techela">techela</a> is a tool based on scimax that acts like a content management system for teaching a class. It provides a framework to distribute, collect, grade and return assignments and course materials. 
+<a href="https://github.com/jkitchin/techela">techela</a> is a tool based on scimax that acts like a content management system for teaching a class. It provides a framework to distribute, collect, grade and return assignments and course materials. techela provides an integrated gradebook, and communication tools.
 </p>
 
 
