@@ -16,7 +16,7 @@
 </div>
 <%inherit file="_templates/site.mako" />
 
-<h1>sci<font color="#4863A0">max</font> - bringing plain text to life</h1>
+<h1>sci<font color="#4863A0">max</font></h1><br><h3>bringing plain text to life</h3>
 
 <p>
 <a href="https://github.com/jkitchin/scimax">Scimax</a> is a set of open-source software tools to integrate narrative text with data, code, figures, equations, tables and citations. Scimax brings plain text to life by making it functional and interactive. With scimax you can embed and run code directly in your documents, and capture the output in your document. You can embed data in your documents with narrative text that explains what it is, and then use the document as a data source for analysis. You can easily convert documents written with scimax to HTML, LaTeX, PDF, even MS Word.
