@@ -84,6 +84,445 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Writing-hy-code-from-hy-code"></div>
+      <h2 class="blog_post_title"><a href="/blog/2016/04/07/Writing-hy-code-from-hy-code/" rel="bookmark" title="Permanent Link to Writing hy code from hy code">Writing hy code from hy code</a></h2>
+      <p><small><span class="blog_post_date">Posted April 07, 2016 at 01:06 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/hylang/'>hylang</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2016/04/07/Writing-hy-code-from-hy-code#disqus_thread">View Comments</a>
+      <p><small><span class="blog_post_date">Updated April 07, 2016 at 01:09 PM</span>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#sec-1">1. Serialize as compiled Python</a></li>
+<li><a href="#sec-2">2. Summary</a></li>
+</ul>
+</div>
+</div>
+
+<p>
+Here is one of the main reasons I am interested in a lisp for programming. I want to write programs that write programs. In Python, I have ended up doing things like this where we build up a script with string formatting and manipulation, write it to a file, and run it later or somewhere else. We need this because we run a lot of our calculations through a queue system which runs asynchronously from the work we do in an editor.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #0000FF;">import</span> os
+<span style="color: #0000FF;">for</span> x <span style="color: #0000FF;">in</span> [1, 2, 3]:
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">fname</span> = <span style="color: #008000;">'p{0}.py'</span>.<span style="color: #006FE0;">format</span>(x)
+
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">program</span> = <span style="color: #008000;">'''#!/usr/bin/env python</span>
+<span style="color: #008000;">def f(x):</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span><span style="color: #008000;">   return x**{0}</span>
+
+<span style="color: #008000;">import sys</span>
+<span style="color: #008000;">print f(float(sys.argv[1]))'''</span>.<span style="color: #006FE0;">format</span>(x)
+
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">with</span> <span style="color: #006FE0;">open</span>(fname, <span style="color: #008000;">'w'</span>) <span style="color: #0000FF;">as</span> f:
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   f.write(program)
+
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   os.chmod(fname, 0o755)
+</pre>
+</div>
+
+<p>
+Then you can call these now at the command line like:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-sh">./p2.py 3
+./p3.py 3
+</pre>
+</div>
+
+<pre class="example">
+9.0
+27.0
+</pre>
+
+<p>
+That is not too bad because the script is simple, but it is tedious to keep the indentation right, it is not always easy to keep track of the arguments (even with numbered indexes, names, etc&#x2026; in the formatting), there is limited logic you can use in the arguments (e.g. no if/elif/elif/else, etc&#x2026;), you lose all the value of having an editor in Python mode, so no syntax highlighting, eldoc, code completion, automatic indentation, etc&#x2026; I don't like it, but it gets the job done.
+</p>
+
+<p>
+Lisps allow you to treat code like data, in an editor in lisp-mode, so it should be ideal for this kind of thing. Here we look at getting that done with hy. For the simplest forms, we simply convert the code to a string, which can then be written to a file. You can see we probably got lucky here that the objects in the expression all print in a simple form that allows us to reconstruct the code. You can see here some aspects of Python peeking through the hy implementation. In data/quoted mode, the atoms in the list are not all simple symbols. By the time the program gets to running the code, they have been transformed to objects of various types that need to be handled separately.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-hy">(<span style="color: #006FE0;">setv</span> program `(<span style="color: #006FE0;">+</span> 4 5))
+(<span style="color: #006FE0;">print</span> (<span style="color: #006FE0;">+</span> <span style="color: #008000;">"("</span> (.join <span style="color: #008000;">" "</span> (<span style="color: #006FE0;">list-comp</span> (str x) [x program])) <span style="color: #008000;">")"</span>))
+(<span style="color: #006FE0;">print</span> (<span style="color: #006FE0;">list-comp</span> (type x) [x program]))
+</pre>
+</div>
+
+<pre class="example">
+(+ 4 5)
+[&lt;class 'hy.models.symbol.HySymbol'&gt;, &lt;class 'hy.models.integer.HyInteger'&gt;, &lt;class 'hy.models.integer.HyInteger'&gt;]
+</pre>
+
+
+<p>
+Real programs are not this simple, and we need to handle nested expressions and other types of objects. Consider this program. It has many different types in it, and they don't all get represented by the right syntax in print (i.e. with (repr object).
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-hy">(<span style="color: #0000FF;">let</span> [program `(list {<span style="color: #008000;">"a"</span> 1 <span style="color: #008000;">"b"</span> 3} <span style="color: #008000;">"b"</span> 3 3.0 [1 1 2] <span style="color: #D0372D;">:keyword</span> (<span style="color: #0000FF;">lambda</span> [x] (<span style="color: #006FE0;">*</span> x 3)))]
+  (<span style="color: #006FE0;">print</span> (<span style="color: #006FE0;">list-comp</span> (type x) [x program]))
+  (<span style="color: #0000FF;">for</span> [x program] (<span style="color: #006FE0;">print</span> (.format <span style="color: #008000;">"{0!r}"</span> x))))
+</pre>
+</div>
+
+<pre class="example">
+[&lt;class 'hy.models.symbol.HySymbol'&gt;, &lt;class 'hy.models.dict.HyDict'&gt;, &lt;class 'hy.models.string.HyString'&gt;, &lt;class 'hy.models.integer.HyInteger'&gt;, &lt;class 'hy.models.float.HyFloat'&gt;, &lt;class 'hy.models.list.HyList'&gt;, &lt;class 'hy.models.keyword.HyKeyword'&gt;, &lt;class 'hy.models.expression.HyExpression'&gt;]
+u'list'
+{u'a' 1L u'b' 3L}
+u'b'
+3L
+3.0
+[1L 1L 2L]
+u'\ufdd0:keyword'
+(u'lambda' [u'x'] (u'*' u'x' 3L))
+</pre>
+
+<p>
+Next we make a recursive expression to handle some of these. It is recursive to handle nested expressions. Here are the things in hy.models that might need special treatment. We make sure to wrap expressions in (), lists in [], dictionaries in {}, and strings in "". Keywords have a unicode character put in front of them, so we cut that off. Everything else seems to be ok to just convert to a string. This function gets tangled to serialize.hy so it can be used in subsequent code examples.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-hy">(<span style="color: #0000FF;">import</span> <span style="color: #006699;">hy</span>)
+
+(<span style="color: #0000FF;">defn</span> <span style="color: #006699;">stringify</span> [form <span style="color: #6434A3;">&amp;optional</span> debug]
+  <span style="color: #008000;">"Convert a FORM to a string."</span>
+  (<span style="color: #0000FF;">when</span> debug (<span style="color: #006FE0;">print</span> (.format <span style="color: #008000;">"{0}: {1}"</span> form (type form))))
+  (<span style="color: #0000FF;">cond</span>
+   [(isinstance form hy.models.expression.HyExpression)
+    (<span style="color: #006FE0;">+</span> <span style="color: #008000;">"("</span> (.join <span style="color: #008000;">" "</span> (<span style="color: #006FE0;">list-comp</span> (stringify x debug) [x form])) <span style="color: #008000;">")"</span>)]
+   [(isinstance form hy.models.dict.HyDict)
+    (<span style="color: #006FE0;">+</span> <span style="color: #008000;">"{"</span> (.join <span style="color: #008000;">" "</span> (<span style="color: #006FE0;">list-comp</span> (stringify x debug) [x form])) <span style="color: #008000;">"}"</span>)]
+   [(isinstance form hy.models.list.HyList)
+    (<span style="color: #006FE0;">+</span> <span style="color: #008000;">"["</span> (.join <span style="color: #008000;">" "</span> (<span style="color: #006FE0;">list-comp</span> (stringify x debug) [x form])) <span style="color: #008000;">"]"</span>)]
+   [(isinstance form hy.models.symbol.HySymbol)
+    (.format <span style="color: #008000;">"{}"</span> form)]
+   [(isinstance form hy.models.keyword.HyKeyword)
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">these have some unicode prefix I want to remove</span>
+    (.format <span style="color: #008000;">"{}"</span> (<span style="color: #006FE0;">cut</span> form 1))]
+   [(<span style="color: #006FE0;">or</span> (isinstance form hy.models.string.HyString)
+        (isinstance form unicode))
+    (.format <span style="color: #008000;">"\"{}\""</span> form)]
+   [<span style="color: #D0372D;">true</span>
+    (.format <span style="color: #008000;">"{}"</span> form)]))
+</pre>
+</div>
+
+<p>
+Now, some examples. These cover most of what I can imagine coming up.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-hy">(import [serialize [stringify]])  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">tangled from the block above</span>
+
+<span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">some examples that cover most of what I am doing.</span>
+(<span style="color: #006FE0;">print</span> (stringify `(<span style="color: #006FE0;">+</span> 5 6.0)))
+(<span style="color: #006FE0;">print</span> (stringify `(<span style="color: #0000FF;">defn</span> <span style="color: #006699;">f</span> [x] (<span style="color: #006FE0;">*</span> 2 x))))
+(<span style="color: #006FE0;">print</span> (stringify `(<span style="color: #006FE0;">get</span> {<span style="color: #008000;">"a"</span> 1 <span style="color: #008000;">"b"</span> 3} <span style="color: #008000;">"b"</span>)))
+(<span style="color: #006FE0;">print</span> (stringify `(<span style="color: #006FE0;">print</span> (<span style="color: #006FE0;">+</span> 4 5 (<span style="color: #006FE0;">*</span> 6 7)))))
+(<span style="color: #006FE0;">print</span> (stringify `(import [numpy <span style="color: #D0372D;">:as</span> np])))
+(<span style="color: #006FE0;">print</span> (stringify `(import [scipy.optimize [fsolve]])))
+(<span style="color: #006FE0;">print</span> (stringify `(set [2 2 3])))
+(<span style="color: #006FE0;">print</span> (stringify `(complex 4 5)))
+(<span style="color: #006FE0;">print</span> (stringify `(<span style="color: #006FE0;">cons</span> 4 5)))
+</pre>
+</div>
+<pre class="example">
+(+ 5 6.0)
+(defn f [x] (* 2 x))
+(get {"a" 1 "b" 3} "b")
+(print (+ 4 5 (* 6 7)))
+(import [numpy :as np])
+(import [scipy.optimize [fsolve]])
+(set [2 2 3])
+(complex 4 5)
+(cons 4 5)
+</pre>
+
+<p>
+Those all look promising. Maybe it looks like nothing happened. Something <i>did</i> happen! We took <i>code</i> that was quoted (and hence like a list of <i>data</i>), and converted it into a string representation of the code. Now that we have a string form, we can do things like write it to a file.
+</p>
+
+<p>
+Next, we add a function that can write that to an executable script.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-hy">(<span style="color: #0000FF;">defn</span> <span style="color: #006699;">scriptify</span> [form fname]
+  (<span style="color: #0000FF;">with</span> [f (open fname <span style="color: #008000;">"w"</span>)]
+        (.write f <span style="color: #008000;">"#!/usr/bin/env hy\n"</span>)
+        (.write f (stringify form)))
+  (<span style="color: #0000FF;">import</span> <span style="color: #006699;">os</span>)
+  (os.chmod fname 0o755))
+</pre>
+</div>
+
+<p>
+Here is an example
+</p>
+<div class="org-src-container">
+
+<pre class="src src-hy">(import [serialize [stringify scriptify]])
+
+<span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">make functions</span>
+(<span style="color: #0000FF;">for</span> [x (<span style="color: #006FE0;">range</span> 1 4)]
+  (scriptify
+   `(<span style="color: #0000FF;">do</span>
+     (<span style="color: #0000FF;">import</span> <span style="color: #006699;">sys</span>)
+     (<span style="color: #0000FF;">defn</span> <span style="color: #006699;">f</span> [x]
+       (<span style="color: #006FE0;">**</span> x ~x))
+     (<span style="color: #006FE0;">print</span> (f (float (<span style="color: #006FE0;">get</span> sys.argv 1)))))
+   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">fname to write to</span>
+   (.format <span style="color: #008000;">"h{}.hy"</span> x)))
+</pre>
+</div>
+
+<p>
+Here is the proof those programs got created.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-sh">ls h[0-9].hy
+<span style="color: #006FE0;">echo</span>
+cat h1.hy
+</pre>
+</div>
+
+<pre class="example">
+h1.hy
+h2.hy
+h3.hy
+
+#!/usr/bin/env hy
+(do (import sys) (defn f [x] (** x 1)) (print (f (float (get sys.argv 1)))))
+</pre>
+
+<p>
+The code is all on one line, which doesn't matter or hy. Yep, if it didn't occur to you, we could take those strings and send them over the internet so they could get executed remotely. They are one read-str and eval away from being lisp code again. Yes there are security concerns with that. And an amazing way to get something done.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-hy">(import [serialize [*]])
+(<span style="color: #006FE0;">print</span> (<span style="color: #006FE0;">eval</span> (<span style="color: #006FE0;">read-str</span> (stringify `(<span style="color: #006FE0;">+</span> 4 5)))))
+</pre>
+</div>
+
+<pre class="example">
+9
+</pre>
+
+<p>
+We can run those programs at the command line:
+</p>
+<div class="org-src-container">
+
+<pre class="src src-sh">hy h2.hy 10
+hy h3.hy 10
+</pre>
+</div>
+
+<pre class="example">
+100.0
+1000.0
+</pre>
+
+<p>
+Now for a more realistic test. I make some scripts related to the kinds of molecular simulation we do. These scripts just setup a model of bulk Cu or Pt, and print the generated object. In a real application we would compute some thing from this object.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-hy">(import [serialize [stringify scriptify]])
+
+(<span style="color: #0000FF;">for</span> [element [<span style="color: #008000;">"Cu"</span> <span style="color: #008000;">"Pt"</span>]]
+  (scriptify `(<span style="color: #0000FF;">do</span> (import [ase.lattice [bulk]])
+                  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">we have to str the element to avoid a unicode error</span>
+                  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">ase does not do unicode.</span>
+                  (<span style="color: #006FE0;">setv</span> atoms (bulk (str ~element) <span style="color: #D0372D;">:a</span> 4.5 <span style="color: #D0372D;">:cubic</span> <span style="color: #D0372D;">True</span>))
+                  (<span style="color: #006FE0;">print</span> atoms))
+             (.format <span style="color: #008000;">"{}.hy"</span> element)))
+</pre>
+</div>
+
+<p>
+Here is what one of those scripts looks like
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-sh">cat Pt.hy
+</pre>
+</div>
+
+<pre class="example">
+#!/usr/bin/env hy
+(do (import [ase.lattice [bulk]]) (setv atoms (bulk (str "Pt") :a 4.5 :cubic True)) (print atoms))
+</pre>
+
+<p>
+Note the comments are not in the generated script. These are evidently ignored in hy, and are not even elements. We can run this at the command line to. If this script did an actual calculation, we would have a mechanism to generate simulation scripts that run calculations and output the results we want!
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-sh">hy Pt.hy
+</pre>
+</div>
+
+<pre class="example">
+Atoms(symbols='Pt4', positions=..., cell=[4.5, 4.5, 4.5], pbc=[True, True, True])
+</pre>
+
+<p>
+So, we can write programs that <i>write</i> programs!
+</p>
+
+<div id="outline-container-sec-1" class="outline-2">
+<h2 id="sec-1"><span class="section-number-2">1</span> Serialize as compiled Python</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+It could be convenient to run the generated programs from Python instead of hy. Here we consider how to do that. I adapted this code from hy.importer.write_hy_as_pyc.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-hy">(import [hy.importer <span style="color: #D0372D;">:as</span> hi])
+(import [hy._compat [PY3 PY33 MAGIC wr_long long_type]])
+(<span style="color: #0000FF;">import</span> <span style="color: #006699;">marshal</span>)
+(<span style="color: #0000FF;">import</span> <span style="color: #006699;">os</span>)
+
+(<span style="color: #0000FF;">defn</span> <span style="color: #006699;">hy2pyc</span> [code fname]
+  <span style="color: #008000;">"Write CODE as Python compiled byte-code in FNAME."</span>
+
+  (<span style="color: #006FE0;">setv</span> program (stringify code))
+
+  (<span style="color: #006FE0;">setv</span> _ast (hi.import_buffer_to_ast
+              program
+              <span style="color: #008000;">"main"</span>))
+
+  (<span style="color: #006FE0;">setv</span> code (hi.ast_compile _ast <span style="color: #008000;">"&lt;string&gt;"</span> <span style="color: #008000;">"exec"</span>))
+
+  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">create file and close it so we get the size</span>
+  (<span style="color: #0000FF;">with</span> [f (open fname <span style="color: #008000;">"wb"</span>)] <span style="color: #D0372D;">nil</span>)
+  (<span style="color: #0000FF;">with</span> [f (open fname <span style="color: #008000;">"wb"</span>)]
+        (<span style="color: #0000FF;">try</span>
+         (<span style="color: #006FE0;">setv</span> st (os.fstat (f.fileno)))
+         (<span style="color: #0000FF;">except</span> [e AttributeError]
+           (<span style="color: #006FE0;">setv</span> st (os.stat fname))))
+        (<span style="color: #006FE0;">setv</span> timestamp (long_type (. st st_mtime))))
+  (<span style="color: #0000FF;">with</span> [fc (open fname <span style="color: #008000;">"wb"</span>)]
+        (<span style="color: #0000FF;">if</span> PY3
+          (.write fc b<span style="color: #008000;">"\0\0\0\0"</span>) <span style="color: #8D8D84; font-style: italic;">; I amnot sure this is right in hy with b""</span>
+          (.write fc <span style="color: #008000;">"\0\0\0\0"</span>))
+        (wr_long fc timestamp)
+        (<span style="color: #0000FF;">when</span> PY33
+          (wr_long fc st.st_size))
+        (.dump marshal code fc)
+        (.flush fc)
+        (.seek fc 0 0)
+        (.write fc MAGIC)))
+</pre>
+</div>
+<p>
+Now for an example.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-hy">(import [serialize [*]])
+
+(hy2pyc `(<span style="color: #0000FF;">do</span>
+          (<span style="color: #0000FF;">import</span> <span style="color: #006699;">sys</span>)
+          (<span style="color: #0000FF;">defn</span> <span style="color: #006699;">f</span> [x]
+            (<span style="color: #006FE0;">**</span> x 3))
+          (<span style="color: #006FE0;">print</span> (.format <span style="color: #008000;">"Hy! {0}^3 is {1}."</span>
+                          (<span style="color: #006FE0;">get</span> sys.argv 1)
+                          (f (float (<span style="color: #006FE0;">get</span> sys.argv 1))))))
+          <span style="color: #008000;">"main.pyc"</span>)
+</pre>
+</div>
+
+<p>
+Now we can execute it like this.
+</p>
+<div class="org-src-container">
+
+<pre class="src src-sh">python main.pyc 4
+</pre>
+</div>
+<pre class="example">
+Hy! 4^3 is 64.0.
+</pre>
+
+<p>
+Well, that worked fine too!
+</p>
+</div>
+</div>
+
+<div id="outline-container-sec-2" class="outline-2">
+<h2 id="sec-2"><span class="section-number-2">2</span> Summary</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+In some ways this is similar to the string manipulation approach (they both generate programs after all), but there are these differences:
+</p>
+<ol class="org-ol">
+<li>We do not have the indentation issues of generating Python.
+</li>
+<li>The code is edited in hy-mode with full language support.
+</li>
+<li>Instead of formatting, and string replacements, you have to think of what is quoted and what is evaluated. I find that easier to think about than with strings.
+</li>
+</ol>
+
+<p>
+There are some ways we could simplify this perhaps. In this <a href="http://kitchingroup.cheme.cmu.edu/blog/2015/05/16/Python-data-structures-to-lisp/">post</a> I added code to the built in python types so they could be represented as lisp code. We could add something like this to each of the hy.model objects so they natively can be represented as hy code. The repr functions on these should technically be used for that I think. On the other hand, this serialize code works fine, and lets me do what I want. It is pretty cool this is all possible!
+</p>
+</div>
+</div>
+<p>Copyright (C) 2016 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2016/04/07/Writing-hy-code-from-hy-code.org">org-mode source</a></p>
+<p>Org-mode version = 8.2.10</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2016/04/07/Writing-hy-code-from-hy-code#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Another-step-towards-HyDE"></div>
       <h2 class="blog_post_title"><a href="/blog/2016/04/06/Another-step-towards-HyDE/" rel="bookmark" title="Permanent Link to Another step towards HyDE">Another step towards HyDE</a></h2>
       <p><small><span class="blog_post_date">Posted April 06, 2016 at 04:41 PM</span> | categories:
@@ -3670,7 +4109,7 @@ No docstring available.
       <div id="ob-hy-el-or-better-integration-of-hylang-in-org-mode"></div>
       <h2 class="blog_post_title"><a href="/blog/2016/04/01/ob-hy-el-or-better-integration-of-hylang-in-org-mode/" rel="bookmark" title="Permanent Link to ob-hy.el - or better integration of hylang in org-mode">ob-hy.el - or better integration of hylang in org-mode</a></h2>
       <p><small><span class="blog_post_date">Posted April 01, 2016 at 07:31 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/hylang/'>hylang</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/hylang/'>hylang</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2016/04/01/ob-hy-el-or-better-integration-of-hylang-in-org-mode#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -3979,7 +4418,7 @@ It works well enough to make testing in org-mode pretty convenient. I can't thin
       <div id="More-on-Hy-and-why-I-think-it-is-a-big-deal"></div>
       <h2 class="blog_post_title"><a href="/blog/2016/03/31/More-on-Hy-and-why-I-think-it-is-a-big-deal/" rel="bookmark" title="Permanent Link to More on Hy and why I think it is a big deal">More on Hy and why I think it is a big deal</a></h2>
       <p><small><span class="blog_post_date">Posted March 31, 2016 at 01:41 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/python/'>python</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/hylang/'>hylang</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/python/'>python</a>, <a href='/blog/category/hylang/'>hylang</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2016/03/31/More-on-Hy-and-why-I-think-it-is-a-big-deal#disqus_thread">View Comments</a>
       <p><small><span class="blog_post_date">Updated April 01, 2016 at 01:58 PM</span>
       </small></p>
@@ -4419,174 +4858,6 @@ I haven't used it enough to see the warts yet, but already the top issues I had 
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2016/03/31/More-on-Hy-and-why-I-think-it-is-a-big-deal#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="OMG-A-Lisp-that-runs-python"></div>
-      <h2 class="blog_post_title"><a href="/blog/2016/03/30/OMG-A-Lisp-that-runs-python/" rel="bookmark" title="Permanent Link to OMG A Lisp that runs python">OMG A Lisp that runs python</a></h2>
-      <p><small><span class="blog_post_date">Posted March 30, 2016 at 05:10 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/python/'>python</a>, <a href='/blog/category/lisp/'>lisp</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2016/03/30/OMG-A-Lisp-that-runs-python#disqus_thread">View Comments</a>
-      <p><small><span class="blog_post_date">Updated March 31, 2016 at 01:54 PM</span>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-
-<p>
-For a year now I have struggled with abandoning Python for Lisp. It's complicated, I have used Python for 15 years now, and have a lot of skill and knowledge in it. I have used emacs-lisp for about 5 years now, and have a far bit of skill with it too. They solve really different problems. Between the two, I find I <i>like</i> writing and editing elisp <b>lots</b> better than writing Python, except it lacks the scipy+numpy+matplotlib stack. I looked into Racket and Common Lisp, but they also don't really have that as nicely as Python does at the moment. It hit me earlier today that a Lisp that compiled to Python might be the right middle ground. I had seen this project Hy (<a href="http://docs.hylang.org/en/latest/quickstart.html">http://docs.hylang.org/en/latest/quickstart.html</a> ) earlier, but didn't connect the dots to this.
-</p>
-
-<p>
-Let me do that here. First, an obligatory execute function to run org-mode code blocks.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-babel-execute:hy</span> (body params)
-  (<span style="color: #0000FF;">let*</span> ((temporary-file-directory <span style="color: #008000;">"."</span>)
-         (tempfile (make-temp-file <span style="color: #008000;">"hy-"</span>)))
-    (<span style="color: #0000FF;">with-temp-file</span> tempfile
-      (insert body))
-    (<span style="color: #0000FF;">unwind-protect</span>
-        (shell-command-to-string
-         (format <span style="color: #008000;">"hy %s"</span> tempfile))
-      (delete-file tempfile))))
-</pre>
-</div>
-
-<pre class="example">
-org-babel-execute:hy
-</pre>
-
-<p>
-Now the basic Hello world example. It looks like lisp.
-</p>
-<div class="org-src-container">
-
-<pre class="src src-hy">(<span style="color: #006FE0;">print</span> <span style="color: #008000;">"Hy world"</span>)
-</pre>
-</div>
-
-<pre class="example">
-Hy world
-</pre>
-
-<p>
-Now for a use that looks like Python:
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-hy">(<span style="color: #0000FF;">import</span> <span style="color: #006699;">numpy</span>)
-(<span style="color: #006FE0;">setv</span> a (numpy.array [1 2 3]))
-(<span style="color: #006FE0;">setv</span> b (numpy.array [1 2 3]))
-(<span style="color: #006FE0;">print</span> (numpy.dot a b))
-</pre>
-</div>
-
-<pre class="example">
-14
-</pre>
-
-<p>
-WHAT!!!!
-</p>
-
-<p>
-A simple plot? Surely it can't be so easy&#x2026;
-</p>
-<div class="org-src-container">
-
-<pre class="src src-hy">(import [matplotlib.pyplot <span style="color: #D0372D;">:as</span> plt])
-(plt.plot [1 2 4 8])
-(plt.xlabel <span style="color: #008000;">"x"</span>)
-(plt.ylabel <span style="color: #008000;">"y"</span>)
-(plt.savefig <span style="color: #008000;">"hy-test.png"</span>)
-</pre>
-</div>
-
-<pre class="example">
-2016-03-30 17:09:40.826 Python[94292:d13] CoreText performance note: Client called CTFontCreateWithName() using name "Lucida Grande" and got font with PostScript name "LucidaGrande". For best performance, only use PostScript names when calling this API.
-2016-03-30 17:09:40.826 Python[94292:d13] CoreText performance note: Set a breakpoint on CTFontLogSuboptimalRequest to debug.
-</pre>
-
-
-<div class="figure">
-<p><img src="/media/2016-03-30-OMG-A-Lisp-that-runs-python/hy-test.png"> 
-</p>
-</div>
-
-<p>
-Wow. I am not sure what the warnings are, I seem to get them on my Mac for some reason. How about solving an equation?
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-hy">(import [scipy.optimize [fsolve]])
-(<span style="color: #0000FF;">defn</span> <span style="color: #006699;">objective</span> [x] (<span style="color: #006FE0;">-</span> 2 x))
-(<span style="color: #006FE0;">print</span> (fsolve objective -1))
-</pre>
-</div>
-
-<pre class="example">
-[ 2.]
-</pre>
-
-
-<pre class="example">
-     _.-^^---....,,--
- _--                  --_
-&lt;                        &gt;)
-|                         |
- \._                   _./
-    ```--. . , ; .--'''
-          | |   |
-       .-=||  | |=-.
-       `-=#$%&amp;%$#=-'
-          | ;  :|
- _____.,-#%&amp;$@%#&amp;#~,._____
-       _---~~(~~-_.
-     _{        )   )
-   ,   ) -~~- ( ,-' )_
-  (  `-,_..`., )-- '_,)
- ( ` _)  (  -~( -_ `,  }
- (_-  _  ~_-~~~~`,  ,' )  &lt;---- My brain right now...
-   `~ -^(    __;-,((()))
-         ~~~~ {_ -_(())
-                `\  }
-                  { }
-</pre>
-
-<p>
-I may not be able to sleep tonight&#x2026;
-</p>
-
-<p>
-Ascii art courtesy of <a href="http://chris.com/ascii/index.php?art=people/body%20parts/brains">http://chris.com/ascii/index.php?art=people/body%20parts/brains</a> and <a href="http://www.ascii-code.com/ascii-art/weapons/explosives.php">http://www.ascii-code.com/ascii-art/weapons/explosives.php</a> .</p>
-<p>Copyright (C) 2016 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2016/03/30/OMG-A-Lisp-that-runs-python.org">org-mode source</a></p>
-<p>Org-mode version = 8.2.10</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2016/03/30/OMG-A-Lisp-that-runs-python#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="../4">« Previous Page</a>
   --  
  <a href="../6">Next Page »</a>
@@ -4628,11 +4899,11 @@ Ascii art courtesy of <a href="http://chris.com/ascii/index.php?art=people/body%
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2016/06/29/New-publication-in-ACS-Catalysis/">New publication in ACS Catalysis</a></li>
       <li><a href="/blog/2016/06/16/Copy-formatted-org-mode-text-from-Emacs-to-other-applications/">Copy formatted org-mode text from Emacs to other applications</a></li>
       <li><a href="/blog/2016/06/14/Using-prefix-args-in-ivy-actions/">Using prefix args in ivy actions</a></li>
-      <li><a href="/blog/2016/06/14/New-publication-in-International-Journal-on-Digital-Libraries/">New publication in International Journal on Digital Libraries</a></li>
+      <li><a href="/blog/2016/06/14/New-publication-in-International-Journal-of-Digital-Libraries/">New publication in International Journal of Digital Libraries</a></li>
       <li><a href="/blog/2016/06/13/Dynamic-sorting-with-ivy/">Dynamic sorting with ivy</a></li>
-      <li><a href="/blog/2016/05/30/Writing-lisp-code-from-Python/">Writing lisp code from Python</a></li>
     </ul>
   </section>
 
