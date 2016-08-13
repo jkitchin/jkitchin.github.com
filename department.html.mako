@@ -108,7 +108,7 @@
 </tr>
 
 <tr>
-<td class="left"><a href="http://www.scopus.com/authid/detail.url?origin=AuthorProfile&authorId=35609935600">Kathyrn Whitehead</a></td>
+<td class="left"><a href="http://www.scopus.com/authid/detail.url?origin=AuthorProfile&authorId=35609935600">Kathryn Whitehead</a></td>
 </tr>
 
 <tr>
