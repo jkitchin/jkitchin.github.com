@@ -1,8 +1,10 @@
+# These seem to be my publications.
+
 from scopus.scopus_xml import *
 
 import requests
 import json
-from scopus.my_scopus import MY_API_KEY
+from scopus import MY_API_KEY
 resp = requests.get("http://api.elsevier.com/content/search/scopus?query=AU-ID(7004212771)&field=eid,aggregationType&count=100",
                     headers={'Accept':'application/json',
                              'X-ELS-APIKey': MY_API_KEY})

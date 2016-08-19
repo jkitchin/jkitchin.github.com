@@ -1,5 +1,4 @@
 from scopus.scopus_xml import *
-from scopus.my_scopus import MY_API_KEY
 from scopus.scopus_search import ScopusSearch
 from scopus.scopus_api import ScopusAbstract
 
@@ -12,11 +11,13 @@ for YEAR in [#'2005',
              #'2011',
              #'2012',
              #'2013',
-             #'2014',
+             '2014',
              '2015']:
 
+    # this query includes Neil Donahue
     ss = ScopusSearch('(affil(carnegie mellon university and chemical engineering)'
-                      ' or au-id(7004596535)) AND pubyear is {}'.format(YEAR))
+                      ' or au-id(7004596535)) AND pubyear is {}'.format(YEAR),
+                      refresh=True)
 
     with open('dept-publications-{}.html.mako'.format(YEAR), 'w') as f:
         f.write('''<%inherit file="_templates/site.mako" />
