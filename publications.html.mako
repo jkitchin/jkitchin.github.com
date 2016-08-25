@@ -2,6 +2,8 @@
 <article class="page_box">
 <%self:filter chain="markdown">
 
+<script type='text/javascript' src='https://d1bxh8uas1mnw7.cloudfront.net/assets/embed.js'></script>
+
 <h1>Online collections of our work</h1>
 Pick your favorite:
 <ul>
