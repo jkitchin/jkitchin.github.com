@@ -7,12 +7,251 @@
   <title type="text">The Kitchin Research Group</title>
   <subtitle type="text">Chemical Engineering at Carnegie Mellon University</subtitle>
 
-  <updated>2016-08-19T13:57:35Z</updated>
+  <updated>2016-08-25T16:23:20Z</updated>
   <generator uri="http://blogofile.com/">Blogofile</generator>
 
   <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog" />
   <id>http://jkitchin.github.io/blog/feed/atom/</id>
   <link rel="self" type="application/atom+xml" href="http://jkitchin.github.io/blog/feed/atom/" />
+  <entry>
+    <author>
+      <name></name>
+      <uri>http://jkitchin.github.io/blog</uri>
+    </author>
+    <title type="html"><![CDATA[Automated bibtex entry tweeting]]></title>
+    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2016/08/25/Automated-bibtex-entry-tweeting" />
+    <id>http://jkitchin.github.io/blog/2016/08/25/Automated-bibtex-entry-tweeting</id>
+    <updated>2016-08-25T12:23:08Z</updated>
+    <published>2016-08-25T12:14:31Z</published>
+    <category scheme="http://jkitchin.github.io/blog" term="bibtex" />
+    <category scheme="http://jkitchin.github.io/blog" term="twitter" />
+    <summary type="html"><![CDATA[Automated bibtex entry tweeting]]></summary>
+    <content type="html" xml:base="http://jkitchin.github.io/blog/2016/08/25/Automated-bibtex-entry-tweeting"><![CDATA[
+
+
+<p>
+The goal in this post is to develop an elisp function that will tweet a bibtex entry. What I want is to be on a bibtex entry, and run a command that will generate a tweet and tweet it. Here is an example bibtex entry I will use in this post. Clearly, I couldn't simply tweet the entry, it is too long. What I want instead is to generate a picture of a formatted citation, to make a gist out of the bibtex entry so we can link to it, and then to provide links in the tweet to the doi, and the bibtex entry gist. 
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect <span style="color: #008000;">"~/Dropbox/bibliography/references.bib"</span>)
+  (goto-char (point-min))
+  (re-search-forward <span style="color: #008000;">"kitchin-2016-autom-data,"</span>)
+  (bibtex-copy-entry-as-kill)
+  (<span style="color: #0000FF;">with-temp-buffer</span>
+    (bibtex-yank 1)
+    (buffer-string)))
+</pre>
+</div>
+
+<p>
+First, we tackle making an image. Emacs has some capability to generate svg, and we can readily convert that to png for the tweet. Here we just go to the entry, and then generate a png. I build off the citation capability of org-ref to generate a pretty reasonably formatted entry. It isn't perfect; the volume is missing in the entry, so there is a blank space between two commas, but this is good enough for me. Note we need a png for twitter. It appears you cannot upload svg yet.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let*</span> ((entry (<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect <span style="color: #008000;">"~/Dropbox/bibliography/references.bib"</span>)
+                (goto-char (point-min))
+                (re-search-forward <span style="color: #008000;">"kitchin-2016-autom-data,"</span>)
+                (bibtex-beginning-of-entry)
+                (bibtex-parse-entry t)))
+       (formatted-entry (orhc-formatted-citation entry))
+       (lines (<span style="color: #0000FF;">with-temp-buffer</span>
+                (insert formatted-entry)
+                (fill-paragraph)
+                (split-string  (buffer-string) <span style="color: #008000;">"\n"</span>)))
+       (svg (svg-create 500 (* 20 (length lines)))))
+
+  (<span style="color: #0000FF;">loop</span> for i from 0
+        for line in lines
+        do
+        (svg-text svg line
+                  <span style="color: #006FE0;">:font-size</span> <span style="color: #008000;">"12"</span>
+                  <span style="color: #006FE0;">:stroke</span> <span style="color: #008000;">"black"</span>
+                  <span style="color: #006FE0;">:x</span> 0
+                  <span style="color: #006FE0;">:y</span> (+ 15 (* i 15))
+                  <span style="color: #006FE0;">:stroke-width</span> 0.3))
+
+  (<span style="color: #0000FF;">with-temp-file</span> <span style="color: #008000;">"authoring.svg"</span>
+    (svg-print svg)))
+
+(shell-command <span style="color: #008000;">"convert authoring.svg authoring.png"</span>)
+</pre>
+</div>
+
+<p>
+<img src="/media/authoring.png"> 
+</p>
+
+<p>
+It is easy enough to get the doi, and generate the url to it.
+</p>
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let*</span> ((entry (<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect <span style="color: #008000;">"~/Dropbox/bibliography/references.bib"</span>)
+                (goto-char (point-min))
+                (re-search-forward <span style="color: #008000;">"kitchin-2016-autom-data,"</span>)
+                (bibtex-beginning-of-entry)
+                (bibtex-parse-entry t))))
+  (format <span style="color: #008000;">"http://dx.doi.org/%s"</span> (cdr (assoc <span style="color: #008000;">"doi"</span> entry ))))
+</pre>
+</div>
+
+<p>
+Next, we will put the entry as a gist on Github, so we can provide a link to it. I use the gist.el package, and here just do some trickery to put the entry in a temp-file named by the key so that the gist has a nice name. This returns the url to the gist, which we would want to incorporate into a tweet.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect <span style="color: #008000;">"~/Dropbox/bibliography/references.bib"</span>)
+  (goto-char (point-min))
+  (re-search-forward <span style="color: #008000;">"kitchin-2016-autom-data,"</span>)
+  (<span style="color: #0000FF;">save-restriction</span>
+    (bibtex-narrow-to-entry)
+    (bibtex-beginning-of-entry)
+    (<span style="color: #0000FF;">let*</span> ((entry-string (buffer-string))
+           (entry (bibtex-parse-entry))
+           (key (cdr (assoc <span style="color: #008000;">"=key="</span> entry)))
+           (tfile (expand-file-name (format <span style="color: #008000;">"%s.bib"</span> key) temporary-file-directory)))
+      (<span style="color: #0000FF;">with-temp-file</span> tfile
+        (insert entry-string))
+      (<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect tfile) 
+        (gist-buffer)))
+    (<span style="color: #0000FF;">with-temp-buffer</span>
+      (yank)
+      (buffer-string))))
+</pre>
+</div>
+
+
+<p>
+Ok, All the pieces are in place. The only piece left is creating the tweet, and tweeting it. I couldn't see an obvious way to do this with twittering mode, since I didn't see where to add an image. There is a <a href="https://pypi.python.org/pypi/TwitterAPI/2.4.2">Python library</a> for this though, and it looks pretty easy to use. Here is an example usage. 
+</p>
+
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #0000FF;">from</span> TwitterAPI <span style="color: #0000FF;">import</span> TwitterAPI
+<span style="color: #0000FF;">from</span> twitter_secrets <span style="color: #0000FF;">import</span> CONSUMER_KEY, CONSUMER_SECRET, ACCESS_TOKEN_KEY, ACCESS_TOKEN_SECRET
+
+<span style="color: #BA36A5;">api</span> = TwitterAPI(CONSUMER_KEY, CONSUMER_SECRET, ACCESS_TOKEN_KEY, ACCESS_TOKEN_SECRET)
+<span style="color: #006FE0;">file</span> = <span style="color: #006FE0;">open</span>(<span style="color: #008000;">'authoring.png'</span>, <span style="color: #008000;">'rb'</span>)
+<span style="color: #BA36A5;">data</span> = <span style="color: #006FE0;">file</span>.read()
+<span style="color: #BA36A5;">r</span> = api.request(<span style="color: #008000;">'statuses/update_with_media'</span>, {<span style="color: #008000;">'status'</span>:<span style="color: #008000;">'A test tweet using the TwitterAPI with an image.'</span>}, {<span style="color: #008000;">'media[]'</span>:data})
+<span style="color: #0000FF;">print</span>(r.status_code)
+</pre>
+</div>
+
+<p>
+200
+</p>
+
+<p>
+It will be a tad hacky, but the script is so simple we can just make a template, and run it. We need to do these things: 1) make the image, 2) make the gist 3) format and send the tweet. Here is the elisp function to do that.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">tweet-bibtex</span> ()
+  <span style="color: #036A07;">"Tweet the bibtex entry at point."</span>
+  (<span style="color: #0000FF;">interactive</span>)
+  (bibtex-beginning-of-entry)
+
+  (<span style="color: #0000FF;">let*</span> ((entry-string (<span style="color: #0000FF;">save-restriction</span>
+                         (bibtex-beginning-of-entry)
+                         (bibtex-narrow-to-entry)
+                         (buffer-string)))
+         (entry (bibtex-parse-entry t))
+         (key (cdr (assoc <span style="color: #008000;">"=key="</span> entry)))
+         (doi (cdr (assoc <span style="color: #008000;">"doi"</span> entry)))
+         (svg-file (expand-file-name (format <span style="color: #008000;">"%s.svg"</span> key) temporary-file-directory))
+         (png-file (expand-file-name (format <span style="color: #008000;">"%s.png"</span> key) temporary-file-directory))
+         (bib-file (expand-file-name (format <span style="color: #008000;">"%s.bib"</span> key) temporary-file-directory))
+         (py-file (expand-file-name (format <span style="color: #008000;">"%s.py"</span> key) temporary-file-directory))
+         (formatted-entry (orhc-formatted-citation entry))
+         (lines (<span style="color: #0000FF;">with-temp-buffer</span>
+                  (insert formatted-entry)
+                  (fill-paragraph)
+                  (split-string  (buffer-string) <span style="color: #008000;">"\n"</span>)))
+         (svg (svg-create 500 (* 20 (length lines))))
+         (tweet (read-string <span style="color: #008000;">"Tweet: "</span>))
+         gist-url
+         full-tweet)
+
+    (<span style="color: #0000FF;">loop</span> for f in (list svg-file png-file bib-file py-file)
+          do
+          (kill-buffer (find-file-noselect f))
+          (delete-file f))
+
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Step 1 make the image</span>
+    (<span style="color: #0000FF;">loop</span> for i from 0
+          for line in lines
+          do
+          (svg-text svg line
+                    <span style="color: #006FE0;">:font-size</span> <span style="color: #008000;">"12"</span>
+                    <span style="color: #006FE0;">:stroke</span> <span style="color: #008000;">"black"</span>
+                    <span style="color: #006FE0;">:x</span> 0
+                    <span style="color: #006FE0;">:y</span> (+ 15 (* i 15))
+                    <span style="color: #006FE0;">:stroke-width</span> 0.3))
+
+    (<span style="color: #0000FF;">with-temp-file</span> svg-file
+      (svg-print svg))
+
+    (shell-command (format <span style="color: #008000;">"convert %s %s"</span> svg-file png-file))
+
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Step 2, make the gist. Make a temp-file so the gist has a reasonable name</span>
+    (<span style="color: #0000FF;">with-temp-file</span> bib-file
+      (insert entry-string))
+
+    (<span style="color: #0000FF;">let</span> ((bib-buffer (find-file-noselect bib-file)))
+      (<span style="color: #0000FF;">with-current-buffer</span> bib-buffer
+        (gist-buffer))
+      (kill-buffer bib-buffer))
+
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">get url off clipboard</span>
+    (<span style="color: #0000FF;">setq</span> gist-url (<span style="color: #0000FF;">with-temp-buffer</span>
+                     (yank)
+                     (buffer-string)))
+
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Format and send the tweet:</span>
+    (<span style="color: #0000FF;">setq</span> full-tweet (format <span style="color: #008000;">"#publication %s\nhttp://dx.doi.org/%s\nbibtex: %s"</span> tweet doi gist-url))
+
+    (<span style="color: #0000FF;">with-temp-file</span> py-file
+      (insert (format <span style="color: #008000;">"from TwitterAPI import TwitterAPI</span>
+<span style="color: #008000;">from twitter_secrets import CONSUMER_KEY, CONSUMER_SECRET, ACCESS_TOKEN_KEY, ACCESS_TOKEN_SECRET</span>
+
+<span style="color: #008000;">api = TwitterAPI(CONSUMER_KEY, CONSUMER_SECRET, ACCESS_TOKEN_KEY, ACCESS_TOKEN_SECRET)</span>
+<span style="color: #008000;">file = open('%s', 'rb')</span>
+<span style="color: #008000;">data = file.read()</span>
+<span style="color: #008000;">r = api.request('statuses/update_with_media', {'status':'''%s'''}, {'media[]':data})"</span>
+                      png-file
+                      full-tweet)))
+
+    (shell-command (format <span style="color: #008000;">"python %s"</span> py-file))
+    (message <span style="color: #008000;">"%s"</span> full-tweet)))
+
+<span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Now, try it out.</span>
+(<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect <span style="color: #008000;">"~/Dropbox/bibliography/references.bib"</span>)
+  (goto-char (point-min))
+  (re-search-forward <span style="color: #008000;">"kitchin-2016-autom-data,"</span>)
+  (tweet-bibtex))
+</pre>
+</div>
+
+<p>
+You can see what this tweet looks like here:
+</p>
+
+<blockquote class="twitter-tweet" data-lang="en"><p lang="en" dir="ltr"><a href="https://twitter.com/hashtag/publication?src=hash">#publication</a> I tweeted this from a bibtex file.<a href="https://t.co/NGVlRGqKSJ">https://t.co/NGVlRGqKSJ</a><br>bibtex: <a href="https://t.co/0UEkvyBKAM">https://t.co/0UEkvyBKAM</a> <a href="https://t.co/OpbAt1h3OP">pic.twitter.com/OpbAt1h3OP</a></p>&mdash; John Kitchin (@johnkitchin) <a href="https://twitter.com/johnkitchin/status/768838551140261894">August 25, 2016</a></blockquote> <script async src="//platform.twitter.com/widgets.js" charset="utf-8"></script>
+
+<p>
+That seems pretty reasonable. Now I only need to use it about 48,000 times to benefit from the time-savings M-x tweet-bibtex offers compared to manually making all those tweets ;) 
+</p>
+<p>Copyright (C) 2016 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2016/08/25/Automated-bibtex-entry-tweeting.org">org-mode source</a></p>
+<p>Org-mode version = 8.3.4</p>]]></content>
+  </entry>
   <entry>
     <author>
       <name></name>
@@ -708,8 +947,8 @@ This is another place where configuration will be required for bibliography styl
     <id>http://jkitchin.github.io/blog/2016/06/14/Using-prefix-args-in-ivy-actions</id>
     <updated>2016-06-14T11:03:46Z</updated>
     <published>2016-06-14T11:03:46Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="ivy" />
     <category scheme="http://jkitchin.github.io/blog" term="emacs" />
+    <category scheme="http://jkitchin.github.io/blog" term="ivy" />
     <summary type="html"><![CDATA[Using prefix args in ivy actions]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2016/06/14/Using-prefix-args-in-ivy-actions"><![CDATA[
 
@@ -941,8 +1180,8 @@ Check out the preprint here: <a href="https://github.com/KitchinHUB/kitchingroup
     <id>http://jkitchin.github.io/blog/2016/06/13/Dynamic-sorting-with-ivy</id>
     <updated>2016-06-13T15:51:19Z</updated>
     <published>2016-06-13T15:51:19Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="ivy" />
     <category scheme="http://jkitchin.github.io/blog" term="emacs" />
+    <category scheme="http://jkitchin.github.io/blog" term="ivy" />
     <summary type="html"><![CDATA[Dynamic sorting with ivy]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2016/06/13/Dynamic-sorting-with-ivy"><![CDATA[
 
@@ -1129,8 +1368,8 @@ kb@true.you, gw@not.me, ap@some.come, 555-1212, 555-5555, 867-5304
     <id>http://jkitchin.github.io/blog/2016/05/30/Writing-lisp-code-from-Python</id>
     <updated>2016-05-30T12:38:20Z</updated>
     <published>2016-05-30T09:26:05Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="python" />
     <category scheme="http://jkitchin.github.io/blog" term="lisp" />
+    <category scheme="http://jkitchin.github.io/blog" term="python" />
     <summary type="html"><![CDATA[Writing lisp code from Python]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2016/05/30/Writing-lisp-code-from-Python"><![CDATA[
 
@@ -1323,8 +1562,8 @@ I am not too sure where this will be super useful, but it is an interesting proo
     <id>http://jkitchin.github.io/blog/2016/05/29/Expanding-orgmode-py-to-get-better-org-python-integration</id>
     <updated>2016-05-29T15:51:52Z</updated>
     <published>2016-05-29T14:03:34Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="python" />
     <category scheme="http://jkitchin.github.io/blog" term="orgmode" />
+    <category scheme="http://jkitchin.github.io/blog" term="python" />
     <summary type="html"><![CDATA[Expanding orgmode.py to get better org-python integration]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2016/05/29/Expanding-orgmode-py-to-get-better-org-python-integration"><![CDATA[
 
@@ -1867,297 +2106,6 @@ That is close, but requires us to wrap our code in a function. There does not se
 </p>
 <p>Copyright (C) 2016 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
 <p><a href="/org/2016/05/06/When-in-python-do-as-Pythonistas-unless....org">org-mode source</a></p>
-<p>Org-mode version = 8.2.10</p>]]></content>
-  </entry>
-  <entry>
-    <author>
-      <name></name>
-      <uri>http://jkitchin.github.io/blog</uri>
-    </author>
-    <title type="html"><![CDATA[Automatic decorating of class methods to run them in a context]]></title>
-    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2016/05/01/Automatic-decorating-of-class-methods-to-run-them-in-a-context" />
-    <id>http://jkitchin.github.io/blog/2016/05/01/Automatic-decorating-of-class-methods-to-run-them-in-a-context</id>
-    <updated>2016-05-01T09:16:29Z</updated>
-    <published>2016-05-01T09:16:29Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="python" />
-    <summary type="html"><![CDATA[Automatic decorating of class methods to run them in a context]]></summary>
-    <content type="html" xml:base="http://jkitchin.github.io/blog/2016/05/01/Automatic-decorating-of-class-methods-to-run-them-in-a-context"><![CDATA[
-
-
-
-<p>
-We <a href="http://kitchingroup.cheme.cmu.edu/blog/2016/04/28/Managing-contexts-Python-vs-hy/">previously examined</a> approaches to running code in a context. With hy, we even managed to remove the need for a with statement through the use of a macro that expanded behind the scenes to manage the context. In our jasp code, we frequently need a context manager that temporarily changes the working directory to run some code, then changes back. The use of the context manager was a design decision to avoid decorating every single function. Why? There are a lot of functions that need decorating, and they are spread over a lot of files. Not all of the entries from the next block are methods, but most of them are.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #0000FF;">from</span> jasp <span style="color: #0000FF;">import</span> *
-
-<span style="color: #BA36A5;">c</span> = Vasp()
-<span style="color: #0000FF;">print</span>(<span style="color: #006FE0;">dir</span>(c))
-</pre>
-</div>
-
-<pre class="example">
-['__doc__', '__init__', '__module__', '__repr__', '__str__', 'add_to_db', 'archive', 'atoms', 'bader', 'bool_params', 'calculate', 'calculation_required', 'check_state', 'chgsum', 'clean', 'clone', 'create_metadata', 'dict', 'dict_params', 'exp_params', 'float_params', 'get_atoms', 'get_beefens', 'get_bz_k_points', 'get_charge_density', 'get_default_number_of_electrons', 'get_dipole_moment', 'get_eigenvalues', 'get_elapsed_time', 'get_electronic_temperature', 'get_elf', 'get_energy_components', 'get_fermi_level', 'get_forces', 'get_ibz_k_points', 'get_ibz_kpoints', 'get_infrared_intensities', 'get_k_point_weights', 'get_local_potential', 'get_magnetic_moment', 'get_magnetic_moments', 'get_name', 'get_nearest_neighbor_table', 'get_neb', 'get_nonselfconsistent_energies', 'get_number_of_bands', 'get_number_of_electrons', 'get_number_of_grid_points', 'get_number_of_ionic_steps', 'get_number_of_iterations', 'get_number_of_spins', 'get_occupation_numbers', 'get_orbital_occupations', 'get_potential_energy', 'get_property', 'get_pseudo_density', 'get_pseudo_wavefunction', 'get_pseudopotentials', 'get_required_memory', 'get_spin_polarized', 'get_stress', 'get_valence_electrons', 'get_version', 'get_vibrational_frequencies', 'get_vibrational_modes', 'get_xc_functional', 'initialize', 'input_params', 'int_params', 'is_neb', 'job_in_queue', 'json', 'list_params', 'name', 'nbands', 'org', 'output_template', 'plot_neb', 'positions', 'post_run_hooks', 'prepare_input_files', 'pretty_json', 'python', 'read', 'read_convergence', 'read_default_number_of_electrons', 'read_dipole', 'read_eigenvalues', 'read_electronic_temperature', 'read_energy', 'read_fermi', 'read_forces', 'read_ibz_kpoints', 'read_incar', 'read_k_point_weights', 'read_kpoints', 'read_ldau', 'read_magnetic_moment', 'read_magnetic_moments', 'read_metadata', 'read_nbands', 'read_number_of_electrons', 'read_number_of_iterations', 'read_occupation_numbers', 'read_outcar', 'read_potcar', 'read_relaxed', 'read_stress', 'read_version', 'read_vib_freq', 'register_post_run_hook', 'register_pre_run_hook', 'restart', 'restart_load', 'results', 'run', 'run_counts', 'set', 'set_atoms', 'set_nbands', 'set_results', 'special_params', 'string_params', 'strip', 'strip_warnings', 'todict', 'track_output', 'update', 'write_incar', 'write_kpoints', 'write_metadata', 'write_potcar', 'write_sort_file', 'xml']
-</pre>
-
-<p>
-The use of a context manager is really useful for a single calculation, and it saves us a lot of boilerplate code to manage changing directories. It limits us though for looping through calculations. We are stuck with traditional for loops that have the with statement embedded in them. We also cannot get too functional, e.g. with list comprehension.
-</p>
-
-<p>
-In other words, this is ok:
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #BA36A5;">E</span> = []
-<span style="color: #0000FF;">for</span> d <span style="color: #0000FF;">in</span> np.linspace(1, 1.5):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">atoms</span> = Atoms(...,d)
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">with</span> jasp(<span style="color: #008000;">'calculated-name-{}'</span>.<span style="color: #006FE0;">format</span>(d),
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> ...,
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> atoms=atoms) <span style="color: #0000FF;">as</span> calc:
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   E.append(atoms.get_potential_energy())
-</pre>
-</div>
-
-<p>
-But this code is not possible:
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #BA36A5;">bond_lengths</span> = np.linspace(1, 1.5)
-
-<span style="color: #BA36A5;">A</span> = [Atoms(...,d) <span style="color: #0000FF;">for</span> d <span style="color: #0000FF;">in</span> bond_lengths]
-
-<span style="color: #BA36A5;">calcs</span> = [JASP(<span style="color: #008000;">'calculated-name-{}'</span>.<span style="color: #006FE0;">format</span>(d),...,atoms=atoms)
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span><span style="color: #0000FF;">for</span> d, atoms <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">zip</span>(bond-lengths, A)]
-
-<span style="color: #BA36A5;">E</span> = [atoms.get_potential_energy() <span style="color: #0000FF;">for</span> atoms <span style="color: #0000FF;">in</span> A]
-</pre>
-</div>
-
-<p>
-It is not legal syntax to embed a with statement inside a list comprehension. The code will not work because to get the potential energy we have to switch into the calculation directory and read it from a file there, then switch back.
-</p>
-
-<p>
-To make that possible, we need to decorate the class functions so that the right thing happens when needed. I still do not want to decorate each function manually. Although there is a case to make for it, as I mentioned earlier, the functions are all over the place, and numerous. Now is not the time to fix it.
-</p>
-
-<p>
-Instead, we consider a solution that will automatically decorate class functions for us! Enter the Metaclass. This is a class that modifies how classes are created. The net effect of the code below is our Calculator class now has all functions automatically decorated with a function that changes to the working directory, runs the function, and then ensures we change back even in the event of an exception. This approach is adapted from <a href="http://stackoverflow.com/questions/3467526/attaching-a-decorator-to-all-functions-within-a-class">http://stackoverflow.com/questions/3467526/attaching-a-decorator-to-all-functions-within-a-class</a> .
-</p>
-
-<p>
-I am pretty sure this is the right way to do this. We cannot simply decorate the functions of ase.calculators.vasp.Vasp because our decorator needs access to the directory defined in a <i>class instance</i>. That is what the <span class="underline"><span class="underline">init</span></span> method of the metaclass enables.
-</p>
-
-<p>
-We will put this code into a library called meta_calculator.py for reuse in later examples.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #0000FF;">import</span> os
-<span style="color: #0000FF;">import</span> types
-
-<span style="color: #0000FF;">class</span> <span style="color: #6434A3;">WithCurrentDirectory</span>(<span style="color: #006FE0;">type</span>):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>  <span style="color: #036A07;">"""Metaclass that decorates all of its methods except __init__."""</span>
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>  <span style="color: #0000FF;">def</span> <span style="color: #006699;">__new__</span>(cls, name, bases, attrs):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> <span style="color: #0000FF;">return</span> <span style="color: #006FE0;">super</span>(WithCurrentDirectory, cls).__new__(cls, name, bases, attrs)
-
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>  <span style="color: #0000FF;">def</span> <span style="color: #006699;">__init__</span>(cls, name, bases, attrs):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> <span style="color: #036A07;">"""Decorate all the methods of the class instance with the classmethod cd.</span>
-
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span><span style="color: #036A07;">   </span><span style="color: #9B9B9B; background-color: #EDEDED;"> </span><span style="color: #036A07;"> We skip __init__ because that is where the attributes are actually set.</span>
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span><span style="color: #036A07;">   </span><span style="color: #9B9B9B; background-color: #EDEDED;"> </span><span style="color: #036A07;"> It is an error to access them before they are set.</span>
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span><span style="color: #036A07;">   </span><span style="color: #9B9B9B; background-color: #EDEDED;"> </span><span style="color: #036A07;"> """</span>
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> <span style="color: #0000FF;">for</span> attr_name, attr_value <span style="color: #0000FF;">in</span> attrs.iteritems():
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span><span style="color: #0000FF;">if</span> attr_name != <span style="color: #008000;">'__init__'</span> <span style="color: #0000FF;">and</span> <span style="color: #006FE0;">isinstance</span>(attr_value, types.FunctionType):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #006FE0;">setattr</span>(cls, attr_name, cls.cd(attr_value))
-
-
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>  <span style="color: #6434A3;">@classmethod</span>
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>  <span style="color: #0000FF;">def</span> <span style="color: #006699;">cd</span>(cls, func):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> <span style="color: #036A07;">"""Decorator to temporarily run cls.func in the directory stored in cls.wd.</span>
-
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span><span style="color: #036A07;">   </span><span style="color: #9B9B9B; background-color: #EDEDED;"> </span><span style="color: #036A07;"> The working directory is restored to the original directory afterwards.</span>
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span><span style="color: #036A07;">   </span><span style="color: #9B9B9B; background-color: #EDEDED;"> </span><span style="color: #036A07;"> """</span>
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> <span style="color: #0000FF;">def</span> <span style="color: #006699;">wrapper</span>(<span style="color: #0000FF;">self</span>, *args, **kwargs):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span><span style="color: #0000FF;">if</span> <span style="color: #0000FF;">self</span>.verbose:
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">print</span>(<span style="color: #008000;">'\nRunning {}'</span>.<span style="color: #006FE0;">format</span>(func.<span style="color: #006FE0;">__name__</span>))
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">print</span>(<span style="color: #008000;">"Started in {}"</span>.<span style="color: #006FE0;">format</span>(os.getcwd()))
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>os.chdir(<span style="color: #0000FF;">self</span>.wd)
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span><span style="color: #0000FF;">if</span> <span style="color: #0000FF;">self</span>.verbose:
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">print</span>(<span style="color: #008000;">"  Entered {}"</span>.<span style="color: #006FE0;">format</span>(os.getcwd()))
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span><span style="color: #0000FF;">try</span>:
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">result</span> = func(<span style="color: #0000FF;">self</span>, *args, **kwargs)
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">if</span> <span style="color: #0000FF;">self</span>.verbose:
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>  <span style="color: #0000FF;">print</span>(<span style="color: #008000;">'  {}'</span>.<span style="color: #006FE0;">format</span>(result))
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> result
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span><span style="color: #0000FF;">except</span> <span style="color: #6434A3;">Exception</span>, e:
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">this is where you would use an exception handling function</span>
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">print</span>(<span style="color: #008000;">'  Caught {}'</span>.<span style="color: #006FE0;">format</span>(e))
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">pass</span>
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span><span style="color: #0000FF;">finally</span>:
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   os.chdir(<span style="color: #0000FF;">self</span>.owd)
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">if</span> <span style="color: #0000FF;">self</span>.verbose:
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>  <span style="color: #0000FF;">print</span>(<span style="color: #008000;">"  Exited to {}\n"</span>.<span style="color: #006FE0;">format</span>(os.getcwd()))
-
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> wrapper.<span style="color: #006FE0;">__name__</span> = func.<span style="color: #006FE0;">__name__</span>
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> wrapper.<span style="color: #006FE0;">__doc__</span> = func.<span style="color: #006FE0;">__doc__</span>
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> <span style="color: #0000FF;">return</span> wrapper
-
-
-<span style="color: #0000FF;">class</span> <span style="color: #6434A3;">Calculator</span>(<span style="color: #006FE0;">object</span>):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>  <span style="color: #036A07;">"""Class we use for a calculator.</span>
-
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span><span style="color: #036A07;">  Every method is decorated by the metaclass so it runs in the working</span>
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span><span style="color: #036A07;">  directory defined by the class instance.</span>
-
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span><span style="color: #036A07;">  """</span>
-
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>  <span style="color: #BA36A5;">__metaclass__</span> = WithCurrentDirectory
-
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>  <span style="color: #0000FF;">def</span> <span style="color: #006699;">__init__</span>(<span style="color: #0000FF;">self</span>, wd, verbose=<span style="color: #D0372D;">False</span>):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> <span style="color: #0000FF;">self</span>.owd = os.getcwd()
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> <span style="color: #0000FF;">self</span>.wd = wd
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> <span style="color: #0000FF;">self</span>.verbose = verbose
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> <span style="color: #0000FF;">if</span> <span style="color: #0000FF;">not</span> os.path.isdir(wd):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>os.makedirs(wd)
-
-
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>  <span style="color: #0000FF;">def</span> <span style="color: #006699;">create_input</span>(<span style="color: #0000FF;">self</span>, **kwargs):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> <span style="color: #0000FF;">with</span> <span style="color: #006FE0;">open</span>(<span style="color: #008000;">'INCAR'</span>, <span style="color: #008000;">'w'</span>) <span style="color: #0000FF;">as</span> f:
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span><span style="color: #0000FF;">for</span> key, val <span style="color: #0000FF;">in</span> kwargs.iteritems():
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   f.write(<span style="color: #008000;">'{} = {}\n'</span>.<span style="color: #006FE0;">format</span>(key, val))
-
-
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>  <span style="color: #0000FF;">def</span> <span style="color: #006699;">exc</span>(<span style="color: #0000FF;">self</span>):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> <span style="color: #036A07;">"This raises an exception to see what happens"</span>
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> 1 / 0
-
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>  <span style="color: #0000FF;">def</span> <span style="color: #006699;">read_input</span>(<span style="color: #0000FF;">self</span>):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> <span style="color: #0000FF;">with</span> <span style="color: #006FE0;">open</span>(<span style="color: #008000;">'INCAR'</span>, <span style="color: #008000;">'r'</span>) <span style="color: #0000FF;">as</span> f:
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span><span style="color: #0000FF;">return</span> f.read()
-
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>  <span style="color: #0000FF;">def</span> <span style="color: #006699;">__str__</span>(<span style="color: #0000FF;">self</span>):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> <span style="color: #0000FF;">return</span> <span style="color: #008000;">'In {}. Contains: {}'</span>.<span style="color: #006FE0;">format</span>(os.getcwd(),
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> os.listdir(<span style="color: #008000;">'.'</span>))
-</pre>
-</div>
-
-<p>
-Here is how we might use it.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #0000FF;">from</span> meta_calculator <span style="color: #0000FF;">import</span> *
-
-<span style="color: #BA36A5;">c</span> = Calculator(<span style="color: #008000;">'/tmp/calc-1'</span>, verbose=<span style="color: #D0372D;">True</span>)
-<span style="color: #0000FF;">print</span> c.create_input(xc=<span style="color: #008000;">'PBE'</span>, encut=450)
-<span style="color: #0000FF;">print</span> c.read_input()
-<span style="color: #0000FF;">print</span> c.exc()
-<span style="color: #0000FF;">print</span> c
-</pre>
-</div>
-<pre class="example">
-Running create_input
-Started in /Users/jkitchin/blogofile-jkitchin.github.com/_blog
-  Entered /private/tmp/calc-1
-  None
-  Exited to /Users/jkitchin/blogofile-jkitchin.github.com/_blog
-
-None
-
-Running read_input
-Started in /Users/jkitchin/blogofile-jkitchin.github.com/_blog
-  Entered /private/tmp/calc-1
-  xc = PBE
-encut = 450
-
-  Exited to /Users/jkitchin/blogofile-jkitchin.github.com/_blog
-
-xc = PBE
-encut = 450
-
-
-Running exc
-Started in /Users/jkitchin/blogofile-jkitchin.github.com/_blog
-  Entered /private/tmp/calc-1
-  Caught integer division or modulo by zero
-  Exited to /Users/jkitchin/blogofile-jkitchin.github.com/_blog
-
-None
-
-Running __str__
-Started in /Users/jkitchin/blogofile-jkitchin.github.com/_blog
-  Entered /private/tmp/calc-1
-  In /private/tmp/calc-1. Contains: ['INCAR']
-  Exited to /Users/jkitchin/blogofile-jkitchin.github.com/_blog
-
-In /private/tmp/calc-1. Contains: ['INCAR']
-</pre>
-
-<p>
-As we can see, in each function call, we evidently do change into the path that /tmp/calc-1 points to (it is apparently /private/tmp on Mac OSX), runs the method, and then changes back out, even when exceptions occur.
-</p>
-
-<p>
-Here is a functional approach to using our new calculator.
-</p>
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #0000FF;">from</span> meta_calculator <span style="color: #0000FF;">import</span> *
-
-<span style="color: #BA36A5;">encuts</span> = [100, 200, 300, 400]
-<span style="color: #BA36A5;">calcs</span> = [Calculator(<span style="color: #008000;">'encut-{}'</span>.<span style="color: #006FE0;">format</span>(encut)) <span style="color: #0000FF;">for</span> encut <span style="color: #0000FF;">in</span> encuts]
-
-<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">list-comprehension for the side-effect</span>
-[calc.create_input(encut=encut) <span style="color: #0000FF;">for</span> calc,encut <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">zip</span>(calcs, encuts)]
-
-<span style="color: #BA36A5;">inputs</span> = [calc.read_input() <span style="color: #0000FF;">for</span> calc <span style="color: #0000FF;">in</span> calcs]
-
-<span style="color: #0000FF;">print</span>(inputs)
-<span style="color: #0000FF;">print</span>([calc.wd <span style="color: #0000FF;">for</span> calc <span style="color: #0000FF;">in</span> calcs])
-</pre>
-</div>
-<pre class="example">
-['encut = 100\n', 'encut = 200\n', 'encut = 300\n', 'encut = 400\n']
-['encut-100', 'encut-200', 'encut-300', 'encut-400']
-</pre>
-
-<p>
-Sweet. And here is our evidence that the directories got created and have the files in them.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-sh">find . -type f -print | grep <span style="color: #008000;">"encut-[1-4]00"</span> | xargs -n 1 -I {} -i bash -c <span style="color: #008000;">'echo {}; cat {}; echo'</span>
-</pre>
-</div>
-<pre class="example">
-./encut-100/INCAR
-encut = 100
-
-./encut-200/INCAR
-encut = 200
-
-./encut-300/INCAR
-encut = 300
-
-./encut-400/INCAR
-encut = 400
-</pre>
-
-<p>
-This looks like another winner that will be making its way into <a href="https://github.com/jkitchin/jasp">jasp</a> soon. I guess it will require at least some minor surgery on a class in ase.calculators.vasp. It might be time to move a copy of it all the way into jasp.</p>
-<p>Copyright (C) 2016 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2016/05/01/Automatic-decorating-of-class-methods-to-run-them-in-a-context.org">org-mode source</a></p>
 <p>Org-mode version = 8.2.10</p>]]></content>
   </entry>
 </feed>

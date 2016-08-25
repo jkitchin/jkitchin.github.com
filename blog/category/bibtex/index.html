@@ -84,10 +84,265 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Automated-bibtex-entry-tweeting"></div>
+      <h2 class="blog_post_title"><a href="/blog/2016/08/25/Automated-bibtex-entry-tweeting/" rel="bookmark" title="Permanent Link to Automated bibtex entry tweeting">Automated bibtex entry tweeting</a></h2>
+      <p><small><span class="blog_post_date">Posted August 25, 2016 at 12:14 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/bibtex/'>bibtex</a>, <a href='/blog/category/twitter/'>twitter</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2016/08/25/Automated-bibtex-entry-tweeting#disqus_thread">View Comments</a>
+      <p><small><span class="blog_post_date">Updated August 25, 2016 at 12:23 PM</span>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+The goal in this post is to develop an elisp function that will tweet a bibtex entry. What I want is to be on a bibtex entry, and run a command that will generate a tweet and tweet it. Here is an example bibtex entry I will use in this post. Clearly, I couldn't simply tweet the entry, it is too long. What I want instead is to generate a picture of a formatted citation, to make a gist out of the bibtex entry so we can link to it, and then to provide links in the tweet to the doi, and the bibtex entry gist. 
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect <span style="color: #008000;">"~/Dropbox/bibliography/references.bib"</span>)
+  (goto-char (point-min))
+  (re-search-forward <span style="color: #008000;">"kitchin-2016-autom-data,"</span>)
+  (bibtex-copy-entry-as-kill)
+  (<span style="color: #0000FF;">with-temp-buffer</span>
+    (bibtex-yank 1)
+    (buffer-string)))
+</pre>
+</div>
+
+<p>
+First, we tackle making an image. Emacs has some capability to generate svg, and we can readily convert that to png for the tweet. Here we just go to the entry, and then generate a png. I build off the citation capability of org-ref to generate a pretty reasonably formatted entry. It isn't perfect; the volume is missing in the entry, so there is a blank space between two commas, but this is good enough for me. Note we need a png for twitter. It appears you cannot upload svg yet.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let*</span> ((entry (<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect <span style="color: #008000;">"~/Dropbox/bibliography/references.bib"</span>)
+                (goto-char (point-min))
+                (re-search-forward <span style="color: #008000;">"kitchin-2016-autom-data,"</span>)
+                (bibtex-beginning-of-entry)
+                (bibtex-parse-entry t)))
+       (formatted-entry (orhc-formatted-citation entry))
+       (lines (<span style="color: #0000FF;">with-temp-buffer</span>
+                (insert formatted-entry)
+                (fill-paragraph)
+                (split-string  (buffer-string) <span style="color: #008000;">"\n"</span>)))
+       (svg (svg-create 500 (* 20 (length lines)))))
+
+  (<span style="color: #0000FF;">loop</span> for i from 0
+        for line in lines
+        do
+        (svg-text svg line
+                  <span style="color: #006FE0;">:font-size</span> <span style="color: #008000;">"12"</span>
+                  <span style="color: #006FE0;">:stroke</span> <span style="color: #008000;">"black"</span>
+                  <span style="color: #006FE0;">:x</span> 0
+                  <span style="color: #006FE0;">:y</span> (+ 15 (* i 15))
+                  <span style="color: #006FE0;">:stroke-width</span> 0.3))
+
+  (<span style="color: #0000FF;">with-temp-file</span> <span style="color: #008000;">"authoring.svg"</span>
+    (svg-print svg)))
+
+(shell-command <span style="color: #008000;">"convert authoring.svg authoring.png"</span>)
+</pre>
+</div>
+
+<p>
+<img src="/media/authoring.png"> 
+</p>
+
+<p>
+It is easy enough to get the doi, and generate the url to it.
+</p>
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let*</span> ((entry (<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect <span style="color: #008000;">"~/Dropbox/bibliography/references.bib"</span>)
+                (goto-char (point-min))
+                (re-search-forward <span style="color: #008000;">"kitchin-2016-autom-data,"</span>)
+                (bibtex-beginning-of-entry)
+                (bibtex-parse-entry t))))
+  (format <span style="color: #008000;">"http://dx.doi.org/%s"</span> (cdr (assoc <span style="color: #008000;">"doi"</span> entry ))))
+</pre>
+</div>
+
+<p>
+Next, we will put the entry as a gist on Github, so we can provide a link to it. I use the gist.el package, and here just do some trickery to put the entry in a temp-file named by the key so that the gist has a nice name. This returns the url to the gist, which we would want to incorporate into a tweet.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect <span style="color: #008000;">"~/Dropbox/bibliography/references.bib"</span>)
+  (goto-char (point-min))
+  (re-search-forward <span style="color: #008000;">"kitchin-2016-autom-data,"</span>)
+  (<span style="color: #0000FF;">save-restriction</span>
+    (bibtex-narrow-to-entry)
+    (bibtex-beginning-of-entry)
+    (<span style="color: #0000FF;">let*</span> ((entry-string (buffer-string))
+           (entry (bibtex-parse-entry))
+           (key (cdr (assoc <span style="color: #008000;">"=key="</span> entry)))
+           (tfile (expand-file-name (format <span style="color: #008000;">"%s.bib"</span> key) temporary-file-directory)))
+      (<span style="color: #0000FF;">with-temp-file</span> tfile
+        (insert entry-string))
+      (<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect tfile) 
+        (gist-buffer)))
+    (<span style="color: #0000FF;">with-temp-buffer</span>
+      (yank)
+      (buffer-string))))
+</pre>
+</div>
+
+
+<p>
+Ok, All the pieces are in place. The only piece left is creating the tweet, and tweeting it. I couldn't see an obvious way to do this with twittering mode, since I didn't see where to add an image. There is a <a href="https://pypi.python.org/pypi/TwitterAPI/2.4.2">Python library</a> for this though, and it looks pretty easy to use. Here is an example usage. 
+</p>
+
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #0000FF;">from</span> TwitterAPI <span style="color: #0000FF;">import</span> TwitterAPI
+<span style="color: #0000FF;">from</span> twitter_secrets <span style="color: #0000FF;">import</span> CONSUMER_KEY, CONSUMER_SECRET, ACCESS_TOKEN_KEY, ACCESS_TOKEN_SECRET
+
+<span style="color: #BA36A5;">api</span> = TwitterAPI(CONSUMER_KEY, CONSUMER_SECRET, ACCESS_TOKEN_KEY, ACCESS_TOKEN_SECRET)
+<span style="color: #006FE0;">file</span> = <span style="color: #006FE0;">open</span>(<span style="color: #008000;">'authoring.png'</span>, <span style="color: #008000;">'rb'</span>)
+<span style="color: #BA36A5;">data</span> = <span style="color: #006FE0;">file</span>.read()
+<span style="color: #BA36A5;">r</span> = api.request(<span style="color: #008000;">'statuses/update_with_media'</span>, {<span style="color: #008000;">'status'</span>:<span style="color: #008000;">'A test tweet using the TwitterAPI with an image.'</span>}, {<span style="color: #008000;">'media[]'</span>:data})
+<span style="color: #0000FF;">print</span>(r.status_code)
+</pre>
+</div>
+
+<p>
+200
+</p>
+
+<p>
+It will be a tad hacky, but the script is so simple we can just make a template, and run it. We need to do these things: 1) make the image, 2) make the gist 3) format and send the tweet. Here is the elisp function to do that.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">tweet-bibtex</span> ()
+  <span style="color: #036A07;">"Tweet the bibtex entry at point."</span>
+  (<span style="color: #0000FF;">interactive</span>)
+  (bibtex-beginning-of-entry)
+
+  (<span style="color: #0000FF;">let*</span> ((entry-string (<span style="color: #0000FF;">save-restriction</span>
+                         (bibtex-beginning-of-entry)
+                         (bibtex-narrow-to-entry)
+                         (buffer-string)))
+         (entry (bibtex-parse-entry t))
+         (key (cdr (assoc <span style="color: #008000;">"=key="</span> entry)))
+         (doi (cdr (assoc <span style="color: #008000;">"doi"</span> entry)))
+         (svg-file (expand-file-name (format <span style="color: #008000;">"%s.svg"</span> key) temporary-file-directory))
+         (png-file (expand-file-name (format <span style="color: #008000;">"%s.png"</span> key) temporary-file-directory))
+         (bib-file (expand-file-name (format <span style="color: #008000;">"%s.bib"</span> key) temporary-file-directory))
+         (py-file (expand-file-name (format <span style="color: #008000;">"%s.py"</span> key) temporary-file-directory))
+         (formatted-entry (orhc-formatted-citation entry))
+         (lines (<span style="color: #0000FF;">with-temp-buffer</span>
+                  (insert formatted-entry)
+                  (fill-paragraph)
+                  (split-string  (buffer-string) <span style="color: #008000;">"\n"</span>)))
+         (svg (svg-create 500 (* 20 (length lines))))
+         (tweet (read-string <span style="color: #008000;">"Tweet: "</span>))
+         gist-url
+         full-tweet)
+
+    (<span style="color: #0000FF;">loop</span> for f in (list svg-file png-file bib-file py-file)
+          do
+          (kill-buffer (find-file-noselect f))
+          (delete-file f))
+
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Step 1 make the image</span>
+    (<span style="color: #0000FF;">loop</span> for i from 0
+          for line in lines
+          do
+          (svg-text svg line
+                    <span style="color: #006FE0;">:font-size</span> <span style="color: #008000;">"12"</span>
+                    <span style="color: #006FE0;">:stroke</span> <span style="color: #008000;">"black"</span>
+                    <span style="color: #006FE0;">:x</span> 0
+                    <span style="color: #006FE0;">:y</span> (+ 15 (* i 15))
+                    <span style="color: #006FE0;">:stroke-width</span> 0.3))
+
+    (<span style="color: #0000FF;">with-temp-file</span> svg-file
+      (svg-print svg))
+
+    (shell-command (format <span style="color: #008000;">"convert %s %s"</span> svg-file png-file))
+
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Step 2, make the gist. Make a temp-file so the gist has a reasonable name</span>
+    (<span style="color: #0000FF;">with-temp-file</span> bib-file
+      (insert entry-string))
+
+    (<span style="color: #0000FF;">let</span> ((bib-buffer (find-file-noselect bib-file)))
+      (<span style="color: #0000FF;">with-current-buffer</span> bib-buffer
+        (gist-buffer))
+      (kill-buffer bib-buffer))
+
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">get url off clipboard</span>
+    (<span style="color: #0000FF;">setq</span> gist-url (<span style="color: #0000FF;">with-temp-buffer</span>
+                     (yank)
+                     (buffer-string)))
+
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Format and send the tweet:</span>
+    (<span style="color: #0000FF;">setq</span> full-tweet (format <span style="color: #008000;">"#publication %s\nhttp://dx.doi.org/%s\nbibtex: %s"</span> tweet doi gist-url))
+
+    (<span style="color: #0000FF;">with-temp-file</span> py-file
+      (insert (format <span style="color: #008000;">"from TwitterAPI import TwitterAPI</span>
+<span style="color: #008000;">from twitter_secrets import CONSUMER_KEY, CONSUMER_SECRET, ACCESS_TOKEN_KEY, ACCESS_TOKEN_SECRET</span>
+
+<span style="color: #008000;">api = TwitterAPI(CONSUMER_KEY, CONSUMER_SECRET, ACCESS_TOKEN_KEY, ACCESS_TOKEN_SECRET)</span>
+<span style="color: #008000;">file = open('%s', 'rb')</span>
+<span style="color: #008000;">data = file.read()</span>
+<span style="color: #008000;">r = api.request('statuses/update_with_media', {'status':'''%s'''}, {'media[]':data})"</span>
+                      png-file
+                      full-tweet)))
+
+    (shell-command (format <span style="color: #008000;">"python %s"</span> py-file))
+    (message <span style="color: #008000;">"%s"</span> full-tweet)))
+
+<span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Now, try it out.</span>
+(<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect <span style="color: #008000;">"~/Dropbox/bibliography/references.bib"</span>)
+  (goto-char (point-min))
+  (re-search-forward <span style="color: #008000;">"kitchin-2016-autom-data,"</span>)
+  (tweet-bibtex))
+</pre>
+</div>
+
+<p>
+You can see what this tweet looks like here:
+</p>
+
+<blockquote class="twitter-tweet" data-lang="en"><p lang="en" dir="ltr"><a href="https://twitter.com/hashtag/publication?src=hash">#publication</a> I tweeted this from a bibtex file.<a href="https://t.co/NGVlRGqKSJ">https://t.co/NGVlRGqKSJ</a><br>bibtex: <a href="https://t.co/0UEkvyBKAM">https://t.co/0UEkvyBKAM</a> <a href="https://t.co/OpbAt1h3OP">pic.twitter.com/OpbAt1h3OP</a></p>&mdash; John Kitchin (@johnkitchin) <a href="https://twitter.com/johnkitchin/status/768838551140261894">August 25, 2016</a></blockquote> <script async src="//platform.twitter.com/widgets.js" charset="utf-8"></script>
+
+<p>
+That seems pretty reasonable. Now I only need to use it about 48,000 times to benefit from the time-savings M-x tweet-bibtex offers compared to manually making all those tweets ;) 
+</p>
+<p>Copyright (C) 2016 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2016/08/25/Automated-bibtex-entry-tweeting.org">org-mode source</a></p>
+<p>Org-mode version = 8.3.4</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2016/08/25/Automated-bibtex-entry-tweeting#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="A-python-version-of-the-s-exp-bibtex-entry"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/06/11/A-python-version-of-the-s-exp-bibtex-entry/" rel="bookmark" title="Permanent Link to A python version of the s-exp bibtex entry">A python version of the s-exp bibtex entry</a></h2>
       <p><small><span class="blog_post_date">Posted June 11, 2015 at 10:02 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/python/'>python</a>, <a href='/blog/category/ref/'>ref</a>, <a href='/blog/category/bibtex/'>bibtex</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/bibtex/'>bibtex</a>, <a href='/blog/category/ref/'>ref</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2015/06/11/A-python-version-of-the-s-exp-bibtex-entry#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -226,7 +481,7 @@ So, it seems Python can do some things like lisp in treating functions like firs
       <div id="A-sexp-version-of-a-bibtex-entry"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/06/10/A-sexp-version-of-a-bibtex-entry/" rel="bookmark" title="Permanent Link to A sexp version of a bibtex entry">A sexp version of a bibtex entry</a></h2>
       <p><small><span class="blog_post_date">Posted June 10, 2015 at 08:54 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/lisp/'>lisp</a>, <a href='/blog/category/bibtex/'>bibtex</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/bibtex/'>bibtex</a>, <a href='/blog/category/lisp/'>lisp</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2015/06/10/A-sexp-version-of-a-bibtex-entry#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -859,108 +1114,6 @@ Now, back to that proposal I am writing that needs a lot of citations to books t
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/01/31/Turn-an-ISBN-to-a-bibtex-entry#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Generating-your-bibliography-in-another-file"></div>
-      <h2 class="blog_post_title"><a href="/blog/2014/10/30/Generating-your-bibliography-in-another-file/" rel="bookmark" title="Permanent Link to Generating your bibliography in another file">Generating your bibliography in another file</a></h2>
-      <p><small><span class="blog_post_date">Posted October 30, 2014 at 07:42 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/bibtex/'>bibtex</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2014/10/30/Generating-your-bibliography-in-another-file#disqus_thread">View Comments</a>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<div id="table-of-contents">
-<h2>Table of Contents</h2>
-<div id="text-table-of-contents">
-<ul>
-<li><a href="#sec-1">1. Getting the references in another file</a></li>
-</ul>
-</div>
-</div>
-
-<p>
-It has been proposal season. This particular round of proposals had a requirement to print the references in a separate file from the proposal. Usually I just build a pdf from org-mode, and then manually separate the references. That is not very fun if you have to do it several times. Here we examine a way to avoid this issue by using a new nobibliography link from org-ref with the bibentry LaTeX package.
-</p>
-
-<p>
-We wrote this paper <a href="#mehta-2014-ident-poten">mehta-2014-ident-poten</a> and this one <a href="#xu-2014-relat">xu-2014-relat</a>.
-</p>
-
-<p>
-
-<h1>Bibliography</h1>
-<ul><li><a id="mehta-2014-ident-poten">[mehta-2014-ident-poten] Prateek Mehta, Paul Salvador, John \& Kitchin, Identifying Potential \ce{BO2} Oxide Polymorphs for  Epitaxial Growth Candidates, <i>ACS Appl. Mater. Interfaces</i>, <b>6(5)</b>, 3630-3639 (2014). <a href="http://dx.doi.org/10.1021/am4059149">link</a>. <a href="http://dx.doi.org/10.1021/am4059149">doi</a>.</a></li>
-<li><a id="xu-2014-relat">[xu-2014-relat] Zhongnan Xu \& John Kitchin, Relating the Electronic Structure and Reactivity of  the 3d Transition Metal Monoxide Surfaces, <i>Catalysis Communications</i>, <b>52()</b>, 60-64 (2014). <a href="http://dx.doi.org/10.1016/j.catcom.2013.10.028">link</a>. <a href="http://dx.doi.org/10.1016/j.catcom.2013.10.028">doi</a>.</a></li>
-</ul>
-</p>
-
-<p>
-Here is the resulting pdf, with no references: <a href="separate-bib.pdf">separate-bib.pdf</a>.
-</p>
-
-
-<div id="outline-container-sec-1" class="outline-2">
-<h2 id="sec-1"><span class="section-number-2">1</span> Getting the references in another file</h2>
-<div class="outline-text-2" id="text-1">
-<p>
-Now, we need to get the reference file. We create a new file, in org-mode, mostly for the convenience of exporting that to a pdf. Here is the code that does that.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">let*</span> ((base (file-name-sans-extension
-              (file-name-nondirectory (buffer-file-name))))
-       (bbl (concat base <span style="color: #228b22;">".bbl"</span>))
-       (orgfile (concat base <span style="color: #228b22;">"-references.org"</span>))
-       (pdffile (concat base <span style="color: #228b22;">"-references.pdf"</span>)))
-  (<span style="color: #8b0000;">with-temp-file</span> orgfile
-    (insert 
-     (format <span style="color: #228b22;">"#+LATEX_CLASS: cmu-article</span>
-<span style="color: #228b22;">#+OPTIONS: toc:nil</span>
-
-<span style="color: #228b22;">#+BEGIN_LaTeX</span>
-<span style="color: #228b22;">\\input{%s}</span>
-<span style="color: #228b22;">#+END_LaTeX</span>
-<span style="color: #228b22;">"</span> bbl)))
-
-  (find-file orgfile)
-  (org-latex-export-to-pdf)
-  (org-open-file pdffile))
-</pre>
-</div>
-
-<p>
-And, here is the reference file: <a href="/media/2014-10-30-Generating-your-bibliography-in-another-file/separate-bib.pdf">separate-bib.pdf</a> 
-</p>
-
-<p>
-I think this would be integrated into a noexport build section of a document that would generate the pdf and references. 
-</p>
-</div>
-</div>
-<p>Copyright (C) 2014 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2014/10/30/Generating-your-bibliography-in-another-file.org">org-mode source</a><p><p>Org-mode version = 8.2.7c</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2014/10/30/Generating-your-bibliography-in-another-file#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="/blog/category/bibtex/2">Next Page »</a>
 
           </div>
@@ -1000,11 +1153,11 @@ I think this would be integrated into a noexport build section of a document tha
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2016/08/25/Automated-bibtex-entry-tweeting/">Automated bibtex entry tweeting</a></li>
       <li><a href="/blog/2016/08/12/A-new-take-on-altmetrics-the-Altmetrics-API/">A new take on altmetrics - the Altmetrics API</a></li>
       <li><a href="/blog/2016/06/29/New-publication-in-ACS-Catalysis/">New publication in ACS Catalysis</a></li>
       <li><a href="/blog/2016/06/16/Copy-formatted-org-mode-text-from-Emacs-to-other-applications/">Copy formatted org-mode text from Emacs to other applications</a></li>
       <li><a href="/blog/2016/06/14/Using-prefix-args-in-ivy-actions/">Using prefix args in ivy actions</a></li>
-      <li><a href="/blog/2016/06/14/New-publication-in-International-Journal-of-Digital-Libraries/">New publication in International Journal of Digital Libraries</a></li>
     </ul>
   </section>
 
