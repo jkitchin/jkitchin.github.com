@@ -45,7 +45,10 @@ The authors are linked to their Scopus page, the title linked to the Scopus abst
 ''')
 
     for eid,type in data:
-        f.write('<li>{}</li>'.format(get_html_citation(eid)))
+        try:
+            f.write('<li>{}</li>'.format(get_html_citation(eid)))
+        except:
+            print('Error in {}'.format(eid))
     f.write('''</ol>
 
 </%self:filter>
