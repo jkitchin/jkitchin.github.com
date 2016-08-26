@@ -25,6 +25,9 @@
 </div>
 
 <p>
+#+BEGIN_HTM
+&lt;div data-badge-details="right" data-badge-type="medium-donut" data-doi="10.1016/j.susc.2015.10.001" data-hide-no-mentions="true" class="altmetric-embed"&gt;&lt;/div&gt;
+#+END_HTML
 See it here: <a href="http://www.sciencedirect.com/science/article/pii/S0039602815003052">http://www.sciencedirect.com/science/article/pii/S0039602815003052</a>.
 </p>
 
