@@ -18,6 +18,22 @@
 ${self.head()}
 </head>
   <body>
+    <div id="container" class="container container_12">
+      <div id="main" role="main">
+        <div id="main_block">
+          ${self.header()}
+          <div id="prose_block" class="grid_8">
+            
+          </div>
+          <div id="sidebar" class="grid_4">
+            ${self.sidebar()}
+          </div>
+          <div class="clear"></div>
+        </div>
+      </div>
+      ${self.footer()}
+    </div>
+    ${self.body_scripts()}
 <div id="outline-container-orgheadline1" class="outline-2">
 <h2 id="orgheadline1"><span class="section-number-2">1</span> <span class="done DONE">DONE</span> Using Twitter cards for better tweets</h2>
 <div class="outline-text-2" id="text-1">
