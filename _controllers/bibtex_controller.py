@@ -60,6 +60,8 @@ def citation(entry):
         if doi:
             s += ' <a href="http://dx.doi.org/{}">doi</a>.'.format(doi)
 
+            s += '<div data-badge-popover="right" data-badge-type="medium-donut" data-doi="{}" data-hide-no-mentions="true" class="altmetric-embed"></div>'.format(doi)
+
     elif entry['ENTRYTYPE'] == 'inbook':
         s = ''
         s += author_string(entry) + ', '
