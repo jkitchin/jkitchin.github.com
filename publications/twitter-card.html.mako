@@ -1,4 +1,4 @@
-<%inherit file="../_templates/site.mako" /><div id="outline-container-orgheadline1" class="outline-2">
+<%inherit file="../_templates/site.mako" /><script type='text/javascript' src='https://d1bxh8uas1mnw7.cloudfront.net/assets/embed.js'></script><div id="outline-container-orgheadline1" class="outline-2">
 <h2 id="orgheadline1"><span class="section-number-2">1</span> <span class="done DONE">DONE</span> Using Twitter cards for better tweets</h2>
 <div class="outline-text-2" id="text-1">
 
