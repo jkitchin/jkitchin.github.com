@@ -7,7 +7,7 @@
   <title type="text">The Kitchin Research Group</title>
   <subtitle type="text">Chemical Engineering at Carnegie Mellon University</subtitle>
 
-  <updated>2016-11-07T01:45:06Z</updated>
+  <updated>2016-11-07T12:02:31Z</updated>
   <generator uri="http://blogofile.com/">Blogofile</generator>
 
   <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog" />
@@ -18,14 +18,194 @@
       <name></name>
       <uri>http://jkitchin.github.io/blog</uri>
     </author>
+    <title type="html"><![CDATA[Better equation numbering in LaTeX fragments in org-mode]]></title>
+    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2016/11/07/Better-equation-numbering-in-LaTeX-fragments-in-org-mode" />
+    <id>http://jkitchin.github.io/blog/2016/11/07/Better-equation-numbering-in-LaTeX-fragments-in-org-mode</id>
+    <updated>2016-11-07T07:02:19Z</updated>
+    <published>2016-11-07T07:02:19Z</published>
+    <category scheme="http://jkitchin.github.io/blog" term="emacs" />
+    <category scheme="http://jkitchin.github.io/blog" term="orgmode" />
+    <category scheme="http://jkitchin.github.io/blog" term="latex" />
+    <summary type="html"><![CDATA[Better equation numbering in LaTeX fragments in org-mode]]></summary>
+    <content type="html" xml:base="http://jkitchin.github.io/blog/2016/11/07/Better-equation-numbering-in-LaTeX-fragments-in-org-mode"><![CDATA[
+
+
+<p>
+In org-mode we can use LaTeX equations, and toggle an overlay that shows what the rendered equation will look like. One thing that has always bothered me though, is that each fragment is created in isolation. That means numbering is almost always wrong, and typically with each numbered equation starting with (1). Here we look at a way to fix that. Fixing it means we have to find a way to not create each fragment image in isolation; each one needs a context that enables the numbering to be correct. The idea we try here is simple: we just figure out in advance what the numbering for each equation should be, and then figure out how to get that information to the image generation.
+</p>
+
+<p>
+See this video of the post in action:
+</p>
+<iframe width="560" height="315" src="https://www.youtube.com/embed/pcMuJlUvKCw" frameborder="0" allowfullscreen></iframe>
+
+<p>
+Here are some example equations to see how it works.
+</p>
+
+<p>
+This should be numbered (1)
+</p>
+\begin{equation}
+\int x^2 dx
+\end{equation}
+
+<p>
+This is a numbered equation with a custom number. This should have (E1) as the number.
+</p>
+\begin{equation}\tag{E1}
+\int x^2 dx
+\end{equation}
+
+<p>
+But equation* is not numbered
+</p>
+\begin{equation*}
+\int x^2 dx
+\end{equation*}
+
+<p>
+LaTeX align environments are numbered. The first line is (2), the second line is not numbered (because we put <code>\nonumber</code> in the line), and the third line is (3).
+</p>
+\begin{align}
+a = 5 \\
+b=6 \nonumber \\
+c = 8
+\end{align}
+
+<p>
+But align* environments are not numbered.
+</p>
+\begin{align*}
+a = 5 \\
+b=6
+\end{align*}
+
+<p>
+This should be numbered (4).
+</p>
+
+\begin{equation}
+\int x^3 dx
+\end{equation}
+
+<p>
+These should be numbered (5), (6) and (7).
+</p>
+\begin{align}
+a = 5 \\
+b=6  \\
+c = 8
+\end{align}
+
+<p>
+This should be numbered with (E2).
+</p>
+\begin{equation}\tag{E2}
+\int x^2 dx 
+\end{equation}
+
+<p>
+And this should be numbered (8).
+</p>
+\begin{equation}
+\int x^2 dx 
+\end{equation}
+
+<p>
+Note: This will be numbered (1) because it is exactly the same equation as a previous one! 
+</p>
+\begin{equation}
+\int x^2 dx
+\end{equation}
+
+
+<p>
+We can change the numbering of an equation with code like this. After this code, the next equation will be numbered (5).
+</p>
+
+<p>
+The only fragments that should be numbered are equation environments, and align environments (these are the main ones that we consider here). The align environment is tricky since there is potentially more than one number in the environment. 
+</p>
+
+<p>
+So, we get all the fragments, and generate a list of which ones should be numbered, and if they should what the number should be. That means we will need to count the number of numbered equations in an align environment. We will do that by getting the number of line breaks, and subtracting the number of nonumbers.
+</p>
+
+<p>
+Here is the code block that does that, using advice again. A downside of this approach is that we generate the list for every fragment, which is not efficient, since it should not change in a synchronous approach to generating them.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-renumber-environment</span> (orig-func <span style="color: #6434A3;">&amp;rest</span> args)
+  (<span style="color: #0000FF;">let</span> ((results '()) 
+        (counter -1)
+        (numberp))
+
+    (<span style="color: #0000FF;">setq</span> results (<span style="color: #0000FF;">loop</span> for (begin .  env) in 
+                        (org-element-map (org-element-parse-buffer) 'latex-environment
+                          (<span style="color: #0000FF;">lambda</span> (env)
+                            (cons
+                             (org-element-property <span style="color: #006FE0;">:begin</span> env)
+                             (org-element-property <span style="color: #006FE0;">:value</span> env))))
+                        collect
+                        (<span style="color: #0000FF;">cond</span>
+                         ((<span style="color: #0000FF;">and</span> (string-match <span style="color: #008000;">"\\\\begin{equation}"</span> env)
+                               (not (string-match <span style="color: #008000;">"\\\\tag{"</span> env)))
+                          (<span style="color: #0000FF;">incf</span> counter)
+                          (cons begin counter))
+                         ((string-match <span style="color: #008000;">"\\\\begin{align}"</span> env)
+                          (<span style="color: #0000FF;">prog2</span>
+                              (<span style="color: #0000FF;">incf</span> counter)
+                              (cons begin counter)                          
+                            (<span style="color: #0000FF;">with-temp-buffer</span>
+                              (insert env)
+                              (goto-char (point-min))
+                              <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">\\ is used for a new line. Each one leads to a number</span>
+                              (<span style="color: #0000FF;">incf</span> counter (count-matches <span style="color: #008000;">"\\\\$"</span>))
+                              <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">unless there are nonumbers.</span>
+                              (goto-char (point-min))
+                              (<span style="color: #0000FF;">decf</span> counter (count-matches <span style="color: #008000;">"\\nonumber"</span>)))))
+                         (t
+                          (cons begin nil)))))
+
+    (<span style="color: #0000FF;">when</span> (<span style="color: #0000FF;">setq</span> numberp (cdr (assoc (point) results)))
+      (<span style="color: #0000FF;">setf</span> (car args)
+            (concat
+             (format <span style="color: #008000;">"\\setcounter{equation}{%s}\n"</span> numberp)
+             (car args)))))
+  
+  (apply orig-func args))
+
+(advice-add 'org-create-formula-image <span style="color: #006FE0;">:around</span> #'org-renumber-environment)
+</pre>
+</div>
+
+<p>
+You can remove the advice like this.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(advice-remove 'org-create-formula-image #'org-renumber-environment)
+</pre>
+</div>
+<p>Copyright (C) 2016 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2016/11/07/Better-equation-numbering-in-LaTeX-fragments-in-org-mode.org">org-mode source</a></p>
+<p>Org-mode version = 9.0</p>]]></content>
+  </entry>
+  <entry>
+    <author>
+      <name></name>
+      <uri>http://jkitchin.github.io/blog</uri>
+    </author>
     <title type="html"><![CDATA[Justifying LaTeX preview fragments in org-mode]]></title>
     <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2016/11/06/Justifying-LaTeX-preview-fragments-in-org-mode" />
     <id>http://jkitchin.github.io/blog/2016/11/06/Justifying-LaTeX-preview-fragments-in-org-mode</id>
     <updated>2016-11-06T20:44:53Z</updated>
     <published>2016-11-06T20:44:53Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="latex" />
-    <category scheme="http://jkitchin.github.io/blog" term="orgmode" />
     <category scheme="http://jkitchin.github.io/blog" term="emacs" />
+    <category scheme="http://jkitchin.github.io/blog" term="orgmode" />
+    <category scheme="http://jkitchin.github.io/blog" term="latex" />
     <summary type="html"><![CDATA[Justifying LaTeX preview fragments in org-mode]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2016/11/06/Justifying-LaTeX-preview-fragments-in-org-mode"><![CDATA[
 
@@ -1834,8 +2014,8 @@ You may want to look at <a href="https://pypi.python.org/pypi/pyaltmetric">https
     <id>http://jkitchin.github.io/blog/2016/06/29/New-publication-in-ACS-Catalysis</id>
     <updated>2016-06-29T12:51:24Z</updated>
     <published>2016-06-29T12:50:38Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="news" />
     <category scheme="http://jkitchin.github.io/blog" term="publication" />
+    <category scheme="http://jkitchin.github.io/blog" term="news" />
     <summary type="html"><![CDATA[New publication in ACS Catalysis]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2016/06/29/New-publication-in-ACS-Catalysis"><![CDATA[
 
@@ -1881,8 +2061,8 @@ DFT calculations are not exact, and the uncertainties in a calculation can impac
     <id>http://jkitchin.github.io/blog/2016/06/16/Copy-formatted-org-mode-text-from-Emacs-to-other-applications</id>
     <updated>2016-06-16T11:46:39Z</updated>
     <published>2016-06-16T11:46:39Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="emacs" />
     <category scheme="http://jkitchin.github.io/blog" term="rtf" />
+    <category scheme="http://jkitchin.github.io/blog" term="emacs" />
     <summary type="html"><![CDATA[Copy formatted org-mode text from Emacs to other applications]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2016/06/16/Copy-formatted-org-mode-text-from-Emacs-to-other-applications"><![CDATA[
 
@@ -2177,78 +2357,5 @@ This will setup the bare bones emacs that I used for this post.
 <p>Copyright (C) 2016 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
 <p><a href="/org/2016/06/14/Using-prefix-args-in-ivy-actions.org">org-mode source</a></p>
 <p>Org-mode version = 8.3.4</p>]]></content>
-  </entry>
-  <entry>
-    <author>
-      <name></name>
-      <uri>http://jkitchin.github.io/blog</uri>
-    </author>
-    <title type="html"><![CDATA[New publication in International Journal of Digital Libraries]]></title>
-    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2016/06/14/New-publication-in-International-Journal-of-Digital-Libraries" />
-    <id>http://jkitchin.github.io/blog/2016/06/14/New-publication-in-International-Journal-of-Digital-Libraries</id>
-    <updated>2016-06-14T11:42:48Z</updated>
-    <published>2016-06-14T06:01:46Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="news" />
-    <category scheme="http://jkitchin.github.io/blog" term="publication" />
-    <summary type="html"><![CDATA[New publication in International Journal of Digital Libraries]]></summary>
-    <content type="html" xml:base="http://jkitchin.github.io/blog/2016/06/14/New-publication-in-International-Journal-of-Digital-Libraries"><![CDATA[
-
-
-<p>
-We have a new paper out on using org-mode in publishing. The idea is to use org-mode to automate data embedding in publications. For example, in org-mode tables can serve as data sources. We show how you can automatically embed the tables as csv files in PDF or HTML when the org-file is exported. Similarly, all the code blocks are embedded as extractable files at export time. This increases the reusability of the data and code in papers. 
-</p>
-
-<p>
-<script type='text/javascript' src='https://d1bxh8uas1mnw7.cloudfront.net/assets/embed.js'></script>
-<div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1007/s00799-016-0173-7'></div>
-</p>
-
-<p>
-Check out the preprint here: <a href="https://github.com/KitchinHUB/kitchingroup-66">https://github.com/KitchinHUB/kitchingroup-66</a> 
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-bibtex"><span style="color: #006699;">@Article</span>{<span style="color: #D0372D;">Kitchin2016</span>,
-  <span style="color: #BA36A5;">author</span> =       "Kitchin, John R. and Van Gulick, Ana E. and Zilinski, Lisa D.",
-  <span style="color: #BA36A5;">title</span> =        "Automating data sharing through authoring tools",
-  <span style="color: #BA36A5;">journal</span> =      "International Journal on Digital Libraries",
-  <span style="color: #BA36A5;">year</span> =         "2016",
-  <span style="color: #BA36A5;">pages</span> =        "1--6",
-  <span style="color: #BA36A5;">abstract</span> =     "In the current scientific publishing landscape, there is a
-                  need for an authoring workflow that easily integrates data and
-                  code into manuscripts and that enables the data and code to be
-                  published in reusable form. Automated embedding of data and
-                  code into published output will enable superior communication
-                  and data archiving. In this work, we demonstrate a proof of
-                  concept for a workflow, org-mode, which successfully provides
-                  this authoring capability and workflow integration. We
-                  illustrate this concept in a series of examples for potential
-                  uses of this workflow. First, we use data on citation counts
-                  to compute the h-index of an author, and show two code
-                  examples for calculating the h-index. The source for each
-                  example is automatically embedded in the PDF during the export
-                  of the document. We demonstrate how data can be embedded in
-                  image files, which themselves are embedded in the document.
-                  Finally, metadata about the embedded files can be
-                  automatically included in the exported PDF, and accessed by
-                  computer programs. In our customized export, we embedded
-                  metadata about the attached files in the PDF in an Info field.
-                  A computer program could parse this output to get a list of
-                  embedded files and carry out analyses on them. Authoring tools
-                  such as Emacs + org-mode can greatly facilitate the
-                  integration of data and code into technical writing. These
-                  tools can also automate the embedding of data into document
-                  formats intended for consumption.",
-  <span style="color: #BA36A5;">issn</span> =         "1432-1300",
-  <span style="color: #BA36A5;">doi</span> =          "<span style="color: #006DAF; text-decoration: underline;">10.1007/s00799-016-0173-7</span>",
-  <span style="color: #BA36A5;">url</span> =          "<span style="color: #006DAF; text-decoration: underline;">http://dx.doi.org/10.1007/s00799-016-0173-7</span>"
-}
-</pre>
-</div>
-<p>Copyright (C) 2016 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2016/06/14/New-publication-in-International-Journal-on-Digital-Libraries.org">org-mode source</a></p>
-<p>Org-mode version = 8.3.4</p>
-]]></content>
   </entry>
 </feed>
