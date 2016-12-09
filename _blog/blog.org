@@ -1,4 +1,104 @@
+* images in export by uri
 
+Here is an image for fun:
+
+#+attr_org: :width 20%
+[[./Au-icosahedron-3.png]]
+
+#+BEGIN_SRC emacs-lisp
+(defun org-image-data-uri (path)
+  (let ((data (with-temp-buffer (insert-file-contents path) (buffer-string))))
+(message "Data baby!")
+    (concat "<img src=\"" 
+            "data:image/png;charset=utf-8;base64,"
+	    (base64-encode-string (encode-coding-string data 'binary) t)
+	    "\"/>")))
+
+(defun my-link (link contents info)
+  (let ((type (org-element-property :type link))
+	(path (org-element-property :path link)))
+    (if (and (string= type "file")
+	     (f-ext? path "png"))
+	(org-image-data-uri path)
+      (org-html-link link contents info))))
+
+(org-export-define-derived-backend 'my-html 'html
+  :translate-alist '((link . my-link)))
+
+(browse-url (org-export-to-file 'my-html "embedded-image.html"))
+#+END_SRC
+
+#+RESULTS:
+: #<process open /Users/jkitchin/vc/blogofile-jkitchin.github.com/_blog/embedded-image.html>
+
+
+
+* Happy Thanksgiving!
+
+Hi everyone! Today is a day we traditionally give thanks to many things in our lives we often take for granted: our friends, our families, the people around us. The semester is nearly finished, and as busy as it will get until it is over. Today I am taking some time to say thanks for everything this semester: your hard work, your patience, your perseverance at learning a lot of new things all at once. I am proud to see what you have learned so far and look forward to seeing you continue to grow as engineers. 
+
+As you know by now, no message would be complete without some code in it. First, we get an image we will use in a bit.
+
+#+BEGIN_SRC sh
+wget http://insanityflows.net/wp-content/uploads/2016/11/Happy-Thanksgiving.jpg
+#+END_SRC
+
+#+RESULTS:
+
+Next, we consider that we have some delicious cranberry sauce, and that we eat it at a rate proportional to the amount of cranberry sauce that remains. We wonder how long it will take until it is half gone. Now you are all experts at this kind of modeling, and you can read off of the graph here to see it will take a little over 5 hours. The good news is, you will still have many hours after that to continue enjoying it! I hope you are all enjoying yourself today. Happy Thanksgiving!
+
+#+RESULTS: thanksgiving
+:RESULTS:
+[[file:thanksgiving-batch.png]]
+:END:
+
+#+name: thanksgiving
+#+BEGIN_SRC python :results output org drawer
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.misc import imread
+from scipy.integrate import odeint
+import pycse.orgmode as org
+
+Ca0 = 2 # M
+k = 0.11  # 1/hr
+
+def batch(Ca, t):
+    return - k * Ca
+
+tspan = np.linspace(0, 24)
+Ca = odeint(batch, Ca0, tspan)
+
+img = imread('Happy-Thanksgiving.jpg')
+
+plt.imshow(img, zorder=0, extent=[0.0, 24.0, 0, 2], aspect='auto')
+plt.plot(tspan, Ca, zorder=1)
+plt.xlim([0, 24])
+
+plt.xlabel('Time (hr)')
+plt.ylabel('Ca (mol/L)')
+org.figure(plt.savefig('thanksgiving-batch.png'))
+#+END_SRC
+
+
+
+
+
+
+
+* html bibentry
+
+
+#+BEGIN_SRC emacs-lisp :results silent
+(org-link-set-parameters
+ "bibentry"
+ :export (lambda (key desc backend)
+	   "Convert KEY to a bibtex entry"
+	   (org-ref-get-bibtex-entry-html key)))
+#+END_SRC
+
+
+bibentry:kitchin-2015-examp
 * htmlize file links
 http://emacs.stackexchange.com/questions/28480/why-arent-my-org-links-being-htmlized/28481#28481
 
@@ -46,11 +146,11 @@ This is a numbered equation.
 \end{equation}
 
 The idea is pretty simple, we get the width of the window, and the width of the image, and compute the offset that approximately centers or right justifies the overlay, and then add the before-string property to the overlay. While we are at it, I will add a tooltip to the image so you can see the LaTeX code that created it, and make it clickable so you can toggle it back to the code. 
-I apply the functions as after advice to the function that creates the overlay, so we do not have to adapt the org code at all. Here is the code that does it.
+I apply the function?ns as after advice to the function that creates the overlay, so we do not have to adapt the org code at all. Here is the code that does it.
 
 #+BEGIN_SRC emacs-lisp
 ;; specify the justification you want
-(plist-put org-format-latex-options :justify 'left)
+(plist-put org-format-latex-options :justify 'center)
 
 (defun org-justify-fragment-overlay (beg end image imagetype)
   "Adjust the justification of a LaTeX fragment.
@@ -100,6 +200,65 @@ That is it. If you get tired of the advice, remove it like this:
 (advice-remove 'org--format-latex-make-overlay 'org-latex-fragment-tooltip)
 #+END_SRC
 #+RESULTS:
+
+
+From Chris Genovese
+#+BEGIN_SRC emacs-lisp
+(defun imagep (object)
+  "Is object a valid image descriptor?"
+  (and object (consp object) (eq (car object) 'image)
+       (image-type-available-p (plist-get (cdr object) :type))))
+
+(defun org-justify-latex-fragment (beg end image imagetype)
+  "Shift the overlay to justify a previewed LaTeX fragment.
+
+This attempts to only justify displays (e.g., displayed
+equations) but not in-line math. The justification type is
+determined by the `:justify' key in the property list
+`org-format-latex-options'.
+
+This function should not be used directly. Instead, use the
+command `org-latex-preview/justify-displays' to set or disable
+justification."
+  (let ((justification (plist-get org-format-latex-options :justify))
+        (shift (- beg (line-beginning-position))))
+    (when (and (memq justification '(center right))
+               (save-excursion
+                 (goto-char beg) ; TeX display math not necessarily at bol
+                 (or (and (zerop shift) (not (looking-at-p "\\$[^$]")))
+                     (looking-at-p "\\s-*\\$\\$"))))
+      (let* ((ov (car (overlays-at (point))))
+             (img (if-let ((ov-image (overlay-get ov 'display))
+                           (ov-image (and (imagep ov-image) ov-image)))
+                      ov-image
+                    (create-image image (intern-soft imagetype))))
+             (space-left (- (window-text-width) (car (image-display-size img))))
+             (offset (floor (if (eq justification 'center)
+                                (- (/ space-left 2) shift)
+                              (- space-left shift)))))
+        (when (> offset 0)
+          (overlay-put ov 'before-string (make-string offset ?\ )))))))
+
+(defun org-latex-preview/justify-displays (justification)
+  "Set justification type for displayed equations in org latex preview.
+
+If JUSTIFICATION is either the symbol 'center or 'right, new
+overlays are center or right justified, respectively; otherwise,
+new overlays are left justified."
+  (interactive
+   (list (intern-soft
+          (completing-read "Justification (left): " '(left center right)
+                           nil t nil nil 'left))))
+  (if (memq justification '(center right))
+      (progn
+        (plist-put org-format-latex-options :justify justification)
+        (advice-add 'org--format-latex-make-overlay
+                    :after 'org-justify-latex-fragment))
+    (plist-put org-format-latex-options :justify 'left)
+    (advice-remove 'org--format-latex-make-overlay
+		   'org-justify-latex-fragment)))
+(org-latex-preview/justify-displays 'right)
+#+END_SRC
 
 * DONE Better equation numbering in LaTeX fragments in org-mode
   CLOSED: [2016-11-07 Mon 07:02]
@@ -26425,6 +26584,3 @@ with jasp('O_sv',
 : <type 'instance'>
 : ase.calculators.vasp.Vasp
 
-# Local Variables:
-# eval: (ov-highlight-load)
-# End:
