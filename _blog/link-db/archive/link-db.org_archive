@@ -1,0 +1,543 @@
+#    -*- mode: org -*-
+
+
+Archived entries from file /Users/jkitchin/vc/blogofile-jkitchin.github.com/_blog/link-db/link-db.org
+
+
+* TODO [#B] A database for org-links                                   :link:
+  :PROPERTIES:
+  :categories: emacs,orgmode
+  :ARCHIVE_TIME: 2017-01-02 Mon 17:08
+  :ARCHIVE_FILE: ~/vc/blogofile-jkitchin.github.com/_blog/link-db/link-db.org
+  :ARCHIVE_CATEGORY: link-db
+  :ARCHIVE_TODO: TODO
+  :END:
+
+I want to create a database for links in org-files
+
+1. filename
+2. link type
+3. link path
+4. link description (this is the contents)
+5. search-option 
+6. begin
+
+[[file:link-db.org][this file]]
+
+file:link-db.org::3
+
+cite:kitchin-2015-examp
+
+#+BEGIN_SRC emacs-lisp
+(require 'emacsql-sqlite)
+(setq db (emacsql-sqlite "links.db"))
+
+(emacsql db [:create-table links ([(id integer :primary-key) filename type path raw-link description search-option begin])])
+#+END_SRC
+
+#+RESULTS:
+
+#+BEGIN_SRC emacs-lisp
+(condition-case nil (emacsql db [:select * :from link])
+  (error (message "test")))
+#+END_SRC
+
+#+RESULTS:
+: test
+
+** adds all the links
+#+BEGIN_SRC emacs-lisp
+(org-element-map (org-element-parse-buffer) 'link
+  (lambda (link)
+    (emacsql db [:insert :into links :values $v1]
+	     (list (vector 
+		    nil
+		    (buffer-file-name)
+		    (org-element-property :type link)
+		    (org-element-property :path link)
+		    (org-element-property :raw-link link)
+		    (if (org-element-property :contents-begin link)
+			(buffer-substring-no-properties
+			 (org-element-property :contents-begin link)
+			 (org-element-property :contents-end link))
+		      "")			   
+		    (org-element-property :search-option link)
+		    (org-element-property :begin link))))))
+#+END_SRC
+
+#+RESULTS:
+
+** queries
+Get cite links
+#+BEGIN_SRC emacs-lisp
+(emacsql db [:select [filename path begin] :from links :where (= type "cite")])
+#+END_SRC
+
+#+RESULTS:
+| /Users/jkitchin/vc/blogofile-jkitchin.github.com/_blog/link-db/link-db.org | kitchin-2015-examp | 243 |
+
+#+BEGIN_SRC emacs-lisp
+(emacsql db [:select [filename path begin] :from links :where (and (= type "cite") (glob path "mathias*"))])
+#+END_SRC
+
+#+RESULTS:
+| /Users/jkitchin/Dropbox/org-mode/journal.org | mathias-2013-improv-regen | 3955 |
+
+
+Links with partial match on path
+
+#+BEGIN_SRC emacs-lisp
+(emacsql db [:select [filename begin] :from links :where (glob path "kitchin-2015*")])
+#+END_SRC
+
+#+RESULTS:
+| /Users/jkitchin/vc/blogofile-jkitchin.github.com/_blog/link-db/link-db.org | 243 |
+
+Search on search-option
+#+BEGIN_SRC emacs-lisp
+(emacsql db [:select [filename path search-option begin] :from links :where (not (= search-option ""))])
+#+END_SRC
+
+#+RESULTS:
+| /Users/jkitchin/vc/blogofile-jkitchin.github.com/_blog/link-db/link-db.org | link-db.org | 3 | 222 |
+
+** deleting rows
+#+BEGIN_SRC emacs-lisp
+(emacsql db [:delete  :from links :where (not (= search-option ""))])
+#+END_SRC
+
+#+RESULTS:
+
+Get rid of all rows by a file name.
+#+BEGIN_SRC emacs-lisp
+(emacsql db [:delete  :from links :where (= filename $s1)] (buffer-file-name))
+#+END_SRC
+
+
+We can have a function for that.
+
+#+BEGIN_SRC emacs-lisp
+(defun link-db-delete (fname)
+  "Delete all rows for FNAME."
+  (emacsql db [:delete  :from links :where (= filename $s1)] fname))
+#+END_SRC
+
+#+RESULTS:
+: link-db-delete
+
+** open a link
+
+#+BEGIN_SRC emacs-lisp
+(defmacro link-db-open (query)
+  (interactive "sQuery: ")
+  `(let* ((results (emacsql db [:select [filename raw-link description begin] :from links :where ,query]))
+	  (candidates (loop for result in results
+			    collect
+			    (list (format "%s | %s" (nth 1 result) (nth 2 result))
+				  (nth 0 result)
+				  (nth 3 result))))
+	  (choice (completing-read "Open: " candidates))
+	  (data (assoc choice candidates))
+	  (fname (nth 1 data))
+	  (pos (nth 2 data)))
+     (find-file fname)
+     (goto-char pos)))
+
+(link-db-open (= type "cite"))
+(link-db-open (glob path "kitchin*"))
+#+END_SRC
+
+#+RESULTS:
+| /Users/jkitchin/vc/blogofile-jkitchin.github.com/_blog/link-db/link-db.org | link-db.org | 189 |
+| /Users/jkitchin/vc/blogofile-jkitchin.github.com/_blog/link-db/link-db.org | link-db.org | 222 |
+
+
+cite:kitchin-2016-autom-data,kitchin-2015-examp,kitchin-2015-data-surfac-scien
+
+** Update links
+#+BEGIN_SRC emacs-lisp
+(defun link-db-update ()
+  "Update the database with links in this file."
+  
+  (link-db-delete (buffer-file-name))
+
+  (org-element-map (org-element-parse-buffer) 'link
+    (lambda (link)
+      (emacsql db [:insert :into links :values $v1]
+	       (list (vector 
+		      nil
+		      (buffer-file-name)
+		      (org-element-property :type link)
+		      (org-element-property :path link)
+		      (org-element-property :raw-link link)
+		      (if (org-element-property :contents-begin link)
+			  (buffer-substring-no-properties
+			   (org-element-property :contents-begin link)
+			   (org-element-property :contents-end link))
+			"")			   
+		      (org-element-property :search-option link)
+		      (org-element-property :begin link)))))))
+#+END_SRC
+
+This sets up a local hook in org-files to update the database when the file is killed or saved.
+#+BEGIN_SRC emacs-lisp
+(add-hook
+ 'org-mode-hook
+ (lambda ()
+   (add-hook 'kill-buffer-hook
+	     (lambda ()
+	       (link-db-update))
+	     nil t)
+   (add-hook 'after-save-hook
+	     (lambda ()
+	       (link-db-update))
+	     nil t)))
+#+END_SRC
+
+<<word>>    [[word]]
+
+** maintenace
+Get a list of all unique files. I can use this to check that all the files exist
+
+#+BEGIN_SRC emacs-lisp
+(emacsql db [:select :distinct [filename] :from links])
+#+END_SRC
+
+#+RESULTS:
+| /Users/jkitchin/vc/blogofile-jkitchin.github.com/_blog/link-db/test.org    |
+| /Users/jkitchin/vc/blogofile-jkitchin.github.com/_blog/link-db/link-db.org |
+
+#+BEGIN_SRC emacs-lisp
+(loop for (fname) in (emacsql db [:select :distinct [filename] :from links])
+      do
+      (unless (file-exists-p fname)
+	(message "%s should be cleaned out of db" fname)))
+#+END_SRC
+
+#+RESULTS:
+
+#+BEGIN_SRC emacs-lisp
+(save-excursion
+    (goto-char (point-min))
+    (while (re-search-forward org-any-link-re nil t)
+      (let ((link (org-element-context)))
+(message "%s" link)
+	(emacsql org-db [:insert :into links :values $v1]
+		 (list (vector 
+			nil
+			(buffer-file-name)
+			(org-element-property :type link)
+			(org-element-property :path link)
+			(org-element-property :raw-link link)
+			(if (org-element-property :contents-begin link)
+			    (buffer-substring-no-properties
+			     (org-element-property :contents-begin link)
+			     (org-element-property :contents-end link))
+			  "")			   
+			(org-element-property :search-option link)
+			(org-element-property :begin link)))))))
+#+END_SRC
+
+
+
+
+* archive
+  :PROPERTIES:
+  :ARCHIVE_TIME: 2017-01-02 Mon 17:08
+  :ARCHIVE_FILE: ~/vc/blogofile-jkitchin.github.com/_blog/link-db/link-db.org
+  :ARCHIVE_OLPATH: org-mode anywhere
+  :ARCHIVE_CATEGORY: link-db
+  :ARCHIVE_ITAGS: database headlines links
+  :END:
+
+
+Now, to add a headline we follow these steps:
+
+1. Add the filename and we need to get the row-id for it.
+
+#+BEGIN_SRC emacs-lisp
+(emacsql db [:insert :into files :values [nil $s1]] (buffer-file-name))
+#+END_SRC
+
+#+RESULTS:
+
+#+BEGIN_SRC emacs-lisp
+(emacsql db [:select rowid :from files :where (= filename $s1)] (buffer-file-name))
+#+END_SRC
+
+#+RESULTS:
+| 1 |
+
+
+Next, we add a headline entry.
+
+#+BEGIN_SRC emacs-lisp
+(let ((filename-id (caar (emacsql db [:select rowid :from files :where (= filename $s1)] (buffer-file-name))))
+      (hl (save-excursion
+	    (outline-previous-heading)
+	    (org-element-context))))
+  (emacsql db [:insert :into headlines :values
+	       [nil $s1 $s2 $s3 $s4 $s5 $s6 $s7 $s8 $s9]]
+	   filename-id
+	   (org-element-property :title hl)
+	   (org-element-property :level hl)
+	   (org-element-property :todo-keyword hl)
+	   (org-element-property :todo-type hl)
+	   (org-element-property :archivedp hl)
+	   (org-element-property :commentedp hl)
+	   (org-element-property :footnote-section-p hl)
+	   (org-element-property :begin hl)))
+#+END_SRC
+
+#+RESULTS:
+
+
+
+
+2. Next, we should make sure any tags get added to the tags table.
+
+#+BEGIN_SRC emacs-lisp
+(loop for tag in (org-get-tags-at)
+      do
+      ;; make sure tag is in tags table
+      (unless (emacsql db [:select rowid :from tags :where (= tag $s1)] tag)
+	(emacsql db [:insert :into tags :values [nil $s1]] tag))
+
+      ;; Now add entries to headline_tags
+
+      (emacsql db [:insert :into headline-tags :values [nil $s1 $s2]] 
+	       (caar (emacsql db [:select rowid :from headlines :where (and (= filename-id $s1)
+									    (= begin $s2))]
+			      (caar (emacsql db [:select rowid :from files :where (= filename $s1)] (buffer-file-name)))
+			      (save-excursion
+				(outline-previous-heading)
+				(point))))
+	       (caar (emacsql db [:select rowid :from tags :where (= tag $s1)] tag)) ;the tag id
+	       ))
+#+END_SRC
+
+#+RESULTS:
+
+
+
+3. And properties
+
+#+BEGIN_SRC emacs-lisp
+(loop for (property . value) in (org-entry-properties)
+      do
+      (unless (emacsql db [:select rowid :from properties :where (= property $s1)] property)
+	(emacsql db [:insert :into properties :values [nil $s1]] property))
+      ;; and the values
+      (emacsql db [:insert :into headline-properties :values [nil $s1 $s2 $s3]] 
+	       (caar (emacsql db [:select rowid :from headlines :where (and (= filename-id $s1)
+									    (= begin $s2))]
+			      (caar (emacsql db [:select rowid :from files :where (= filename $s1)] (buffer-file-name)))
+			      (save-excursion
+				(outline-previous-heading)
+				(point))))
+	       (caar (emacsql db [:select rowid :from properties :where (= property $s1)] property))
+	       value))
+#+END_SRC
+
+#+BEGIN_SRC emacs-lisp
+(require 'emacsql-sqlite)
+(setq org-db (emacsql-sqlite "org-db.sqlite"))
+(emacsql org-db [:PRAGMA (= foreign_keys 1)])
+
+(emacsql org-db [:create-table :if :not :exists
+	     files
+	     ([(rowid integer :primary-key)
+	       (filename :unique)])])
+
+(emacsql org-db [:create-table :if :not :exists tags
+	     ([(rowid integer :primary-key)
+	       (tag :unique)])])
+
+(emacsql org-db [:create-table :if :not :exists properties
+	     ([(rowid integer :primary-key)
+	       (property :unique)])])
+
+(emacsql org-db [:create-table :if :not :exists
+	     headlines 
+	     ([(rowid integer :primary-key)
+               filename-id
+	       title
+	       level
+	       todo-keyword
+	       todo-type
+	       archivedp
+	       commentedp
+	       footnote-section-p
+	       begin]
+	      (:foreign-key [filename-id] :references files [rowid] :on-delete :cascade))])
+
+;; no cascade delete ;(
+(emacsql org-db [:create :virtual :table :if :not :exists headline-content :using fts4 
+	     ([headline-id content])])
+
+(emacsql org-db [:create-table :if :not :exists
+	     headline-tags
+	     ([(rowid integer :primary-key)
+               headline-id
+	       tag-id]
+	      (:foreign-key [headline-id] :references headlines [rowid] :on-delete :cascade)
+	      (:foreign-key [tag-id] :references tags [rowid] :on-delete :cascade))])
+
+(emacsql org-db [:create-table :if :not :exists
+			   headline-properties
+			   ([(rowid integer :primary-key)
+			     headline-id
+			     property-id
+			     value]
+			    (:foreign-key [headline-id] :references headlines [rowid] :on-delete :cascade)
+			    (:foreign-key [property-id] :references properties [rowid] :on-delete :cascade))])
+
+
+(emacsql org-db [:create-table :if :not :exists
+	     links
+	     ([(rowid integer :primary-key)
+	       filename-id
+	       type
+	       path
+	       raw-link
+	       description
+	       search-option
+	       begin]
+	      (:foreign-key [filename-id] :references files [rowid] :on-delete :cascade))])
+
+(defun org-db-link-update ()
+  "Update the database with links in the current buffer."
+  (interactive)
+
+  (setq filename-id
+	(or (caar (emacsql org-db [:select rowid :from files
+			       :where (= filename $s1)]
+			   (buffer-file-name)))
+	    (emacsql org-db [:insert :into files :values [nil $s1]] (buffer-file-name))
+	    (caar (emacsql org-db [:select (funcall last-insert-rowid)]))))
+  
+  (save-excursion
+    (goto-char (point-min))
+    (while (re-search-forward org-any-link-re nil t)
+      (let ((link (save-excursion (goto-char (match-beginning 0)) (org-element-context))))
+	(emacsql org-db [:insert :into links :values $v1]
+		 (list (vector 
+			nil
+			filename-id
+			(org-element-property :type link)
+			(org-element-property :path link)
+			(org-element-property :raw-link link)
+			(if (org-element-property :contents-begin link)
+			    (buffer-substring-no-properties
+			     (org-element-property :contents-begin link)
+			     (org-element-property :contents-end link))
+			  "")			   
+			(org-element-property :search-option link)
+			(org-element-property :begin link))))))))
+
+
+
+(defun org-db-add-headline ()
+  "add a headline."
+  (interactive)
+  (let ((hl (org-element-context))
+	filename-id headline-id tag-id property-id)
+
+    ;; filename 
+    (setq filename-id
+	  (or (caar (emacsql org-db [:select rowid :from files
+				     :where (= filename $s1)]
+			     (buffer-file-name)))
+	      (emacsql org-db [:insert :into files :values [nil $s1]] (buffer-file-name))
+	      (caar (emacsql org-db [:select (funcall last-insert-rowid)]))))
+
+    ;; headline
+    (emacsql org-db [:insert :into headlines :values
+		     [nil $s1 $s2 $s3 $s4 $s5 $s6 $s7 $s8 $s9]]
+	     filename-id
+	     (org-element-property :title hl)
+	     (org-element-property :level hl)
+	     (org-element-property :todo-keyword hl)
+	     (org-element-property :todo-type hl)
+	     (org-element-property :archivedp hl)
+	     (org-element-property :commentedp hl)
+	     (org-element-property :footnote-section-p hl)
+	     (org-element-property :begin hl))
+    (setq headline-id (caar (emacsql org-db [:select (funcall last-insert-rowid)])))
+
+    ;; content for searching
+    (when (org-element-property :contents-begin hl)
+      (emacsql org-db [:insert :into headline-content :values
+		       [$s1 $s2]]
+    	       headline-id
+	       (buffer-substring-no-properties
+		(org-element-property :contents-begin hl)
+		(org-element-property :contents-end hl))))
+
+    ;; tags
+    (loop for tag in (mapcar 'org-no-properties (org-get-tags-at))
+	  do 
+	  (setq tag-id
+		(or
+		 (caar (emacsql org-db [:select rowid :from tags :where (= tag $s1)] tag))
+		 (emacsql org-db [:insert :into tags :values [nil $s1]] tag)
+		 (caar (emacsql org-db [:select (funcall last-insert-rowid)]))))
+
+	  ;; Now add entries to headline_tags
+
+	  (emacsql org-db [:insert :into headline-tags :values [nil $s1 $s2]] 
+		   headline-id tag-id))
+    ;; properties
+    (loop for (property . value) in (org-entry-properties)
+	  do
+	  (setq property-id
+		(or
+		 (caar (emacsql org-db [:select rowid :from properties :where (= property $s1)] property))
+		 (emacsql org-db [:insert :into properties :values [nil $s1]] property)
+		 (caar (emacsql org-db [:select (funcall last-insert-rowid)]))))
+	  
+	  ;; and the values
+	  (emacsql org-db [:insert :into headline-properties :values [nil $s1 $s2 $s3]] 
+		   headline-id
+		   property-id 
+		   (org-no-properties value)))))
+
+(defun org-db-update ()
+  "Update the database with the current buffer."
+  (interactive)
+  ;; no cascade delete in virtual tables, so we manually do it.
+  (let ((filename-id (caar (emacsql org-db [:select rowid :from files
+					    :where (= filename $s1)]
+				    (buffer-file-name))))
+	headline-ids)
+    (when filename-id
+      (setq headline-ids
+	    (mapcar 'car (emacsql org-db [:select [rowid] :from headlines
+					  :where (= filename-id $s1)]
+				  filename-id)))
+      (loop for hl-id in headline-ids do
+	    (emacsql org-db [:delete :from headline-content
+			     :where (= headline-content:headline-id $s1)]
+		     hl-id)))
+    ;; now delete the file, which should cascade delete the rest
+    (emacsql org-db [:delete :from files :where (= filename $s1)] (buffer-file-name)))
+
+  ;; now add each headline and link.
+  (org-with-wide-buffer
+   (org-db-link-update)
+   (org-map-entries 'org-db-add-headline))
+  
+  (message "done updating"))
+
+
+(add-hook
+ 'org-mode-hook
+ (lambda ()
+   (org-db-update)
+   (add-hook 'after-save-hook
+	     (lambda ()	   
+	       (org-db-update))
+	     nil t))) 
+#+END_SRC
+
+
