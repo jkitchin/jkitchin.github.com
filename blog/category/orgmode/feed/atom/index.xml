@@ -7,12 +7,922 @@
   <title type="text">The Kitchin Research Group</title>
   <subtitle type="text">Chemical Engineering at Carnegie Mellon University</subtitle>
 
-  <updated>2017-01-01T23:21:05Z</updated>
+  <updated>2017-01-03T19:33:48Z</updated>
   <generator uri="http://blogofile.com/">Blogofile</generator>
 
   <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog" />
   <id>http://jkitchin.github.io/blog/feed/atom/</id>
   <link rel="self" type="application/atom+xml" href="http://jkitchin.github.io/blog/feed/atom/" />
+  <entry>
+    <author>
+      <name></name>
+      <uri>http://jkitchin.github.io/blog</uri>
+    </author>
+    <title type="html"><![CDATA[Find stuff in org-mode anywhere]]></title>
+    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2017/01/03/Find-stuff-in-org-mode-anywhere" />
+    <id>http://jkitchin.github.io/blog/2017/01/03/Find-stuff-in-org-mode-anywhere</id>
+    <updated>2017-01-03T14:33:32Z</updated>
+    <published>2017-01-03T14:33:32Z</published>
+    <category scheme="http://jkitchin.github.io/blog" term="database" />
+    <category scheme="http://jkitchin.github.io/blog" term="orgmode" />
+    <category scheme="http://jkitchin.github.io/blog" term="emacs" />
+    <summary type="html"><![CDATA[Find stuff in org-mode anywhere]]></summary>
+    <content type="html" xml:base="http://jkitchin.github.io/blog/2017/01/03/Find-stuff-in-org-mode-anywhere"><![CDATA[
+
+
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org961d2be">1. The database design</a></li>
+<li><a href="#orgbda3471">2. Querying the link table</a></li>
+<li><a href="#org8284133">3. Headline queries</a></li>
+<li><a href="#org7d75505">4. Keyword queries</a></li>
+<li><a href="#org08feb51">5. Full text search</a></li>
+<li><a href="#orgbb3d71f">6. Summary</a></li>
+</ul>
+</div>
+</div>
+<p>
+I use org-mode <i>extensively</i>. I write scientific papers, keep notes on meetings, write letters of recommendation, notes on scientific articles, keep TODO lists in projects, help files for software, write lecture notes, students send me homework solutions in it, it is a contact database, &#x2026; Some files are on Dropbox, Google Drive, Box, some in git repos, etc. The problem is that leads to org-files everywhere on my hard drive. At this point I have several thousand org-files that span about five years of work.
+</p>
+
+<p>
+It is not that easy after a while to find them. Yes there are things like recent-files, bookmarks, counsel-find-file, helm-for-files, counsel/helm-locate, helm/counsel-grep/ag/pt, projectile for searching within a project, a slew of tools to search open buffers, there is <a href="https://www.lesbonscomptes.com/recoll/">recoll</a>, etc&#x2026; There are desktop search tools, and of course, good organization habits. Over a five year time span though, these change, and I have yet to find a solution to finding what I want. What about a file I made a year ago that is not in the current directory or this project, and not in my org-agenda-files list? How do I get a dynamic todo list across all these files? Or find all the files that cite a particular bibtex entry, or that were authored by a particular student?
+</p>
+
+<p>
+Previously, <a href="http://kitchingroup.cheme.cmu.edu/blog/2015/07/06/Indexing-headlines-in-org-files-with-swish-e-with-laser-sharp-results/">I indexed org files with Swish-e</a> to make it easy to search them, with an ability to search just headlines, or paragraphs, etc. The problem with that is the nightly indexing was slow since I basically had to regenerate the database each time due to limitations in Swish-e. Finally I have gotten around to the next iteration of this idea, which is a better database. In this post, I explore using sqlite to store headlines and links in org-files.
+</p>
+
+<p>
+The idea is that anytime I open or save <i>any</i> org file, it will be added/updated in the database. The database will store the headlines and its properties and content, as well as the location and properties of all links and file keywords. That means I should be able to efficiently query all org files I have ever visited to find TODO headlines, tagged headlines, different types of links, etc. Here we try it out and see if it is useful.
+</p>
+
+
+<div id="outline-container-org961d2be" class="outline-2">
+<h2 id="org961d2be"><span class="section-number-2">1</span> The database design</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+I used <a href="https://github.com/skeeto/emacsql">emacsql</a> to create and interact with a sqlite3 database. It is a lispy way to generate SQL queries. I will not talk about the code much here, you can see this version <a href="/media/org-db.el">org-db.el</a> . The database design consists of several tables that contain the filenames, headlines, tags, properties, (optionally) headline-content, headline-tags, headline-properties, and links. The lisp code is a work in progress, and not something I use on a daily basis yet. This post is a proof of concept to see how well this approach works. 
+</p>
+
+<p>
+I use hooks to update the database when an org-file is opened (only if it is different than what is in the database based on an md5 hash) and when it is saved. Basically, these functions delete the current entries in the database for a file, then use regular expressions to go to each headline or link in the file, and add data back to the database. I found this to be faster than parsing the org-file with org-element especially for large files. Since this is all done by a hook, anytime I open an org-file anywhere it gets added/updated to the database. The performance of this is ok. This approach will not guarantee the database is 100% accurate all the time (e.g. if something modifies the file outside of emacs, like a git pull), but it doesn't need to be. Most of the files do not change often, the database gets updated each time you open a file, and you can always reindex the database from files it knows about. Time will tell how often that seems necessary.
+</p>
+
+<p>
+emacsql lets you use lisp code to generate SQL that is sent to the database. Here is an example:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql-flatten-sql [<span style="color: #006FE0;">:select</span> [name] <span style="color: #006FE0;">:from</span> main:sqlite_master <span style="color: #006FE0;">:where</span> (= type table)])
+</pre>
+</div>
+
+<pre class="example">
+SELECT name FROM main.sqlite_master WHERE type = "table";
+</pre>
+
+<p>
+There are some nuances, for example, main:sqlite_master gets converted to main.sqlite_master. You use vectors, keywords, and sexps to setup the command. emacsql will turn a name like filename-id into filename_id. It was not too difficulty to figure out, and the author of emacsql was really helpful on a few points. I will be referring to this post in the future to remember some of these nuances!
+</p>
+
+<p>
+Here is a list of tables in the database. There are a few primary tables, and then some that store tags, properties, and keywords on the headlines. This is typical of emacsql code; it is a lisp expression that generates SQL.  In this next expression org-db is a variable that stores the database connection created in org-db.el.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> [name] <span style="color: #006FE0;">:from</span> main:sqlite_master <span style="color: #006FE0;">:where</span> (= type table)])
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">files</td>
+</tr>
+
+<tr>
+<td class="org-left">tags</td>
+</tr>
+
+<tr>
+<td class="org-left">properties</td>
+</tr>
+
+<tr>
+<td class="org-left">keywords</td>
+</tr>
+
+<tr>
+<td class="org-left">headlines</td>
+</tr>
+
+<tr>
+<td class="org-left">headline_content</td>
+</tr>
+
+<tr>
+<td class="org-left">headline_content_content</td>
+</tr>
+
+<tr>
+<td class="org-left">headline_content_segments</td>
+</tr>
+
+<tr>
+<td class="org-left">headline_content_segdir</td>
+</tr>
+
+<tr>
+<td class="org-left">headline_content_docsize</td>
+</tr>
+
+<tr>
+<td class="org-left">headline_content_stat</td>
+</tr>
+
+<tr>
+<td class="org-left">headline_tags</td>
+</tr>
+
+<tr>
+<td class="org-left">headline_properties</td>
+</tr>
+
+<tr>
+<td class="org-left">file_keywords</td>
+</tr>
+
+<tr>
+<td class="org-left">links</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Here is a description of the columns in the files table:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:pragma</span> (funcall table_info files)])
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+
+<col  class="org-left" />
+
+<col  class="org-right" />
+
+<col  class="org-left" />
+
+<col  class="org-right" />
+
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-right">0</td>
+<td class="org-left">rowid</td>
+<td class="org-right">INTEGER</td>
+<td class="org-left">0</td>
+<td class="org-right">nil</td>
+<td class="org-right">1</td>
+</tr>
+
+<tr>
+<td class="org-right">1</td>
+<td class="org-left">filename</td>
+<td class="org-right">0</td>
+<td class="org-left">nil</td>
+<td class="org-right">0</td>
+<td class="org-right">&#xa0;</td>
+</tr>
+
+<tr>
+<td class="org-right">2</td>
+<td class="org-left">md5</td>
+<td class="org-right">0</td>
+<td class="org-left">nil</td>
+<td class="org-right">0</td>
+<td class="org-right">&#xa0;</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+and the headlines table.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:pragma</span> (funcall table_info headlines)])
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+
+<col  class="org-left" />
+
+<col  class="org-right" />
+
+<col  class="org-left" />
+
+<col  class="org-right" />
+
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-right">0</td>
+<td class="org-left">rowid</td>
+<td class="org-right">INTEGER</td>
+<td class="org-left">0</td>
+<td class="org-right">nil</td>
+<td class="org-right">1</td>
+</tr>
+
+<tr>
+<td class="org-right">1</td>
+<td class="org-left">filename_id</td>
+<td class="org-right">0</td>
+<td class="org-left">nil</td>
+<td class="org-right">0</td>
+<td class="org-right">&#xa0;</td>
+</tr>
+
+<tr>
+<td class="org-right">2</td>
+<td class="org-left">title</td>
+<td class="org-right">0</td>
+<td class="org-left">nil</td>
+<td class="org-right">0</td>
+<td class="org-right">&#xa0;</td>
+</tr>
+
+<tr>
+<td class="org-right">3</td>
+<td class="org-left">level</td>
+<td class="org-right">0</td>
+<td class="org-left">nil</td>
+<td class="org-right">0</td>
+<td class="org-right">&#xa0;</td>
+</tr>
+
+<tr>
+<td class="org-right">4</td>
+<td class="org-left">todo_keyword</td>
+<td class="org-right">0</td>
+<td class="org-left">nil</td>
+<td class="org-right">0</td>
+<td class="org-right">&#xa0;</td>
+</tr>
+
+<tr>
+<td class="org-right">5</td>
+<td class="org-left">todo_type</td>
+<td class="org-right">0</td>
+<td class="org-left">nil</td>
+<td class="org-right">0</td>
+<td class="org-right">&#xa0;</td>
+</tr>
+
+<tr>
+<td class="org-right">6</td>
+<td class="org-left">archivedp</td>
+<td class="org-right">0</td>
+<td class="org-left">nil</td>
+<td class="org-right">0</td>
+<td class="org-right">&#xa0;</td>
+</tr>
+
+<tr>
+<td class="org-right">7</td>
+<td class="org-left">commentedp</td>
+<td class="org-right">0</td>
+<td class="org-left">nil</td>
+<td class="org-right">0</td>
+<td class="org-right">&#xa0;</td>
+</tr>
+
+<tr>
+<td class="org-right">8</td>
+<td class="org-left">footnote_section_p</td>
+<td class="org-right">0</td>
+<td class="org-left">nil</td>
+<td class="org-right">0</td>
+<td class="org-right">&#xa0;</td>
+</tr>
+
+<tr>
+<td class="org-right">9</td>
+<td class="org-left">begin</td>
+<td class="org-right">0</td>
+<td class="org-left">nil</td>
+<td class="org-right">0</td>
+<td class="org-right">&#xa0;</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Tags and properties on a headline are stored in headline-tags and headline-properties. 
+</p>
+
+<p>
+The database is not large if all it has is headlines and links (no content). It got up to half a GB with content, and seemed a little slow, so for this post I leave the content out.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh">du -hs ~/org-db/org-db.sqlite
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">56M</td>
+<td class="org-left">/Users/jkitchin/org-db/org-db.sqlite</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Here we count how many files are in the database. These are just the org-files in my Dropbox folder. There are a lot of them! If I include all the org-files from my research and teaching projects this number grows to about 10,000! You do not want to run org-map-entries on that. Note this also includes all of the org_archive files.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> (funcall count) <span style="color: #006FE0;">:from</span> files])
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-right">1569</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Here is the headlines count. You can see there is no chance of remembering where these are because there are so many!
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> (funcall count) <span style="color: #006FE0;">:from</span> headlines])
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-right">38587</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+And the links. So many links!
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> (funcall count) <span style="color: #006FE0;">:from</span> links])
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-right">303739</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+That is a surprising number of links. 
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgbda3471" class="outline-2">
+<h2 id="orgbda3471"><span class="section-number-2">2</span> Querying the link table</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+Let's see how many are cite links from org-ref there are.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> (funcall count) <span style="color: #006FE0;">:from</span> links <span style="color: #006FE0;">:where</span> (= type <span style="color: #008000;">"cite"</span>)])
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-right">14766</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Wow, I find that to also be surprisingly large!  I make a living writing proposals and scientific papers, and I wrote org-ref to make that easier, so maybe it should not be so surprising. We can search the link database for files containing citations of "kitchin-2015-examp" like this.  The links table only stores the filename-id, so we join it with the files table to get useful information. Here we show the list of files that contain a citation of that reference. It is a mix of manuscripts, proposals, presentations, documentation files and notes.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> <span style="color: #006FE0;">:distinct</span> [files:filename]
+                 <span style="color: #006FE0;">:from</span> links <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> files <span style="color: #006FE0;">:on</span> (= links:filename-id files:rowid) 
+                 <span style="color: #006FE0;">:where</span> (<span style="color: #0000FF;">and</span> (= type <span style="color: #008000;">"cite"</span>) (like path <span style="color: #008000;">"%kitchin-2015-examp%"</span>))])
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/2015/Research_Data_Publishing_Paper/manuscript.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/2015/Research_Data_Publishing_Paper/manuscript-2015-06-29/manuscript.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/2015/Research_Data_Publishing_Paper/manuscript-2015-10-10/manuscript.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/2015/Research_Data_Publishing_Paper/manuscript-2016-03-09/manuscript.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/2015/Research_Data_Publishing_Paper/manuscript-2016-04-18/manuscript.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/2015/human-readable-data/manuscript.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/@archive/2015/Research_Data_Publishing_Paper/manuscript.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/@archive/2015/Research_Data_Publishing_Paper/manuscript-2015-06-29/manuscript.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/@archive/2015/Research_Data_Publishing_Paper/manuscript-2015-10-10/manuscript.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/@archive/2015/Research_Data_Publishing_Paper/manuscript-2016-03-09/manuscript.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/@archive/2015/Research_Data_Publishing_Paper/manuscript-2016-04-18/manuscript.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/@archive/2015/human-readable-data/manuscript.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/meetings/@archive/2015/BES-2015/doe-bes-wed-data-briefing/doe-bes-wed-data-sharing.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/meetings/@archive/2015/NIST-july-2015/data-sharing.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/meetings/@archive/2015/UD-webinar/ud-webinar.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/meetings/@archive/2016/AICHE/data-sharing/data-sharing.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/meetings/@archive/2016/Spring-ACS/data-sharing/data-sharing.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/projects/DOE-Early-Career/annual-reports/final-report/kitchin-DESC0004031-final-report.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/proposals/@archive/2015/DOE-renewal/proposal-v2.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/proposals/@archive/2015/DOE-renewal/archive/proposal.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/proposals/@archive/2016/DOE-single-atom-alloy/proposal.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/proposals/@archive/2016/MRSEC/MRSEC-IRG-metastable-materials-preproposal/IRG-concept.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/proposals/@archive/2016/ljaf-open-science/kitchin-proposal.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/proposals/@archive/2016/nsf-germination/project-description.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/proposals/@archive/2016/nsf-reu-supplement/project-description.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/proposals/@archive/2016/proctor-and-gamble-education/proposal.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/bibliography/notes.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/kitchingroup/jmax/org-ref/citeproc/readme.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/kitchingroup/jmax/org-ref/citeproc/readme-unsrt.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/kitchingroup/jmax/org-ref/citeproc/readme-author-year.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/kitchingroup/jmax/org-ref/tests/test-1.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/kitchingroup/jmax/org-ref/tests/sandbox/elpa/org-ref-20160122.1725/citeproc/readme.org</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Obviously we could use this to generate candidates for something like helm or ivy like this. 
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(ivy-read <span style="color: #008000;">"Open: "</span> (emacsql org-db [<span style="color: #006FE0;">:select</span> [files:filename links:begin]
+                                    <span style="color: #006FE0;">:from</span> links <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> files <span style="color: #006FE0;">:on</span> (= links:filename-id files:rowid) 
+                                    <span style="color: #006FE0;">:where</span> (<span style="color: #0000FF;">and</span> (= type <span style="color: #008000;">"cite"</span>) (like path <span style="color: #008000;">"%kitchin-2015-examp%"</span>))])
+          <span style="color: #006FE0;">:action</span> '(1 (<span style="color: #008000;">"o"</span>
+                       (<span style="color: #0000FF;">lambda</span> (c)
+                         (find-file (car c))
+                         (goto-char (nth 1 c))
+                         (org-show-entry)))))
+</pre>
+</div>
+
+<pre class="example">
+/Users/jkitchin/Dropbox/CMU/manuscripts/2015/human-readable-data/manuscript.org
+</pre>
+
+<p>
+Now, you can find every org-file containing any bibtex key as a citation. Since SQL is the query language, you should be able to build really sophisticated queries that combine filters for multiple citations, different kinds of citations, etc.
+</p>
+</div>
+</div>
+
+<div id="outline-container-org8284133" class="outline-2">
+<h2 id="org8284133"><span class="section-number-2">3</span> Headline queries</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+Every headline is stored, along with its location, tags and properties. We can use the database to find headlines that are tagged or with certain properties. You can see here I have 293 tags in the database.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> (funcall count) <span style="color: #006FE0;">:from</span> tags])
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-right">293</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Here we find headlines tagged with electrolyte. I tagged some papers I read with this at some point.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> <span style="color: #006FE0;">:distinct</span> [files:filename headlines:title]
+                 <span style="color: #006FE0;">:from</span> headlines <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> headline-tags <span style="color: #006FE0;">:on</span> (=  headlines:rowid headline-tags:headline-id)
+                 <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> tags <span style="color: #006FE0;">:on</span> (= tags:rowid headline-tags:tag-id)
+                 <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> files <span style="color: #006FE0;">:on</span> (= headlines:filename-id files:rowid)
+                 <span style="color: #006FE0;">:where</span> (= tags:tag <span style="color: #008000;">"electrolyte"</span>) <span style="color: #006FE0;">:limit</span> 5])
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/org-mode/prj-doe-early-career.org</td>
+<td class="org-left">2010 - Nickel-borate oxygen-evolving catalyst that functions under benign conditions</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/bibliography/notes.org</td>
+<td class="org-left">1971 - A Correlation of the Solution Properties and the  Electrochemical Behavior of the Nickel Hydroxide  Electrode in Binary Aqueous Alkali Hydroxides</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/bibliography/notes.org</td>
+<td class="org-left">1981 - Studies concerning charged nickel hydroxide electrodes IV. Reversible potentials in LiOH, NaOH, RbOH and CsOH</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/bibliography/notes.org</td>
+<td class="org-left">1986 - The effect of lithium in preventing iron poisoning in the nickel hydroxide electrode</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/bibliography/notes.org</td>
+<td class="org-left">1996 - The role of lithium in preventing the detrimental effect of iron on alkaline battery nickel hydroxide electrode: A mechanistic aspect</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Here we see how many entries have an EMAIL property. These could serve as contacts to send email to.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> [(funcall count)] <span style="color: #006FE0;">:from</span>
+                 headlines <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> headline-properties <span style="color: #006FE0;">:on</span> (=  headlines:rowid headline-properties:headline-id)
+                 <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> properties <span style="color: #006FE0;">:on</span> (= properties:rowid headline-properties:property-id)
+                 <span style="color: #006FE0;">:where</span> (<span style="color: #0000FF;">and</span> (= properties:property <span style="color: #008000;">"EMAIL"</span>) (not (null headline-properties:value)))])
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-right">7452</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+If you want to see the ones that match "jkitchin", here they are. 
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> <span style="color: #006FE0;">:distinct</span> [headlines:title headline-properties:value] <span style="color: #006FE0;">:from</span>
+             headlines <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> headline-properties <span style="color: #006FE0;">:on</span> (=  headlines:rowid headline-properties:headline-id)
+             <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> properties <span style="color: #006FE0;">:on</span> (= properties:rowid headline-properties:property-id)
+             <span style="color: #006FE0;">:where</span> (<span style="color: #0000FF;">and</span> (= properties:property <span style="color: #008000;">"EMAIL"</span>) (like headline-properties:value <span style="color: #008000;">"%jkitchin%"</span>))])
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">John Kitchin</td>
+<td class="org-left">jkitchin@andrew.cmu.edu</td>
+</tr>
+
+<tr>
+<td class="org-left">John Kitchin</td>
+<td class="org-left">jkitchin@cmu.edu</td>
+</tr>
+
+<tr>
+<td class="org-left">Kitchin, John</td>
+<td class="org-left">jkitchin@andrew.cmu.edu</td>
+</tr>
+</tbody>
+</table>
+
+
+<p>
+Here is a query to find the number of headlines where the deadline matches 2017. Looks like I am already busy!
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> (funcall count) <span style="color: #006FE0;">:from</span>
+             headlines <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> headline-properties <span style="color: #006FE0;">:on</span> (=  headlines:rowid headline-properties:headline-id)
+             <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> properties <span style="color: #006FE0;">:on</span> (= properties:rowid headline-properties:property-id)
+             <span style="color: #006FE0;">:where</span> (<span style="color: #0000FF;">and</span> (= properties:property <span style="color: #008000;">"DEADLINE"</span>) (glob headline-properties:value <span style="color: #008000;">"*2017*"</span>))])
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-right">50</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<div id="outline-container-org7d75505" class="outline-2">
+<h2 id="org7d75505"><span class="section-number-2">4</span> Keyword queries</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+We also store file keywords, so we can search on document titles, authors, etc. Here are five documents with titles longer than 35 characters sorted in descending order. 
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> <span style="color: #006FE0;">:distinct</span> [value] <span style="color: #006FE0;">:from</span>
+                 file-keywords <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> keywords <span style="color: #006FE0;">:on</span> (= file-keywords:keyword-id keywords:rowid)
+                 <span style="color: #006FE0;">:where</span> (<span style="color: #0000FF;">and</span> (&gt; (funcall length value) 35) (= keywords:keyword <span style="color: #008000;">"TITLE"</span>))
+                 <span style="color: #006FE0;">:order</span> <span style="color: #006FE0;">:by</span> value <span style="color: #006FE0;">:desc</span>
+                 <span style="color: #006FE0;">:limit</span> 5])
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">pycse - Python3 Computations in Science and Engineering</td>
+</tr>
+
+<tr>
+<td class="org-left">org-show - simple presentations in org-mode</td>
+</tr>
+
+<tr>
+<td class="org-left">org-mode - A Human Readable, Machine Addressable Approach to Data Archiving and Sharing in Science and Engineering</td>
+</tr>
+
+<tr>
+<td class="org-left">modifying emacs to make typing easier.</td>
+</tr>
+
+<tr>
+<td class="org-left">jmax - John's customizations to maximize Emacs</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+It is possible to search on AUTHOR, and others. My memos have a #+SUBJECT keyword, so I can find memos on a subject. They also use the LATEX_CLASS of cmu-memo, so I can find all of them easily too:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> [(funcall count)] <span style="color: #006FE0;">:from</span>
+                 file-keywords <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> keywords <span style="color: #006FE0;">:on</span> (= file-keywords:keyword-id keywords:rowid)
+                 <span style="color: #006FE0;">:where</span> (<span style="color: #0000FF;">and</span> (= value <span style="color: #008000;">"cmu-memo"</span>) (= keywords:keyword <span style="color: #008000;">"LATEX_CLASS"</span>))
+                 <span style="color: #006FE0;">:limit</span> 5])
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-right">119</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+How about that, 119 memos&#x2026; Still it sure is nice to be able to find them.
+</p>
+</div>
+</div>
+
+<div id="outline-container-org08feb51" class="outline-2">
+<h2 id="org08feb51"><span class="section-number-2">5</span> Full text search</h2>
+<div class="outline-text-2" id="text-5">
+<p>
+In theory, the database has a table for the headline content, and it should be fully searchable. I found the database got a little sluggish, and nearly 1/2 a GB in size when using it so I am leaving it out for now.
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgbb3d71f" class="outline-2">
+<h2 id="orgbb3d71f"><span class="section-number-2">6</span> Summary</h2>
+<div class="outline-text-2" id="text-6">
+<p>
+The foundation for something really good is here. It is still a little tedious to wrote the queries with all the table joins, but some of that could be wrapped into a function for a query. I like the lispy style of the queries, although it can be tricky to map all the concepts onto SQL. A function that might wrap this could look like this:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(org-db-query (<span style="color: #0000FF;">and</span> (= properties:property <span style="color: #008000;">"DEADLINE"</span>) (glob headline-properties:value <span style="color: #008000;">"*2017*"</span>)))
+</pre>
+</div>
+
+<p>
+This is what it would ideally look like using the org tag/property match syntax. Somehow that string would have to get expanded to generate the code above. I do not have a sense for how difficult that would be. It might not be hard with <a href="https://github.com/skeeto/rdp">a recursive descent parser</a>, written by the same author as emacsql.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(org-db-query <span style="color: #008000;">"DEADLINE={2017}"</span>)
+</pre>
+</div>
+
+<p>
+The performance is only ok. For large org files there is a notable lag in updating the database, which is notable because while updating, Emacs is blocked. I could try using an idle timer for updates with a queue, or get more clever about when to update. It is not essential that the updates be real-time, only that they are reasonably accurate or done by the time I next search. For now, it is not too annoying though. As a better database, I have had my eye on <a href="https://xapian.org">xapian</a> since that is what mu4e (and notmuch) uses. It might be good to have an external library for parsing org-files, i.e. not through emacs, for this. It would certainly be faster. It seems like a big project though, maybe next summer ;)
+</p>
+
+<p>
+Another feature this might benefit from is ignore patterns, or some file feature that prevents it from being indexed. For example, I keep an encrypted password file in org-mode, but as soon as I opened it, it got indexed right into the database, in plain text. If you walk your file system, it might make sense to avoid some directories, like .dropbox.cache. Otherwise, this still looks like a promising approach. 
+</p>
+</div>
+</div>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/01/03/Find-stuff-in-org-mode-anywhere.org">org-mode source</a></p>
+<p>Org-mode version = 9.0.3</p>]]></content>
+  </entry>
   <entry>
     <author>
       <name></name>
@@ -189,8 +1099,8 @@ Here are few limitations though:
     <updated>2016-11-09T11:00:01Z</updated>
     <published>2016-11-09T11:00:01Z</published>
     <category scheme="http://jkitchin.github.io/blog" term="orgmode" />
-    <category scheme="http://jkitchin.github.io/blog" term="emacs" />
     <category scheme="http://jkitchin.github.io/blog" term="python" />
+    <category scheme="http://jkitchin.github.io/blog" term="emacs" />
     <summary type="html"><![CDATA[New and improved asynchronous org-babel python blocks]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2016/11/09/New-and-improved-asynchronous-org-babel-python-blocks"><![CDATA[
 
@@ -522,8 +1432,8 @@ And it exports nicely to HTML. You can see the code here: <a href="#org7a9df33">
     <id>http://jkitchin.github.io/blog/2016/11/07/Better-equation-numbering-in-LaTeX-fragments-in-org-mode</id>
     <updated>2016-11-07T07:02:19Z</updated>
     <published>2016-11-07T07:02:19Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="orgmode" />
     <category scheme="http://jkitchin.github.io/blog" term="latex" />
+    <category scheme="http://jkitchin.github.io/blog" term="orgmode" />
     <category scheme="http://jkitchin.github.io/blog" term="emacs" />
     <summary type="html"><![CDATA[Better equation numbering in LaTeX fragments in org-mode]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2016/11/07/Better-equation-numbering-in-LaTeX-fragments-in-org-mode"><![CDATA[
@@ -702,8 +1612,8 @@ You can remove the advice like this.
     <id>http://jkitchin.github.io/blog/2016/11/06/Justifying-LaTeX-preview-fragments-in-org-mode</id>
     <updated>2016-11-06T20:44:53Z</updated>
     <published>2016-11-06T20:44:53Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="orgmode" />
     <category scheme="http://jkitchin.github.io/blog" term="latex" />
+    <category scheme="http://jkitchin.github.io/blog" term="orgmode" />
     <category scheme="http://jkitchin.github.io/blog" term="emacs" />
     <summary type="html"><![CDATA[Justifying LaTeX preview fragments in org-mode]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2016/11/06/Justifying-LaTeX-preview-fragments-in-org-mode"><![CDATA[
@@ -2156,301 +3066,6 @@ This looks promising to me. There are a few things to get used to, like always h
 </div>
 <p>Copyright (C) 2016 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
 <p><a href="/org/2016/05/29/Expanding-orgmode.py-to-get-better-org-python-integration.org">org-mode source</a></p>
-<p>Org-mode version = 8.2.10</p>]]></content>
-  </entry>
-  <entry>
-    <author>
-      <name></name>
-      <uri>http://jkitchin.github.io/blog</uri>
-    </author>
-    <title type="html"><![CDATA[ob-hy.el - or better integration of hylang in org-mode]]></title>
-    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2016/04/01/ob-hy-el-or-better-integration-of-hylang-in-org-mode" />
-    <id>http://jkitchin.github.io/blog/2016/04/01/ob-hy-el-or-better-integration-of-hylang-in-org-mode</id>
-    <updated>2016-04-01T19:31:37Z</updated>
-    <published>2016-04-01T19:31:37Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="orgmode" />
-    <category scheme="http://jkitchin.github.io/blog" term="hylang" />
-    <category scheme="http://jkitchin.github.io/blog" term="emacs" />
-    <summary type="html"><![CDATA[ob-hy.el - or better integration of hylang in org-mode]]></summary>
-    <content type="html" xml:base="http://jkitchin.github.io/blog/2016/04/01/ob-hy-el-or-better-integration-of-hylang-in-org-mode"><![CDATA[
-
-
-<div id="table-of-contents">
-<h2>Table of Contents</h2>
-<div id="text-table-of-contents">
-<ul>
-<li><a href="#sec-1">1. Tests</a>
-<ul>
-<li><a href="#sec-1-1">1.1. Simple</a></li>
-<li><a href="#sec-1-2">1.2. vars in header</a></li>
-</ul>
-</li>
-<li><a href="#sec-2">2. Summary</a></li>
-</ul>
-</div>
-</div>
-<p>
-The point of this post is to develop and test a more substantial integration of Hy into org-mode. We develop ob-hy.el here. This is based off of ob-clojure.el.
-</p>
-
-<p>
-The next few blocks will get tangled to ob-hy.el. First, some variables.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">ob</span>)
-
-(add-to-list 'org-structure-template-alist
-             '(<span style="color: #008000;">"hy"</span> <span style="color: #008000;">"#+BEGIN_SRC hy\n?\n#+END_SRC"</span> <span style="color: #008000;">"&lt;src lang=\"hy\"&gt;\n?\n&lt;/src&gt;"</span>))
-
-(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">org-babel-tangle-lang-exts</span>)
-(add-to-list 'org-babel-tangle-lang-exts '(<span style="color: #008000;">"hy"</span> . <span style="color: #008000;">"hy"</span>))
-
-(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">org-babel-default-header-args:hy</span> '())
-(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">org-babel-header-args:hy</span> '((<span style="color: #006FE0;">:results</span> . <span style="color: #008000;">"output"</span>)))
-</pre>
-</div>
-
-<pre class="example">
-org-babel-header-args:hy
-</pre>
-
-<p>
-Next a function to expand the code body. This will allow us to pass vars in the header.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-babel-expand-body:hy</span> (body params)
-  <span style="color: #036A07;">"Expand BODY according to PARAMS, return the expanded body."</span>
-  (<span style="color: #0000FF;">let*</span> ((vars (mapcar #'cdr (org-babel-get-header params <span style="color: #006FE0;">:var</span>)))
-         (result-params (cdr (assoc <span style="color: #006FE0;">:result-params</span> params)))
-         (print-level nil)
-         (print-length nil)
-         (body (org-babel-trim
-                (<span style="color: #0000FF;">if</span> (&gt; (length vars) 0)
-                    (concat <span style="color: #008000;">"(let ["</span>
-                            (mapconcat
-                             (<span style="color: #0000FF;">lambda</span> (var)
-                               (format
-                                <span style="color: #008000;">"%S (quote %S)"</span>
-                                (car var)
-                                (cdr var)))
-                             vars <span style="color: #008000;">"\n      "</span>)
-                            <span style="color: #008000;">"]\n"</span> body <span style="color: #008000;">")"</span>)
-                  body))))
-    (<span style="color: #0000FF;">when</span> (not (member <span style="color: #008000;">"output"</span> result-params))
-      (<span style="color: #0000FF;">setq</span> body (format <span style="color: #008000;">"(print (do  %s\n))"</span> body)))
-    body))
-</pre>
-</div>
-
-<pre class="example">
-org-babel-expand-body:hy
-</pre>
-
-<p>
-And a function to execute the body. We still use a simple approach to write the code to a temp-file, execute it, capture the output, and delete the file. This limits things to
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-babel-execute:hy</span> (body params)
-  <span style="color: #036A07;">"Execute a block of hy code with Babel."</span>
-  (<span style="color: #0000FF;">let*</span> ((temporary-file-directory <span style="color: #008000;">"."</span>)
-         (tempfile (make-temp-file <span style="color: #008000;">"hy-"</span>))
-         result
-         (result-params (cdr (assoc <span style="color: #006FE0;">:result-params</span> params)))
-         (body (org-babel-expand-body:hy body params)))
-
-    (<span style="color: #0000FF;">with-temp-file</span> tempfile
-      (insert body))
-
-    (<span style="color: #0000FF;">unwind-protect</span>
-        (<span style="color: #0000FF;">progn</span>
-          (<span style="color: #0000FF;">cond</span>
-           ((member <span style="color: #008000;">"body"</span> result-params)
-            (<span style="color: #0000FF;">setq</span> result body))
-           ((member <span style="color: #008000;">"python"</span> result-params)
-            (<span style="color: #0000FF;">setq</span> result (shell-command-to-string
-                          (format <span style="color: #008000;">"hy2py %s"</span> tempfile))))
-           ((member <span style="color: #008000;">"ast"</span> result-params)
-            (<span style="color: #0000FF;">setq</span> result (shell-command-to-string
-                          (format <span style="color: #008000;">"hy2py -a -np %s"</span> tempfile))))
-           (t
-            (<span style="color: #0000FF;">setq</span> result (shell-command-to-string
-                          (format <span style="color: #008000;">"hy %s"</span> tempfile)))))
-
-          (<span style="color: #0000FF;">org-babel-result-cond</span> result-params
-            result
-            (<span style="color: #0000FF;">condition-case</span> nil (org-babel-script-escape result)
-              (<span style="color: #ff0000; font-weight: bold;">error</span> result))))
-      (delete-file tempfile))))
-
-(<span style="color: #0000FF;">provide</span> '<span style="color: #D0372D;">ob-hy</span>)
-</pre>
-</div>
-
-<pre class="example">
-ob-hy
-</pre>
-
-<p>
-Now we tangle and load those blocks.
-</p>
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(org-babel-tangle)
-(load-file <span style="color: #008000;">"ob-hy.el"</span>)
-</pre>
-</div>
-
-<pre class="example">
-t
-</pre>
-
-<p>
-Next, we do some tests. They are all simple tests.
-</p>
-
-<div id="outline-container-sec-1" class="outline-2">
-<h2 id="sec-1"><span class="section-number-2">1</span> Tests</h2>
-<div class="outline-text-2" id="text-1">
-</div><div id="outline-container-sec-1-1" class="outline-3">
-<h3 id="sec-1-1"><span class="section-number-3">1.1</span> Simple</h3>
-<div class="outline-text-3" id="text-1-1">
-<div class="org-src-container">
-
-<pre class="src src-hy">(<span style="color: #006FE0;">print</span> <span style="color: #008000;">"Hy world"</span>)
-</pre>
-</div>
-
-<pre class="example">
-Hy world
-</pre>
-
-<p>
-We can see how this turns into Python:
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-hy">(<span style="color: #006FE0;">print</span> <span style="color: #008000;">"Hy world"</span>)
-</pre>
-</div>
-
-<pre class="example">
-print(u'Hy world')
-</pre>
-
-<p>
-or the AST:
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-hy">(<span style="color: #006FE0;">print</span> <span style="color: #008000;">"Hy world"</span>)
-</pre>
-</div>
-
-<pre class="example">
-Module(
-    body=[Expr(value=Call(func=Name(id='print'), args=[Str(s=u'Hy world')], keywords=[], starargs=None, kwargs=None))])
-</pre>
-
-<p>
-Let's test :results value. It is not quite the value since we seem to get everything that is output from the script, but if you don't print stuff, it seems to get it right.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-hy"><span style="color: #008000;">"test"</span>
-(<span style="color: #006FE0;">+</span> 1 2 3)
-</pre>
-</div>
-
-<pre class="example">
-6
-</pre>
-</div>
-</div>
-
-<div id="outline-container-sec-1-2" class="outline-3">
-<h3 id="sec-1-2"><span class="section-number-3">1.2</span> vars in header</h3>
-<div class="outline-text-3" id="text-1-2">
-<p>
-Here we test out adding variables to the header lines.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-hy" id="hy-world">(<span style="color: #006FE0;">print</span> <span style="color: #008000;">"Hy"</span> data)
-</pre>
-</div>
-
-<pre class="example">
-Hy world
-</pre>
-
-<p>
-Interesting, I am not sure where the space between them comes from. Let's check out the :results body option. It will show us the hy script that gets run.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-hy">(<span style="color: #006FE0;">print</span> <span style="color: #008000;">"Hy"</span> data)
-</pre>
-</div>
-
-<pre class="example">
-(let [data (quote "world")]
-(print "Hy" data))
-</pre>
-
-<p>
-Nothing obvious about the space there. We can test out passing block results in here.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-hy">(<span style="color: #006FE0;">print</span> data)
-</pre>
-</div>
-
-<pre class="example">
-Hy  world
-</pre>
-
-<p>
-Here is the body of that:
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-hy">(<span style="color: #006FE0;">print</span> data)
-</pre>
-</div>
-
-<pre class="example">
-(let [data (quote "Hy world
-")]
-(print data))
-</pre>
-</div>
-</div>
-</div>
-
-<div id="outline-container-sec-2" class="outline-2">
-<h2 id="sec-2"><span class="section-number-2">2</span> Summary</h2>
-<div class="outline-text-2" id="text-2">
-<p>
-It works well enough to make testing in org-mode pretty convenient. I can't think of anything else it "needs" right now, although communication with a repl might make it faster, and sessions are not supported at the moment. Saving that for another day ;)
-</p>
-</div>
-</div>
-<p>Copyright (C) 2016 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2016/04/01/ob-hy.el---or-better-integration-of-hylang-in-org-mode.org">org-mode source</a></p>
 <p>Org-mode version = 8.2.10</p>]]></content>
   </entry>
 </feed>
