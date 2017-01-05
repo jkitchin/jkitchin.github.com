@@ -142,14 +142,14 @@
       (let ((keywords '())
 	    filename-id keyword-id
 	    key val)
-	(while (re-search-forward "^#\\+\\([^ ]*\\): +\\(.*\\)")
+	(while (re-search-forward "^#\\+\\([^ ]*\\): +\\(.*\\)" nil t)
 	  (setq key (match-string-no-properties 1)
 		val (match-string-no-properties 2))
 	  (add-to-list 'keywords (cons (upcase key) val)))
 
 	(setq filename-id
 	      (or (caar (emacsql org-db [:select rowid :from files
-					 :where (= filename $s1)]
+						 :where (= filename $s1)]
 				 (buffer-file-name)))
 		  (emacsql org-db [:insert :into files :values [nil $s1 $s2]]
 			   (buffer-file-name)
@@ -161,7 +161,7 @@
 	      (message "keyword: %s %s" keyword value)
 	      (setq keyword-id
 		    (or (caar (emacsql org-db [:select rowid :from keywords
-					       :where (= keyword $s1)]
+						       :where (= keyword $s1)]
 				       keyword))
 			(emacsql org-db [:insert :into keywords :values [nil $s1]]
 				 keyword)
@@ -241,25 +241,26 @@
 (defun org-db-update (&optional force)
   "Update the database with the current buffer if needed."
   (interactive "P")
-  (when (or force
-	    (not (string= (md5 (current-buffer))
-			  (caar (emacsql org-db [:select md5 :from files
-						 :where (= filename $s1)]
-					 (buffer-file-name))))))
+  (when (and (buffer-file-name)
+	     (or force
+		 (not (string= (md5 (current-buffer))
+			       (caar (emacsql org-db [:select md5 :from files
+							      :where (= filename $s1)]
+					      (buffer-file-name)))))))
     (message "Updating database in %s" (buffer-file-name))
     ;; no cascade delete in virtual tables, so we manually do it.
     (let ((filename-id (caar (emacsql org-db [:select rowid :from files
-					      :where (= filename $s1)]
+						      :where (= filename $s1)]
 				      (buffer-file-name))))
 	  headline-ids)
       (when filename-id
 	(setq headline-ids
 	      (mapcar 'car (emacsql org-db [:select [rowid] :from headlines
-					    :where (= filename-id $s1)]
+						    :where (= filename-id $s1)]
 				    filename-id)))
 	(loop for hl-id in headline-ids do
 	      (emacsql org-db [:delete :from headline-content
-			       :where (= headline-content:headline-id $s1)]
+				       :where (= headline-content:headline-id $s1)]
 		       hl-id)))
       ;; now delete the file, which should cascade delete the rest
       (emacsql org-db [:delete :from files :where (= filename $s1)] (buffer-file-name)))
@@ -323,17 +324,6 @@
 	  (let ((buf (find-file-noselect f)))
 	    (kill-buffer buf)))))
 
-(add-hook
- 'org-mode-hook
- (lambda ()
-   ;; update on opening, in case it changed externally
-   (org-db-update)
-   (add-hook 'after-save-hook
-	     ;; update on saving.
-	     (lambda ()	   
-	       (org-db-update))
-	     nil t)))
-
 
 (defun org-db-clean-db ()
   "Check all files in the db exist and delete those that don't."
@@ -343,17 +333,17 @@
 	  ;; the headline content does not cascade delete, so we do it manually
 	  ;; here.
 	  (let ((filename-id (caar (emacsql org-db [:select rowid :from files
-						    :where (= filename $s1)]
+							    :where (= filename $s1)]
 					    fname)))
 		headline-ids)
 	    (when filename-id
 	      (setq headline-ids
 		    (mapcar 'car (emacsql org-db [:select [rowid] :from headlines
-						  :where (= filename-id $s1)]
+							  :where (= filename-id $s1)]
 					  filename-id)))
 	      (loop for hl-id in headline-ids do
 		    (emacsql org-db [:delete :from headline-content
-				     :where (= headline-content:headline-id $s1)]
+					     :where (= headline-content:headline-id $s1)]
 			     hl-id)))
 	    ;; now delete the file, which should cascade delete the rest
 	    (emacsql org-db [:delete :from files :where (= filename $s1)] fname)))))
@@ -389,6 +379,19 @@ enter the query as an unevaluated sexp in code.
   "Quit the database."
   (interactive)
   (emacsql-close org-db))
+
+
+;; * the hooks
+(add-hook
+ 'org-mode-hook
+ (lambda ()
+   ;; update on opening, in case it changed externally
+   (org-db-update)
+   (add-hook 'after-save-hook
+	     ;; update on saving.
+	     (lambda ()	   
+	       (org-db-update))
+	     nil t)))
 
 ;; * End
 (provide 'org-db)
