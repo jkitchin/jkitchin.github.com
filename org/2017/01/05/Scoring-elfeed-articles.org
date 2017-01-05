@@ -1,0 +1,164 @@
+* Scoring elfeed articles
+  :PROPERTIES:
+  :categories: emacs,elfeed
+  :date:     2017/01/05 11:18:29
+  :updated:  2017/01/05 11:18:29
+  :END:
+
+I use [[https://github.com/skeeto/elfeed][elfeed]] to read RSS feeds of scientific journals, python, emacs, and lisp blogs, and the emacs stackexchange feed. Here are the current feeds I follow.
+
+#+BEGIN_SRC emacs-lisp
+(mapcar 'list elfeed-feeds)
+#+END_SRC
+
+#+RESULTS:
+| (http://syndic8.scopus.com/getMessage?registrationId=ADEJAEEKHFESCDEOCDFOAHGSCDHSAKHREFMSADHNJA cmu)              |
+| http://feeds.feedburner.com/acs/accacs                                                                            |
+| http://feeds.feedburner.com/acs/enfuem                                                                            |
+| http://feeds.feedburner.com/acs/esthag                                                                            |
+| http://feeds.feedburner.com/acs/jacsat                                                                            |
+| http://feeds.feedburner.com/acs/jpcbfk                                                                            |
+| http://feeds.feedburner.com/acs/jpccck                                                                            |
+| http://feeds.feedburner.com/acs/jpclcd                                                                            |
+| http://feeds.feedburner.com/acs/cmatex                                                                            |
+| http://feeds.feedburner.com/acs/jctcce                                                                            |
+| http://feeds.feedburner.com/acs/jcisd8                                                                            |
+| http://feeds.feedburner.com/acs/iecred                                                                            |
+| http://feeds.aps.org/rss/recent/prl.xml                                                                           |
+| http://feeds.aps.org/rss/recent/prb.xml                                                                           |
+| http://www.sciencemag.org/rss/current.xml                                                                         |
+| http://feeds.nature.com/nature/rss/current                                                                        |
+| http://feeds.nature.com/nmat/rss/current                                                                          |
+| http://feeds.nature.com/nchem/rss/current                                                                         |
+| http://rss.sciencedirect.com/publication/science/09270256                                                         |
+| http://onlinelibrary.wiley.com/rss/journal/10.1002/(ISSN)1521-3773                                                |
+| http://scitation.aip.org/rss/content/aip/journal/jcp/latestarticles;jsessionid=6k76xb11z253.x-aip-live-06?fmt=rss |
+| (http://planetpython.org/rss20.xml python)                                                                        |
+| (http://planet.scipy.org/rss20.xml python)                                                                        |
+| (http://planet.emacsen.org/atom.xml emacs)                                                                        |
+| http://planet.lisp.org/rss20.xml                                                                                  |
+| http://catalysis-preprint-archive.github.io/updates.rss                                                           |
+| https://www.cmu.edu/policies/news/rss-feed.rss                                                                    |
+| (http://emacs.stackexchange.com/feeds emacs)                                                                      |
+
+I get a lot of articles this way. The current size of the database is:
+
+#+BEGIN_SRC emacs-lisp
+(elfeed-db-size)
+#+END_SRC
+
+#+RESULTS:
+: 79721
+
+Elfeed tells me I have over 300 unread entries to review at the moment.
+
+#+BEGIN_SRC emacs-lisp
+(elfeed-search--count-unread)
+#+END_SRC
+
+#+RESULTS:
+: 341/363:24
+
+To deal with this deluge, I have done a couple of things. I set up some new key-bindings so I can alternate marking entries as read if the titles do not look interesting. These keybindings let me alternate fingers, so they do not get too tired (that really happens some days!).
+
+#+BEGIN_SRC emacs-lisp
+;; help me alternate fingers in marking entries as read
+(define-key elfeed-search-mode-map (kbd "f") 'elfeed-search-untag-all-unread)
+(define-key elfeed-search-mode-map (kbd "j") 'elfeed-search-untag-all-unread)
+#+END_SRC
+
+I also set up some auto-tagging of the emacs and python feeds, and setup some custom faces so these tags are highlighted so they are easy to see. Anything highlighted in blue is related to emacs, green is related to python, and pink is related to my department, and I can type s, then the tag to see only those entries.  Here is what my feed looks like:
+
+#+attr_org: :width 600
+[[./screenshots/date-05-01-2017-time-08-42-33.png]]
+
+
+
+Today I want to explore adding tags to entries to further prioritize them. There is a way to tag entries that is described here: https://github.com/skeeto/elfeed#tag-hooks where you can create patterns to match an entry feed title, url, title or link. Basically, you create a function that takes an entry, amd have it add or remove a tag conditionally.
+
+I want to tag entries that meet certain criteria, for example keywords, and set a tag based on the number of matches. Ideally, one day this would be integrated with machine learning so it could rank entries by other entries I have liked, but today we setup code that will create a score for an entry based on the number of matches, and then tag it so that it will get highlighted for me.  First, we define two custom faces and setup elfeed to use them. I will use two tags: important and relevant. relevant will be for entries that get a score of at least 1, and important for entries that get a score greater than 1.
+
+#+BEGIN_SRC emacs-lisp :results silent
+(defface relevant-elfeed-entry
+  '((t :background (color-lighten-name "orange1" 40)))
+  "Marks a relevant Elfeed entry.")
+
+(defface important-elfeed-entry
+  '((t :background (color-lighten-name "OrangeRed2" 40)))
+  "Marks an important Elfeed entry.")
+
+(push '(relevant relevant-elfeed-entry)
+      elfeed-search-face-alist)
+
+(push '(important important-elfeed-entry)
+      elfeed-search-face-alist)
+#+END_SRC
+
+In elfeed, each entry is a structure, and we can access the title and content for matching. Here is an example of a simple scoring function. The idea is just to match patterns, and then add to the score if it matches. This is not as advanced as [[https://www.gnu.org/software/emacs/manual/html_node/gnus/Scoring.html#Scoring][gnus scoring]], but it is a good starting point.
+
+#+BEGIN_SRC emacs-lisp
+(defun score-elfeed-entry (entry)
+  (let ((title (elfeed-entry-title entry))
+	(content (elfeed-deref (elfeed-entry-content entry)))
+	(score 0))
+    (loop for (pattern n) in '(("alloy" 1)
+			       ("machine learning\\|neural" 1)
+			       ("database" 1)
+			       ("reproducible" 1)
+			       ("carbon dioxide\\|CO2" 1)
+			       ("oxygen evolution\\|OER\\|electrolysis" 1)
+			       ("perovskite\\|polymorph\\|epitax" 1)
+			       ("kitchin" 2))
+	  if (string-match pattern title)
+	  do (incf score n)
+	  if (string-match pattern content)
+	  do (incf score n))
+    (message "%s - %s" title score)
+
+    ;; store score for later in case I ever integrate machine learning
+    (setf (elfeed-meta entry :my/score) score)
+
+    (cond
+     ((= score 1)
+      (elfeed-tag entry 'relevant))
+     ((> score 1)
+      (elfeed-tag entry 'important)))
+    entry))
+
+(add-hook 'elfeed-new-entry-hook 'score-elfeed-entry)
+#+END_SRC
+
+#+RESULTS:
+| score-elfeed-entry |
+
+Now, new entries automatically get tagged with relevant or important, depending on the score that function gives them, and they get color-coded. Now, the feed looks like this:
+
+#+attr_org: :width 600
+[[./screenshots/date-05-01-2017-time-11-10-42.png]]
+
+
+I saved some bookmarks to see just the important or relevant ones (http://nullprogram.com/blog/2015/12/03/) so I can see new relevant entries with C-x r b and selecting the relevant bookmark. These work from anywhere in Emacs.
+
+#+BEGIN_EXAMPLE
+  @6-months-ago +unread +relev  @6-months-ago +unread +relevant
+  elfeed @6-months-ago +unread  @6-months-ago +unread +important
+#+END_EXAMPLE
+
+I usually access elfeed from a command that shows me everything. Here, I define key-bindings to show me just the important or relevant ones. I could not see a way to get an or in there to show me both of them. These keys make it a one key press to show only these entries, and then get back to the full list.
+
+#+BEGIN_SRC emacs-lisp
+(define-key elfeed-search-mode-map (kbd "i")
+  (lambda () (interactive)
+    (elfeed-search-set-filter "@6-months-ago +unread +important")))
+
+(define-key elfeed-search-mode-map (kbd "v")
+  (lambda () (interactive)
+    (elfeed-search-set-filter "@6-months-ago +unread +relevant")))
+
+(define-key elfeed-search-mode-map (kbd "c")
+  (lambda () (interactive)
+    (elfeed-search-set-filter "@6-months-ago +unread")))
+#+END_SRC
+
+
+That summarizes the experiment of the day. There is clearly some room for improvement on the scoring function, e.g. moving the patterns out of the function and into a customizable variable, making the patterns be specific to either the title or content, etc. I am going to try this for a few days and see if it is actually helpful first though.
