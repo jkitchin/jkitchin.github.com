@@ -378,7 +378,15 @@ enter the query as an unevaluated sexp in code.
 (defun org-db-quit ()
   "Quit the database."
   (interactive)
-  (emacsql-close org-db))
+  (emacsql-close org-db) 
+  (remove-hook 'org-mode-hook (lambda ()
+				;; update on opening, in case it changed externally
+				(org-db-update)
+				(add-hook 'after-save-hook
+					  ;; update on saving.
+					  (lambda ()	   
+					    (org-db-update))
+					  nil t))))
 
 
 ;; * the hooks
