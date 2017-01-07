@@ -4,7 +4,7 @@
   xmlns="http://www.w3.org/2005/Atom"
   xmlns:thr="http://purl.org/syndication/thread/1.0"
   xml:lang="en"
-   >
+  >
   <title type="text">${escape(bf.config.blog.name)}</title>
   <subtitle type="text">${escape(bf.config.blog.description)}</subtitle>
 

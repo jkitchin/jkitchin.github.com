@@ -8,6 +8,7 @@
      xmlns:wfw="http://wellformedweb.org/CommentAPI/"
      >
   <channel>
+    <atom:link href="http://kitchingroup.cheme.cmu.edu/blog/feed/index.xml" rel="self" type="application/rss+xml" />
     <title>${escape(bf.config.blog.name)}</title>
     <link>${bf.config.blog.url}</link>
     <description>${escape(bf.config.blog.description)}</description>
@@ -15,6 +16,7 @@
     <generator>Blogofile</generator>
     <sy:updatePeriod>hourly</sy:updatePeriod>
     <sy:updateFrequency>1</sy:updateFrequency>
+    
 % for post in posts[:10]:
     <item>
       <title>${escape(post.title)}</title>
