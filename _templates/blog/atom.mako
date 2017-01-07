@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?><% from datetime import datetime %>
+<% from xml.sax.saxutils import escape %>
 <feed
   xmlns="http://www.w3.org/2005/Atom"
   xmlns:thr="http://purl.org/syndication/thread/1.0"
   xml:lang="en"
    >
-  <title type="text">${bf.config.blog.name}</title>
-  <subtitle type="text">${bf.config.blog.description}</subtitle>
+  <title type="text">${escape(bf.config.blog.name)}</title>
+  <subtitle type="text">${escape(bf.config.blog.description)}</subtitle>
 
   <updated>${datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")}</updated>
   <generator uri="http://blogofile.com/">Blogofile</generator>
@@ -19,7 +20,7 @@
       <name>${post.author}</name>
       <uri>${bf.config.blog.url}</uri>
     </author>
-    <title type="html"><![CDATA[${post.title}]]></title>
+    <title type="html"><![CDATA[${escape(post.title)}]]></title>
     <link rel="alternate" type="text/html" href="${post.permalink}" />
     <id>${post.permalink}</id>
     <updated>${post.updated.strftime("%Y-%m-%dT%H:%M:%SZ")}</updated>
@@ -27,8 +28,8 @@
 % for category in post.categories:
     <category scheme="${bf.config.blog.url}" term="${category}" />
 % endfor
-    <summary type="html"><![CDATA[${post.title}]]></summary>
-    <content type="html" xml:base="${post.permalink}"><![CDATA[${post.content}]]></content>
+    <summary type="html"><![CDATA[${escape(post.title)}]]></summary>
+    <content type="html" xml:base="${post.permalink}"><![CDATA[${escape(post.content)}]]></content>
   </entry>
 % endfor
 </feed>
