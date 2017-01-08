@@ -226,7 +226,7 @@ the beginning and end of the range of changed text,
 and the length in chars of the pre-change text replaced by that range.
 (For an insertion, the pre-change length is zero;
 for a deletion, that length is the number of chars deleted,
-and the post-change beginning and end are a#  ov-highlight-data: KCgxMjE4OSAxMjE4OSAoZmFjZSAoOmZvcmVncm91bmQgInJlZCIgOnN0cmlrZS10aHJvdWdoIHQpIG92LWhpZ2hsaWdodCB0KSkgKDEyMTY2IDEyMTg2IChvdi10eXBlICJkZWxldGUiIG92LWhpZ2hsaWdodCB0IGZhY2UgKDpmb3JlZ3JvdW5kICJyZWQiIDpzdHJpa2UtdGhyb3VnaCB0KSkpKQ==
+and the post-change beginning and end are a#  ov-highlight-data: KCgxMjAwMCAxMjAwMCAob3YtdHlwZSAiZGVsZXRlIiBvdi1oaWdobGlnaHQgdCBmYWNlICg6Zm9yZWdyb3VuZCAicmVkIiA6c3RyaWtlLXRocm91Z2ggdCkpKSAoMTIwMDAgMTIwMDAgKGZhY2UgKDpmb3JlZ3JvdW5kICJyZWQiIDpzdHJpa2UtdGhyb3VnaCB0KSBvdi1oaWdobGlnaHQgdCkpKQ==
 
 (setq inhibit-modification-hooks nil
 (ovh-track-changes)
@@ -247,3 +247,142 @@ and the post-change beginning and end are a#  ov-highlight-data: KCgxMjE4OSAxMjE
 
 #+RESULTS:
 | ovh-after-change |
+* Superpowered email in Emacs
+
+Gmail does a few things right: awesome search, email completion. I am not a big fan of writing email in a browser though. You know, because I like editing text in Emacs.
+
+I treat email primarily as an inbox of messages I need to do something with. My preference is to read an email, and either respond and archive, archive or delete it. If I can not do one of those things, the email should go on a todo list for me to handle later. If a message is in the inbox, it means it is waiting for me to do something. I try to keep under 50 emails in my inbox at any given time, and those are emails I usually plan to handle within a few days (or it goes on a todo list).
+
+** TODO Attachment reminder
+** Highlight some words from specific users
+
+I get some automated reports from a computer cluster. These reports tell me if the RAID array is in Optimal, Degraded or Missing status. To make it easier to read these, I want those words to be highlighted in color. I especially want words like Degraded and Missing to be red so they stand out! This snippet highlights those words, but only in emails from the cluster. This is an example of conditionally changing the appearance of an email.
+
+#+BEGIN_SRC emacs-lisp :results silent
+(defun gilgamesh-fontify ()
+  (loop for (name . email) in (mu4e-message-field-at-point :from) 
+	do
+	(when (string= email "root@gilgamesh.cheme.cmu.edu")
+	  (hi-lock-mode 1)
+	  (highlight-regexp "Optimal" 'mu4e-modeline-face) ; a greenish color
+	  (highlight-regexp "Degraded" 'mu4e-warning-face) ; a reddish color
+	  (highlight-regexp "Missing" 'mu4e-warning-face))))
+
+(add-hook 'mu4e-view-mode-hook 'gilgamesh-fontify)
+#+END_SRC
+
+** Mail merge
+
+Many times I collect information from people by email. I like to send individual emails, rather than one email to the whole group. It makes it simpler for me to aggregate the data they send me, and I get individual email threads. If the information is sufficiently structured, it is easy to use the mail-merge feature of scimax to generate and send the emails. 
+
+Mail merge is a multi-step process
+
+1. Create a data source (usually a table) that has all the information you need. Each row in the table will end up being one email. Give the table a name, so it can be the input for a source block later.
+
+#+name: mail-merge-data
+| email              | first name | last name | file       |
+|--------------------+------------+-----------+------------|
+| some@person.com    | Some       | One       | tees.org   |
+| another@person.com | Another    | Person    | shorts.org |
+
+2. Create a template using ${identifier} tags that will be replaced by things in the template by data from the data-source using s-format. I like to put these in a named example block like this so it is easy to include in a source block later. This block uses a personal name to address the person, tells them to check on a file, and attaches the file to the email. Note this also puts an id link in the message. If they reply, and that link is there, I can type C-c o on it and jump back to the heading where I sent the message from. I might copy some data from the message there.
+
+#+name: email-template
+#+BEGIN_EXAMPLE
+Dear ${NAME},
+
+Please check this file: ${FILE}. It is attached.
+
+-----------------------
+Please do not delete this.
+[[id:${ID}]]
+
+<#part type="application/octet-stream" filename="${PATH}" disposition=attachment>
+<#/part>
+#+END_EXAMPLE
+
+3. Generate the messages using `mail-merge-make-headings'. You need to create a new data-source that defines the fields in the template, and the heading properties TO and SUBJECT. This will generate a subheading called Messages in the current heading. Each message will be a subsubheading, and initially tagged :unsent:.
+
+#+BEGIN_SRC emacs-lisp :var data=mail-merge-data template=email-template
+(let ((data-source (loop for (email fname lname file) in data
+			 collect
+			 `(("TO" . ,email)
+			   ("SUBJECT" . ,(format "Meeting notes about %s" file))
+			   ("HEADLINE" . ,(format "Message to %s %s" fname lname))
+			   ("NAME" . ,fname)
+			   ("FILE" . ,file)
+			   ("PATH" . ,(expand-file-name file))))))
+  (mail-merge-make-headings template data-source)))
+#+END_SRC
+
+#+RESULTS:
+
+4. Inspect each message. You can edit these messages by hand, or modify the template/code above and re-run them. If a message is good, send it with M-x mail-merge-send-heading (which opens a message buffer and you have to C-c C-c to send it). I always do this for the first few to make sure the messages are formatted correctly. Once I am sure of that, C-u M-x mail-merge-send-heading will send the message directly. Both tag the message as sent, and add some properties about when the message was sent, stores a link to the sent message, and  move the point to the next unsent message. I actually use speed keys for this. When you are on the first star of the message headline, pressing m will open the message buffer for you to send, and pressing s will just send it. If you are super confident, you can use M-x mail-merge and it will send all headlines that are tagged unsent with a TO property with a 0.2 second delay.
+
+
+
+
+*** Messages
+**** DONE Message to Some One                                          :sent:
+     CLOSED: [2017-01-07 Sat 15:17]
+     :PROPERTIES:
+     :ID: 35BD9490-4380-4062-A445-AF14718584FD
+     :TO:       some@person.com
+     :SUBJECT:  Meeting notes
+     :SENT-ON:  Sat Jan  7 15:18:07 2017
+     :Message-ID: [[mu4e:msgid:m2pojyfwua.fsf@Johns-MacBook-Air.local][Meeting notes (Sat Jan  7 15:18:07 2017)]
+     :END:
+Dear Some,
+
+Please check this file: tees.org. It is attached.
+
+-----------------------
+Please do not delete this.
+[[id:35BD9490-4380-4062-A445-AF14718584FD]]
+
+
+**** Message to Another Person :sent:
+     :PROPERTIES:
+     :ID: A32AF98B-DC16-48BE-88FA-A3B7C879D931
+     :TO:       another@person.com
+     :SUBJECT:  Meeting notes
+     :SENT-ON:  Sat Jan  7 15:17:48 2017
+     :Message-ID: [[mu4e:msgid:m2shoufwut.fsf@Johns-MacBook-Air.local][Meeting notes (Sat Jan  7 15:17:48 2017)]]
+     :END:
+Dear Another,
+
+Please check this file: shorts.org. It is attached.
+
+-----------------------
+Please do not delete this.
+[[id:A32AF98B-DC16-48BE-88FA-A3B7C879D931]]
+
+<#part type=\"application/octet-stream\" filename=\"/Users/jkitchin/vc/blogofile-jkitchin.github.com/_blog/shorts.org\" disposition=attachment>
+<#/part>
+
+** Triggering followup actions on replies
+
+A sent message has a message-id and when people reply to it, that id should be in a references header field. We can set up a hook that alerts us when someone replies to a specific email. This will be triggered on every view, so you might be careful about what the action does.
+
+#+BEGIN_SRC emacs-lisp
+(setq email-notifications '(("m28tqmhobn.fsf@Johns-MacBook-Air.local" . (message-box "Followup!"))))
+
+(defun check-for-followup ()
+  (loop for (ref . action) in email-notifications
+	do
+	(message "%s: %S against %S"
+		 (-contains? (mu4e-message-field-at-point :references) ref)
+		 ref (mu4e-message-field-at-point :references))
+	(when (-contains? (mu4e-message-field-at-point :references) ref)
+	  (message "confirmed")
+	  (eval action))))
+
+(add-hook 'mu4e-view-mode-hook 'check-for-followup)
+#+END_SRC
+
+#+RESULTS:
+| check-for-followup | gilgamesh-fontify | mu4e-auto-tag | email-fontify | #[nil \301\300!\210\302\211\207 [bookmark-make-record-function make-local-variable mu4e-view-bookmark-make-record] 2] |
+
+** Tagging emails
+
+** Automatic tagging
