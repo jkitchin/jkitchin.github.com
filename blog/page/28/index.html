@@ -84,10 +84,201 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="A-helm-mu4e-contact-selector"></div>
+      <h2 class="blog_post_title"><a href="/blog/2015/03/14/A-helm-mu4e-contact-selector/" rel="bookmark" title="Permanent Link to A helm-mu4e contact selector">A helm-mu4e contact selector</a></h2>
+      <p><small><span class="blog_post_date">Posted March 14, 2015 at 10:21 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/helm/'>helm</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/email/'>email</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2015/03/14/A-helm-mu4e-contact-selector#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+I have been using <a href="http://www.djcbsoftware.nl/code/mu/mu4e.html">mu4e</a> in Emacs for email for about three months now. It is pretty good, and I hardly ever use the gmail web interface any more. The email completion in mu4e is ok, but I am frequently surprised at what it does not find, and totally spoiled by how good Gmail is at this. The built in completion seems to get lost if you don't start the search with the first few letters. Not always, but too often for me. I don't always remember the first letters, and want to search by name, or company. I would love to search by tags in org-contacts. This should be simple in helm, where you can build up candidates with different bits of information. Here I explore a helm interface, which I think might be better than the built in mu4e support, and even be better than gmail.
+</p>
+
+<p>
+In my dream email completer, I want some easy way to define my own groups, I want to use org-contacts (and its tags), and I want every email address in the mails I have in my archive as completion candidates.  helm supports multiple sources, so I initially tried a separate source for each of these. Preliminary efforts suggested it is not possible to mark multiple selections from different sources and pass them all to one function. So, we combine all email candidates into one list of (searchable-string . email-address) cons cells. To get an idea of how many contacts we are looking at:
+</p>
+
+<p>
+Here is what I have in my org-contacts file:
+</p>
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(length (org-contacts-db))
+</pre>
+</div>
+
+<pre class="example">
+173
+</pre>
+
+<p>
+And here is what mu4e knows about. Interestingly, it takes a while for this variable to get populated because the request is asynchronous. After the first time though it sticks around. I think just opening mu4e will populate this variable.
+</p>
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(length mu4e~contacts-for-completion)
+</pre>
+</div>
+
+<pre class="example">
+12717
+</pre>
+
+<p>
+So, I have close to 13,000 potential email addresses to choose from. For my email groups, I will just use a list of cons cells like (group-name . "comma-separated emails"). Then, I will loop through the org-contacts-db and the mu4e completion list to make the helm candidates. Finally, we add some functions to open our org-contact, and to tag org-contacts so it is easier to make groups.
+</p>
+
+<p>
+Here is the code I have been using.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp"><span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">here we set aliases for groups.</span>
+(setq email-groups
+      '((<span style="color: #008000;">"ms"</span> . <span style="color: #008000;">"email1, email2"</span>)
+        (<span style="color: #008000;">"phd"</span> . <span style="color: #008000;">"email3, email4"</span>)))
+
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-contacts-open-from-email</span> (email)
+  <span style="color: #036A07;">"Open org-contact with matching EMAIL. If no match, create new</span>
+<span style="color: #036A07;">entry with prompts for first and last name."</span>
+  (<span style="color: #0000FF;">let</span> ((contact (<span style="color: #0000FF;">catch</span> '<span style="color: #D0372D;">contact</span>
+                   (loop for contact in  (org-contacts-db)
+                         do
+                         (<span style="color: #0000FF;">when</span> (string= email (cdr (assoc <span style="color: #008000;">"EMAIL"</span> (elt contact 2))))
+                           (<span style="color: #0000FF;">throw</span> '<span style="color: #D0372D;">contact</span> contact))))))
+
+    (<span style="color: #0000FF;">unless</span> contact
+                (set-buffer (find-file-noselect (ido-completing-read
+                                                 <span style="color: #008000;">"Select org-contact file: "</span>
+                                                 org-contacts-files)))
+                (goto-char (point-max))
+                (insert (format  <span style="color: #008000;">"\n* %s %s\n"</span>
+                                 (read-input <span style="color: #008000;">"First name: "</span>)
+                                 (read-input <span style="color: #008000;">"Last name: "</span>)))
+                (org-entry-put (point) <span style="color: #008000;">"EMAIL"</span> email)
+                (save-buffer))
+
+    (<span style="color: #0000FF;">when</span> contact
+      (find-file  (cdr (assoc <span style="color: #008000;">"FILE"</span> (elt contact 2))))
+      (goto-char (elt contact 1))
+      (show-subtree))))
+
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-contacts-tag-selection</span> (selection)
+  <span style="color: #036A07;">"Prompts you for a tag, and tags each entry in org-contacts</span>
+<span style="color: #036A07;">that has a matching email in `</span><span style="color: #D0372D;">helm-marked-candidates</span><span style="color: #036A07;">'. Ignore</span>
+<span style="color: #036A07;">emails that are not in an org-contact file. I am not sure what</span>
+<span style="color: #036A07;">the best thing to do there is. Probably prompt for a file, and</span>
+<span style="color: #036A07;">add an entry to the end of it."</span>
+  (<span style="color: #0000FF;">save-excursion</span>
+    (<span style="color: #0000FF;">let</span> ((tag (read-input <span style="color: #008000;">"Tag: "</span>)))
+      (loop for email in (helm-marked-candidates)
+            do
+            (<span style="color: #0000FF;">let</span> ((contact (<span style="color: #0000FF;">catch</span> '<span style="color: #D0372D;">contact</span>
+                             (loop for contact in  (org-contacts-db)
+                                   do
+                                   (<span style="color: #0000FF;">when</span> (string=
+                                          email
+                                          (cdr (assoc
+                                                <span style="color: #008000;">"EMAIL"</span>
+                                                (elt contact 2))))
+                                     (<span style="color: #0000FF;">throw</span> '<span style="color: #D0372D;">contact</span> contact))))))
+              <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">add new contact and tag it</span>
+              (<span style="color: #0000FF;">unless</span> contact
+                (set-buffer (find-file-noselect (ido-completing-read
+                                                 <span style="color: #008000;">"Select org-contact file: "</span>
+                                                 org-contacts-files)))
+                (goto-char (point-max))
+                (insert (format  <span style="color: #008000;">"\n* %s %s\n"</span>
+                                 (read-input <span style="color: #008000;">"First name: "</span>)
+                                 (read-input <span style="color: #008000;">"Last name: "</span>)))
+                (org-entry-put (point) <span style="color: #008000;">"EMAIL"</span> email)
+                (org-set-tags-to (list tag))
+                (save-buffer))
+              <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">update tags on existing entry</span>
+              (<span style="color: #0000FF;">when</span> contact
+                (find-file-noselect  (cdr (assoc <span style="color: #008000;">"FILE"</span> (elt contact 2))))
+                (set-buffer (marker-buffer (elt contact 1)))
+                (goto-char (elt contact 1))
+                (org-set-tags-to (append (org-get-tags) (list tag)))))))))
+
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">j-insert-emails</span> ()
+  <span style="color: #036A07;">"Helm interface to email addresses"</span>
+  (interactive)
+
+  (helm <span style="color: #006FE0;">:sources</span> `(((name . <span style="color: #008000;">"Email address candidates"</span>)
+                   (candidates . ,(append
+                                   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">my aliases</span>
+                                   email-groups
+                                   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">org-contacts</span>
+                                   (loop for contact in (org-contacts-db)
+                                         collect
+                                         (cons (format
+                                                <span style="color: #008000;">"%s %s %s &lt;%s&gt; org-contact"</span>
+                                                (cdr (assoc <span style="color: #008000;">"FIRSTNAME"</span> (elt contact 2)))
+                                                (cdr (assoc <span style="color: #008000;">"LASTNAME"</span> (elt contact 2)))
+                                                (cdr (assoc <span style="color: #008000;">"TAGS"</span> (elt contact 2)))
+                                                (cdr (assoc <span style="color: #008000;">"EMAIL"</span> (elt contact 2))))
+                                               (cdr (assoc <span style="color: #008000;">"EMAIL"</span> (elt contact 2)))))
+                                   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">mu contacts</span>
+                                   (loop for contact in mu4e~contacts-for-completion
+                                         collect (cons contact contact))))
+                   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">only action is to insert string at point.</span>
+                   (action . ((<span style="color: #008000;">"insert"</span> . (<span style="color: #0000FF;">lambda</span> (x)
+                                            (insert
+                                             (mapconcat
+                                              'identity
+                                              (helm-marked-candidates)
+                                              <span style="color: #008000;">","</span>))))
+                              (<span style="color: #008000;">"open"</span> . org-contacts-open-from-email)
+                              (<span style="color: #008000;">"tag"</span>  . org-contacts-tag-selection)))))))
+
+<span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Finally, let us bind this to something probably convenient. I use c-c ] for</span>
+<span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">citations. Lets try that in compose mode.</span>
+(define-key mu4e-compose-mode-map <span style="color: #008000;">"\C-c]"</span> 'j-insert-emails)
+</pre>
+</div>
+<pre class="example">
+j-insert-emails
+</pre>
+
+<p>
+Now, I have a sweet helm interface with nearly 13,000 email candidates (there is a decent amount of duplication in this list, and some garbage emails from spam, but helm is so fast, this does not bother me). I can pretty quickly narrow to any tagged set of emails from org-contacts with a search that looks like :phd: for example, or [^phd]:group: to get org-contacts tagged group, but not phd. I can narrow the selection on first name, lastname, parts of email addresses, tags in org-contacts, etc&#x2026; I can open a contact, or tag contacts, even add new contacts to org-contacts. I have been using this for a few weeks, and so far I like it. Occasionally I find mu4e~contacts-for-completion is empty, and then I only get my org-contacts emails, but that seems to only happen when I first open emacs. Since Emacs is usually open for days at a time, this has not been an issue very often.
+</p>
+<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/03/14/A-helm-mu4e-contact-selector.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/03/14/A-helm-mu4e-contact-selector#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Making-org-mode-Python-sessions-look-better"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/03/12/Making-org-mode-Python-sessions-look-better/" rel="bookmark" title="Permanent Link to Making org-mode Python sessions look better">Making org-mode Python sessions look better</a></h2>
       <p><small><span class="blog_post_date">Posted March 12, 2015 at 10:45 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/python/'>python</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2015/03/12/Making-org-mode-Python-sessions-look-better#disqus_thread">View Comments</a>
       <p><small><span class="blog_post_date">Updated March 12, 2015 at 06:58 PM</span>
       </small></p>
@@ -556,120 +747,6 @@ In this collaborative paper with the Gellman group, we show an anomalous core-le
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/03/03/New-publication-in-Surface-Science-on-alloy-core-level-shifts#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="org-mode-links-meet-hydra"></div>
-      <h2 class="blog_post_title"><a href="/blog/2015/02/22/org-mode-links-meet-hydra/" rel="bookmark" title="Permanent Link to org-mode links meet hydra">org-mode links meet hydra</a></h2>
-      <p><small><span class="blog_post_date">Posted February 22, 2015 at 07:06 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/hydra/'>hydra</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2015/02/22/org-mode-links-meet-hydra#disqus_thread">View Comments</a>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-I have played with a lot of options to give org-mode links extra functionality. Here are a few of the ideas I have looked at so far.
-</p>
-
-<ol class="org-ol">
-<li><a href="http://kitchingroup.cheme.cmu.edu/blog/2013/10/21/Enabling-right-clicks-in-org-mode-links/">Enabling right clicks on links</a> 
-</li>
-<li>A home made minibuffer menu in org-ref
-</li>
-<li>A helm buffer in org-ref
-</li>
-</ol>
-
-<p>
-Here, I want to explore a hydra menu for a link. The idea is pretty simple, we need functions that do something with the link at point, and a hydra interface to call them. This turned out to be a little tricky. I could not get the path from the link in the link lambda function, and we need a way to pass the path to the function. I use a global variable for that. I wish there was another way to do that, but this does actually work. We illustrate it here with a more functional doi link.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">doi-crossref</span> ()
-  <span style="color: #036A07;">"Search DOI in CrossRef."</span>
-  (interactive)
-  (browse-url
-   (format
-    <span style="color: #008000;">"http://search.crossref.org/?q=%s"</span> *doi-hydra-path*)))
-
-(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">doi-google-scholar</span> ()
-  <span style="color: #036A07;">"Google scholar the doi."</span>
-  (interactive)
-  (browse-url
-   (format
-    <span style="color: #008000;">"http://scholar.google.com/scholar?q=%s"</span> *doi-hydra-path*)))
-
-(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">doi-pubmed</span> ()
-  <span style="color: #036A07;">"Pubmed the doi."</span>
-  (interactive)
-  (browse-url
-   (format
-    <span style="color: #008000;">"http://www.ncbi.nlm.nih.gov/pubmed/?term=%s"</span>
-    (url-hexify-string *doi-hydra-path*))))
-
- (defhydra doi-hydra ()
-   <span style="color: #008000;">"org-ref"</span>
-   (<span style="color: #008000;">"c"</span> doi-crossref <span style="color: #008000;">"Crossref"</span>)
-   (<span style="color: #008000;">"g"</span> doi-google-scholar <span style="color: #008000;">"Google Scholar"</span>)
-   (<span style="color: #008000;">"p"</span> doi-pubmed <span style="color: #008000;">"Pubmed"</span>))
-
-(org-add-link-type <span style="color: #008000;">"doi"</span>
-  (<span style="color: #0000FF;">lambda</span> (path) (setq *doi-hydra-path* path) (doi-hydra/body)))
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="left" />
-
-<col  class="left" />
-
-<col  class="left" />
-
-<col  class="left" />
-</colgroup>
-<tbody>
-<tr>
-<td class="left">lambda</td>
-<td class="left">(path)</td>
-<td class="left">(setq <b>doi-hydra-path</b> path)</td>
-<td class="left">(doi-hydra/body)</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-Now for a test, <a href="10.1021/jp047349j">10.1021/jp047349j</a>.
-</p>
-
-<p>
-It works fine, when you click on a link, you get a minibuffer menu with context hints, and pressing any other key than is defined simply cancels the command.
-</p>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/02/22/org-mode-links-meet-hydra.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/02/22/org-mode-links-meet-hydra#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="../27">« Previous Page</a>
   --  
  <a href="../29">Next Page »</a>
@@ -711,11 +788,11 @@ It works fine, when you click on a link, you get a minibuffer menu with context 
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2017/01/08/Elif-Erdinc-selected-for-2016-2017-Gulf-Oil-Foundation-Graduate-Fellowship-in-Chemical-Engineering/">Elif Erdinc selected for 2016-2017 Gulf Oil Foundation Graduate Fellowship in Chemical Engineering!</a></li>
       <li><a href="/blog/2017/01/05/New-publication-in-ACS-Applied-Materials-Interfaces/">New publication in ACS Applied Materials & Interfaces</a></li>
       <li><a href="/blog/2017/01/05/Scoring-elfeed-articles/">Scoring elfeed articles</a></li>
       <li><a href="/blog/2017/01/03/Find-stuff-in-org-mode-anywhere/">Find stuff in org-mode anywhere</a></li>
       <li><a href="/blog/2017/01/01/2016-in-a-nutshell-for-the-Kitchin-Research-group/">2016 in a nutshell for the Kitchin Research group</a></li>
-      <li><a href="/blog/2016/12/22/Context-specific-org-mode-speed-keys/">Context-specific org-mode speed keys</a></li>
     </ul>
   </section>
 
