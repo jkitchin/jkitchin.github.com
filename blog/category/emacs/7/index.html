@@ -84,10 +84,224 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Adding-emacs-command-key-bindings-and-help-functionality-to-org-mode"></div>
+      <h2 class="blog_post_title"><a href="/blog/2015/11/22/Adding-emacs-command-key-bindings-and-help-functionality-to-org-mode/" rel="bookmark" title="Permanent Link to Adding emacs command key-bindings and help functionality to org-mode">Adding emacs command key-bindings and help functionality to org-mode</a></h2>
+      <p><small><span class="blog_post_date">Posted November 22, 2015 at 10:08 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2015/11/22/Adding-emacs-command-key-bindings-and-help-functionality-to-org-mode#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+The documentation of functions in emacs allows you to put some light markup into function doc strings that will render as the key sequence required to run the command when you look up the help on the function. I would like to have something like that in org-mode. You can look up the key-binding to a command like this:
+</p>
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(substitute-command-keys <span style="color: #008000;">"\\[</span><span style="color: #D0372D;">org-agenda</span><span style="color: #008000;">]"</span>)
+</pre>
+</div>
+
+<pre class="example">
+C-c a
+</pre>
+
+<p>
+We are going to explore a way to recognize the syntax shown above, change its appearance to alert us that we are looking at an emacs command, add a tooltip, and make it clickable to open the documentation, and s (super) clickable to find the function code. Font lock is the tool we will use for this. Basically, we need a regular expression to match the syntax, and a function to find the next instance, and put some properties on the matched text.
+</p>
+
+<p>
+I made a video (<a href="https://www.youtube.com/watch?v=VLUMW0sR4Vk">https://www.youtube.com/watch?v=VLUMW0sR4Vk</a> ) showing what this post is all about. It isn't easy to see in the post ☺.
+</p>
+
+<p>
+Here we use the `rx' library to build up a regular expression for this. It is a bit easier to document than a raw regexp. Since we are matching \ in the pattern, there are some obligatory escaping \ characters in there too. All we need is to integrate this into font-lock. We define a function that will move the point to the end of the next match, and put properties on the match. We will go ahead and make the text clickable so we can access documentation and code easily. The tooltip will show the key-binding to run the command.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">rx</span>)
+
+(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">elisp-symbol-keybinding-re</span>
+  (<span style="color: #0000FF;">rx</span>
+   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">opening \\[</span>
+   (eval <span style="color: #008000;">"\\["</span>)
+   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">one or more characters that are not ]</span>
+   (group (one-or-more (not (any <span style="color: #008000;">"]"</span>))))
+   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">The closing ]</span>
+   <span style="color: #008000;">"]"</span>)
+<span style="color: #036A07;">"Regexp for an elisp command keybinding syntax. \\[</span><span style="color: #D0372D;">some-command</span><span style="color: #036A07;">]</span>
+<span style="color: #036A07;">Regexp group 1 matches `</span><span style="color: #D0372D;">some-command</span><span style="color: #036A07;">'."</span>)
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">match-next-keybinding</span> (<span style="color: #6434A3;">&amp;optional</span> limit)
+  <span style="color: #036A07;">"Move point to the end of the next expression matching</span>
+<span style="color: #036A07;">`</span><span style="color: #D0372D;">elisp-symbol-keybinding-re</span><span style="color: #036A07;">', and put properties on the match</span>
+<span style="color: #036A07;">that shows the key sequence. Non-bound commands are not</span>
+<span style="color: #036A07;">fontified."</span>
+  (<span style="color: #0000FF;">when</span> (<span style="color: #0000FF;">and</span> (re-search-forward
+              elisp-symbol-keybinding-re
+              limit t)
+             (fboundp (intern (match-string 1))))
+    (<span style="color: #0000FF;">let*</span> ((beg (match-beginning 0))
+           (end (match-end 0))
+           (s (match-string 0))
+           (command (match-string 1))
+           (describe-func `(<span style="color: #0000FF;">lambda</span> ()
+                    <span style="color: #036A07;">"Run `</span><span style="color: #D0372D;">describe-function</span><span style="color: #036A07;">' on the command."</span>
+                    (<span style="color: #0000FF;">interactive</span>)
+                    (describe-function (intern ,command))))
+           (find-func `(<span style="color: #0000FF;">lambda</span> ()
+                     <span style="color: #036A07;">"Run `</span><span style="color: #D0372D;">find-function</span><span style="color: #036A07;">' on the command."</span>
+                     (<span style="color: #0000FF;">interactive</span>)
+                     (find-function (intern ,command))))
+           (map (make-sparse-keymap)))
+
+      <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">this is what gets run when you click on it.</span>
+      (define-key map [mouse-1] describe-func)
+      (define-key map [s-mouse-1] find-func)
+      <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Here we define the text properties</span>
+      (add-text-properties
+       beg end
+       `(local-map ,map
+         mouse-face highlight
+         help-echo ,(format
+                     <span style="color: #008000;">"%s\n\nClick for documentation.\ns-mouse-1 to find function."</span>
+                     (substitute-command-keys s))
+         keybinding t)))))
+</pre>
+</div>
+
+<p>
+Let's go ahead and make syntax for `some-command' too. This one seems simple enough we just write a regexp for it.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">match-next-emacs-command</span> (<span style="color: #6434A3;">&amp;optional</span> limit)
+  <span style="color: #036A07;">"Move point to the end of the next expression matching</span>
+<span style="color: #036A07;">`</span><span style="color: #D0372D;">this-syntax</span><span style="color: #036A07;">', and put a tooltip on the match</span>
+<span style="color: #036A07;">that shows the key sequence. Works on commands and variables."</span>
+  (<span style="color: #0000FF;">when</span> (<span style="color: #0000FF;">and</span> (re-search-forward
+              <span style="color: #008000;">"`</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">(</span><span style="color: #008000;">[</span><span style="color: #008000;">^</span><span style="color: #008000;">']+</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">)</span><span style="color: #008000;">'"</span>
+              limit t)
+             (<span style="color: #0000FF;">or</span> (boundp (intern (match-string 1)))
+                 (fboundp (intern (match-string 1)))))
+    (<span style="color: #0000FF;">let*</span> ((beg (match-beginning 0))
+           (end (match-end 0))
+           (s (match-string 0))
+           (command (match-string 1))
+           (describe-func
+            `(<span style="color: #0000FF;">lambda</span> ()
+               <span style="color: #036A07;">"Run `</span><span style="color: #D0372D;">describe-function/variable</span><span style="color: #036A07;">' on the command."</span>
+               (<span style="color: #0000FF;">interactive</span>)
+               (<span style="color: #0000FF;">cond</span> ((fboundp (intern ,command))
+                      (describe-function (intern ,command)))
+                     ((boundp (intern ,command))
+                      (describe-variable (intern ,command))))))
+           (find-func `(<span style="color: #0000FF;">lambda</span> ()
+                     <span style="color: #036A07;">"Run `</span><span style="color: #D0372D;">find-function</span><span style="color: #036A07;">' on the command."</span>
+                     (<span style="color: #0000FF;">interactive</span>)
+                     (find-function (intern ,command))))
+           (map (make-sparse-keymap)))
+
+      <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">this is what gets run when you click on it.</span>
+      (define-key map [mouse-1] describe-func)
+      (define-key map [s-mouse-1] find-func)
+      <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Here we define the text properties</span>
+      (add-text-properties
+       beg end
+       `(local-map ,map
+         mouse-face highlight
+         help-echo ,(format
+                     <span style="color: #008000;">"%s\n\nClick for documentation.%s"</span>
+                     (<span style="color: #0000FF;">if</span> (fboundp (intern command))
+                         (substitute-command-keys (format <span style="color: #008000;">"\\[</span><span style="color: #D0372D;">%s</span><span style="color: #008000;">]"</span> command))
+                       <span style="color: #008000;">"Variable"</span>)
+                     (<span style="color: #0000FF;">if</span> (fboundp (intern command))
+                         <span style="color: #008000;">"\ns-mouse-1 to find function."</span>
+                       <span style="color: #008000;">""</span>))
+         keybinding t)))))
+</pre>
+</div>
+
+<p>
+Now we need a way to turn them on and off. We do that here with a minor mode.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">define-minor-mode</span> <span style="color: #006699;">emacs-keybinding-command-tooltip-mode</span>
+  <span style="color: #036A07;">"Fontify on emacs keybinding syntax. Adds a tooltip for</span>
+<span style="color: #036A07;">keybinding, and make the command clickable to get to the</span>
+<span style="color: #036A07;">documentation."</span>
+  <span style="color: #006FE0;">:lighter</span> <span style="color: #008000;">" KB"</span>
+  (<span style="color: #0000FF;">if</span> emacs-keybinding-command-tooltip-mode
+      <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">turn them on</span>
+      (font-lock-add-keywords
+       nil
+       '((match-next-keybinding 1 font-lock-constant-face)
+         (match-next-emacs-command 1 font-lock-constant-face)))
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">turn them off</span>
+    (font-lock-remove-keywords
+     nil
+     '((match-next-keybinding 1 font-lock-constant-face)
+       (match-next-emacs-command 1 font-lock-constant-face))))
+  (font-lock-fontify-buffer))
+</pre>
+</div>
+
+<p>
+Here we turn it on:
+</p>
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(emacs-keybinding-command-tooltip-mode -1)
+</pre>
+</div>
+
+<p>
+Here are some sample uses. You can use  \\[org-toggle-latex-overlays] to toggle latex overlays.
+</p>
+
+<p>
+You can use \\[org-ref-helm-insert-cite-link]  to insert citations.
+</p>
+
+<p>
+That more or less does it! I don't know if this is the canonical way to do this, but it works nicely here. You can also use overlays, but I found them a little confusing because they are not editable, and you have to toggle the minor mode to see them. Here we have unobtrusive tooltips. One downside is these won't export in any fashion in org-mode since it is not part of the syntax. It might be a good idea to adjust `font-lock-extra-managed-props' for this
+</p>
+
+<p>
+It works for this syntax too: `helm', which is also commonly used in doc strings. This should be pretty handy in org-mode documents about Emacs!
+</p>
+<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/11/22/Adding-emacs-command-key-bindings-and-help-functionality-to-org-mode.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/11/22/Adding-emacs-command-key-bindings-and-help-functionality-to-org-mode#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Insert-org-entities-into-org-mode-with-helm"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/11/21/Insert-org-entities-into-org-mode-with-helm/" rel="bookmark" title="Permanent Link to Insert org-entities into org-mode with helm">Insert org-entities into org-mode with helm</a></h2>
       <p><small><span class="blog_post_date">Posted November 21, 2015 at 11:37 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/helm/'>helm</a>, <a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/helm/'>helm</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2015/11/21/Insert-org-entities-into-org-mode-with-helm#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -891,92 +1105,6 @@ I don't use phone calls very often, but an interesting thing might be to open a 
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/11/04/Clickable-telephone-numbers-in-mu4e-messages#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="YAT-yet-another-template-strategy"></div>
-      <h2 class="blog_post_title"><a href="/blog/2015/11/01/YAT-yet-another-template-strategy/" rel="bookmark" title="Permanent Link to YAT - yet another template strategy">YAT - yet another template strategy</a></h2>
-      <p><small><span class="blog_post_date">Posted November 01, 2015 at 02:12 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2015/11/01/YAT-yet-another-template-strategy#disqus_thread">View Comments</a>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-
-<p>
-I have another need for a template that is dynamically evaluated. I previously wrote about this <a href="http://kitchingroup.cheme.cmu.edu/blog/2014/01/26/Another-alternative-to-string-templates/">here</a> , and today I am going to do a variation of the theme. We will still use a syntax of $(expression), but a new approach to evaluating the expression. I saw this interesting function to evaluate and replace an s-expression in a buffer <a href="http://emacsredux.com/blog/2013/06/21/eval-and-replace/">Eval and Replace - Emacs Redux</a> . I am going use that to replace a template expression in a string, with a little variation to avoid replacing non-sexp variations, e.g. $(. Here we go.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">eval-and-replace</span> ()
-  <span style="color: #036A07;">"Replace the preceding sexp with its value."</span>
-  (<span style="color: #0000FF;">interactive</span>)
-  (backward-kill-sexp)
-  (<span style="color: #0000FF;">condition-case</span> nil
-      (princ (eval (read (current-kill 0)))
-             (current-buffer))
-    (<span style="color: #ff0000; font-weight: bold;">error</span> (message <span style="color: #008000;">"Invalid expression"</span>)
-           (insert (concat <span style="color: #008000;">"$"</span> (current-kill 0))))))
-
-(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">j-format</span> (s)
-  <span style="color: #036A07;">"Replace all instances of $(expression) in S with the evaluated</span>
-<span style="color: #036A07;">expression."</span>
-  (<span style="color: #0000FF;">with-temp-buffer</span>
-    (insert s)
-    (goto-char (point-min))
-    (<span style="color: #0000FF;">while</span> (re-search-forward <span style="color: #008000;">"$("</span> nil t)
-      (backward-char)
-      (<span style="color: #0000FF;">when</span> (sexp-at-point)
-        <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">get rid of the $</span>
-        (delete-char -1)
-        <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">go to the end of the sexp and then eval-and-replace it.</span>
-        (end-of-sexp)
-        (eval-and-replace)))
-    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">return the formatted text.</span>
-    (buffer-string)))
-
-
-(<span style="color: #0000FF;">let</span> ((some-var <span style="color: #008000;">"You got me"</span>))
-  (j-format <span style="color: #008000;">"Test of 4 + 5 = $(+ 4 5). $(  $(foobar). $(progn (setq x 5) \"\")</span>
-<span style="color: #008000;">and then we have 2x=$(prin1 (* 2 x)).</span>
-
-<span style="color: #008000;">some-var = $(print some-var)"</span>))
-</pre>
-</div>
-
-<pre class="example">
-Test of 4 + 5 = 9. $(  $(foobar).
-and then we have 2x=10.
-
-some-var = You got me
-</pre>
-
-<p>
-That seems pretty ok. I obviously have not tested it extensively, but it looks pretty promising.
-</p>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/11/01/YAT---yet-another-template-strategy.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/11/01/YAT-yet-another-template-strategy#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="/blog/category/emacs/6">« Previous Page</a>
   --  
  <a href="/blog/category/emacs/8">Next Page »</a>
@@ -1018,11 +1146,11 @@ That seems pretty ok. I obviously have not tested it extensively, but it looks p
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2017/01/16/A-simple-emacs-lisp-interface-to-CRUD-operations-in-mongodb/">A simple emacs-lisp interface to CRUD operations in mongodb</a></li>
       <li><a href="/blog/2017/01/15/Querying-a-MongoDB-bibtex-database-with-Python-and-emacs-lisp/">Querying a MongoDB bibtex database with Python and emacs-lisp</a></li>
       <li><a href="/blog/2017/01/08/Elif-Erdinc-selected-for-2016-2017-Gulf-Oil-Foundation-Graduate-Fellowship-in-Chemical-Engineering/">Elif Erdinc selected for 2016-2017 Gulf Oil Foundation Graduate Fellowship in Chemical Engineering!</a></li>
       <li><a href="/blog/2017/01/05/New-publication-in-ACS-Applied-Materials-Interfaces/">New publication in ACS Applied Materials & Interfaces</a></li>
       <li><a href="/blog/2017/01/05/Scoring-elfeed-articles/">Scoring elfeed articles</a></li>
-      <li><a href="/blog/2017/01/03/Find-stuff-in-org-mode-anywhere/">Find stuff in org-mode anywhere</a></li>
     </ul>
   </section>
 

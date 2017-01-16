@@ -84,10 +84,845 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="A-simple-emacs-lisp-interface-to-CRUD-operations-in-mongodb"></div>
+      <h2 class="blog_post_title"><a href="/blog/2017/01/16/A-simple-emacs-lisp-interface-to-CRUD-operations-in-mongodb/" rel="bookmark" title="Permanent Link to A simple emacs-lisp interface to CRUD operations in mongodb">A simple emacs-lisp interface to CRUD operations in mongodb</a></h2>
+      <p><small><span class="blog_post_date">Posted January 16, 2017 at 09:44 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/mongodb/'>mongodb</a>, <a href='/blog/category/emacslisp/'>emacslisp</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/database/'>database</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2017/01/16/A-simple-emacs-lisp-interface-to-CRUD-operations-in-mongodb#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#orgf43163b">1. Inserting entries</a></li>
+<li><a href="#orgbec2cf8">2. Finding a document</a></li>
+<li><a href="#org7279625">3. Updating an entry</a></li>
+<li><a href="#org769cf9d">4. Deleting a document</a></li>
+<li><a href="#org0cb9437">5. Generic commands</a></li>
+<li><a href="#org512e4fe">6. A MongoDB contacts database</a></li>
+<li><a href="#org97edcbc">7. Text searching</a></li>
+<li><a href="#org04fa0df">8. Summary</a></li>
+</ul>
+</div>
+</div>
+<p>
+In this <a href="http://kitchingroup.cheme.cmu.edu/blog/2017/01/15/Querying-a-MongoDB-bibtex-database-with-Python-and-emacs-lisp/">post</a> I showed that MongoDB is pretty easy to use for simple database applications. I showed a way to get data out of the database that is native to Emacs, but to use Mongo in emacs applications comfortably, it would be really helpful to be able to create, read, update and delete (CRUD) entries. There is a minimal interface to mongodb for emacs-lisp here: <a href="https://github.com/m2ym/mongo-el">https://github.com/m2ym/mongo-el</a>. From what I can see, it seems limited to simple, single queries, and it is written with advanced features of emacs-lisp I do not understand enough to extend it. In the last post, I showed an easy way to use mongoexport to get data from a query out of a mongo database. Here I explore a similar approach to round out the CRUD (create, read, update and delete) operations for using emacs-lisp to work with mongodb. This will enable Emacs to easily use MongoDB in applications.
+</p>
+
+<p>
+We use the mongo cli with the &#x2013;eval option, which allows you to run commands on the database. The basic idea is to generate the json we need from a lisp data structure, and use that json in mongo commands as needed. This sounds simple, but below you will see there are plenty of corners to take care of.
+</p>
+
+<p>
+The goal here is to get something that is pretty functional. It will not be able to support all the capabilities of MongoDB and the options available in the cli.
+</p>
+
+<div id="outline-container-orgf43163b" class="outline-2">
+<h2 id="orgf43163b"><span class="section-number-2">1</span> Inserting entries</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+Here we insert a document into the contacts collection of the contacts database. As in the Python example we considered earlier, this database is automatically created when we run this command. 
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">json</span>))
+(<span style="color: #0000FF;">let*</span> ((json (json-encode '((first-name . <span style="color: #008000;">"John"</span>)
+                            (last-name . <span style="color: #008000;">"Kitchin"</span>)
+                            (email . <span style="color: #008000;">"jkitchin@cmu.edu"</span>))))
+       (cmd (format <span style="color: #008000;">"mongo 127.0.0.1/contacts --quiet --eval 'db.contacts.insert(%s)'"</span>
+                    json)))
+  (shell-command-to-string cmd))
+</pre>
+</div>
+
+<pre class="example">
+json
+</pre>
+
+<p>
+Here is a function we can use for inserting, and as you can see it works for multiple inserts too. There is a limit on how long the json string can be for this, so you cannot add too many entries at once with this. I do not know what the limit is, and suspect it is related to using a shell command. When this succeeds there is data returned about what happened, which we try to get in lisp form. Also, I noticed I had to do a little bit of escaping, especially for entries containing a single quote, which messes up the quoting on the shell command, and for non-ascii characters which the shell did not handle well. Maybe this could be avoided with a file-based approach, or if we used a pipe to a process.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">mongo-insert</span> (db collection document)
+  <span style="color: #036A07;">"Insert into DB.COLLECTION the DOCUMENT.</span>
+<span style="color: #036A07;">DOCUMENT will be some lisp structure that is converted to json."</span>
+  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">we have to escape quote any single quotes. This came from</span>
+  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">http://stackoverflow.com/questions/1250079/how-to-escape-single-quotes-within-single-quoted-strings</span>
+  (<span style="color: #0000FF;">let*</span> ((json (replace-regexp-in-string <span style="color: #008000;">"'"</span> <span style="color: #008000;">"'\"'\"'"</span> (json-encode document)))
+         <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">it seems utf-8 characters may cause issues. Let's just remove them.</span>
+         (json (replace-regexp-in-string <span style="color: #008000;">"[</span><span style="color: #008000;">^</span><span style="color: #008000;">[:ascii:]]"</span> <span style="color: #008000;">""</span> json))
+         (cmd (format <span style="color: #008000;">"mongo %s --quiet --eval 'db.%s.insert(%s)'"</span>
+                      db collection
+                      json))
+         (output (shell-command-to-string cmd)))
+    (<span style="color: #0000FF;">cond</span>
+     ((string-match <span style="color: #008000;">"BulkWriteResult("</span> output)
+      (json-read-from-string (substring output 16 -2)))
+     ((string-match <span style="color: #008000;">"WriteResult("</span> output)
+      (json-read-from-string (substring output 12 -2)))
+     (t
+      output))))
+</pre>
+</div>
+
+<pre class="example">
+mongo-insert
+</pre>
+
+<p>
+Here it is in action.
+</p>
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-insert <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span>
+              '(((first-name . <span style="color: #008000;">"John"</span>)
+                 (last-name . <span style="color: #008000;">"Kitchin"</span>)
+                 (email . <span style="color: #008000;">"jkitchin@cmu.edu"</span>))
+                ((first-name . <span style="color: #008000;">"Someone"</span>)
+                 (last-name . <span style="color: #008000;">"Else"</span>)
+                 (<span style="color: #008000;">"email"</span> . <span style="color: #008000;">"someone@out.there"</span>))))
+</pre>
+</div>
+
+<pre class="example">
+((writeErrors . []) (writeConcernErrors . []) (nInserted . 2) (nUpserted . 0) (nMatched . 0) (nModified . 0) (nRemoved . 0) (upserted . []))
+</pre>
+
+<p>
+Seems like an ok way to get data from Emacs into a Mongo DB, and we get lisp data returned telling us what happened.
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgbec2cf8" class="outline-2">
+<h2 id="orgbec2cf8"><span class="section-number-2">2</span> Finding a document</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+To update documents we need to find them. We would like to find a document by the _id, but we have a small dilemma. The json we need for that needs to look like: {"_id": ObjectId("587babfaef131d0d4603b3ad")}, where the ObjectId is not quoted. The json library does not seem to be able to do that. So, we have to modify our find code to do this. This is possible by manipulating the json string after it is generated with regular expression replacement. It feels hacky, and hopefully there are not many more examples of that. If there are, we will need another approach to generating the json data. Here is the modified find function, also with the projection option. Here is another place we have to tread somewhat lightly with the _id, in this case we have to requote it so that it can be read by emacs. It might make sense to just replace it with the quoted _id string, rather than the ObjectId call. Time will tell.
+</p>
+
+<p>
+Here we create two helper functions to unquote input, and requote output. We also need some code to make an array of all the results, and put commas between all the results so that we end up with valid json in the output.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">mongo-unquote-query</span> (query)
+  <span style="color: #036A07;">"Json encodes QUERY, and unquotes any ObjectId calls.</span>
+
+<span style="color: #036A07;">We don't have syntax for the ObjectId call that mongo wants in</span>
+<span style="color: #036A07;"> lisp, so a query has to look like this:</span>
+<span style="color: #036A07;">'((_id .  \"ObjectId(\"587babfaef131d0d4603b3ad\")\"))</span>
+
+<span style="color: #036A07;">Mongo can't have the quotes around the call, so this function</span>
+<span style="color: #036A07;">removes them.</span>
+<span style="color: #036A07;">"</span>
+  (replace-regexp-in-string <span style="color: #008000;">"\"</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">(</span><span style="color: #008000;">ObjectID(\\\\\"</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">(</span><span style="color: #008000;">.*?</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">)</span><span style="color: #008000;">\\\\\")</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">)</span><span style="color: #008000;">\""</span>
+                            <span style="color: #008000;">"ObjectId(\"\\2\")"</span>
+                            (json-encode query)))
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">mongo-requote-output</span> (output)
+  <span style="color: #036A07;">"Adds quotes around ObjectId in OUTPUT.</span>
+<span style="color: #036A07;">When mongo outputs json, it has unquoted ObjectIds in it that</span>
+<span style="color: #036A07;">emacs cannot interpret as json. "</span>
+  (replace-regexp-in-string
+   <span style="color: #008000;">"ObjectId(\"</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">(</span><span style="color: #008000;">.*?</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">)</span><span style="color: #008000;">\")"</span>
+   <span style="color: #008000;">"\"ObjectId(\\\\\"\\1\\\\\")\""</span>
+   output))
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">mongo-find</span> (db collection query <span style="color: #6434A3;">&amp;optional</span> projection)
+  (<span style="color: #0000FF;">let*</span> ((query-json (mongo-unquote-query query))
+         (projection-json
+          (<span style="color: #0000FF;">and</span> projection (json-encode projection)))
+         (output (mongo-requote-output
+                  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">add [] to make an array of output in json,</span>
+                  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">and separate results by a comma</span>
+                  (concat <span style="color: #008000;">"["</span>
+                          (replace-regexp-in-string
+                           <span style="color: #008000;">"\n"</span> <span style="color: #008000;">""</span>
+                           (shell-command-to-string
+                            (format <span style="color: #008000;">"mongo %s --quiet --eval 'db.%s.find(%s).forEach(function(myDoc) { printjsononeline(myDoc); print( \",\"); })'"</span>
+                                    db collection
+                                    (<span style="color: #0000FF;">if</span> projection
+                                        (format <span style="color: #008000;">"%s, %s"</span> query-json projection-json)
+                                      query-json))))
+                          <span style="color: #008000;">"]"</span>)))) 
+    (json-read-from-string output)))
+</pre>
+</div>
+
+<pre class="example">
+mongo-find
+</pre>
+
+<p>
+So, finally we can run something like this:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-find <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> '((email . <span style="color: #008000;">"someone@out.there"</span>)))
+</pre>
+</div>
+
+<pre class="example">
+[((_id . "ObjectId(\"587c166cdfcd649d3acf99fd\")") (first-name . "Someone") (last-name . "Else") (email . "someone@out.there")) ((_id . "ObjectId(\"587c16ad410565dd4c16c748\")") (first-name . "Someone") (last-name . "Else") (email . "someone@out.there")) ((_id . "ObjectId(\"587c17550e586b4f8df21de0\")") (first-name . "Someone") (last-name . "Else") (email . "someone@out.there")) ((_id . "ObjectId(\"587c1764d75279a55ffec483\")") (first-name . "Someone") (last-name . "Else") (email . "someone@out.there")) ((_id . "ObjectId(\"587c17743281f1e9d5054396\")") (first-name . "Someone") (last-name . "Else") (email . "someone@out.there")) ((_id . "ObjectId(\"587c178ad92706d2bd5a6e3c\")") (first-name . "Someone") (last-name . "Else") (email . "someone@out.there")) ((_id . "ObjectId(\"587c1794756bb2bd0f0ac499\")") (first-name . "Someone") (last-name . "Else") (email . "someone@out.there"))]
+</pre>
+
+<p>
+Here is an example usage with a projection that returns only the information you want, in this case, just the id.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-find <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> '((email . <span style="color: #008000;">"someone@out.there"</span>))
+            '((_id . 1)))
+</pre>
+</div>
+
+<pre class="example">
+[((_id . "ObjectId(\"587c166cdfcd649d3acf99fd\")")) ((_id . "ObjectId(\"587c16ad410565dd4c16c748\")")) ((_id . "ObjectId(\"587c17550e586b4f8df21de0\")")) ((_id . "ObjectId(\"587c1764d75279a55ffec483\")")) ((_id . "ObjectId(\"587c17743281f1e9d5054396\")")) ((_id . "ObjectId(\"587c178ad92706d2bd5a6e3c\")")) ((_id . "ObjectId(\"587c1794756bb2bd0f0ac499\")"))]
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org7279625" class="outline-2">
+<h2 id="org7279625"><span class="section-number-2">3</span> Updating an entry</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+Ok, back to the update. To make sure that we update exactly the document we want, we will use the document _id. First, we define an update command.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">mongo-update</span> (db collection query $set)
+  <span style="color: #036A07;">"In DB.COLLECTION update records matching QUERY with the contents of $SET."</span>
+  (<span style="color: #0000FF;">let*</span> ((query-json (mongo-encode-query query))
+         ($set-json (mongo-encode-query $set))
+         (cmd (format <span style="color: #008000;">"mongo %s --quiet --eval 'db.%s.update(%s, %s)'"</span>
+                      db collection
+                      query-json $set-json))
+         (output (shell-command-to-string cmd)))
+    (<span style="color: #0000FF;">if</span> (string-match <span style="color: #008000;">"WriteResult("</span> output)
+        (json-read-from-string
+         (substring output 12 -2))
+      output)))
+</pre>
+</div>
+
+<pre class="example">
+mongo-update
+</pre>
+
+<p>
+First a reminder of what is in this record.
+</p>
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-find <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> '((_id . <span style="color: #008000;">"ObjectId(\"587c16ad410565dd4c16c748\")"</span>)))
+</pre>
+</div>
+
+<pre class="example">
+[((_id . "ObjectId(\"587c16ad410565dd4c16c748\")") (first-name . "Someone") (last-name . "Else") (email . "someone@out.there"))]
+</pre>
+
+<p>
+Here we set the email field to a new address. Without $set, the whole document gets replaced.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-update <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span>
+              '((_id . <span style="color: #008000;">"ObjectId(\"587c16ad410565dd4c16c748\")"</span>))
+              '(($set . ((email . <span style="color: #008000;">"someone@out.there.com"</span>)))))
+</pre>
+</div>
+
+<pre class="example">
+((nMatched . 1) (nUpserted . 0) (nModified . 1))
+</pre>
+
+<p>
+Finally, let's see the document again to verify it is modified.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-find <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> '((_id . <span style="color: #008000;">"ObjectId(\"587c16ad410565dd4c16c748\")"</span>)))
+</pre>
+</div>
+
+<pre class="example">
+[((_id . "ObjectId(\"587c16ad410565dd4c16c748\")") (first-name . "Someone") (last-name . "Else") (email . "someone@out.there.com"))]
+</pre>
+
+<p>
+Looks good, you can see it got changed. There is a potential gotcha though. This next command looks like it should do the same thing, but it does not. The whole document gets replaced!
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-update <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span>
+              '((_id . <span style="color: #008000;">"ObjectId(\"587c16ad410565dd4c16c748\")"</span>))
+              '((email . <span style="color: #008000;">"someone@out.there.com"</span>)))
+</pre>
+</div>
+
+<pre class="example">
+((nMatched . 1) (nUpserted . 0) (nModified . 1))
+</pre>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-find <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> '((_id . <span style="color: #008000;">"ObjectId(\"587c16ad410565dd4c16c748\")"</span>)))
+</pre>
+</div>
+
+<pre class="example">
+[((_id . "ObjectId(\"587c16ad410565dd4c16c748\")") (email . "someone@out.there.com"))]
+</pre>
+
+<p>
+Do not forget the $set operator if you just want to update some fields!
+</p>
+</div>
+</div>
+
+<div id="outline-container-org769cf9d" class="outline-2">
+<h2 id="org769cf9d"><span class="section-number-2">4</span> Deleting a document</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+Next, let's get a delete function. I will only implement the deleteMany function here since you can give it a document id to delete only one, and usually I would want to delete all documents that meet a criteria anyway.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">mongo-deleteMany</span> (db collection filter)
+  <span style="color: #036A07;">"Delete records in DB.COLLECTION matched by FILTER.</span>
+<span style="color: #036A07;">TODO: add write concern."</span>
+  (<span style="color: #0000FF;">let*</span> ((filter-json (mongo-encode-query filter)) 
+         (cmd (format <span style="color: #008000;">"mongo %s --quiet --eval 'db.%s.deleteMany(%s)'"</span>
+                      db collection
+                      filter-json))
+         (output (shell-command-to-string cmd)))
+    (json-read-from-string output)))
+</pre>
+</div>
+
+<pre class="example">
+mongo-deleteMany
+</pre>
+
+<p>
+Since we borked that last document, let's just delete it.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-deleteMany <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> '((_id . <span style="color: #008000;">"ObjectId(\"587be3fa6009a569a277b680\")"</span>)))
+</pre>
+</div>
+
+<pre class="example">
+((acknowledged . t) (deletedCount . 0))
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org0cb9437" class="outline-2">
+<h2 id="org0cb9437"><span class="section-number-2">5</span> Generic commands</h2>
+<div class="outline-text-2" id="text-5">
+<p>
+We may want some flexibility to run collection commands.  The most generic command will simply be to write the shell-command completely. We can keep a little syntax by encapsulating most of the boilerplate though. Here is a function for that.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">mongo-cmd</span> (db collection cmd <span style="color: #6434A3;">&amp;rest</span> args)
+  <span style="color: #036A07;">"In DB.COLLECTION run CMD. </span>
+<span style="color: #036A07;">ARGS if present will be used to format CMD."</span>
+  (shell-command-to-string
+   (format <span style="color: #008000;">"mongo %s --quiet --eval 'db.%s.%s'"</span>
+           db collection
+           (apply #'format cmd args))))
+</pre>
+</div>
+
+<pre class="example">
+mongo-cmd
+</pre>
+
+<p>
+We can get the number of documents with this:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-cmd <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"count()"</span>)
+</pre>
+</div>
+
+<pre class="example">
+4341
+</pre>
+
+<p>
+Or run a more sophisticated command with arguments like this.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-cmd <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"explain().remove(%s)"</span> (json-encode '((<span style="color: #008000;">"category"</span> . <span style="color: #008000;">"enemy"</span>))))
+</pre>
+</div>
+
+<pre class="example">
+{
+	"queryPlanner" : {
+		"plannerVersion" : 1,
+		"namespace" : "contacts.contacts",
+		"indexFilterSet" : false,
+		"parsedQuery" : {
+			"category" : {
+				"$eq" : "enemy"
+			}
+		},
+		"winningPlan" : {
+			"stage" : "DELETE",
+			"inputStage" : {
+				"stage" : "COLLSCAN",
+				"filter" : {
+					"category" : {
+						"$eq" : "enemy"
+					}
+				},
+				"direction" : "forward"
+			}
+		},
+		"rejectedPlans" : [ ]
+	},
+	"serverInfo" : {
+		"host" : "Johns-MacBook-Air.local",
+		"port" : 27017,
+		"version" : "3.4.1",
+		"gitVersion" : "5e103c4f5583e2566a45d740225dc250baacfbd7"
+	},
+	"ok" : 1
+}
+</pre>
+
+<p>
+Or, drop the collection with:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-cmd <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"drop()"</span>)
+</pre>
+</div>
+
+<pre class="example">
+true
+</pre>
+
+<p>
+All gone! Note, we do not try to handle the output of any of those, and they are returned as strings.
+</p>
+</div>
+</div>
+
+<div id="outline-container-org512e4fe" class="outline-2">
+<h2 id="org512e4fe"><span class="section-number-2">6</span> A MongoDB contacts database</h2>
+<div class="outline-text-2" id="text-6">
+<p>
+Now, let's re-populate it for real. I store my contacts in a variable called "contacts" as a list of a descriptive string and then cons cells. These are actually harvested from a set of org-files. It is way to slow to parse these files each time, so I keep the contacts cached in memory and only update them if a file changes.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(length contacts)
+</pre>
+</div>
+
+<pre class="example">
+6047
+</pre>
+
+<p>
+There are over 6000 contacts. Let's put them in a MongoDB.
+</p>
+
+<p>
+Here is a limitation of our approach. This will not work because the generated shell command ends up being too long for the shell.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-insert <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span>
+              (<span style="color: #0000FF;">loop</span> for contact in contacts
+                    collect
+                    (append `((desc . ,(car contact))) (cdr contact))))
+</pre>
+</div>
+
+<p>
+So, we do them one at time here:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((ct (current-time)))
+  (<span style="color: #0000FF;">loop</span> for contact in contacts
+        do
+        (<span style="color: #0000FF;">let</span> ((output (mongo-insert <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span>
+                                    (append `((desc . ,(car contact))) (cdr contact)))))
+          (<span style="color: #0000FF;">unless</span> (= 1 (cdr (assoc 'nInserted output)))
+            (<span style="color: #ff0000; font-weight: bold;">warn</span> <span style="color: #008000;">"error: %S for %S"</span> (cdr (assoc 'nInserted output)) contact))))
+  (message <span style="color: #008000;">"Elapsed time %.02f seconds"</span> (float-time (time-since ct))))
+</pre>
+</div>
+
+<pre class="example">
+Elapsed time 762.95 seconds
+</pre>
+
+<p>
+That took a little over 10 minutes to add. That seems long to me. This next step confirms that they were added.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-cmd <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"count()"</span>)
+</pre>
+</div>
+
+<pre class="example">
+6047
+</pre>
+
+<p>
+Next we will compare some timing of finding data in the database vs looping through the cached contacts. Here is a timing macro to measure how long it takes to run a bit of code.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">http://stackoverflow.com/questions/23622296/emacs-timing-execution-of-function-calls-in-emacs-lisp</span>
+(<span style="color: #0000FF;">defmacro</span> <span style="color: #006699;">measure-time</span> (<span style="color: #6434A3;">&amp;rest</span> body)
+  <span style="color: #036A07;">"Measure the time it takes to evaluate BODY."</span>
+  `(<span style="color: #0000FF;">let</span> ((time (current-time)))
+     ,@body
+     (message <span style="color: #008000;">"%.06f seconds elapsed"</span> (float-time (time-since time)))))
+</pre>
+</div>
+
+<pre class="example">
+measure-time
+</pre>
+
+<p>
+Here is the old way I would extract data. Many contacts I have are academics, and I have stored their academic ranks in each contact.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">loop</span> for contact in contacts
+      if (string= <span style="color: #008000;">"Professor"</span> (cdr (assoc <span style="color: #008000;">"RANK"</span> (cdr contact))))
+      collect contact into professors
+      if (string= <span style="color: #008000;">"Associate Professor"</span> (cdr (assoc <span style="color: #008000;">"RANK"</span> (cdr contact))))
+      collect contact into associate-professors
+      if (string= <span style="color: #008000;">"Assistant Professor"</span> (cdr (assoc <span style="color: #008000;">"RANK"</span> (cdr contact))))
+      collect contact into assistant-professors
+      finally return `((<span style="color: #008000;">"Assistant Professor"</span> ,(length assistant-professors))
+                       (<span style="color: #008000;">"Associate Professor"</span> ,(length associate-professors))
+                       (<span style="color: #008000;">"Professor"</span> ,(length professors))))
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">Assistant Professor</td>
+<td class="org-right">313</td>
+</tr>
+
+<tr>
+<td class="org-left">Associate Professor</td>
+<td class="org-right">283</td>
+</tr>
+
+<tr>
+<td class="org-left">Professor</td>
+<td class="org-right">879</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+How long did it take to do that?
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">measure-time</span>
+ (<span style="color: #0000FF;">loop</span> for contact in contacts
+       if (string= <span style="color: #008000;">"Professor"</span> (cdr (assoc <span style="color: #008000;">"RANK"</span> (cdr contact))))
+       collect contact into professors
+       if (string= <span style="color: #008000;">"Associate Professor"</span> (cdr (assoc <span style="color: #008000;">"RANK"</span> (cdr contact))))
+       collect contact into associate-professors
+       if (string= <span style="color: #008000;">"Assistant Professor"</span> (cdr (assoc <span style="color: #008000;">"RANK"</span> (cdr contact))))
+       collect contact into assistant-professors
+       finally return (list (length assistant-professors)
+                            (length associate-professors)
+                            (length professors))))
+</pre>
+</div>
+
+<pre class="example">
+0.008772 seconds elapsed
+</pre>
+
+<p>
+Not long at all! Comparatively, it is very slow to get this information out of the mongodb, although considerably less code is required. That might not be surprising, considering the json parsing that has to get done here.
+</p>
+
+<p>
+Here is the equivalent code to extract that data from the database.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">loop</span> for rank in '(<span style="color: #008000;">"Assistant Professor"</span> <span style="color: #008000;">"Associate Professor"</span> <span style="color: #008000;">"Professor"</span>)
+       collect (list rank (length (mongo-find <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span>
+                                              `((RANK . ,rank))))))
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">Assistant Professor</td>
+<td class="org-right">313</td>
+</tr>
+
+<tr>
+<td class="org-left">Associate Professor</td>
+<td class="org-right">283</td>
+</tr>
+
+<tr>
+<td class="org-left">Professor</td>
+<td class="org-right">879</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+It is comparatively slow to do this. This requires three json parses, and profiling indicates that alot of the work is done in parsing the json. 
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">measure-time</span>
+ (<span style="color: #0000FF;">loop</span> for rank in '(<span style="color: #008000;">"Assistant Professor"</span> <span style="color: #008000;">"Associate Professor"</span> <span style="color: #008000;">"Professor"</span>)
+       collect (list rank (length (mongo-find <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span>
+                                              `((RANK . ,rank)))))))
+</pre>
+</div>
+
+<pre class="example">
+1.914817 seconds elapsed
+</pre>
+
+<p>
+Here is smarter way to do it that avoids the json parsing.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">loop</span> for rank in '(<span style="color: #008000;">"Assistant Professor"</span> <span style="color: #008000;">"Associate Professor"</span> <span style="color: #008000;">"Professor"</span>)
+      collect (list rank (mongo-cmd <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"count(%s)"</span>
+                                    (json-encode `((RANK . ,rank))))))
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">Assistant Professor</td>
+<td class="org-right">313</td>
+</tr>
+
+<tr>
+<td class="org-left">Associate Professor</td>
+<td class="org-right">283</td>
+</tr>
+
+<tr>
+<td class="org-left">Professor</td>
+<td class="org-right">879</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+And you can see here it is about 10 times faster, but not nearly as fast as running the lisp code on the cache.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">measure-time</span>
+ (<span style="color: #0000FF;">loop</span> for rank in '(<span style="color: #008000;">"Assistant Professor"</span> <span style="color: #008000;">"Associate Professor"</span> <span style="color: #008000;">"Professor"</span>)
+       collect (list rank (mongo-cmd <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"count(%s)"</span>
+                                     (json-encode `((RANK . ,rank)))))))
+</pre>
+</div>
+
+<pre class="example">
+0.349413 seconds elapsed
+</pre>
+
+<p>
+This is how you might integrate this into a completion command:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(ivy-read <span style="color: #008000;">"choose: "</span>
+          (<span style="color: #0000FF;">loop</span> for c across (mongo-find <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">""</span>)
+                collect
+                (list (cdr (assoc 'desc c)) c)))
+</pre>
+</div>
+
+<p>
+This is basically unusable though, because it takes so long to generate the candidates (over six seconds).
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">measure-time</span>
+ (<span style="color: #0000FF;">loop</span> for c across (mongo-find <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">""</span>)
+       collect
+       (list (cdr (assoc 'desc c)) c)))
+</pre>
+</div>
+
+<pre class="example">
+6.228225 seconds elapsed
+</pre>
+
+<p>
+We can get back to usable by making the database do more work for us. Here, we simply make the database print a list of cons cells that we can read into lisp. We have to use a javascript function, with some escaping and quoting. The escaping was necessary because there is some bad data in the email field that messed up the cons cells, e.g. some things like "name" &lt;email&gt; with nested single and double quoting, etc., and the quoting was necessary to get cons cells of the form ("desc" . "email"), and finally we wrap them in parentheses and read back the list of cons cells. At about a quarter of a second, this is very usable to get a list of over 6000 candidates. It is still many times slower than working on the contacts list in memory though. I am not a super fan of the one-line javascript, and if it was much more complicated than this another strategy would probably be desirable.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">measure-time</span>
+ (read
+  (concat
+   <span style="color: #008000;">"("</span>
+   (shell-command-to-string <span style="color: #008000;">"mongo contacts --quiet --eval 'db.contacts.find().forEach(function (doc) {print(\"(\\\"\" + doc.desc + \"\\\" . \\\"\" + escape(doc.EMAIL) +\"\\\")\");})'"</span>)
+   <span style="color: #008000;">")"</span>)))
+</pre>
+</div>
+
+<pre class="example">
+0.284730 seconds elapsed
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org97edcbc" class="outline-2">
+<h2 id="org97edcbc"><span class="section-number-2">7</span> Text searching</h2>
+<div class="outline-text-2" id="text-7">
+<p>
+Finally, let us make a text index to make searching easy. This allows us a very flexible search where we do not have to specify what field or use regular expressions. We setup the index on all the fields, so we can find entries that match even on fields that do not exist in all documents.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-cmd <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"createIndex(%s)"</span> (json-encode '((<span style="color: #008000;">"$**"</span> . <span style="color: #008000;">"text"</span>))))
+</pre>
+</div>
+
+<pre class="example">
+{
+	"createdCollectionAutomatically" : false,
+	"numIndexesBefore" : 1,
+	"numIndexesAfter" : 2,
+	"ok" : 1
+}
+</pre>
+
+<p>
+Now, let's use that to find the GOOGLE-SCHOLAR url of contacts matching the following query.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-find <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> '(($text . (($search . <span style="color: #008000;">"\"Carnegie Mellon\""</span>)))
+                                    ($text . (($search . <span style="color: #008000;">"\"John Kitchin\""</span>))))
+            '((GOOGLE-SCHOLAR . 1) (_id . 0)))
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">[((GOOGLE-SCHOLAR . <span style="color: #008000;">"https://scholar.google.com/citations?hl=en&amp;user=jD_4h7sAAAAJ"</span>))
+ nil nil]
+</pre>
+</div>
+
+<p>
+So, you can see there were three contacts, and one of them lists my google-scholar url.
+</p>
+</div>
+</div>
+
+
+<div id="outline-container-org04fa0df" class="outline-2">
+<h2 id="org04fa0df"><span class="section-number-2">8</span> Summary</h2>
+<div class="outline-text-2" id="text-8">
+<p>
+This looks like the foundation of a mongo/emacs-lisp interface. This interface is not that fast though, and suffers from some limitations related to the use of the shell. Depending on the actual use, it is clear you can gain performance by passing some work on the database, which requires some javascript coding. Even that revealed some subtlety, e.g. making sure the database output text that was compatible with the lisp reader. That mostly means taking care of quotes, and other special characters, which I managed with a simple escape mechanism. It is probably worth investing a few more days in building an interface that uses a process and communicates with the mongo cli directly before moving forward with any significant application that uses Mongo in emacs. There are many good ideas for that:
+</p>
+
+<ol class="org-ol">
+<li>Index all your org files (e.g. <a href="http://kitchingroup.cheme.cmu.edu/blog/2017/01/03/Find-stuff-in-org-mode-anywhere/">http://kitchingroup.cheme.cmu.edu/blog/2017/01/03/Find-stuff-in-org-mode-anywhere/</a>)</li>
+<li>Index all your bibtex files (e.g. <a href="http://kitchingroup.cheme.cmu.edu/blog/2017/01/15/Querying-a-MongoDB-bibtex-database-with-Python-and-emacs-lisp/">http://kitchingroup.cheme.cmu.edu/blog/2017/01/15/Querying-a-MongoDB-bibtex-database-with-Python-and-emacs-lisp/</a>)</li>
+<li>Download RSS feeds into a searchable database</li>
+<li>Manage your contacts</li>
+<li>Index your email? mu and notmuch use xapian for this, but I have found they cannot search for things like hashtags. Maybe MongoDB would be better?</li>
+</ol>
+
+<p>
+The tradeoffs between this and sqlite are more clear now. With Mongo we do not have to create the normalized tables (although it is still a good idea to think about how to structure the documents, and if they should be a little normalized). It is <i>much</i> easier to map lisp data structures to Mongo queries than it is to do that with SQL queries. On the other hand, it is necessary to do some javascript programming with Mongo to get some desired output. It still seems worth exploring further.
+</p>
+</div>
+</div>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/01/16/A-simple-emacs-lisp-interface-to-CRUD-operations-in-mongodb.org">org-mode source</a></p>
+<p>Org-mode version = 9.0.3</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/01/16/A-simple-emacs-lisp-interface-to-CRUD-operations-in-mongodb#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Querying-a-MongoDB-bibtex-database-with-Python-and-emacs-lisp"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/01/15/Querying-a-MongoDB-bibtex-database-with-Python-and-emacs-lisp/" rel="bookmark" title="Permanent Link to Querying a MongoDB bibtex database with Python and emacs-lisp">Querying a MongoDB bibtex database with Python and emacs-lisp</a></h2>
       <p><small><span class="blog_post_date">Posted January 15, 2017 at 10:36 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/python/'>python</a>, <a href='/blog/category/mongodb/'>mongodb</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/database/'>database</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/mongodb/'>mongodb</a>, <a href='/blog/category/python/'>python</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/database/'>database</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/01/15/Querying-a-MongoDB-bibtex-database-with-Python-and-emacs-lisp#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -510,7 +1345,7 @@ This fellowship was established by a donation from the Gulf Oil Foundation, and 
       <div id="New-publication-in-ACS-Applied-Materials-Interfaces"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/01/05/New-publication-in-ACS-Applied-Materials-Interfaces/" rel="bookmark" title="Permanent Link to New publication in ACS Applied Materials & Interfaces">New publication in ACS Applied Materials & Interfaces</a></h2>
       <p><small><span class="blog_post_date">Posted January 05, 2017 at 01:22 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/publication/'>publication</a>, <a href='/blog/category/news/'>news</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/news/'>news</a>, <a href='/blog/category/publication/'>publication</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/01/05/New-publication-in-ACS-Applied-Materials-Interfaces#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -888,930 +1723,6 @@ That summarizes the experiment of the day. There is clearly some room for improv
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/01/05/Scoring-elfeed-articles#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Find-stuff-in-org-mode-anywhere"></div>
-      <h2 class="blog_post_title"><a href="/blog/2017/01/03/Find-stuff-in-org-mode-anywhere/" rel="bookmark" title="Permanent Link to Find stuff in org-mode anywhere">Find stuff in org-mode anywhere</a></h2>
-      <p><small><span class="blog_post_date">Posted January 03, 2017 at 02:33 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/database/'>database</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2017/01/03/Find-stuff-in-org-mode-anywhere#disqus_thread">View Comments</a>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<div id="table-of-contents">
-<h2>Table of Contents</h2>
-<div id="text-table-of-contents">
-<ul>
-<li><a href="#org961d2be">1. The database design</a></li>
-<li><a href="#orgbda3471">2. Querying the link table</a></li>
-<li><a href="#org8284133">3. Headline queries</a></li>
-<li><a href="#org7d75505">4. Keyword queries</a></li>
-<li><a href="#org08feb51">5. Full text search</a></li>
-<li><a href="#orgbb3d71f">6. Summary</a></li>
-</ul>
-</div>
-</div>
-<p>
-I use org-mode <i>extensively</i>. I write scientific papers, keep notes on meetings, write letters of recommendation, notes on scientific articles, keep TODO lists in projects, help files for software, write lecture notes, students send me homework solutions in it, it is a contact database, &#x2026; Some files are on Dropbox, Google Drive, Box, some in git repos, etc. The problem is that leads to org-files everywhere on my hard drive. At this point I have several thousand org-files that span about five years of work.
-</p>
-
-<p>
-It is not that easy after a while to find them. Yes there are things like recent-files, bookmarks, counsel-find-file, helm-for-files, counsel/helm-locate, helm/counsel-grep/ag/pt, projectile for searching within a project, a slew of tools to search open buffers, there is <a href="https://www.lesbonscomptes.com/recoll/">recoll</a>, etc&#x2026; There are desktop search tools, and of course, good organization habits. Over a five year time span though, these change, and I have yet to find a solution to finding what I want. What about a file I made a year ago that is not in the current directory or this project, and not in my org-agenda-files list? How do I get a dynamic todo list across all these files? Or find all the files that cite a particular bibtex entry, or that were authored by a particular student?
-</p>
-
-<p>
-Previously, <a href="http://kitchingroup.cheme.cmu.edu/blog/2015/07/06/Indexing-headlines-in-org-files-with-swish-e-with-laser-sharp-results/">I indexed org files with Swish-e</a> to make it easy to search them, with an ability to search just headlines, or paragraphs, etc. The problem with that is the nightly indexing was slow since I basically had to regenerate the database each time due to limitations in Swish-e. Finally I have gotten around to the next iteration of this idea, which is a better database. In this post, I explore using sqlite to store headlines and links in org-files.
-</p>
-
-<p>
-The idea is that anytime I open or save <i>any</i> org file, it will be added/updated in the database. The database will store the headlines and its properties and content, as well as the location and properties of all links and file keywords. That means I should be able to efficiently query all org files I have ever visited to find TODO headlines, tagged headlines, different types of links, etc. Here we try it out and see if it is useful.
-</p>
-
-
-<div id="outline-container-org961d2be" class="outline-2">
-<h2 id="org961d2be"><span class="section-number-2">1</span> The database design</h2>
-<div class="outline-text-2" id="text-1">
-<p>
-I used <a href="https://github.com/skeeto/emacsql">emacsql</a> to create and interact with a sqlite3 database. It is a lispy way to generate SQL queries. I will not talk about the code much here, you can see this version <a href="/media/org-db.el">org-db.el</a> . The database design consists of several tables that contain the filenames, headlines, tags, properties, (optionally) headline-content, headline-tags, headline-properties, and links. The lisp code is a work in progress, and not something I use on a daily basis yet. This post is a proof of concept to see how well this approach works. 
-</p>
-
-<p>
-I use hooks to update the database when an org-file is opened (only if it is different than what is in the database based on an md5 hash) and when it is saved. Basically, these functions delete the current entries in the database for a file, then use regular expressions to go to each headline or link in the file, and add data back to the database. I found this to be faster than parsing the org-file with org-element especially for large files. Since this is all done by a hook, anytime I open an org-file anywhere it gets added/updated to the database. The performance of this is ok. This approach will not guarantee the database is 100% accurate all the time (e.g. if something modifies the file outside of emacs, like a git pull), but it doesn't need to be. Most of the files do not change often, the database gets updated each time you open a file, and you can always reindex the database from files it knows about. Time will tell how often that seems necessary.
-</p>
-
-<p>
-emacsql lets you use lisp code to generate SQL that is sent to the database. Here is an example:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(emacsql-flatten-sql [<span style="color: #006FE0;">:select</span> [name] <span style="color: #006FE0;">:from</span> main:sqlite_master <span style="color: #006FE0;">:where</span> (= type table)])
-</pre>
-</div>
-
-<pre class="example">
-SELECT name FROM main.sqlite_master WHERE type = "table";
-</pre>
-
-<p>
-There are some nuances, for example, main:sqlite_master gets converted to main.sqlite_master. You use vectors, keywords, and sexps to setup the command. emacsql will turn a name like filename-id into filename_id. It was not too difficulty to figure out, and the author of emacsql was really helpful on a few points. I will be referring to this post in the future to remember some of these nuances!
-</p>
-
-<p>
-Here is a list of tables in the database. There are a few primary tables, and then some that store tags, properties, and keywords on the headlines. This is typical of emacsql code; it is a lisp expression that generates SQL.  In this next expression org-db is a variable that stores the database connection created in org-db.el.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> [name] <span style="color: #006FE0;">:from</span> main:sqlite_master <span style="color: #006FE0;">:where</span> (= type table)])
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-left" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-left">files</td>
-</tr>
-
-<tr>
-<td class="org-left">tags</td>
-</tr>
-
-<tr>
-<td class="org-left">properties</td>
-</tr>
-
-<tr>
-<td class="org-left">keywords</td>
-</tr>
-
-<tr>
-<td class="org-left">headlines</td>
-</tr>
-
-<tr>
-<td class="org-left">headline_content</td>
-</tr>
-
-<tr>
-<td class="org-left">headline_content_content</td>
-</tr>
-
-<tr>
-<td class="org-left">headline_content_segments</td>
-</tr>
-
-<tr>
-<td class="org-left">headline_content_segdir</td>
-</tr>
-
-<tr>
-<td class="org-left">headline_content_docsize</td>
-</tr>
-
-<tr>
-<td class="org-left">headline_content_stat</td>
-</tr>
-
-<tr>
-<td class="org-left">headline_tags</td>
-</tr>
-
-<tr>
-<td class="org-left">headline_properties</td>
-</tr>
-
-<tr>
-<td class="org-left">file_keywords</td>
-</tr>
-
-<tr>
-<td class="org-left">links</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-Here is a description of the columns in the files table:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:pragma</span> (funcall table_info files)])
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-right" />
-
-<col  class="org-left" />
-
-<col  class="org-right" />
-
-<col  class="org-left" />
-
-<col  class="org-right" />
-
-<col  class="org-right" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-right">0</td>
-<td class="org-left">rowid</td>
-<td class="org-right">INTEGER</td>
-<td class="org-left">0</td>
-<td class="org-right">nil</td>
-<td class="org-right">1</td>
-</tr>
-
-<tr>
-<td class="org-right">1</td>
-<td class="org-left">filename</td>
-<td class="org-right">0</td>
-<td class="org-left">nil</td>
-<td class="org-right">0</td>
-<td class="org-right">&#xa0;</td>
-</tr>
-
-<tr>
-<td class="org-right">2</td>
-<td class="org-left">md5</td>
-<td class="org-right">0</td>
-<td class="org-left">nil</td>
-<td class="org-right">0</td>
-<td class="org-right">&#xa0;</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-and the headlines table.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:pragma</span> (funcall table_info headlines)])
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-right" />
-
-<col  class="org-left" />
-
-<col  class="org-right" />
-
-<col  class="org-left" />
-
-<col  class="org-right" />
-
-<col  class="org-right" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-right">0</td>
-<td class="org-left">rowid</td>
-<td class="org-right">INTEGER</td>
-<td class="org-left">0</td>
-<td class="org-right">nil</td>
-<td class="org-right">1</td>
-</tr>
-
-<tr>
-<td class="org-right">1</td>
-<td class="org-left">filename_id</td>
-<td class="org-right">0</td>
-<td class="org-left">nil</td>
-<td class="org-right">0</td>
-<td class="org-right">&#xa0;</td>
-</tr>
-
-<tr>
-<td class="org-right">2</td>
-<td class="org-left">title</td>
-<td class="org-right">0</td>
-<td class="org-left">nil</td>
-<td class="org-right">0</td>
-<td class="org-right">&#xa0;</td>
-</tr>
-
-<tr>
-<td class="org-right">3</td>
-<td class="org-left">level</td>
-<td class="org-right">0</td>
-<td class="org-left">nil</td>
-<td class="org-right">0</td>
-<td class="org-right">&#xa0;</td>
-</tr>
-
-<tr>
-<td class="org-right">4</td>
-<td class="org-left">todo_keyword</td>
-<td class="org-right">0</td>
-<td class="org-left">nil</td>
-<td class="org-right">0</td>
-<td class="org-right">&#xa0;</td>
-</tr>
-
-<tr>
-<td class="org-right">5</td>
-<td class="org-left">todo_type</td>
-<td class="org-right">0</td>
-<td class="org-left">nil</td>
-<td class="org-right">0</td>
-<td class="org-right">&#xa0;</td>
-</tr>
-
-<tr>
-<td class="org-right">6</td>
-<td class="org-left">archivedp</td>
-<td class="org-right">0</td>
-<td class="org-left">nil</td>
-<td class="org-right">0</td>
-<td class="org-right">&#xa0;</td>
-</tr>
-
-<tr>
-<td class="org-right">7</td>
-<td class="org-left">commentedp</td>
-<td class="org-right">0</td>
-<td class="org-left">nil</td>
-<td class="org-right">0</td>
-<td class="org-right">&#xa0;</td>
-</tr>
-
-<tr>
-<td class="org-right">8</td>
-<td class="org-left">footnote_section_p</td>
-<td class="org-right">0</td>
-<td class="org-left">nil</td>
-<td class="org-right">0</td>
-<td class="org-right">&#xa0;</td>
-</tr>
-
-<tr>
-<td class="org-right">9</td>
-<td class="org-left">begin</td>
-<td class="org-right">0</td>
-<td class="org-left">nil</td>
-<td class="org-right">0</td>
-<td class="org-right">&#xa0;</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-Tags and properties on a headline are stored in headline-tags and headline-properties. 
-</p>
-
-<p>
-The database is not large if all it has is headlines and links (no content). It got up to half a GB with content, and seemed a little slow, so for this post I leave the content out.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-sh">du -hs ~/org-db/org-db.sqlite
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-left" />
-
-<col  class="org-left" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-left">56M</td>
-<td class="org-left">/Users/jkitchin/org-db/org-db.sqlite</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-Here we count how many files are in the database. These are just the org-files in my Dropbox folder. There are a lot of them! If I include all the org-files from my research and teaching projects this number grows to about 10,000! You do not want to run org-map-entries on that. Note this also includes all of the org_archive files.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> (funcall count) <span style="color: #006FE0;">:from</span> files])
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-right" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-right">1569</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-Here is the headlines count. You can see there is no chance of remembering where these are because there are so many!
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> (funcall count) <span style="color: #006FE0;">:from</span> headlines])
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-right" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-right">38587</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-And the links. So many links!
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> (funcall count) <span style="color: #006FE0;">:from</span> links])
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-right" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-right">303739</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-That is a surprising number of links. 
-</p>
-</div>
-</div>
-
-<div id="outline-container-orgbda3471" class="outline-2">
-<h2 id="orgbda3471"><span class="section-number-2">2</span> Querying the link table</h2>
-<div class="outline-text-2" id="text-2">
-<p>
-Let's see how many are cite links from org-ref there are.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> (funcall count) <span style="color: #006FE0;">:from</span> links <span style="color: #006FE0;">:where</span> (= type <span style="color: #008000;">"cite"</span>)])
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-right" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-right">14766</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-Wow, I find that to also be surprisingly large!  I make a living writing proposals and scientific papers, and I wrote org-ref to make that easier, so maybe it should not be so surprising. We can search the link database for files containing citations of "kitchin-2015-examp" like this.  The links table only stores the filename-id, so we join it with the files table to get useful information. Here we show the list of files that contain a citation of that reference. It is a mix of manuscripts, proposals, presentations, documentation files and notes.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> <span style="color: #006FE0;">:distinct</span> [files:filename]
-                 <span style="color: #006FE0;">:from</span> links <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> files <span style="color: #006FE0;">:on</span> (= links:filename-id files:rowid) 
-                 <span style="color: #006FE0;">:where</span> (<span style="color: #0000FF;">and</span> (= type <span style="color: #008000;">"cite"</span>) (like path <span style="color: #008000;">"%kitchin-2015-examp%"</span>))])
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-left" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/2015/Research_Data_Publishing_Paper/manuscript.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/2015/Research_Data_Publishing_Paper/manuscript-2015-06-29/manuscript.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/2015/Research_Data_Publishing_Paper/manuscript-2015-10-10/manuscript.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/2015/Research_Data_Publishing_Paper/manuscript-2016-03-09/manuscript.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/2015/Research_Data_Publishing_Paper/manuscript-2016-04-18/manuscript.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/2015/human-readable-data/manuscript.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/@archive/2015/Research_Data_Publishing_Paper/manuscript.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/@archive/2015/Research_Data_Publishing_Paper/manuscript-2015-06-29/manuscript.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/@archive/2015/Research_Data_Publishing_Paper/manuscript-2015-10-10/manuscript.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/@archive/2015/Research_Data_Publishing_Paper/manuscript-2016-03-09/manuscript.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/@archive/2015/Research_Data_Publishing_Paper/manuscript-2016-04-18/manuscript.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/@archive/2015/human-readable-data/manuscript.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/CMU/meetings/@archive/2015/BES-2015/doe-bes-wed-data-briefing/doe-bes-wed-data-sharing.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/CMU/meetings/@archive/2015/NIST-july-2015/data-sharing.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/CMU/meetings/@archive/2015/UD-webinar/ud-webinar.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/CMU/meetings/@archive/2016/AICHE/data-sharing/data-sharing.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/CMU/meetings/@archive/2016/Spring-ACS/data-sharing/data-sharing.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/CMU/projects/DOE-Early-Career/annual-reports/final-report/kitchin-DESC0004031-final-report.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/CMU/proposals/@archive/2015/DOE-renewal/proposal-v2.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/CMU/proposals/@archive/2015/DOE-renewal/archive/proposal.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/CMU/proposals/@archive/2016/DOE-single-atom-alloy/proposal.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/CMU/proposals/@archive/2016/MRSEC/MRSEC-IRG-metastable-materials-preproposal/IRG-concept.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/CMU/proposals/@archive/2016/ljaf-open-science/kitchin-proposal.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/CMU/proposals/@archive/2016/nsf-germination/project-description.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/CMU/proposals/@archive/2016/nsf-reu-supplement/project-description.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/CMU/proposals/@archive/2016/proctor-and-gamble-education/proposal.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/bibliography/notes.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/kitchingroup/jmax/org-ref/citeproc/readme.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/kitchingroup/jmax/org-ref/citeproc/readme-unsrt.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/kitchingroup/jmax/org-ref/citeproc/readme-author-year.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/kitchingroup/jmax/org-ref/tests/test-1.org</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/kitchingroup/jmax/org-ref/tests/sandbox/elpa/org-ref-20160122.1725/citeproc/readme.org</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-Obviously we could use this to generate candidates for something like helm or ivy like this. 
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(ivy-read <span style="color: #008000;">"Open: "</span> (emacsql org-db [<span style="color: #006FE0;">:select</span> [files:filename links:begin]
-                                    <span style="color: #006FE0;">:from</span> links <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> files <span style="color: #006FE0;">:on</span> (= links:filename-id files:rowid) 
-                                    <span style="color: #006FE0;">:where</span> (<span style="color: #0000FF;">and</span> (= type <span style="color: #008000;">"cite"</span>) (like path <span style="color: #008000;">"%kitchin-2015-examp%"</span>))])
-          <span style="color: #006FE0;">:action</span> '(1 (<span style="color: #008000;">"o"</span>
-                       (<span style="color: #0000FF;">lambda</span> (c)
-                         (find-file (car c))
-                         (goto-char (nth 1 c))
-                         (org-show-entry)))))
-</pre>
-</div>
-
-<pre class="example">
-/Users/jkitchin/Dropbox/CMU/manuscripts/2015/human-readable-data/manuscript.org
-</pre>
-
-<p>
-Now, you can find every org-file containing any bibtex key as a citation. Since SQL is the query language, you should be able to build really sophisticated queries that combine filters for multiple citations, different kinds of citations, etc.
-</p>
-</div>
-</div>
-
-<div id="outline-container-org8284133" class="outline-2">
-<h2 id="org8284133"><span class="section-number-2">3</span> Headline queries</h2>
-<div class="outline-text-2" id="text-3">
-<p>
-Every headline is stored, along with its location, tags and properties. We can use the database to find headlines that are tagged or with certain properties. You can see here I have 293 tags in the database.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> (funcall count) <span style="color: #006FE0;">:from</span> tags])
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-right" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-right">293</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-Here we find headlines tagged with electrolyte. I tagged some papers I read with this at some point.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> <span style="color: #006FE0;">:distinct</span> [files:filename headlines:title]
-                 <span style="color: #006FE0;">:from</span> headlines <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> headline-tags <span style="color: #006FE0;">:on</span> (=  headlines:rowid headline-tags:headline-id)
-                 <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> tags <span style="color: #006FE0;">:on</span> (= tags:rowid headline-tags:tag-id)
-                 <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> files <span style="color: #006FE0;">:on</span> (= headlines:filename-id files:rowid)
-                 <span style="color: #006FE0;">:where</span> (= tags:tag <span style="color: #008000;">"electrolyte"</span>) <span style="color: #006FE0;">:limit</span> 5])
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-left" />
-
-<col  class="org-left" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/org-mode/prj-doe-early-career.org</td>
-<td class="org-left">2010 - Nickel-borate oxygen-evolving catalyst that functions under benign conditions</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/bibliography/notes.org</td>
-<td class="org-left">1971 - A Correlation of the Solution Properties and the  Electrochemical Behavior of the Nickel Hydroxide  Electrode in Binary Aqueous Alkali Hydroxides</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/bibliography/notes.org</td>
-<td class="org-left">1981 - Studies concerning charged nickel hydroxide electrodes IV. Reversible potentials in LiOH, NaOH, RbOH and CsOH</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/bibliography/notes.org</td>
-<td class="org-left">1986 - The effect of lithium in preventing iron poisoning in the nickel hydroxide electrode</td>
-</tr>
-
-<tr>
-<td class="org-left">/Users/jkitchin/Dropbox/bibliography/notes.org</td>
-<td class="org-left">1996 - The role of lithium in preventing the detrimental effect of iron on alkaline battery nickel hydroxide electrode: A mechanistic aspect</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-Here we see how many entries have an EMAIL property. These could serve as contacts to send email to.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> [(funcall count)] <span style="color: #006FE0;">:from</span>
-                 headlines <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> headline-properties <span style="color: #006FE0;">:on</span> (=  headlines:rowid headline-properties:headline-id)
-                 <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> properties <span style="color: #006FE0;">:on</span> (= properties:rowid headline-properties:property-id)
-                 <span style="color: #006FE0;">:where</span> (<span style="color: #0000FF;">and</span> (= properties:property <span style="color: #008000;">"EMAIL"</span>) (not (null headline-properties:value)))])
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-right" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-right">7452</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-If you want to see the ones that match "jkitchin", here they are. 
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> <span style="color: #006FE0;">:distinct</span> [headlines:title headline-properties:value] <span style="color: #006FE0;">:from</span>
-             headlines <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> headline-properties <span style="color: #006FE0;">:on</span> (=  headlines:rowid headline-properties:headline-id)
-             <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> properties <span style="color: #006FE0;">:on</span> (= properties:rowid headline-properties:property-id)
-             <span style="color: #006FE0;">:where</span> (<span style="color: #0000FF;">and</span> (= properties:property <span style="color: #008000;">"EMAIL"</span>) (like headline-properties:value <span style="color: #008000;">"%jkitchin%"</span>))])
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-left" />
-
-<col  class="org-left" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-left">John Kitchin</td>
-<td class="org-left">jkitchin@andrew.cmu.edu</td>
-</tr>
-
-<tr>
-<td class="org-left">John Kitchin</td>
-<td class="org-left">jkitchin@cmu.edu</td>
-</tr>
-
-<tr>
-<td class="org-left">Kitchin, John</td>
-<td class="org-left">jkitchin@andrew.cmu.edu</td>
-</tr>
-</tbody>
-</table>
-
-
-<p>
-Here is a query to find the number of headlines where the deadline matches 2017. Looks like I am already busy!
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> (funcall count) <span style="color: #006FE0;">:from</span>
-             headlines <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> headline-properties <span style="color: #006FE0;">:on</span> (=  headlines:rowid headline-properties:headline-id)
-             <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> properties <span style="color: #006FE0;">:on</span> (= properties:rowid headline-properties:property-id)
-             <span style="color: #006FE0;">:where</span> (<span style="color: #0000FF;">and</span> (= properties:property <span style="color: #008000;">"DEADLINE"</span>) (glob headline-properties:value <span style="color: #008000;">"*2017*"</span>))])
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-right" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-right">50</td>
-</tr>
-</tbody>
-</table>
-</div>
-</div>
-
-<div id="outline-container-org7d75505" class="outline-2">
-<h2 id="org7d75505"><span class="section-number-2">4</span> Keyword queries</h2>
-<div class="outline-text-2" id="text-4">
-<p>
-We also store file keywords, so we can search on document titles, authors, etc. Here are five documents with titles longer than 35 characters sorted in descending order. 
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> <span style="color: #006FE0;">:distinct</span> [value] <span style="color: #006FE0;">:from</span>
-                 file-keywords <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> keywords <span style="color: #006FE0;">:on</span> (= file-keywords:keyword-id keywords:rowid)
-                 <span style="color: #006FE0;">:where</span> (<span style="color: #0000FF;">and</span> (&gt; (funcall length value) 35) (= keywords:keyword <span style="color: #008000;">"TITLE"</span>))
-                 <span style="color: #006FE0;">:order</span> <span style="color: #006FE0;">:by</span> value <span style="color: #006FE0;">:desc</span>
-                 <span style="color: #006FE0;">:limit</span> 5])
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-left" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-left">pycse - Python3 Computations in Science and Engineering</td>
-</tr>
-
-<tr>
-<td class="org-left">org-show - simple presentations in org-mode</td>
-</tr>
-
-<tr>
-<td class="org-left">org-mode - A Human Readable, Machine Addressable Approach to Data Archiving and Sharing in Science and Engineering</td>
-</tr>
-
-<tr>
-<td class="org-left">modifying emacs to make typing easier.</td>
-</tr>
-
-<tr>
-<td class="org-left">jmax - John's customizations to maximize Emacs</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-It is possible to search on AUTHOR, and others. My memos have a #+SUBJECT keyword, so I can find memos on a subject. They also use the LATEX_CLASS of cmu-memo, so I can find all of them easily too:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> [(funcall count)] <span style="color: #006FE0;">:from</span>
-                 file-keywords <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> keywords <span style="color: #006FE0;">:on</span> (= file-keywords:keyword-id keywords:rowid)
-                 <span style="color: #006FE0;">:where</span> (<span style="color: #0000FF;">and</span> (= value <span style="color: #008000;">"cmu-memo"</span>) (= keywords:keyword <span style="color: #008000;">"LATEX_CLASS"</span>))
-                 <span style="color: #006FE0;">:limit</span> 5])
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-right" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-right">119</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-How about that, 119 memos&#x2026; Still it sure is nice to be able to find them.
-</p>
-</div>
-</div>
-
-<div id="outline-container-org08feb51" class="outline-2">
-<h2 id="org08feb51"><span class="section-number-2">5</span> Full text search</h2>
-<div class="outline-text-2" id="text-5">
-<p>
-In theory, the database has a table for the headline content, and it should be fully searchable. I found the database got a little sluggish, and nearly 1/2 a GB in size when using it so I am leaving it out for now.
-</p>
-</div>
-</div>
-
-<div id="outline-container-orgbb3d71f" class="outline-2">
-<h2 id="orgbb3d71f"><span class="section-number-2">6</span> Summary</h2>
-<div class="outline-text-2" id="text-6">
-<p>
-The foundation for something really good is here. It is still a little tedious to wrote the queries with all the table joins, but some of that could be wrapped into a function for a query. I like the lispy style of the queries, although it can be tricky to map all the concepts onto SQL. A function that might wrap this could look like this:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(org-db-query (<span style="color: #0000FF;">and</span> (= properties:property <span style="color: #008000;">"DEADLINE"</span>) (glob headline-properties:value <span style="color: #008000;">"*2017*"</span>)))
-</pre>
-</div>
-
-<p>
-This is what it would ideally look like using the org tag/property match syntax. Somehow that string would have to get expanded to generate the code above. I do not have a sense for how difficult that would be. It might not be hard with <a href="https://github.com/skeeto/rdp">a recursive descent parser</a>, written by the same author as emacsql.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(org-db-query <span style="color: #008000;">"DEADLINE={2017}"</span>)
-</pre>
-</div>
-
-<p>
-The performance is only ok. For large org files there is a notable lag in updating the database, which is notable because while updating, Emacs is blocked. I could try using an idle timer for updates with a queue, or get more clever about when to update. It is not essential that the updates be real-time, only that they are reasonably accurate or done by the time I next search. For now, it is not too annoying though. As a better database, I have had my eye on <a href="https://xapian.org">xapian</a> since that is what mu4e (and notmuch) uses. It might be good to have an external library for parsing org-files, i.e. not through emacs, for this. It would certainly be faster. It seems like a big project though, maybe next summer ;)
-</p>
-
-<p>
-Another feature this might benefit from is ignore patterns, or some file feature that prevents it from being indexed. For example, I keep an encrypted password file in org-mode, but as soon as I opened it, it got indexed right into the database, in plain text. If you walk your file system, it might make sense to avoid some directories, like .dropbox.cache. Otherwise, this still looks like a promising approach. 
-</p>
-</div>
-</div>
-<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2017/01/03/Find-stuff-in-org-mode-anywhere.org">org-mode source</a></p>
-<p>Org-mode version = 9.0.3</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/01/03/Find-stuff-in-org-mode-anywhere#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="/blog/page/2">Next Page »</a>
 
           </div>
@@ -1851,11 +1762,11 @@ Another feature this might benefit from is ignore patterns, or some file feature
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2017/01/16/A-simple-emacs-lisp-interface-to-CRUD-operations-in-mongodb/">A simple emacs-lisp interface to CRUD operations in mongodb</a></li>
       <li><a href="/blog/2017/01/15/Querying-a-MongoDB-bibtex-database-with-Python-and-emacs-lisp/">Querying a MongoDB bibtex database with Python and emacs-lisp</a></li>
       <li><a href="/blog/2017/01/08/Elif-Erdinc-selected-for-2016-2017-Gulf-Oil-Foundation-Graduate-Fellowship-in-Chemical-Engineering/">Elif Erdinc selected for 2016-2017 Gulf Oil Foundation Graduate Fellowship in Chemical Engineering!</a></li>
       <li><a href="/blog/2017/01/05/New-publication-in-ACS-Applied-Materials-Interfaces/">New publication in ACS Applied Materials & Interfaces</a></li>
       <li><a href="/blog/2017/01/05/Scoring-elfeed-articles/">Scoring elfeed articles</a></li>
-      <li><a href="/blog/2017/01/03/Find-stuff-in-org-mode-anywhere/">Find stuff in org-mode anywhere</a></li>
     </ul>
   </section>
 

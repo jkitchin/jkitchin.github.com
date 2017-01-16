@@ -84,10 +84,845 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="A-simple-emacs-lisp-interface-to-CRUD-operations-in-mongodb"></div>
+      <h2 class="blog_post_title"><a href="/blog/2017/01/16/A-simple-emacs-lisp-interface-to-CRUD-operations-in-mongodb/" rel="bookmark" title="Permanent Link to A simple emacs-lisp interface to CRUD operations in mongodb">A simple emacs-lisp interface to CRUD operations in mongodb</a></h2>
+      <p><small><span class="blog_post_date">Posted January 16, 2017 at 09:44 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/mongodb/'>mongodb</a>, <a href='/blog/category/emacslisp/'>emacslisp</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/database/'>database</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2017/01/16/A-simple-emacs-lisp-interface-to-CRUD-operations-in-mongodb#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#orgf43163b">1. Inserting entries</a></li>
+<li><a href="#orgbec2cf8">2. Finding a document</a></li>
+<li><a href="#org7279625">3. Updating an entry</a></li>
+<li><a href="#org769cf9d">4. Deleting a document</a></li>
+<li><a href="#org0cb9437">5. Generic commands</a></li>
+<li><a href="#org512e4fe">6. A MongoDB contacts database</a></li>
+<li><a href="#org97edcbc">7. Text searching</a></li>
+<li><a href="#org04fa0df">8. Summary</a></li>
+</ul>
+</div>
+</div>
+<p>
+In this <a href="http://kitchingroup.cheme.cmu.edu/blog/2017/01/15/Querying-a-MongoDB-bibtex-database-with-Python-and-emacs-lisp/">post</a> I showed that MongoDB is pretty easy to use for simple database applications. I showed a way to get data out of the database that is native to Emacs, but to use Mongo in emacs applications comfortably, it would be really helpful to be able to create, read, update and delete (CRUD) entries. There is a minimal interface to mongodb for emacs-lisp here: <a href="https://github.com/m2ym/mongo-el">https://github.com/m2ym/mongo-el</a>. From what I can see, it seems limited to simple, single queries, and it is written with advanced features of emacs-lisp I do not understand enough to extend it. In the last post, I showed an easy way to use mongoexport to get data from a query out of a mongo database. Here I explore a similar approach to round out the CRUD (create, read, update and delete) operations for using emacs-lisp to work with mongodb. This will enable Emacs to easily use MongoDB in applications.
+</p>
+
+<p>
+We use the mongo cli with the &#x2013;eval option, which allows you to run commands on the database. The basic idea is to generate the json we need from a lisp data structure, and use that json in mongo commands as needed. This sounds simple, but below you will see there are plenty of corners to take care of.
+</p>
+
+<p>
+The goal here is to get something that is pretty functional. It will not be able to support all the capabilities of MongoDB and the options available in the cli.
+</p>
+
+<div id="outline-container-orgf43163b" class="outline-2">
+<h2 id="orgf43163b"><span class="section-number-2">1</span> Inserting entries</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+Here we insert a document into the contacts collection of the contacts database. As in the Python example we considered earlier, this database is automatically created when we run this command. 
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">json</span>))
+(<span style="color: #0000FF;">let*</span> ((json (json-encode '((first-name . <span style="color: #008000;">"John"</span>)
+                            (last-name . <span style="color: #008000;">"Kitchin"</span>)
+                            (email . <span style="color: #008000;">"jkitchin@cmu.edu"</span>))))
+       (cmd (format <span style="color: #008000;">"mongo 127.0.0.1/contacts --quiet --eval 'db.contacts.insert(%s)'"</span>
+                    json)))
+  (shell-command-to-string cmd))
+</pre>
+</div>
+
+<pre class="example">
+json
+</pre>
+
+<p>
+Here is a function we can use for inserting, and as you can see it works for multiple inserts too. There is a limit on how long the json string can be for this, so you cannot add too many entries at once with this. I do not know what the limit is, and suspect it is related to using a shell command. When this succeeds there is data returned about what happened, which we try to get in lisp form. Also, I noticed I had to do a little bit of escaping, especially for entries containing a single quote, which messes up the quoting on the shell command, and for non-ascii characters which the shell did not handle well. Maybe this could be avoided with a file-based approach, or if we used a pipe to a process.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">mongo-insert</span> (db collection document)
+  <span style="color: #036A07;">"Insert into DB.COLLECTION the DOCUMENT.</span>
+<span style="color: #036A07;">DOCUMENT will be some lisp structure that is converted to json."</span>
+  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">we have to escape quote any single quotes. This came from</span>
+  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">http://stackoverflow.com/questions/1250079/how-to-escape-single-quotes-within-single-quoted-strings</span>
+  (<span style="color: #0000FF;">let*</span> ((json (replace-regexp-in-string <span style="color: #008000;">"'"</span> <span style="color: #008000;">"'\"'\"'"</span> (json-encode document)))
+         <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">it seems utf-8 characters may cause issues. Let's just remove them.</span>
+         (json (replace-regexp-in-string <span style="color: #008000;">"[</span><span style="color: #008000;">^</span><span style="color: #008000;">[:ascii:]]"</span> <span style="color: #008000;">""</span> json))
+         (cmd (format <span style="color: #008000;">"mongo %s --quiet --eval 'db.%s.insert(%s)'"</span>
+                      db collection
+                      json))
+         (output (shell-command-to-string cmd)))
+    (<span style="color: #0000FF;">cond</span>
+     ((string-match <span style="color: #008000;">"BulkWriteResult("</span> output)
+      (json-read-from-string (substring output 16 -2)))
+     ((string-match <span style="color: #008000;">"WriteResult("</span> output)
+      (json-read-from-string (substring output 12 -2)))
+     (t
+      output))))
+</pre>
+</div>
+
+<pre class="example">
+mongo-insert
+</pre>
+
+<p>
+Here it is in action.
+</p>
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-insert <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span>
+              '(((first-name . <span style="color: #008000;">"John"</span>)
+                 (last-name . <span style="color: #008000;">"Kitchin"</span>)
+                 (email . <span style="color: #008000;">"jkitchin@cmu.edu"</span>))
+                ((first-name . <span style="color: #008000;">"Someone"</span>)
+                 (last-name . <span style="color: #008000;">"Else"</span>)
+                 (<span style="color: #008000;">"email"</span> . <span style="color: #008000;">"someone@out.there"</span>))))
+</pre>
+</div>
+
+<pre class="example">
+((writeErrors . []) (writeConcernErrors . []) (nInserted . 2) (nUpserted . 0) (nMatched . 0) (nModified . 0) (nRemoved . 0) (upserted . []))
+</pre>
+
+<p>
+Seems like an ok way to get data from Emacs into a Mongo DB, and we get lisp data returned telling us what happened.
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgbec2cf8" class="outline-2">
+<h2 id="orgbec2cf8"><span class="section-number-2">2</span> Finding a document</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+To update documents we need to find them. We would like to find a document by the _id, but we have a small dilemma. The json we need for that needs to look like: {"_id": ObjectId("587babfaef131d0d4603b3ad")}, where the ObjectId is not quoted. The json library does not seem to be able to do that. So, we have to modify our find code to do this. This is possible by manipulating the json string after it is generated with regular expression replacement. It feels hacky, and hopefully there are not many more examples of that. If there are, we will need another approach to generating the json data. Here is the modified find function, also with the projection option. Here is another place we have to tread somewhat lightly with the _id, in this case we have to requote it so that it can be read by emacs. It might make sense to just replace it with the quoted _id string, rather than the ObjectId call. Time will tell.
+</p>
+
+<p>
+Here we create two helper functions to unquote input, and requote output. We also need some code to make an array of all the results, and put commas between all the results so that we end up with valid json in the output.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">mongo-unquote-query</span> (query)
+  <span style="color: #036A07;">"Json encodes QUERY, and unquotes any ObjectId calls.</span>
+
+<span style="color: #036A07;">We don't have syntax for the ObjectId call that mongo wants in</span>
+<span style="color: #036A07;"> lisp, so a query has to look like this:</span>
+<span style="color: #036A07;">'((_id .  \"ObjectId(\"587babfaef131d0d4603b3ad\")\"))</span>
+
+<span style="color: #036A07;">Mongo can't have the quotes around the call, so this function</span>
+<span style="color: #036A07;">removes them.</span>
+<span style="color: #036A07;">"</span>
+  (replace-regexp-in-string <span style="color: #008000;">"\"</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">(</span><span style="color: #008000;">ObjectID(\\\\\"</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">(</span><span style="color: #008000;">.*?</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">)</span><span style="color: #008000;">\\\\\")</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">)</span><span style="color: #008000;">\""</span>
+                            <span style="color: #008000;">"ObjectId(\"\\2\")"</span>
+                            (json-encode query)))
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">mongo-requote-output</span> (output)
+  <span style="color: #036A07;">"Adds quotes around ObjectId in OUTPUT.</span>
+<span style="color: #036A07;">When mongo outputs json, it has unquoted ObjectIds in it that</span>
+<span style="color: #036A07;">emacs cannot interpret as json. "</span>
+  (replace-regexp-in-string
+   <span style="color: #008000;">"ObjectId(\"</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">(</span><span style="color: #008000;">.*?</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">)</span><span style="color: #008000;">\")"</span>
+   <span style="color: #008000;">"\"ObjectId(\\\\\"\\1\\\\\")\""</span>
+   output))
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">mongo-find</span> (db collection query <span style="color: #6434A3;">&amp;optional</span> projection)
+  (<span style="color: #0000FF;">let*</span> ((query-json (mongo-unquote-query query))
+         (projection-json
+          (<span style="color: #0000FF;">and</span> projection (json-encode projection)))
+         (output (mongo-requote-output
+                  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">add [] to make an array of output in json,</span>
+                  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">and separate results by a comma</span>
+                  (concat <span style="color: #008000;">"["</span>
+                          (replace-regexp-in-string
+                           <span style="color: #008000;">"\n"</span> <span style="color: #008000;">""</span>
+                           (shell-command-to-string
+                            (format <span style="color: #008000;">"mongo %s --quiet --eval 'db.%s.find(%s).forEach(function(myDoc) { printjsononeline(myDoc); print( \",\"); })'"</span>
+                                    db collection
+                                    (<span style="color: #0000FF;">if</span> projection
+                                        (format <span style="color: #008000;">"%s, %s"</span> query-json projection-json)
+                                      query-json))))
+                          <span style="color: #008000;">"]"</span>)))) 
+    (json-read-from-string output)))
+</pre>
+</div>
+
+<pre class="example">
+mongo-find
+</pre>
+
+<p>
+So, finally we can run something like this:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-find <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> '((email . <span style="color: #008000;">"someone@out.there"</span>)))
+</pre>
+</div>
+
+<pre class="example">
+[((_id . "ObjectId(\"587c166cdfcd649d3acf99fd\")") (first-name . "Someone") (last-name . "Else") (email . "someone@out.there")) ((_id . "ObjectId(\"587c16ad410565dd4c16c748\")") (first-name . "Someone") (last-name . "Else") (email . "someone@out.there")) ((_id . "ObjectId(\"587c17550e586b4f8df21de0\")") (first-name . "Someone") (last-name . "Else") (email . "someone@out.there")) ((_id . "ObjectId(\"587c1764d75279a55ffec483\")") (first-name . "Someone") (last-name . "Else") (email . "someone@out.there")) ((_id . "ObjectId(\"587c17743281f1e9d5054396\")") (first-name . "Someone") (last-name . "Else") (email . "someone@out.there")) ((_id . "ObjectId(\"587c178ad92706d2bd5a6e3c\")") (first-name . "Someone") (last-name . "Else") (email . "someone@out.there")) ((_id . "ObjectId(\"587c1794756bb2bd0f0ac499\")") (first-name . "Someone") (last-name . "Else") (email . "someone@out.there"))]
+</pre>
+
+<p>
+Here is an example usage with a projection that returns only the information you want, in this case, just the id.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-find <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> '((email . <span style="color: #008000;">"someone@out.there"</span>))
+            '((_id . 1)))
+</pre>
+</div>
+
+<pre class="example">
+[((_id . "ObjectId(\"587c166cdfcd649d3acf99fd\")")) ((_id . "ObjectId(\"587c16ad410565dd4c16c748\")")) ((_id . "ObjectId(\"587c17550e586b4f8df21de0\")")) ((_id . "ObjectId(\"587c1764d75279a55ffec483\")")) ((_id . "ObjectId(\"587c17743281f1e9d5054396\")")) ((_id . "ObjectId(\"587c178ad92706d2bd5a6e3c\")")) ((_id . "ObjectId(\"587c1794756bb2bd0f0ac499\")"))]
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org7279625" class="outline-2">
+<h2 id="org7279625"><span class="section-number-2">3</span> Updating an entry</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+Ok, back to the update. To make sure that we update exactly the document we want, we will use the document _id. First, we define an update command.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">mongo-update</span> (db collection query $set)
+  <span style="color: #036A07;">"In DB.COLLECTION update records matching QUERY with the contents of $SET."</span>
+  (<span style="color: #0000FF;">let*</span> ((query-json (mongo-encode-query query))
+         ($set-json (mongo-encode-query $set))
+         (cmd (format <span style="color: #008000;">"mongo %s --quiet --eval 'db.%s.update(%s, %s)'"</span>
+                      db collection
+                      query-json $set-json))
+         (output (shell-command-to-string cmd)))
+    (<span style="color: #0000FF;">if</span> (string-match <span style="color: #008000;">"WriteResult("</span> output)
+        (json-read-from-string
+         (substring output 12 -2))
+      output)))
+</pre>
+</div>
+
+<pre class="example">
+mongo-update
+</pre>
+
+<p>
+First a reminder of what is in this record.
+</p>
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-find <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> '((_id . <span style="color: #008000;">"ObjectId(\"587c16ad410565dd4c16c748\")"</span>)))
+</pre>
+</div>
+
+<pre class="example">
+[((_id . "ObjectId(\"587c16ad410565dd4c16c748\")") (first-name . "Someone") (last-name . "Else") (email . "someone@out.there"))]
+</pre>
+
+<p>
+Here we set the email field to a new address. Without $set, the whole document gets replaced.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-update <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span>
+              '((_id . <span style="color: #008000;">"ObjectId(\"587c16ad410565dd4c16c748\")"</span>))
+              '(($set . ((email . <span style="color: #008000;">"someone@out.there.com"</span>)))))
+</pre>
+</div>
+
+<pre class="example">
+((nMatched . 1) (nUpserted . 0) (nModified . 1))
+</pre>
+
+<p>
+Finally, let's see the document again to verify it is modified.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-find <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> '((_id . <span style="color: #008000;">"ObjectId(\"587c16ad410565dd4c16c748\")"</span>)))
+</pre>
+</div>
+
+<pre class="example">
+[((_id . "ObjectId(\"587c16ad410565dd4c16c748\")") (first-name . "Someone") (last-name . "Else") (email . "someone@out.there.com"))]
+</pre>
+
+<p>
+Looks good, you can see it got changed. There is a potential gotcha though. This next command looks like it should do the same thing, but it does not. The whole document gets replaced!
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-update <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span>
+              '((_id . <span style="color: #008000;">"ObjectId(\"587c16ad410565dd4c16c748\")"</span>))
+              '((email . <span style="color: #008000;">"someone@out.there.com"</span>)))
+</pre>
+</div>
+
+<pre class="example">
+((nMatched . 1) (nUpserted . 0) (nModified . 1))
+</pre>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-find <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> '((_id . <span style="color: #008000;">"ObjectId(\"587c16ad410565dd4c16c748\")"</span>)))
+</pre>
+</div>
+
+<pre class="example">
+[((_id . "ObjectId(\"587c16ad410565dd4c16c748\")") (email . "someone@out.there.com"))]
+</pre>
+
+<p>
+Do not forget the $set operator if you just want to update some fields!
+</p>
+</div>
+</div>
+
+<div id="outline-container-org769cf9d" class="outline-2">
+<h2 id="org769cf9d"><span class="section-number-2">4</span> Deleting a document</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+Next, let's get a delete function. I will only implement the deleteMany function here since you can give it a document id to delete only one, and usually I would want to delete all documents that meet a criteria anyway.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">mongo-deleteMany</span> (db collection filter)
+  <span style="color: #036A07;">"Delete records in DB.COLLECTION matched by FILTER.</span>
+<span style="color: #036A07;">TODO: add write concern."</span>
+  (<span style="color: #0000FF;">let*</span> ((filter-json (mongo-encode-query filter)) 
+         (cmd (format <span style="color: #008000;">"mongo %s --quiet --eval 'db.%s.deleteMany(%s)'"</span>
+                      db collection
+                      filter-json))
+         (output (shell-command-to-string cmd)))
+    (json-read-from-string output)))
+</pre>
+</div>
+
+<pre class="example">
+mongo-deleteMany
+</pre>
+
+<p>
+Since we borked that last document, let's just delete it.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-deleteMany <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> '((_id . <span style="color: #008000;">"ObjectId(\"587be3fa6009a569a277b680\")"</span>)))
+</pre>
+</div>
+
+<pre class="example">
+((acknowledged . t) (deletedCount . 0))
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org0cb9437" class="outline-2">
+<h2 id="org0cb9437"><span class="section-number-2">5</span> Generic commands</h2>
+<div class="outline-text-2" id="text-5">
+<p>
+We may want some flexibility to run collection commands.  The most generic command will simply be to write the shell-command completely. We can keep a little syntax by encapsulating most of the boilerplate though. Here is a function for that.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">mongo-cmd</span> (db collection cmd <span style="color: #6434A3;">&amp;rest</span> args)
+  <span style="color: #036A07;">"In DB.COLLECTION run CMD. </span>
+<span style="color: #036A07;">ARGS if present will be used to format CMD."</span>
+  (shell-command-to-string
+   (format <span style="color: #008000;">"mongo %s --quiet --eval 'db.%s.%s'"</span>
+           db collection
+           (apply #'format cmd args))))
+</pre>
+</div>
+
+<pre class="example">
+mongo-cmd
+</pre>
+
+<p>
+We can get the number of documents with this:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-cmd <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"count()"</span>)
+</pre>
+</div>
+
+<pre class="example">
+4341
+</pre>
+
+<p>
+Or run a more sophisticated command with arguments like this.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-cmd <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"explain().remove(%s)"</span> (json-encode '((<span style="color: #008000;">"category"</span> . <span style="color: #008000;">"enemy"</span>))))
+</pre>
+</div>
+
+<pre class="example">
+{
+	"queryPlanner" : {
+		"plannerVersion" : 1,
+		"namespace" : "contacts.contacts",
+		"indexFilterSet" : false,
+		"parsedQuery" : {
+			"category" : {
+				"$eq" : "enemy"
+			}
+		},
+		"winningPlan" : {
+			"stage" : "DELETE",
+			"inputStage" : {
+				"stage" : "COLLSCAN",
+				"filter" : {
+					"category" : {
+						"$eq" : "enemy"
+					}
+				},
+				"direction" : "forward"
+			}
+		},
+		"rejectedPlans" : [ ]
+	},
+	"serverInfo" : {
+		"host" : "Johns-MacBook-Air.local",
+		"port" : 27017,
+		"version" : "3.4.1",
+		"gitVersion" : "5e103c4f5583e2566a45d740225dc250baacfbd7"
+	},
+	"ok" : 1
+}
+</pre>
+
+<p>
+Or, drop the collection with:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-cmd <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"drop()"</span>)
+</pre>
+</div>
+
+<pre class="example">
+true
+</pre>
+
+<p>
+All gone! Note, we do not try to handle the output of any of those, and they are returned as strings.
+</p>
+</div>
+</div>
+
+<div id="outline-container-org512e4fe" class="outline-2">
+<h2 id="org512e4fe"><span class="section-number-2">6</span> A MongoDB contacts database</h2>
+<div class="outline-text-2" id="text-6">
+<p>
+Now, let's re-populate it for real. I store my contacts in a variable called "contacts" as a list of a descriptive string and then cons cells. These are actually harvested from a set of org-files. It is way to slow to parse these files each time, so I keep the contacts cached in memory and only update them if a file changes.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(length contacts)
+</pre>
+</div>
+
+<pre class="example">
+6047
+</pre>
+
+<p>
+There are over 6000 contacts. Let's put them in a MongoDB.
+</p>
+
+<p>
+Here is a limitation of our approach. This will not work because the generated shell command ends up being too long for the shell.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-insert <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span>
+              (<span style="color: #0000FF;">loop</span> for contact in contacts
+                    collect
+                    (append `((desc . ,(car contact))) (cdr contact))))
+</pre>
+</div>
+
+<p>
+So, we do them one at time here:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((ct (current-time)))
+  (<span style="color: #0000FF;">loop</span> for contact in contacts
+        do
+        (<span style="color: #0000FF;">let</span> ((output (mongo-insert <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span>
+                                    (append `((desc . ,(car contact))) (cdr contact)))))
+          (<span style="color: #0000FF;">unless</span> (= 1 (cdr (assoc 'nInserted output)))
+            (<span style="color: #ff0000; font-weight: bold;">warn</span> <span style="color: #008000;">"error: %S for %S"</span> (cdr (assoc 'nInserted output)) contact))))
+  (message <span style="color: #008000;">"Elapsed time %.02f seconds"</span> (float-time (time-since ct))))
+</pre>
+</div>
+
+<pre class="example">
+Elapsed time 762.95 seconds
+</pre>
+
+<p>
+That took a little over 10 minutes to add. That seems long to me. This next step confirms that they were added.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-cmd <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"count()"</span>)
+</pre>
+</div>
+
+<pre class="example">
+6047
+</pre>
+
+<p>
+Next we will compare some timing of finding data in the database vs looping through the cached contacts. Here is a timing macro to measure how long it takes to run a bit of code.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">http://stackoverflow.com/questions/23622296/emacs-timing-execution-of-function-calls-in-emacs-lisp</span>
+(<span style="color: #0000FF;">defmacro</span> <span style="color: #006699;">measure-time</span> (<span style="color: #6434A3;">&amp;rest</span> body)
+  <span style="color: #036A07;">"Measure the time it takes to evaluate BODY."</span>
+  `(<span style="color: #0000FF;">let</span> ((time (current-time)))
+     ,@body
+     (message <span style="color: #008000;">"%.06f seconds elapsed"</span> (float-time (time-since time)))))
+</pre>
+</div>
+
+<pre class="example">
+measure-time
+</pre>
+
+<p>
+Here is the old way I would extract data. Many contacts I have are academics, and I have stored their academic ranks in each contact.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">loop</span> for contact in contacts
+      if (string= <span style="color: #008000;">"Professor"</span> (cdr (assoc <span style="color: #008000;">"RANK"</span> (cdr contact))))
+      collect contact into professors
+      if (string= <span style="color: #008000;">"Associate Professor"</span> (cdr (assoc <span style="color: #008000;">"RANK"</span> (cdr contact))))
+      collect contact into associate-professors
+      if (string= <span style="color: #008000;">"Assistant Professor"</span> (cdr (assoc <span style="color: #008000;">"RANK"</span> (cdr contact))))
+      collect contact into assistant-professors
+      finally return `((<span style="color: #008000;">"Assistant Professor"</span> ,(length assistant-professors))
+                       (<span style="color: #008000;">"Associate Professor"</span> ,(length associate-professors))
+                       (<span style="color: #008000;">"Professor"</span> ,(length professors))))
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">Assistant Professor</td>
+<td class="org-right">313</td>
+</tr>
+
+<tr>
+<td class="org-left">Associate Professor</td>
+<td class="org-right">283</td>
+</tr>
+
+<tr>
+<td class="org-left">Professor</td>
+<td class="org-right">879</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+How long did it take to do that?
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">measure-time</span>
+ (<span style="color: #0000FF;">loop</span> for contact in contacts
+       if (string= <span style="color: #008000;">"Professor"</span> (cdr (assoc <span style="color: #008000;">"RANK"</span> (cdr contact))))
+       collect contact into professors
+       if (string= <span style="color: #008000;">"Associate Professor"</span> (cdr (assoc <span style="color: #008000;">"RANK"</span> (cdr contact))))
+       collect contact into associate-professors
+       if (string= <span style="color: #008000;">"Assistant Professor"</span> (cdr (assoc <span style="color: #008000;">"RANK"</span> (cdr contact))))
+       collect contact into assistant-professors
+       finally return (list (length assistant-professors)
+                            (length associate-professors)
+                            (length professors))))
+</pre>
+</div>
+
+<pre class="example">
+0.008772 seconds elapsed
+</pre>
+
+<p>
+Not long at all! Comparatively, it is very slow to get this information out of the mongodb, although considerably less code is required. That might not be surprising, considering the json parsing that has to get done here.
+</p>
+
+<p>
+Here is the equivalent code to extract that data from the database.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">loop</span> for rank in '(<span style="color: #008000;">"Assistant Professor"</span> <span style="color: #008000;">"Associate Professor"</span> <span style="color: #008000;">"Professor"</span>)
+       collect (list rank (length (mongo-find <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span>
+                                              `((RANK . ,rank))))))
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">Assistant Professor</td>
+<td class="org-right">313</td>
+</tr>
+
+<tr>
+<td class="org-left">Associate Professor</td>
+<td class="org-right">283</td>
+</tr>
+
+<tr>
+<td class="org-left">Professor</td>
+<td class="org-right">879</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+It is comparatively slow to do this. This requires three json parses, and profiling indicates that alot of the work is done in parsing the json. 
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">measure-time</span>
+ (<span style="color: #0000FF;">loop</span> for rank in '(<span style="color: #008000;">"Assistant Professor"</span> <span style="color: #008000;">"Associate Professor"</span> <span style="color: #008000;">"Professor"</span>)
+       collect (list rank (length (mongo-find <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span>
+                                              `((RANK . ,rank)))))))
+</pre>
+</div>
+
+<pre class="example">
+1.914817 seconds elapsed
+</pre>
+
+<p>
+Here is smarter way to do it that avoids the json parsing.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">loop</span> for rank in '(<span style="color: #008000;">"Assistant Professor"</span> <span style="color: #008000;">"Associate Professor"</span> <span style="color: #008000;">"Professor"</span>)
+      collect (list rank (mongo-cmd <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"count(%s)"</span>
+                                    (json-encode `((RANK . ,rank))))))
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">Assistant Professor</td>
+<td class="org-right">313</td>
+</tr>
+
+<tr>
+<td class="org-left">Associate Professor</td>
+<td class="org-right">283</td>
+</tr>
+
+<tr>
+<td class="org-left">Professor</td>
+<td class="org-right">879</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+And you can see here it is about 10 times faster, but not nearly as fast as running the lisp code on the cache.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">measure-time</span>
+ (<span style="color: #0000FF;">loop</span> for rank in '(<span style="color: #008000;">"Assistant Professor"</span> <span style="color: #008000;">"Associate Professor"</span> <span style="color: #008000;">"Professor"</span>)
+       collect (list rank (mongo-cmd <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"count(%s)"</span>
+                                     (json-encode `((RANK . ,rank)))))))
+</pre>
+</div>
+
+<pre class="example">
+0.349413 seconds elapsed
+</pre>
+
+<p>
+This is how you might integrate this into a completion command:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(ivy-read <span style="color: #008000;">"choose: "</span>
+          (<span style="color: #0000FF;">loop</span> for c across (mongo-find <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">""</span>)
+                collect
+                (list (cdr (assoc 'desc c)) c)))
+</pre>
+</div>
+
+<p>
+This is basically unusable though, because it takes so long to generate the candidates (over six seconds).
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">measure-time</span>
+ (<span style="color: #0000FF;">loop</span> for c across (mongo-find <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">""</span>)
+       collect
+       (list (cdr (assoc 'desc c)) c)))
+</pre>
+</div>
+
+<pre class="example">
+6.228225 seconds elapsed
+</pre>
+
+<p>
+We can get back to usable by making the database do more work for us. Here, we simply make the database print a list of cons cells that we can read into lisp. We have to use a javascript function, with some escaping and quoting. The escaping was necessary because there is some bad data in the email field that messed up the cons cells, e.g. some things like "name" &lt;email&gt; with nested single and double quoting, etc., and the quoting was necessary to get cons cells of the form ("desc" . "email"), and finally we wrap them in parentheses and read back the list of cons cells. At about a quarter of a second, this is very usable to get a list of over 6000 candidates. It is still many times slower than working on the contacts list in memory though. I am not a super fan of the one-line javascript, and if it was much more complicated than this another strategy would probably be desirable.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">measure-time</span>
+ (read
+  (concat
+   <span style="color: #008000;">"("</span>
+   (shell-command-to-string <span style="color: #008000;">"mongo contacts --quiet --eval 'db.contacts.find().forEach(function (doc) {print(\"(\\\"\" + doc.desc + \"\\\" . \\\"\" + escape(doc.EMAIL) +\"\\\")\");})'"</span>)
+   <span style="color: #008000;">")"</span>)))
+</pre>
+</div>
+
+<pre class="example">
+0.284730 seconds elapsed
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org97edcbc" class="outline-2">
+<h2 id="org97edcbc"><span class="section-number-2">7</span> Text searching</h2>
+<div class="outline-text-2" id="text-7">
+<p>
+Finally, let us make a text index to make searching easy. This allows us a very flexible search where we do not have to specify what field or use regular expressions. We setup the index on all the fields, so we can find entries that match even on fields that do not exist in all documents.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-cmd <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"createIndex(%s)"</span> (json-encode '((<span style="color: #008000;">"$**"</span> . <span style="color: #008000;">"text"</span>))))
+</pre>
+</div>
+
+<pre class="example">
+{
+	"createdCollectionAutomatically" : false,
+	"numIndexesBefore" : 1,
+	"numIndexesAfter" : 2,
+	"ok" : 1
+}
+</pre>
+
+<p>
+Now, let's use that to find the GOOGLE-SCHOLAR url of contacts matching the following query.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mongo-find <span style="color: #008000;">"contacts"</span> <span style="color: #008000;">"contacts"</span> '(($text . (($search . <span style="color: #008000;">"\"Carnegie Mellon\""</span>)))
+                                    ($text . (($search . <span style="color: #008000;">"\"John Kitchin\""</span>))))
+            '((GOOGLE-SCHOLAR . 1) (_id . 0)))
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">[((GOOGLE-SCHOLAR . <span style="color: #008000;">"https://scholar.google.com/citations?hl=en&amp;user=jD_4h7sAAAAJ"</span>))
+ nil nil]
+</pre>
+</div>
+
+<p>
+So, you can see there were three contacts, and one of them lists my google-scholar url.
+</p>
+</div>
+</div>
+
+
+<div id="outline-container-org04fa0df" class="outline-2">
+<h2 id="org04fa0df"><span class="section-number-2">8</span> Summary</h2>
+<div class="outline-text-2" id="text-8">
+<p>
+This looks like the foundation of a mongo/emacs-lisp interface. This interface is not that fast though, and suffers from some limitations related to the use of the shell. Depending on the actual use, it is clear you can gain performance by passing some work on the database, which requires some javascript coding. Even that revealed some subtlety, e.g. making sure the database output text that was compatible with the lisp reader. That mostly means taking care of quotes, and other special characters, which I managed with a simple escape mechanism. It is probably worth investing a few more days in building an interface that uses a process and communicates with the mongo cli directly before moving forward with any significant application that uses Mongo in emacs. There are many good ideas for that:
+</p>
+
+<ol class="org-ol">
+<li>Index all your org files (e.g. <a href="http://kitchingroup.cheme.cmu.edu/blog/2017/01/03/Find-stuff-in-org-mode-anywhere/">http://kitchingroup.cheme.cmu.edu/blog/2017/01/03/Find-stuff-in-org-mode-anywhere/</a>)</li>
+<li>Index all your bibtex files (e.g. <a href="http://kitchingroup.cheme.cmu.edu/blog/2017/01/15/Querying-a-MongoDB-bibtex-database-with-Python-and-emacs-lisp/">http://kitchingroup.cheme.cmu.edu/blog/2017/01/15/Querying-a-MongoDB-bibtex-database-with-Python-and-emacs-lisp/</a>)</li>
+<li>Download RSS feeds into a searchable database</li>
+<li>Manage your contacts</li>
+<li>Index your email? mu and notmuch use xapian for this, but I have found they cannot search for things like hashtags. Maybe MongoDB would be better?</li>
+</ol>
+
+<p>
+The tradeoffs between this and sqlite are more clear now. With Mongo we do not have to create the normalized tables (although it is still a good idea to think about how to structure the documents, and if they should be a little normalized). It is <i>much</i> easier to map lisp data structures to Mongo queries than it is to do that with SQL queries. On the other hand, it is necessary to do some javascript programming with Mongo to get some desired output. It still seems worth exploring further.
+</p>
+</div>
+</div>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/01/16/A-simple-emacs-lisp-interface-to-CRUD-operations-in-mongodb.org">org-mode source</a></p>
+<p>Org-mode version = 9.0.3</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/01/16/A-simple-emacs-lisp-interface-to-CRUD-operations-in-mongodb#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Querying-a-MongoDB-bibtex-database-with-Python-and-emacs-lisp"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/01/15/Querying-a-MongoDB-bibtex-database-with-Python-and-emacs-lisp/" rel="bookmark" title="Permanent Link to Querying a MongoDB bibtex database with Python and emacs-lisp">Querying a MongoDB bibtex database with Python and emacs-lisp</a></h2>
       <p><small><span class="blog_post_date">Posted January 15, 2017 at 10:36 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/python/'>python</a>, <a href='/blog/category/mongodb/'>mongodb</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/database/'>database</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/mongodb/'>mongodb</a>, <a href='/blog/category/python/'>python</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/database/'>database</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/01/15/Querying-a-MongoDB-bibtex-database-with-Python-and-emacs-lisp#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -1795,119 +2630,6 @@ Org-mode already had this feature in mind for speed keys. All you have to do is 
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2016/12/22/Context-specific-org-mode-speed-keys#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Persistent-highlighting-in-Emacs"></div>
-      <h2 class="blog_post_title"><a href="/blog/2016/11/10/Persistent-highlighting-in-Emacs/" rel="bookmark" title="Permanent Link to Persistent highlighting in Emacs">Persistent highlighting in Emacs</a></h2>
-      <p><small><span class="blog_post_date">Posted November 10, 2016 at 09:16 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2016/11/10/Persistent-highlighting-in-Emacs#disqus_thread">View Comments</a>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-In this <a href="http://kitchingroup.cheme.cmu.edu/blog/2016/11/08/New-color-link-in-org-9-0-using-font-lock-to-color-the-text/">recent post</a> I showed a way to use org-mode links to color text. The main advantage of that approach is it is explicit markup in the file, so it is persistent and exportable to html. The downside of that approach is you cannot use it in code, since the markup will break the code.
-</p>
-
-<p>
-An alternative approach is to use overlays to color the text. This allows you to color the text, add annotations as tooltips and to provide a variety of highlighting colors. Overlays are not explicit markup in the file, so it is necessary to think of a way to save them so they can be restored later. We do this by using hook functions to store the overlays in a file-local variable on saving, and a file-local variable to restore the overlays when the file is opened. I bind the primary function `ov-highlighter/body' to a key, in my case hyper-h, which launches a hydra to access the commands.
-</p>
-
-<p>
-You can find the code here: <a href="https://github.com/jkitchin/scimax/blob/org-9/ov-highlighter.el">https://github.com/jkitchin/scimax/blob/org-9/ov-highlighter.el</a>. Probably around mid-December it will get merged into the master branch.
-</p>
-
-<p>
-Here is what this looks like in my buffer:
-</p>
-
-
-<p>
-<img src="/media/date-10-11-2016-time-09-05-44.png"> 
-</p>
-
-<p>
-You may want to see the video:
-</p>
-<iframe width="560" height="315" src="https://www.youtube.com/embed/syeRq_LBFns" frameborder="0" allowfullscreen></iframe>
-
-<ol class="org-ol">
-<li>blue green pink yellow custom</li>
-<li>Put a comment here.</li>
-<li>Markup a tpyo.</li>
-<li>Get a list of the highlights in the buffer.</li>
-</ol>
-
-<p>
-These highlights are pretty awesome. They work in code blocks, and comments. They also work in non-org files (only in Emacs of course).
-</p>
-
-<div class="org-src-container">
-<pre class="src src-python"><span style="color: #BA36A5;">a</span> = 5
-<span style="color: #BA36A5;">b</span> = 6
-
-<span style="color: #0000FF;">print</span>(a+b)<span style="color: #8D8D84;">#</span><span style="color: #8D8D84; font-style: italic;">print the sum of a and b</span>
-</pre>
-</div>
-
-<p>
-11
-</p>
-
-<p>
-Overall, this is pretty handy. You can highlight your own notes, provide feedback to others, etc. without changing the actual text in the document (well, except for the local variables at the end of the buffer, but these are usually in a "comment" that does not affect the document).
-</p>
-
-
-<p>
-Here are few limitations though:
-</p>
-<ol class="org-ol">
-<li>You can only edit/change the file in Emacs, and the hook functions have to enabled, or the overlay data will get corrupted. That means a merge conflict can ruin the overlays.</li>
-<li>Anyone you share the file with needs to have the ov-highlighter library loaded too. Otherwise they will not see the highlights, and any edits will make the overlay data incorrect.</li>
-<li>The highlights do not export from org-mode (although they do work with `htmlize-buffer'!).</li>
-</ol>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let*</span> ((html-buffer (htmlize-buffer))
-       (html (<span style="color: #0000FF;">with-current-buffer</span> html-buffer
-               (buffer-string))))
-  (<span style="color: #0000FF;">with-temp-file</span> <span style="color: #008000;">"test.html"</span>
-    (insert html))
-  (kill-buffer html-buffer))
-
-(browse-url <span style="color: #008000;">"test.html"</span>)
-</pre>
-</div>
-
-<pre class="example">
-#&lt;process open test.html&gt;
-</pre>
-<p>Copyright (C) 2016 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2016/11/10/Persistent-highlighting-in-Emacs.org">org-mode source</a></p>
-<p>Org-mode version = 9.0</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2016/11/10/Persistent-highlighting-in-Emacs#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="/blog/category/emacs/2">Next Page »</a>
 
           </div>
@@ -1947,11 +2669,11 @@ Here are few limitations though:
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2017/01/16/A-simple-emacs-lisp-interface-to-CRUD-operations-in-mongodb/">A simple emacs-lisp interface to CRUD operations in mongodb</a></li>
       <li><a href="/blog/2017/01/15/Querying-a-MongoDB-bibtex-database-with-Python-and-emacs-lisp/">Querying a MongoDB bibtex database with Python and emacs-lisp</a></li>
       <li><a href="/blog/2017/01/08/Elif-Erdinc-selected-for-2016-2017-Gulf-Oil-Foundation-Graduate-Fellowship-in-Chemical-Engineering/">Elif Erdinc selected for 2016-2017 Gulf Oil Foundation Graduate Fellowship in Chemical Engineering!</a></li>
       <li><a href="/blog/2017/01/05/New-publication-in-ACS-Applied-Materials-Interfaces/">New publication in ACS Applied Materials & Interfaces</a></li>
       <li><a href="/blog/2017/01/05/Scoring-elfeed-articles/">Scoring elfeed articles</a></li>
-      <li><a href="/blog/2017/01/03/Find-stuff-in-org-mode-anywhere/">Find stuff in org-mode anywhere</a></li>
     </ul>
   </section>
 
