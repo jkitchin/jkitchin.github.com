@@ -459,7 +459,8 @@ A sent message has a message-id and when people reply to it, that id should be i
 [:select [(as headlines:title a1) (as tags:tag a2)]
 :from foo :as f]
 
-* Querying a MongoDB bibtex database with Python and emacs-lisp
+* DONE Querying a MongoDB bibtex database with Python and emacs-lisp
+  CLOSED: [2017-01-15 Sun 10:36]
   :PROPERTIES:
   :categories: database,mongodb,emacs,python
   :date:     2017/01/15 10:36:22
@@ -755,5 +756,563 @@ It would make sense to split the authors, and keywords in another version of thi
 
 It is especially interesting to run the queries through emacs-lisp since we get the benefit of editing lisp code while writing the query, e.g. parenthesis navigation, less quoting, etc... and we get back lisp data that can be used to construct helm/ivy queries, or other emacs things. That makes this look competitive with emacsql at least for the syntax. I predict that there will be more posts on this in the future.
 
+
+
+
+* A simple emacs-lisp interface to CRUD operations in mongodb
+  :PROPERTIES:
+  :categories: database,mongodb,emacs,emacslisp
+  :date:     2017/01/16 09:44:16
+  :updated:  2017/01/16 09:44:16
+  :END:
+
+In this [[http://kitchingroup.cheme.cmu.edu/blog/2017/01/15/Querying-a-MongoDB-bibtex-database-with-Python-and-emacs-lisp/][post]] I showed that MongoDB is pretty easy to use for simple database applications. I showed a way to get data out of the database that is native to Emacs, but to use Mongo in emacs applications comfortably, it would be really helpful to be able to create, read, update and delete (CRUD) entries. There is a minimal interface to mongodb for emacs-lisp here: https://github.com/m2ym/mongo-el. From what I can see, it seems limited to simple, single queries, and it is written with advanced features of emacs-lisp I do not understand enough to extend it. In the last post, I showed an easy way to use mongoexport to get data from a query out of a mongo database. Here I explore a similar approach to round out the CRUD (create, read, update and delete) operations for using emacs-lisp to work with mongodb. This will enable Emacs to easily use MongoDB in applications.
+
+We use the mongo cli with the --eval option, which allows you to run commands on the database. The basic idea is to generate the json we need from a lisp data structure, and use that json in mongo commands as needed. This sounds simple, but below you will see there are plenty of corners to take care of.
+
+The goal here is to get something that is pretty functional. It will not be able to support all the capabilities of MongoDB and the options available in the cli.
+
+** Inserting entries
+
+Here we insert a document into the contacts collection of the contacts database. As in the Python example we considered earlier, this database is automatically created when we run this command. 
+
+#+BEGIN_SRC emacs-lisp
+(require 'json))
+(let* ((json (json-encode '((first-name . "John")
+			    (last-name . "Kitchin")
+			    (email . "jkitchin@cmu.edu"))))
+       (cmd (format "mongo 127.0.0.1/contacts --quiet --eval 'db.contacts.insert(%s)'"
+		    json)))
+  (shell-command-to-string cmd))
+#+END_SRC
+
+#+RESULTS:
+: json
+
+Here is a function we can use for inserting, and as you can see it works for multiple inserts too. There is a limit on how long the json string can be for this, so you cannot add too many entries at once with this. I do not know what the limit is, and suspect it is related to using a shell command. When this succeeds there is data returned about what happened, which we try to get in lisp form. Also, I noticed I had to do a little bit of escaping, especially for entries containing a single quote, which messes up the quoting on the shell command, and for non-ascii characters which the shell did not handle well. Maybe this could be avoided with a file-based approach, or if we used a pipe to a process.
+
+#+BEGIN_SRC emacs-lisp
+(defun mongo-insert (db collection document)
+  "Insert into DB.COLLECTION the DOCUMENT.
+DOCUMENT will be some lisp structure that is converted to json."
+  ;; we have to escape quote any single quotes. This came from
+  ;; http://stackoverflow.com/questions/1250079/how-to-escape-single-quotes-within-single-quoted-strings
+  (let* ((json (replace-regexp-in-string "'" "'\"'\"'" (json-encode document)))
+	 ;; it seems utf-8 characters may cause issues. Let's just remove them.
+	 (json (replace-regexp-in-string "[^[:ascii:]]" "" json))
+	 (cmd (format "mongo %s --quiet --eval 'db.%s.insert(%s)'"
+		      db collection
+		      json))
+	 (output (shell-command-to-string cmd)))
+    (cond
+     ((string-match "BulkWriteResult(" output)
+      (json-read-from-string (substring output 16 -2)))
+     ((string-match "WriteResult(" output)
+      (json-read-from-string (substring output 12 -2)))
+     (t
+      output))))
+#+END_SRC
+
+#+RESULTS:
+: mongo-insert
+
+Here it is in action.
+#+BEGIN_SRC emacs-lisp
+(mongo-insert "contacts" "contacts"
+	      '(((first-name . "John")
+		 (last-name . "Kitchin")
+		 (email . "jkitchin@cmu.edu"))
+		((first-name . "Someone")
+		 (last-name . "Else")
+		 ("email" . "someone@out.there"))))
+#+END_SRC
+
+#+RESULTS:
+: ((writeErrors . []) (writeConcernErrors . []) (nInserted . 2) (nUpserted . 0) (nMatched . 0) (nModified . 0) (nRemoved . 0) (upserted . []))
+
+Seems like an ok way to get data from Emacs into a Mongo DB, and we get lisp data returned telling us what happened.
+
+** Finding a document
+
+To update documents we need to find them. We would like to find a document by the _id, but we have a small dilemma. The json we need for that needs to look like: {"_id": ObjectId("587babfaef131d0d4603b3ad")}, where the ObjectId is not quoted. The json library does not seem to be able to do that. So, we have to modify our find code to do this. This is possible by manipulating the json string after it is generated with regular expression replacement. It feels hacky, and hopefully there are not many more examples of that. If there are, we will need another approach to generating the json data. Here is the modified find function, also with the projection option. Here is another place we have to tread somewhat lightly with the _id, in this case we have to requote it so that it can be read by emacs. It might make sense to just replace it with the quoted _id string, rather than the ObjectId call. Time will tell.
+
+Here we create two helper functions to unquote input, and requote output. We also need some code to make an array of all the results, and put commas between all the results so that we end up with valid json in the output.
+
+#+BEGIN_SRC emacs-lisp
+(defun mongo-unquote-query (query)
+  "Json encodes QUERY, and unquotes any ObjectId calls.
+
+We don't have syntax for the ObjectId call that mongo wants in
+ lisp, so a query has to look like this:
+'((_id .  \"ObjectId(\"587babfaef131d0d4603b3ad\")\"))
+
+Mongo can't have the quotes around the call, so this function
+removes them.
+"
+  (replace-regexp-in-string "\"\\(ObjectID(\\\\\"\\(.*?\\)\\\\\")\\)\""
+			    "ObjectId(\"\\2\")"
+			    (json-encode query)))
+
+(defun mongo-requote-output (output)
+  "Adds quotes around ObjectId in OUTPUT.
+When mongo outputs json, it has unquoted ObjectIds in it that
+emacs cannot interpret as json. "
+  (replace-regexp-in-string
+   "ObjectId(\"\\(.*?\\)\")"
+   "\"ObjectId(\\\\\"\\1\\\\\")\""
+   output))
+
+(defun mongo-find (db collection query &optional projection)
+  (let* ((query-json (mongo-unquote-query query))
+	 (projection-json
+	  (and projection (json-encode projection)))
+	 (output (mongo-requote-output
+		  ;; add [] to make an array of output in json,
+		  ;; and separate results by a comma
+		  (concat "["
+			  (replace-regexp-in-string
+			   "\n" ""
+			   (shell-command-to-string
+			    (format "mongo %s --quiet --eval 'db.%s.find(%s).forEach(function(myDoc) { printjsononeline(myDoc); print( \",\"); })'"
+				    db collection
+				    (if projection
+					(format "%s, %s" query-json projection-json)
+				      query-json))))
+			  "]")))) 
+    (json-read-from-string output)))
+#+END_SRC
+
+#+RESULTS:
+: mongo-find
+
+So, finally we can run something like this:
+
+#+BEGIN_SRC emacs-lisp
+(mongo-find "contacts" "contacts" '((email . "someone@out.there")))
+#+END_SRC
+
+#+RESULTS:
+: [((_id . "ObjectId(\"587c166cdfcd649d3acf99fd\")") (first-name . "Someone") (last-name . "Else") (email . "someone@out.there")) ((_id . "ObjectId(\"587c16ad410565dd4c16c748\")") (first-name . "Someone") (last-name . "Else") (email . "someone@out.there")) ((_id . "ObjectId(\"587c17550e586b4f8df21de0\")") (first-name . "Someone") (last-name . "Else") (email . "someone@out.there")) ((_id . "ObjectId(\"587c1764d75279a55ffec483\")") (first-name . "Someone") (last-name . "Else") (email . "someone@out.there")) ((_id . "ObjectId(\"587c17743281f1e9d5054396\")") (first-name . "Someone") (last-name . "Else") (email . "someone@out.there")) ((_id . "ObjectId(\"587c178ad92706d2bd5a6e3c\")") (first-name . "Someone") (last-name . "Else") (email . "someone@out.there")) ((_id . "ObjectId(\"587c1794756bb2bd0f0ac499\")") (first-name . "Someone") (last-name . "Else") (email . "someone@out.there"))]
+
+Here is an example usage with a projection that returns only the information you want, in this case, just the id.
+
+#+BEGIN_SRC emacs-lisp
+(mongo-find "contacts" "contacts" '((email . "someone@out.there"))
+	    '((_id . 1)))
+#+END_SRC
+
+#+RESULTS:
+: [((_id . "ObjectId(\"587c166cdfcd649d3acf99fd\")")) ((_id . "ObjectId(\"587c16ad410565dd4c16c748\")")) ((_id . "ObjectId(\"587c17550e586b4f8df21de0\")")) ((_id . "ObjectId(\"587c1764d75279a55ffec483\")")) ((_id . "ObjectId(\"587c17743281f1e9d5054396\")")) ((_id . "ObjectId(\"587c178ad92706d2bd5a6e3c\")")) ((_id . "ObjectId(\"587c1794756bb2bd0f0ac499\")"))]
+
+** Updating an entry
+
+Ok, back to the update. To make sure that we update exactly the document we want, we will use the document _id. First, we define an update command.
+
+#+BEGIN_SRC emacs-lisp
+(defun mongo-update (db collection query $set)
+  "In DB.COLLECTION update records matching QUERY with the contents of $SET."
+  (let* ((query-json (mongo-encode-query query))
+	 ($set-json (mongo-encode-query $set))
+	 (cmd (format "mongo %s --quiet --eval 'db.%s.update(%s, %s)'"
+		      db collection
+		      query-json $set-json))
+	 (output (shell-command-to-string cmd)))
+    (if (string-match "WriteResult(" output)
+	(json-read-from-string
+	 (substring output 12 -2))
+      output)))
+#+END_SRC
+
+#+RESULTS:
+: mongo-update
+
+First a reminder of what is in this record.
+#+BEGIN_SRC emacs-lisp
+(mongo-find "contacts" "contacts" '((_id . "ObjectId(\"587c16ad410565dd4c16c748\")")))	    
+#+END_SRC
+
+#+RESULTS:
+: [((_id . "ObjectId(\"587c16ad410565dd4c16c748\")") (first-name . "Someone") (last-name . "Else") (email . "someone@out.there"))]
+
+Here we set the email field to a new address. Without $set, the whole document gets replaced.
+
+#+BEGIN_SRC emacs-lisp
+(mongo-update "contacts" "contacts"
+	      '((_id . "ObjectId(\"587c16ad410565dd4c16c748\")"))
+	      '(($set . ((email . "someone@out.there.com")))))
+#+END_SRC
+
+#+RESULTS:
+: ((nMatched . 1) (nUpserted . 0) (nModified . 1))
+
+Finally, let's see the document again to verify it is modified.
+
+#+BEGIN_SRC emacs-lisp
+(mongo-find "contacts" "contacts" '((_id . "ObjectId(\"587c16ad410565dd4c16c748\")")))	    
+#+END_SRC
+
+#+RESULTS:
+: [((_id . "ObjectId(\"587c16ad410565dd4c16c748\")") (first-name . "Someone") (last-name . "Else") (email . "someone@out.there.com"))]
+
+Looks good, you can see it got changed. There is a potential gotcha though. This next command looks like it should do the same thing, but it does not. The whole document gets replaced!
+
+#+BEGIN_SRC emacs-lisp
+(mongo-update "contacts" "contacts"
+	      '((_id . "ObjectId(\"587c16ad410565dd4c16c748\")"))
+	      '((email . "someone@out.there.com")))
+#+END_SRC
+
+#+RESULTS:
+: ((nMatched . 1) (nUpserted . 0) (nModified . 1))
+
+#+BEGIN_SRC emacs-lisp
+(mongo-find "contacts" "contacts" '((_id . "ObjectId(\"587c16ad410565dd4c16c748\")")))	    
+#+END_SRC
+
+#+RESULTS:
+: [((_id . "ObjectId(\"587c16ad410565dd4c16c748\")") (email . "someone@out.there.com"))]
+
+Do not forget the $set operator if you just want to update some fields!
+
+** Deleting a document
+
+Next, let's get a delete function. I will only implement the deleteMany function here since you can give it a document id to delete only one, and usually I would want to delete all documents that meet a criteria anyway.
+
+#+BEGIN_SRC emacs-lisp
+(defun mongo-deleteMany (db collection filter)
+  "Delete records in DB.COLLECTION matched by FILTER.
+TODO: add write concern."
+  (let* ((filter-json (mongo-encode-query filter)) 
+	 (cmd (format "mongo %s --quiet --eval 'db.%s.deleteMany(%s)'"
+		      db collection
+		      filter-json))
+	 (output (shell-command-to-string cmd)))
+    (json-read-from-string output)))
+#+END_SRC
+
+#+RESULTS:
+: mongo-deleteMany
+
+Since we borked that last document, let's just delete it.
+
+#+BEGIN_SRC emacs-lisp
+(mongo-deleteMany "contacts" "contacts" '((_id . "ObjectId(\"587be3fa6009a569a277b680\")")))
+#+END_SRC
+
+#+RESULTS:
+: ((acknowledged . t) (deletedCount . 0))
+
+** Generic commands
+
+We may want some flexibility to run collection commands.  The most generic command will simply be to write the shell-command completely. We can keep a little syntax by encapsulating most of the boilerplate though. Here is a function for that.
+
+#+BEGIN_SRC emacs-lisp
+(defun mongo-cmd (db collection cmd &rest args)
+  "In DB.COLLECTION run CMD. 
+ARGS if present will be used to format CMD."
+  (shell-command-to-string
+   (format "mongo %s --quiet --eval 'db.%s.%s'"
+	   db collection
+	   (apply #'format cmd args))))
+#+END_SRC
+
+#+RESULTS:
+: mongo-cmd
+
+We can get the number of documents with this:
+
+#+BEGIN_SRC emacs-lisp
+(mongo-cmd "contacts" "contacts" "count()")
+#+END_SRC
+
+#+RESULTS:
+: 4341
+
+Or run a more sophisticated command with arguments like this.
+
+#+BEGIN_SRC emacs-lisp
+(mongo-cmd "contacts" "contacts" "explain().remove(%s)" (json-encode '(("category" . "enemy"))))
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+{
+	"queryPlanner" : {
+		"plannerVersion" : 1,
+		"namespace" : "contacts.contacts",
+		"indexFilterSet" : false,
+		"parsedQuery" : {
+			"category" : {
+				"$eq" : "enemy"
+			}
+		},
+		"winningPlan" : {
+			"stage" : "DELETE",
+			"inputStage" : {
+				"stage" : "COLLSCAN",
+				"filter" : {
+					"category" : {
+						"$eq" : "enemy"
+					}
+				},
+				"direction" : "forward"
+			}
+		},
+		"rejectedPlans" : [ ]
+	},
+	"serverInfo" : {
+		"host" : "Johns-MacBook-Air.local",
+		"port" : 27017,
+		"version" : "3.4.1",
+		"gitVersion" : "5e103c4f5583e2566a45d740225dc250baacfbd7"
+	},
+	"ok" : 1
+}
+#+end_example
+
+Or, drop the collection with:
+
+#+BEGIN_SRC emacs-lisp
+(mongo-cmd "contacts" "contacts" "drop()")
+#+END_SRC
+
+#+RESULTS:
+: true
+
+All gone! Note, we do not try to handle the output of any of those, and they are returned as strings.
+
+** A MongoDB contacts database
+
+Now, let's re-populate it for real. I store my contacts in a variable called "contacts" as a list of a descriptive string and then cons cells. These are actually harvested from a set of org-files. It is way to slow to parse these files each time, so I keep the contacts cached in memory and only update them if a file changes.
+
+#+BEGIN_SRC emacs-lisp
+(length contacts)
+#+END_SRC
+
+#+RESULTS:
+: 6047
+
+There are over 6000 contacts. Let's put them in a MongoDB.
+
+Here is a limitation of our approach. This will not work because the generated shell command ends up being too long for the shell.
+
+#+BEGIN_SRC emacs-lisp
+(mongo-insert "contacts" "contacts"
+	      (loop for contact in contacts
+		    collect
+		    (append `((desc . ,(car contact))) (cdr contact))))
+#+END_SRC
+
+#+RESULTS:
+
+So, we do them one at time here:
+
+#+BEGIN_SRC emacs-lisp
+(let ((ct (current-time)))
+  (loop for contact in contacts
+	do
+	(let ((output (mongo-insert "contacts" "contacts"
+				    (append `((desc . ,(car contact))) (cdr contact)))))
+	  (unless (= 1 (cdr (assoc 'nInserted output)))
+	    (warn "error: %S for %S" (cdr (assoc 'nInserted output)) contact))))
+  (message "Elapsed time %.02f seconds" (float-time (time-since ct))))
+#+END_SRC
+
+#+RESULTS:
+: Elapsed time 762.95 seconds
+
+That took a little over 10 minutes to add. That seems long to me. This next step confirms that they were added.
+
+#+BEGIN_SRC emacs-lisp
+(mongo-cmd "contacts" "contacts" "count()")
+#+END_SRC
+
+#+RESULTS:
+: 6047
+
+Next we will compare some timing of finding data in the database vs looping through the cached contacts. Here is a timing macro to measure how long it takes to run a bit of code.
+
+#+BEGIN_SRC emacs-lisp
+;; http://stackoverflow.com/questions/23622296/emacs-timing-execution-of-function-calls-in-emacs-lisp
+(defmacro measure-time (&rest body)
+  "Measure the time it takes to evaluate BODY."
+  `(let ((time (current-time)))
+     ,@body
+     (message "%.06f seconds elapsed" (float-time (time-since time)))))
+#+END_SRC
+
+#+RESULTS:
+: measure-time
+
+Here is the old way I would extract data. Many contacts I have are academics, and I have stored their academic ranks in each contact.
+
+#+BEGIN_SRC emacs-lisp
+(loop for contact in contacts
+      if (string= "Professor" (cdr (assoc "RANK" (cdr contact))))
+      collect contact into professors
+      if (string= "Associate Professor" (cdr (assoc "RANK" (cdr contact))))
+      collect contact into associate-professors
+      if (string= "Assistant Professor" (cdr (assoc "RANK" (cdr contact))))
+      collect contact into assistant-professors
+      finally return `(("Assistant Professor" ,(length assistant-professors))
+		       ("Associate Professor" ,(length associate-professors))
+		       ("Professor" ,(length professors))))
+#+END_SRC
+
+#+RESULTS:
+| Assistant Professor | 313 |
+| Associate Professor | 283 |
+| Professor           | 879 |
+
+How long did it take to do that?
+
+#+BEGIN_SRC emacs-lisp
+(measure-time
+ (loop for contact in contacts
+       if (string= "Professor" (cdr (assoc "RANK" (cdr contact))))
+       collect contact into professors
+       if (string= "Associate Professor" (cdr (assoc "RANK" (cdr contact))))
+       collect contact into associate-professors
+       if (string= "Assistant Professor" (cdr (assoc "RANK" (cdr contact))))
+       collect contact into assistant-professors
+       finally return (list (length assistant-professors)
+			    (length associate-professors)
+			    (length professors))))
+#+END_SRC
+
+#+RESULTS:
+: 0.008772 seconds elapsed
+
+Not long at all! Comparatively, it is very slow to get this information out of the mongodb, although considerably less code is required. That might not be surprising, considering the json parsing that has to get done here.
+
+Here is the equivalent code to extract that data from the database.
+
+#+BEGIN_SRC emacs-lisp
+(loop for rank in '("Assistant Professor" "Associate Professor" "Professor")
+       collect (list rank (length (mongo-find "contacts" "contacts"
+					      `((RANK . ,rank))))))
+#+END_SRC
+
+#+RESULTS:
+| Assistant Professor | 313 |
+| Associate Professor | 283 |
+| Professor           | 879 |
+
+It is comparatively slow to do this. This requires three json parses, and profiling indicates that alot of the work is done in parsing the json. 
+
+#+BEGIN_SRC emacs-lisp
+(measure-time
+ (loop for rank in '("Assistant Professor" "Associate Professor" "Professor")
+       collect (list rank (length (mongo-find "contacts" "contacts"
+					      `((RANK . ,rank)))))))
+#+END_SRC
+
+#+RESULTS:
+: 1.914817 seconds elapsed
+
+Here is smarter way to do it that avoids the json parsing.
+
+#+BEGIN_SRC emacs-lisp
+(loop for rank in '("Assistant Professor" "Associate Professor" "Professor")
+      collect (list rank (mongo-cmd "contacts" "contacts" "count(%s)"
+				    (json-encode `((RANK . ,rank))))))
+#+END_SRC
+
+#+RESULTS:
+| Assistant Professor | 313 |
+| Associate Professor | 283 |
+| Professor           | 879 |
+
+And you can see here it is about 10 times faster, but not nearly as fast as running the lisp code on the cache.
+
+#+BEGIN_SRC emacs-lisp
+(measure-time
+ (loop for rank in '("Assistant Professor" "Associate Professor" "Professor")
+       collect (list rank (mongo-cmd "contacts" "contacts" "count(%s)"
+				     (json-encode `((RANK . ,rank)))))))
+#+END_SRC
+
+#+RESULTS:
+: 0.349413 seconds elapsed
+
+This is how you might integrate this into a completion command:
+
+#+BEGIN_SRC emacs-lisp
+(ivy-read "choose: "
+	  (loop for c across (mongo-find "contacts" "contacts" "")
+		collect
+		(list (cdr (assoc 'desc c)) c)))  
+#+END_SRC
+
+This is basically unusable though, because it takes so long to generate the candidates (over six seconds).
+
+#+BEGIN_SRC emacs-lisp
+(measure-time
+ (loop for c across (mongo-find "contacts" "contacts" "")
+       collect
+       (list (cdr (assoc 'desc c)) c)))
+#+END_SRC
+
+#+RESULTS:
+: 6.228225 seconds elapsed
+
+We can get back to usable by making the database do more work for us. Here, we simply make the database print a list of cons cells that we can read into lisp. We have to use a javascript function, with some escaping and quoting. The escaping was necessary because there is some bad data in the email field that messed up the cons cells, e.g. some things like "name" <email> with nested single and double quoting, etc., and the quoting was necessary to get cons cells of the form ("desc" . "email"), and finally we wrap them in parentheses and read back the list of cons cells. At about a quarter of a second, this is very usable to get a list of over 6000 candidates. It is still many times slower than working on the contacts list in memory though. I am not a super fan of the one-line javascript, and if it was much more complicated than this another strategy would probably be desirable.
+
+#+BEGIN_SRC emacs-lisp
+(measure-time
+ (read
+  (concat
+   "("
+   (shell-command-to-string "mongo contacts --quiet --eval 'db.contacts.find().forEach(function (doc) {print(\"(\\\"\" + doc.desc + \"\\\" . \\\"\" + escape(doc.EMAIL) +\"\\\")\");})'")
+   ")")))
+#+END_SRC
+
+#+RESULTS:
+: 0.284730 seconds elapsed
+
+** Text searching
+
+Finally, let us make a text index to make searching easy. This allows us a very flexible search where we do not have to specify what field or use regular expressions. We setup the index on all the fields, so we can find entries that match even on fields that do not exist in all documents.
+
+#+BEGIN_SRC emacs-lisp
+(mongo-cmd "contacts" "contacts" "createIndex(%s)" (json-encode '(("$**" . "text"))))
+#+END_SRC
+
+#+RESULTS:
+: {
+: 	"createdCollectionAutomatically" : false,
+: 	"numIndexesBefore" : 1,
+: 	"numIndexesAfter" : 2,
+: 	"ok" : 1
+: }
+
+Now, let's use that to find the GOOGLE-SCHOLAR url of contacts matching the following query.
+
+#+BEGIN_SRC emacs-lisp :results code
+(mongo-find "contacts" "contacts" '(($text . (($search . "\"Carnegie Mellon\"")))
+				    ($text . (($search . "\"John Kitchin\""))))
+	    '((GOOGLE-SCHOLAR . 1) (_id . 0)))
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC emacs-lisp
+[((GOOGLE-SCHOLAR . "https://scholar.google.com/citations?hl=en&user=jD_4h7sAAAAJ"))
+ nil nil]
+#+END_SRC
+
+So, you can see there were three contacts, and one of them lists my google-scholar url.
+
+
+** Summary
+
+This looks like the foundation of a mongo/emacs-lisp interface. This interface is not that fast though, and suffers from some limitations related to the use of the shell. Depending on the actual use, it is clear you can gain performance by passing some work on the database, which requires some javascript coding. Even that revealed some subtlety, e.g. making sure the database output text that was compatible with the lisp reader. That mostly means taking care of quotes, and other special characters, which I managed with a simple escape mechanism. It is probably worth investing a few more days in building an interface that uses a process and communicates with the mongo cli directly before moving forward with any significant application that uses Mongo in emacs. There are many good ideas for that:
+
+1. Index all your org files (e.g. http://kitchingroup.cheme.cmu.edu/blog/2017/01/03/Find-stuff-in-org-mode-anywhere/)
+2. Index all your bibtex files (e.g. http://kitchingroup.cheme.cmu.edu/blog/2017/01/15/Querying-a-MongoDB-bibtex-database-with-Python-and-emacs-lisp/)
+3. Download RSS feeds into a searchable database
+4. Manage your contacts
+5. Index your email? mu and notmuch use xapian for this, but I have found they cannot search for things like hashtags. Maybe MongoDB would be better?
+
+The tradeoffs between this and sqlite are more clear now. With Mongo we do not have to create the normalized tables (although it is still a good idea to think about how to structure the documents, and if they should be a little normalized). It is /much/ easier to map lisp data structures to Mongo queries than it is to do that with SQL queries. On the other hand, it is necessary to do some javascript programming with Mongo to get some desired output. It still seems worth exploring further.
 
 
