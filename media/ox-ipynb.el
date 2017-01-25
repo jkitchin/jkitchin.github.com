@@ -4,6 +4,7 @@
 ;; 
 
 ;;; Code:
+(require 'ox-md)
 
 (defun export-ipynb-code-cell (src-result)
   "Return a lisp code cell for the org-element SRC-BLOCK."
@@ -150,7 +151,7 @@ else is exported as a markdown cell.
 		'((nbformat . 4)
 		  (nbformat_minor . 0))))
     (with-temp-file ipynb
-      (insert (json-encode data))))))
+      (insert (json-encode data)))))
 
 (provide 'ox-ipynb)
 
