@@ -1,0 +1,129 @@
+---
+title: ob-ipython and inline figures in org-mode
+date: 2017/01/29 16:05:22
+updated: 2017/01/29 16:05:22
+categories: python,ipython
+tags: 
+---
+
+
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org36f9eed">1. code for getting output and inline figures</a></li>
+</ul>
+</div>
+</div>
+<p>
+<a href="https://github.com/gregsexton/ob-ipython">ob-ipython</a> provides some nice support for inline images, but it is a little limited. You can only have one inline plot, and you cannot capture the printed output. I often want both, and use more than one figure in a code block. So, here I look at a way to get that. 
+</p>
+
+<p>
+When ob-ipython executes a cell, it gets two things internally: the output and a list of result elements. The output is all the stuff that is printed, and the result contains result cells. So, we just have to check these for images, and append them to the output in an appropriate way.  I will do that using file links so that org automatically renders them. We will save the images as temp files, since they are regenerated each time you run the cell. 
+</p>
+
+<p>
+I want output and inline figures. This ipython block should output some text and two figures. Note we do not define file names anywhere! See <a href="#org36f9eed">this section</a> for details on how to get ob-ipython to do this.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython">%matplotlib inline
+<span style="color: #0000FF;">import</span> matplotlib.pyplot <span style="color: #0000FF;">as</span> plt
+<span style="color: #0000FF;">import</span> numpy <span style="color: #0000FF;">as</span> np
+
+<span style="color: #BA36A5;">t</span> = np.linspace(0, 20 * np.pi, 350)
+<span style="color: #BA36A5;">x</span> = np.exp(-0.1 * t) * np.sin(t)
+<span style="color: #BA36A5;">y</span> = np.exp(-0.1 * t) * np.cos(t)
+
+plt.plot(x, y)
+plt.axis(<span style="color: #008000;">'equal'</span>)
+
+plt.figure()
+plt.plot(y, x)
+plt.axis(<span style="color: #008000;">'equal'</span>)
+
+<span style="color: #0000FF;">print</span>(<span style="color: #008000;">'Length of t = {}'</span>.<span style="color: #006FE0;">format</span>(<span style="color: #006FE0;">len</span>(t)))
+<span style="color: #0000FF;">print</span>(<span style="color: #008000;">'x .dot. y = {}'</span>.<span style="color: #006FE0;">format</span>(x @ y))
+</pre>
+</div>
+
+<p>
+Length of t = 350
+x .dot. y = 1.3598389888491538
+<img src="/media/ob-ipython-86557tr2.png"> 
+<img src="/media/ob-ipython-86557f1F.png"> 
+</p>
+
+<p>
+Nice, success! Now my code blocks <a href="http://kitchingroup.cheme.cmu.edu/blog/2017/01/21/Exporting-org-mode-to-Jupyter-notebooks/">export more cleanly to jupyter notebooks</a>. Speaking of which, if you liked the post on that, there is a new library for it in scimax: <a href="https://github.com/jkitchin/scimax/blob/master/ox-ipynb.el">https://github.com/jkitchin/scimax/blob/master/ox-ipynb.el</a>. Yes, one day I will put it in its own repo, and probably put it up on MELPA. If it turns out to be useful over the next semester. 
+</p>
+
+
+
+<div id="outline-container-org36f9eed" class="outline-2">
+<h2 id="org36f9eed"><a id="ID-44FC1FFF-A6EA-466E-B61C-85B22E58781D"></a><span class="section-number-2">1</span> code for getting output and inline figures</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+I wrote one new function that writes the base64 data out to a temporary file and returns a link to it. Then, I modified the org-babel-execute:ipython function to append these links onto the output. It seems like you need to use a header like this in your ob-ipython block, notably the results need to be in a drawer like this if you want org-mode to render the images. They do not show up in the results that have colons starting them.
+</p>
+
+<pre class="example">
+#+BEGIN_SRC ipython :session :results output drawer
+</pre>
+
+<p>
+Here is the code.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">ob-ipython-inline-image</span> (b64-string)
+  <span style="color: #036A07;">"Write the b64-string to a temporary file.</span>
+<span style="color: #036A07;">Returns an org-link to the file."</span>
+  (<span style="color: #0000FF;">let*</span> ((tfile (make-temp-file <span style="color: #008000;">"ob-ipython-"</span> nil <span style="color: #008000;">".png"</span>))
+         (link (format <span style="color: #008000;">"[[file:%s]]"</span> tfile)))
+    (ob-ipython--write-base64-string tfile b64-string)
+    link))
+
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-babel-execute:ipython</span> (body params)
+  <span style="color: #036A07;">"Execute a block of IPython code with Babel.</span>
+<span style="color: #036A07;">This function is called by `</span><span style="color: #D0372D;">org-babel-execute-src-block</span><span style="color: #036A07;">'."</span>
+  (<span style="color: #0000FF;">let*</span> ((file (cdr (assoc <span style="color: #006FE0;">:file</span> params)))
+         (session (cdr (assoc <span style="color: #006FE0;">:session</span> params)))
+         (result-type (cdr (assoc <span style="color: #006FE0;">:result-type</span> params))))
+    (org-babel-ipython-initiate-session session params)
+    (<span style="color: #0000FF;">-when-let</span> (ret (ob-ipython--eval
+                     (ob-ipython--execute-request
+                      (org-babel-expand-body:generic (encode-coding-string body 'utf-8)
+                                                     params (org-babel-variable-assignments:python params))
+                      (ob-ipython--normalize-session session))))
+      (<span style="color: #0000FF;">let</span> ((result (cdr (assoc <span style="color: #006FE0;">:result</span> ret)))
+            (output (cdr (assoc <span style="color: #006FE0;">:output</span> ret))))
+        (<span style="color: #0000FF;">if</span> (eq result-type 'output)
+            (concat
+             output 
+             (format <span style="color: #008000;">"%s"</span>
+                     (mapconcat 'identity
+                                (<span style="color: #0000FF;">loop</span> for res in result
+                                      if (eq 'image/png (car res))
+                                      collect (ob-ipython-inline-image (cdr res)))
+                                <span style="color: #008000;">"\n"</span>)))
+          (ob-ipython--create-stdout-buffer output)
+          (<span style="color: #0000FF;">cond</span> ((<span style="color: #0000FF;">and</span> file (string= (f-ext file) <span style="color: #008000;">"png"</span>))
+                 (<span style="color: #0000FF;">-&gt;&gt;</span> result (assoc 'image/png) cdr (ob-ipython--write-base64-string file)))
+                ((<span style="color: #0000FF;">and</span> file (string= (f-ext file) <span style="color: #008000;">"svg"</span>))
+                 (<span style="color: #0000FF;">-&gt;&gt;</span> result (assoc 'image/svg+xml) cdr (ob-ipython--write-string-to-file file)))
+                (file (<span style="color: #ff0000; font-weight: bold;">error</span> <span style="color: #008000;">"%s is currently an unsupported file extension."</span> (f-ext file)))
+                (t (<span style="color: #0000FF;">-&gt;&gt;</span> result (assoc 'text/plain) cdr))))))))
+</pre>
+</div>
+
+<pre class="example">
+org-babel-execute:ipython
+</pre>
+</div>
+</div>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/01/29/ob-ipython-and-inline-figures-in-org-mode.org">org-mode source</a></p>
+<p>Org-mode version = 9.0.3</p>
