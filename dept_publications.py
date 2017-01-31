@@ -11,8 +11,9 @@ for YEAR in [#'2005',
              #'2011',
              #'2012',
              #'2013',
-             '2014',
-             '2015']:
+#             '2014',
+#             '2015',
+        '2016']:
 
     # this query includes Neil Donahue
     ss = ScopusSearch('(affil(carnegie mellon university and chemical engineering)'
