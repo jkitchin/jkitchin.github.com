@@ -18,7 +18,7 @@ for YEAR in [#'2005',
     # this query includes Neil Donahue
     ss = ScopusSearch('(affil(carnegie mellon university and chemical engineering)'
                       ' or au-id(7004596535)) AND pubyear is {}'
-                      ' AND  ( LIMIT-TO ( DOCTYPE ,  "ar" ) '.format(YEAR),
+                      ' AND  ( LIMIT-TO ( DOCTYPE ,  "ar" )) '.format(YEAR),
                       refresh=True)
 
     with open('dept-publications-{}.html.mako'.format(YEAR), 'w') as f:
