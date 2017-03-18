@@ -11,7 +11,7 @@ resp = requests.get("http://api.elsevier.com/content/search/scopus?query=AU-ID(7
 
 results = resp.json()
 
-data = [[str(r['eid']), str(r['prism:aggregationType'])] for r in
+data = [r['eid'] for r in
         results['search-results']["entry"] if str(r['prism:aggregationType']) == 'Journal']
 
 
@@ -46,7 +46,7 @@ The authors are linked to their Scopus page, the title linked to the Scopus abst
 <ol reversed="reversed">
 ''')
 
-    for eid,type in data:
+    for eid in data:
         try:
             f.write('<li>{}</li>'.format(get_html_citation(eid)))
         except:
