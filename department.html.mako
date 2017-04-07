@@ -2,50 +2,27 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents">
 <ul>
-<li><a href="#orgd1b9f3e">1. The ChemE Faculty on Google Maps</a></li>
-<li><a href="#orgaf06a14">2. Current Department Publications</a></li>
-<li><a href="#org2c0a091">3. Department publications by year</a></li>
-<li><a href="#orgf9544e6">4. Department on ResearchGate</a></li>
-<li><a href="#org38c489b">5. CMU alumni in academia</a></li>
-<li><a href="#org756b009">6. Where do our PhD students come from?</a></li>
+<li><a href="#orgcb6fa9c">1. The ChemE Faculty on Google Maps</a></li>
+<li><a href="#org19b202f">2. Current Department Publications</a></li>
+<li><a href="#org2ee1463">3. Department publications by year</a></li>
+<li><a href="#orge7901a6">4. Department on ResearchGate</a></li>
+<li><a href="#orged0f5f3">5. CMU alumni in academia</a></li>
+<li><a href="#org7c9108c">6. Where do our PhD students come from?</a></li>
 </ul>
 </div>
 </div>
-<div class="HTML">
-<p>
-&lt;%inherit file="_templates/site.mako" /&gt;
-</p>
+<%inherit file="_templates/site.mako" />
 
-</div>
-
-<div id="outline-container-orgd1b9f3e" class="outline-2">
-<h2 id="orgd1b9f3e"><span class="section-number-2">1</span> The ChemE Faculty on Google Maps</h2>
+<div id="outline-container-orgcb6fa9c" class="outline-2">
+<h2 id="orgcb6fa9c"><span class="section-number-2">1</span> The ChemE Faculty on Google Maps</h2>
 <div class="outline-text-2" id="text-1">
-<div class="HTML">
-<p>
-&lt;iframe src="<a href="https://www.google.com/maps/d/embed?mid=zDNHhN3lg2P0.kZ9gh2LUcjbg">https://www.google.com/maps/d/embed?mid=zDNHhN3lg2P0.kZ9gh2LUcjbg</a>" width="640" height="480"&gt;&lt;/iframe&gt;
-</p>
-
+<iframe src="https://www.google.com/maps/d/embed?mid=zDNHhN3lg2P0.kZ9gh2LUcjbg" width="640" height="480"></iframe>
 </div>
 </div>
-</div>
-<div id="outline-container-orgaf06a14" class="outline-2">
-<h2 id="orgaf06a14"><span class="section-number-2">2</span> Current Department Publications</h2>
+<div id="outline-container-org19b202f" class="outline-2">
+<h2 id="org19b202f"><span class="section-number-2">2</span> Current Department Publications</h2>
 <div class="outline-text-2" id="text-2">
-<div class="HTML">
-<p>
-&lt;script src="<a href="http://syndic8.scopus.com/getMessage?registrationId=HAGDHBGEOCGMJAGIJAHIHEJDHJGGLIMGIIIKOHGJKD">http://syndic8.scopus.com/getMessage?registrationId=HAGDHBGEOCGMJAGIJAHIHEJDHJGGLIMGIIIKOHGJKD</a>"&gt;&lt;/script&gt;
-</p>
-
-</div>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp" id="org90f3de6">(<span style="color: #0000FF;">cl-loop</span> for (fn ln sid) in data
-  collect
-  (list (format <span style="color: #008000;">"[[http://www.scopus.com/authid/detail.url?origin=AuthorProfile&amp;authorId=%s][%s %s]]"</span>
-          sid fn ln)))
-</pre>
-</div>
+<script src="http://syndic8.scopus.com/getMessage?registrationId=HAGDHBGEOCGMJAGIJAHIHEJDHJGGLIMGIIIKOHGJKD"></script>
 
 <table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
 <caption class="t-above"><span class="table-number">Table 1:</span> Faculty publication pages by Scopus ID</caption>
@@ -145,8 +122,8 @@
 
 
 
-<div id="outline-container-org2c0a091" class="outline-2">
-<h2 id="org2c0a091"><span class="section-number-2">3</span> Department publications by year</h2>
+<div id="outline-container-org2ee1463" class="outline-2">
+<h2 id="org2ee1463"><span class="section-number-2">3</span> Department publications by year</h2>
 <div class="outline-text-2" id="text-3">
 <p>
 These publications were  derived from Scopus.
@@ -169,8 +146,8 @@ These publications were  derived from Scopus.
 </div>
 </div>
 
-<div id="outline-container-orgf9544e6" class="outline-2">
-<h2 id="orgf9544e6"><span class="section-number-2">4</span> Department on ResearchGate</h2>
+<div id="outline-container-orge7901a6" class="outline-2">
+<h2 id="orge7901a6"><span class="section-number-2">4</span> Department on ResearchGate</h2>
 <div class="outline-text-2" id="text-4">
 <p>
 <a href="https://www.researchgate.net/institution/Carnegie_Mellon_University/department/Department_of_Chemical_Engineering">https://www.researchgate.net/institution/Carnegie_Mellon_University/department/Department_of_Chemical_Engineering</a>
@@ -178,26 +155,16 @@ These publications were  derived from Scopus.
 </div>
 </div>
 
-<div id="outline-container-org38c489b" class="outline-2">
-<h2 id="org38c489b"><span class="section-number-2">5</span> CMU alumni in academia</h2>
+<div id="outline-container-orged0f5f3" class="outline-2">
+<h2 id="orged0f5f3"><span class="section-number-2">5</span> CMU alumni in academia</h2>
 <div class="outline-text-2" id="text-5">
-<div class="HTML">
-<p>
-&lt;iframe src="<a href="https://www.google.com/maps/d/embed?mid=zDNHhN3lg2P0.kKYunRBQeH6A">https://www.google.com/maps/d/embed?mid=zDNHhN3lg2P0.kKYunRBQeH6A</a>" width="640" height="480"&gt;&lt;/iframe&gt;
-</p>
-
-</div>
+<iframe src="https://www.google.com/maps/d/embed?mid=zDNHhN3lg2P0.kKYunRBQeH6A" width="640" height="480"></iframe>
 </div>
 </div>
 
-<div id="outline-container-org756b009" class="outline-2">
-<h2 id="org756b009"><span class="section-number-2">6</span> Where do our PhD students come from?</h2>
+<div id="outline-container-org7c9108c" class="outline-2">
+<h2 id="org7c9108c"><span class="section-number-2">6</span> Where do our PhD students come from?</h2>
 <div class="outline-text-2" id="text-6">
-<div class="HTML">
-<p>
-&lt;iframe width="100%" height="400" frameborder="0" scrolling="no" allowtransparency="true" src="<a href="https://mapalist.com/Public/pm.aspx?mapid=543490">https://mapalist.com/Public/pm.aspx?mapid=543490</a>" &gt;&lt;/iframe&gt;
-</p>
-
-</div>
+<iframe width="100%" height="400" frameborder="0" scrolling="no" allowtransparency="true" src="https://mapalist.com/Public/pm.aspx?mapid=543490" ></iframe>
 </div>
 </div>
