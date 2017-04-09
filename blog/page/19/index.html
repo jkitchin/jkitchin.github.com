@@ -84,6 +84,188 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Line-numbers-in-org-mode-code-blocks"></div>
+      <h2 class="blog_post_title"><a href="/blog/2015/10/13/Line-numbers-in-org-mode-code-blocks/" rel="bookmark" title="Permanent Link to Line numbers in org-mode code blocks">Line numbers in org-mode code blocks</a></h2>
+      <p><small><span class="blog_post_date">Posted October 13, 2015 at 08:58 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2015/10/13/Line-numbers-in-org-mode-code-blocks#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+
+<p>
+Some of my students have wanted to show line numbers in code blocks. This is especially useful for when you run a Python block, and you get an error message with a line number in it. Right now, to figure out which line that is, you have to into the code block, type C-c ' to get into edit mode, and turn line numbers on. We look into how to achieve that here.
+</p>
+
+<p>
+You may want to see the video here: <a href="https://www.youtube.com/watch?v=kinWijGzXms">https://www.youtube.com/watch?v=kinWijGzXms</a> .
+</p>
+
+<p>
+First, we need to get the region that is the code block. We can find some info in the org-element, but, the :begin and :end include lines we don't want, like the header lines, and the results. But, we can get the beginning, and maybe from there search forward to the block. Run this code block to see where the point goes.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp" id="boring-example"><span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">a boring comment</span>
+
+(<span style="color: #0000FF;">progn</span>
+  (+ 40 2))
+
+(goto-char (org-element-property <span style="color: #006FE0;">:begin</span> (org-element-context)))
+(re-search-forward (regexp-quote (org-element-property <span style="color: #006FE0;">:value</span> (org-element-context))))
+(goto-char (match-beginning 0))
+<span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">number of lines in block. The last carriage return doesn't count.</span>
+(1- (length (s-split <span style="color: #008000;">"\n"</span> (org-element-property <span style="color: #006FE0;">:value</span> (org-element-context)))))
+</pre>
+</div>
+
+<pre class="example">
+9
+</pre>
+
+<p>
+So, we can get the number of lines, and move the point to the first line. For numbers, we will use overlays. Here is a simple way to put a number at the beginning of a line.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> (ov)
+  (beginning-of-line)
+  (<span style="color: #0000FF;">setq</span> ov (make-overlay (point) (point)))
+  (overlay-put ov 'before-string <span style="color: #008000;">"1"</span>))
+</pre>
+</div>
+
+<pre class="example">
+1
+</pre>
+
+<p>
+The next thing to do is make a function that puts a number at the beginning of a line. We might as well store these overlays in a variable, so they are easy to remove later. This is just for exploration of how to do it. Later we combine all these pieces together.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">number-line-overlays</span> '()
+  <span style="color: #036A07;">"List of overlays for line numbers."</span>)
+
+(make-variable-buffer-local 'number-line-overlays)
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">number-line</span> (N)
+ <span style="color: #036A07;">"Put an overlay at the beginning of a line."</span>
+  (beginning-of-line)
+  (<span style="color: #0000FF;">let</span> (ov)
+    (<span style="color: #0000FF;">setq</span> ov (make-overlay (point) (point)))
+    (overlay-put ov 'before-string (format <span style="color: #008000;">"%3s"</span> (number-to-string N)))
+    (add-to-list 'number-line-overlays ov)))
+
+(number-line 4)
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="left">#&lt;overlay from 1782 to 1782 in blog.org&gt;</td>
+</tr>
+</tbody>
+</table>
+
+
+<p>
+That looks promising. Let's make a function to clear those overlays. It is so easy it may not even be worth writing.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">number-line-clear</span> ()
+  (mapc 'delete-overlay number-line-overlays)
+  (<span style="color: #0000FF;">setq</span> number-line-overlays '()))
+
+(number-line-clear)
+</pre>
+</div>
+
+<p>
+Finally, we are ready to hack up the code block numbering code. The numbers will not automatically update, so we will write a function that numbers the block, but only temporarily. Any key press will get rid of the numbers so we can get back to work.  I am going to go ahead and make this a stand-alone function and block.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">number-line-overlays</span> '()
+  <span style="color: #036A07;">"List of overlays for line numbers."</span>)
+
+(make-variable-buffer-local 'number-line-overlays)
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">number-line-src-block</span> ()
+  (<span style="color: #0000FF;">interactive</span>)
+  (<span style="color: #0000FF;">save-excursion</span>
+    (<span style="color: #0000FF;">let*</span> ((src-block (org-element-context))
+           (nlines (- (length
+                       (s-split
+                        <span style="color: #008000;">"\n"</span>
+                        (org-element-property <span style="color: #006FE0;">:value</span> src-block)))
+                      1)))
+      (goto-char (org-element-property <span style="color: #006FE0;">:begin</span> src-block))
+      (re-search-forward (regexp-quote (org-element-property <span style="color: #006FE0;">:value</span> src-block)))
+      (goto-char (match-beginning 0))
+
+      (<span style="color: #0000FF;">loop</span> for i from 1 to nlines
+            do
+            (beginning-of-line)
+            (<span style="color: #0000FF;">let</span> (ov)
+              (<span style="color: #0000FF;">setq</span> ov (make-overlay (point) (point)))
+              (overlay-put ov 'before-string (format <span style="color: #008000;">"%3s"</span> (number-to-string i)))
+              (add-to-list 'number-line-overlays ov))
+            (next-line))))
+
+  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">now read a char to clear them</span>
+  (read-key <span style="color: #008000;">"Press a key to clear numbers."</span>)
+  (mapc 'delete-overlay number-line-overlays)
+  (<span style="color: #0000FF;">setq</span> number-line-overlays '()))
+
+(number-line-src-block)
+</pre>
+</div>
+
+<p>
+I am not sure how to get the numbers to automatically update smoothly like they do in linum-mode. That code uses a lot of hooks to make updates work, and embeds them in a minor mode to get rid of them. It also puts them in the fringe I think, but it is not clear how that is done.
+</p>
+
+<p>
+We could modify what happens after the numbers are put on, e.g. pressing numbers might jump to a line, or some other kind of functionality. I don't have a critical need for this right now, so I didn't explore it more. Let me know if you have any good ideas for it!
+</p>
+<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/10/13/Line-numbers-in-org-mode-code-blocks.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/10/13/Line-numbers-in-org-mode-code-blocks#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="The-Kitchingroup-welcomes-Kenate-Nemera"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/10/11/The-Kitchingroup-welcomes-Kenate-Nemera/" rel="bookmark" title="Permanent Link to The Kitchingroup welcomes Kenate Nemera">The Kitchingroup welcomes Kenate Nemera</a></h2>
       <p><small><span class="blog_post_date">Posted October 11, 2015 at 02:17 PM</span> | categories:
@@ -781,82 +963,6 @@ Maybe it would make sense to use unittests, or nose or some other testing framew
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/10/03/A-framework-for-automated-feedback-with-Python-and-org-mode#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Publication-in-PCCP-on-oxide-polymorph-reactivty"></div>
-      <h2 class="blog_post_title"><a href="/blog/2015/09/30/Publication-in-PCCP-on-oxide-polymorph-reactivty/" rel="bookmark" title="Permanent Link to Publication in PCCP on oxide polymorph reactivty">Publication in PCCP on oxide polymorph reactivty</a></h2>
-      <p><small><span class="blog_post_date">Posted September 30, 2015 at 11:58 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/publication/'>publication</a>, <a href='/blog/category/news/'>news</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2015/09/30/Publication-in-PCCP-on-oxide-polymorph-reactivty#disqus_thread">View Comments</a>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-
-<p>
-We have a new publication in Phys. Chem. Chem. Phys. on the reactivity of different oxide polymorphs. In this work we examine the reactivity of some common BO<sub>2</sub> oxide polymorphs for Ru, Rh, Pt and Ir oxides. These are all normally rutile formers, but it may be possible to synthesize them in other polymorphs as epitaxial films, or under pressure. We examined how the reactivity of the polymorphs would differ from that of the most stable phase, and the impact of those changes on the oxygen evolution reaction. We predict that the reactivity may be improved in some cases. Congratulations Zhongnan!
-</p>
-
-<p>
-<a href="http://pubs.rsc.org/en/Content/ArticleLanding/2015/CP/C5CP04840K#!divAbstract">http://pubs.rsc.org/en/Content/ArticleLanding/2015/CP/C5CP04840K#!divAbstract</a>
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-bibtex"><span style="color: #006699;">@article</span>{<span style="color: #D0372D;">xu-2015-tunin-oxide</span>,
-  <span style="color: #BA36A5;">author</span> =       "Xu, Zhongnan and Kitchin, John R",
-  <span style="color: #BA36A5;">title</span> =        {Tuning Oxide Activity Through Modification of the Crystal and
-                  Electronic Structure: From Strain To Potential Polymorphs},
-  <span style="color: #BA36A5;">journal</span> =      "Phys. Chem. Chem. Phys.",
-  <span style="color: #BA36A5;">year</span> =         2015,
-  <span style="color: #BA36A5;">doi</span> =          "<span style="color: #006DAF; text-decoration: underline;">10.1039/C5CP04840K</span>",
-  <span style="color: #BA36A5;">url</span> =          "<span style="color: #006DAF; text-decoration: underline;">http://dx.doi.org/10.1039/C5CP04840K</span>",
-  <span style="color: #BA36A5;">publisher</span> =    "The Royal Society of Chemistry",
-  <span style="color: #BA36A5;">abstract</span> =     "Discovering new materials with tailored chemical properties is
-                  vital for advancing key technologies in catalysis and energy
-                  conversion. One strategy is the modification of a material{'}s
-                  crystal structure{,} and new methods allow for the synthesis
-                  and stabilization of potential materials in a range of crystal
-                  polymorph structures. We assess the potential reactivity of
-                  four metastable oxide polymorphs of MO2 (M=Ru{,} Rh{,} Pt{,}
-                  Ir) transition metal oxides. In spite of the similar local
-                  geometry and coordination between atoms in the metastable
-                  polymorphic and stable rutile structure{,} we find that
-                  polymorph reactivities cannot be explained by strain alone and
-                  offer tunable reactivity and increased stability.
-                  Atom-projected density of states reveals that the unique
-                  reactivity of polymorphs are caused by a redistribution of
-                  energy levels of the t2g-states. This structure-activity
-                  relationship is induced by slight distortions to the M-O bonds
-                  in polymorphic structures and is unattainable by strain. We
-                  predict columbite IrO2 to be more active than rutile IrO2 for
-                  oxygen evolution",
-}
-</pre>
-</div>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/09/30/publication-in-PCCP-on-oxide-polymorph-reactivty.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
-
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/09/30/Publication-in-PCCP-on-oxide-polymorph-reactivty#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="../18">« Previous Page</a>
   --  
  <a href="../20">Next Page »</a>
@@ -898,11 +1004,11 @@ We have a new publication in Phys. Chem. Chem. Phys. on the reactivity of differ
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2017/04/09/A-better-return-in-org-mode/">A better return in org-mode</a></li>
       <li><a href="/blog/2017/04/07/Object-oriented-font-locking-in-emacs-lisp/">Object-oriented font-locking in emacs-lisp</a></li>
       <li><a href="/blog/2017/03/22/A-better-defun-for-emacs-lisp/">A better defun for emacs-lisp</a></li>
       <li><a href="/blog/2017/03/19/A-Hy-macro-for-defining-functions-with-docstrings-on-each-argument/">A Hy macro for defining functions with docstrings on each argument</a></li>
       <li><a href="/blog/2017/03/18/Modeling-a-Cu-dimer-by-EMT-nonlinear-regression-and-neural-networks/">Modeling a Cu dimer by EMT, nonlinear regression and neural networks</a></li>
-      <li><a href="/blog/2017/02/05/New-publication-in-Calphad/">New publication in Calphad</a></li>
     </ul>
   </section>
 
