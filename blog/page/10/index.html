@@ -84,6 +84,207 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Code-completion-in-HyDE"></div>
+      <h2 class="blog_post_title"><a href="/blog/2016/04/18/Code-completion-in-HyDE/" rel="bookmark" title="Permanent Link to Code completion in HyDE">Code completion in HyDE</a></h2>
+      <p><small><span class="blog_post_date">Posted April 18, 2016 at 11:24 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/hylang/'>hylang</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2016/04/18/Code-completion-in-HyDE#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+
+<p>
+Code completion is often useful in an editor. Today, we add some code completion to Emacs for <a href="http://hylang.org">hy</a> . It isn't that hard; we get a list of known keywords from the hy language, a list of functions and macros, and a list of variables from the current buffer. If you are following this line of development, the code can be found here: <a href="https://github.com/jkitchin/jmax/blob/master/mile-hy.el">https://github.com/jkitchin/jmax/blob/master/mile-hy.el</a> 
+</p>
+
+<p>
+If not, there might be some interesting tips here on getting completion in Emacs ;)
+</p>
+
+<p>
+We will use auto-complete (<a href="http://auto-complete.org/doc/manual.html#extend">http://auto-complete.org/doc/manual.html#extend</a> ) for now. First, we can add hy-mode to the list of ac-modes:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp"><span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">* auto-complete</span>
+(add-to-list 'ac-modes 'hy-mode)
+</pre>
+</div>
+
+<p>
+Next, we need to define some sources and functions for completion. Over at <a href="https://github.com/jkitchin/hyve/blob/master/hylp.hy#L65">https://github.com/jkitchin/hyve/blob/master/hylp.hy#L65</a> I defined a function that returns a list of all hy core functions and macros that Emacs can directly read.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-hy">(<span style="color: #0000FF;">defn</span> <span style="color: #006699;">hy-all-keywords-emacs-completion</span> []
+  <span style="color: #008000;">"Return a string for Emacs completion suitable for read in Emacs.</span>
+<span style="color: #008000;">We unmangle the names and replace _ with -."</span>
+  (str
+   (<span style="color: #006FE0;">+</span> <span style="color: #008000;">"("</span>
+      (.join <span style="color: #008000;">" "</span> (<span style="color: #006FE0;">list-comp</span> (.format <span style="color: #008000;">"\"{}\""</span> (.replace x <span style="color: #008000;">"_"</span> <span style="color: #008000;">"-"</span>))
+                            [x (hy-all-keywords)]))
+      <span style="color: #008000;">")"</span>)))
+</pre>
+</div>
+
+
+<p>
+Here, we define a source that gets that information from the hy repl using the lispy&#x2013;eval-hy function. This has the downside of calling the repl, but it seems fast, and I haven't noticed any lags so far. The upside is it only gets called once and has everything hy knows about, i.e. i don't have to update this for new core functions/macros.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">ac-source-hy-keywords</span>
+  `((candidates . ,(read (lispy--eval-hy <span style="color: #008000;">"(hy-all-keywords-emacs-completion)"</span>))))
+  <span style="color: #036A07;">"Keywords known from hy. The command is defined in hyve.hylp."</span>)
+</pre>
+</div>
+
+<p>
+It would also be nice to have the defns/macros in the current file available for completion. This hackery searches the current buffer for these with a pretty simple regex and accumulates the results.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">hy-defns-macros</span> ()
+  <span style="color: #036A07;">"Get a list of defns in the current file."</span>
+  (<span style="color: #0000FF;">let</span> ((defns '()))
+    (<span style="color: #0000FF;">save-excursion</span>
+      (goto-char (point-min))
+      (<span style="color: #0000FF;">while</span> (re-search-forward <span style="color: #008000;">"</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">(?:</span><span style="color: #008000;">defn</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">|</span><span style="color: #008000;">defmacro</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">)</span><span style="color: #008000;">[[:space:]]+</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">(</span><span style="color: #008000;">.*?</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">)</span><span style="color: #008000;"> "</span>nil t)
+        (<span style="color: #0000FF;">push</span> (match-string 1) defns)))
+    defns))
+</pre>
+</div>
+
+<p>
+Finally, we would also like the variable names from setv and let. Hy is lispy, so we use a hybrid regex search, followed by read to get every other name in the case of setv, and the vector expression in the let case.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">hy-variables</span> ()
+  <span style="color: #036A07;">"Collect the variable names in the current buffer.</span>
+<span style="color: #036A07;">These are every other name after setv."</span>
+  (<span style="color: #0000FF;">let</span> ((vars '())
+        expr
+        set-vars
+        let-vars)
+    (<span style="color: #0000FF;">save-excursion</span>
+      (goto-char (point-min))
+      (<span style="color: #0000FF;">while</span> (re-search-forward <span style="color: #008000;">"(setv"</span> nil t)
+        (<span style="color: #0000FF;">save-excursion</span>
+          (goto-char (match-beginning 0))
+          (<span style="color: #0000FF;">setq</span> expr (read (current-buffer)))
+          (<span style="color: #0000FF;">setq</span> set-vars (<span style="color: #0000FF;">loop</span> for x in (cdr expr) by #'cddr
+                               collect x)))))
+    (<span style="color: #0000FF;">save-excursion</span>
+      (goto-char (point-min))
+      (<span style="color: #0000FF;">while</span> (re-search-forward <span style="color: #008000;">"(let"</span> nil t)
+        (<span style="color: #0000FF;">save-excursion</span>
+          (goto-char (match-beginning 0))
+          (<span style="color: #0000FF;">setq</span> expr (read (current-buffer)))
+          <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">this is read as a vector, so we convert to a list.</span>
+          (<span style="color: #0000FF;">setq</span> let-vars
+                (<span style="color: #0000FF;">loop</span> for x in (append (nth 1 expr) nil)
+                      by #'cddr collect x)))))
+    (append set-vars let-vars)))
+</pre>
+</div>
+
+<p>
+Next, we define two new sources for completion that use those two functions:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">ac-source-hy-defns</span>
+  '((candidates . hy-defns-macros))
+  <span style="color: #036A07;">"Functions/macros defined in the file."</span>)
+
+(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">ac-source-hy-variables</span>
+  '((candidates . hy-variables))
+  <span style="color: #036A07;">"Hy variables defined in the file."</span>)
+</pre>
+</div>
+
+<p>
+And finally add this to the hy-setup hook function:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">setq</span> ac-sources '(ac-source-hy-keywords
+                     ac-source-hy-defns
+                     ac-source-hy-variables))
+
+  (ac-set-trigger-key <span style="color: #008000;">"TAB"</span>)
+  (auto-complete-mode 1)
+</pre>
+</div>
+
+<p>
+And we should be good to go with completion. Let's try it out.
+</p>
+
+<p>
+Checkout the video here: <a href="https://www.youtube.com/watch?v=L6j5IWkpoz0">https://www.youtube.com/watch?v=L6j5IWkpoz0</a> 
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-hy">(<span style="color: #0000FF;">let</span> [some-long-name 5
+      boring-and-tedious <span style="color: #008000;">"tree"</span>]
+  (<span style="color: #006FE0;">print</span> boring-and-tedious))
+
+(<span style="color: #006FE0;">setv</span> another-var <span style="color: #D0372D;">nil</span> inline-name (<span style="color: #006FE0;">+</span> 4 5)
+      hylarious-var 5)
+
+(<span style="color: #006FE0;">+</span> hylarious-var 8 )
+
+(<span style="color: #0000FF;">defn</span> <span style="color: #006699;">Some-long-function</span> []
+  (<span style="color: #006FE0;">print</span> 6))
+
+(Some-long-function)
+</pre>
+</div>
+
+<pre class="example">
+tree
+6
+</pre>
+
+<p>
+Sweet.</p>
+<p>Copyright (C) 2016 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2016/04/18/Code-completion-in-HyDE.org">org-mode source</a></p>
+<p>Org-mode version = 8.2.10</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2016/04/18/Code-completion-in-HyDE#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="What-are-you-hy"></div>
       <h2 class="blog_post_title"><a href="/blog/2016/04/15/What-are-you-hy/" rel="bookmark" title="Permanent Link to What are you hy?">What are you hy?</a></h2>
       <p><small><span class="blog_post_date">Posted April 15, 2016 at 08:46 AM</span> | categories:
@@ -1949,166 +2150,6 @@ There are some ways we could simplify this perhaps. In this <a href="http://kitc
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2016/04/07/Writing-hy-code-from-hy-code#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Another-step-towards-HyDE"></div>
-      <h2 class="blog_post_title"><a href="/blog/2016/04/06/Another-step-towards-HyDE/" rel="bookmark" title="Permanent Link to Another step towards HyDE">Another step towards HyDE</a></h2>
-      <p><small><span class="blog_post_date">Posted April 06, 2016 at 04:41 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/hylang/'>hylang</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2016/04/06/Another-step-towards-HyDE#disqus_thread">View Comments</a>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-
-
-<p>
-<img src="/media/2016-04-06-Another-step-towards-HyDE/Hyde.png"> 
-(In case that isn't clear, it is a Python with a Lisp, and somewhat how I feel trying to see what this is all about ;)
-</p>
-
-<p>
-I have been chipping away at HyDE, the Hy Development Environment. So far I have reasonable support for eldoc in hy code, and some integration into lispy.
-</p>
-
-<p>
-The executive summary here is:
-</p>
-<ol class="org-ol">
-<li>We have a first approach at getting eldoc to work.
-</li>
-<li>We have better integration with lispy, including the inline describe and arg functionality, and jump to symbol.
-</li>
-</ol>
-
-<p>
-You may want to just watch the video to see what it is about: <a href="https://www.youtube.com/watch?v=m62oiB6Feeo">https://www.youtube.com/watch?v=m62oiB6Feeo</a> 
-</p>
-
-<p>
-The full details of these implementations are described at the end of this post. For now, we just load the functionality here:
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">mile-hy</span>)
-</pre>
-</div>
-
-<pre class="example">
-mile-hy
-</pre>
-
-<p>
-Some examples of usage:
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-hy">(list (<span style="color: #006FE0;">butlast</span> [12 34 56]))
-</pre>
-</div>
-
-<pre class="example">
-[12L, 34L]
-</pre>
-
-
-
-
-<p>
-For details of the implementations see the following discussion.
-</p>
-
-<p>
-<a href="https://github.com/jkitchin/jmax/blob/master/mile-hy.el">https://github.com/jkitchin/jmax/blob/master/mile-hy.el</a> includes:
-</p>
-<ul class="org-ul">
-<li>Setting up hy-mode with a repl (partly from lispy)
-</li>
-<li>an eldoc function
-</li>
-<li>some hooks for hy-mode to setup some functionality.
-</li>
-<li>A hy src block expansion template for org-mode
-</li>
-<li>the contents of what I previously called ob-hy.el
-</li>
-</ul>
-
-<p>
-These things don't work without the code at <a href="https://github.com/jkitchin/hy/blob/hydoc/hy/core/hylp.hy">https://github.com/jkitchin/hy/blob/hydoc/hy/core/hylp.hy</a> which provides some hy functions to get eldoc strings, and file locations. These are still work in progress, but functional at this point.
-</p>
-
-<p>
-I also adapted some parts of lispy to support hy better in my fork:
-</p>
-<ul class="org-ul">
-<li><a href="https://github.com/jkitchin/lispy/blob/hydoc/le-hy.el">https://github.com/jkitchin/lispy/blob/hydoc/le-hy.el</a> 
-</li>
-<li><a href="https://github.com/jkitchin/lispy/blob/hydoc/lispy-inline.el">https://github.com/jkitchin/lispy/blob/hydoc/lispy-inline.el</a> 
-</li>
-</ul>
-
-<p>
-These are not fully ready to be integrated to lispy yet, as the functionality here depends on the hy code (in hylp.hy) that isn't part of hy yet. I hacked lispy anyway to see how easy it would be to extend it for hy. So far, it looks promising.
-</p>
-
-<p>
-All of these put together lead to:
-</p>
-<ol class="org-ol">
-<li><a href="https://github.com/jkitchin/jmax/blob/master/mile-hy.el#L20">eldoc support in hy</a> code
-</li>
-<li>lispy support for <a href="https://github.com/jkitchin/lispy/blob/hydoc/lispy-inline.el#L247">C-1 descriptions</a> and <a href="https://github.com/jkitchin/lispy/blob/hydoc/lispy-inline.el#L147">C-2 args</a> inline.
-</li>
-<li>lispy support for <a href="https://github.com/jkitchin/lispy/blob/hydoc/le-hy.el#L121">M-. to jump</a> to symbol definitions (although it is a tad hacky and uses <a href="https://github.com/jkitchin/hy/blob/hydoc/hy/core/hylp.hy#L342">hy to generate an org-link</a> to open the code files at the line of the definition ;).
-</li>
-</ol>
-
-<p>
-It is far from fully functional and there are some issues to resolve. The code will also probably change as I resolve some of those issues, but it works well enough to put some ideas out there. Feedback is welcome!
-</p>
-
-<p>
-The eldoc functions work pretty well for the hy stuff. They don't work too well on the python side. The function at <a href="https://github.com/jkitchin/hy/blob/hydoc/hy/core/hylp.hy#L120">https://github.com/jkitchin/hy/blob/hydoc/hy/core/hylp.hy#L120</a> is where some improvement is needed. Right now it really only catches a few types of symbols.
-</p>
-
-<p>
-For learning hylang a documentation sprint would be great.
-</p>
-<ol class="org-ol">
-<li>Add examples to the functions.
-</li>
-<li>Add documentation to the compiler @build definitions. Find a way to make this discoverable the way they are for functions and macros.
-</li>
-<li>Figure out how to get Python help in. It might be confusing because the syntax and examples will be different.
-</li>
-</ol>
-<p>Copyright (C) 2016 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2016/04/06/Another-step-towards-HyDE.org">org-mode source</a></p>
-<p>Org-mode version = 8.2.10</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2016/04/06/Another-step-towards-HyDE#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="../9">« Previous Page</a>
   --  
  <a href="../11">Next Page »</a>
@@ -2150,11 +2191,11 @@ For learning hylang a documentation sprint would be great.
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2017/04/11/Autoformatting-ordinal-numbers-and-fractions-in-orgmode/">Autoformatting ordinal numbers and fractions in orgmode</a></li>
       <li><a href="/blog/2017/04/09/A-better-return-in-org-mode/">A better return in org-mode</a></li>
       <li><a href="/blog/2017/04/07/Object-oriented-font-locking-in-emacs-lisp/">Object-oriented font-locking in emacs-lisp</a></li>
       <li><a href="/blog/2017/03/22/A-better-defun-for-emacs-lisp/">A better defun for emacs-lisp</a></li>
       <li><a href="/blog/2017/03/19/A-Hy-macro-for-defining-functions-with-docstrings-on-each-argument/">A Hy macro for defining functions with docstrings on each argument</a></li>
-      <li><a href="/blog/2017/03/18/Modeling-a-Cu-dimer-by-EMT-nonlinear-regression-and-neural-networks/">Modeling a Cu dimer by EMT, nonlinear regression and neural networks</a></li>
     </ul>
   </section>
 
