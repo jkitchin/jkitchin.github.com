@@ -1,0 +1,171 @@
+---
+title: A callable plist data structure for Emacs
+date: 2017/04/16 16:44:53
+updated: 2017/04/16 16:44:53
+categories: emacs,macro,elisp
+tags: 
+---
+
+
+<p>
+Emacs lisp has a few data structures that store key-value pairs. Here are some canonical examples of these data structures and the way to get data out of them.
+</p>
+
+<ul class="org-ul">
+<li>a-lists</li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((data '((key1 . 4)
+              (key2 . <span style="color: #008000;">"tree"</span>))))
+  (cdr (assoc 'key2 data)))
+</pre>
+</div>
+
+<ul class="org-ul">
+<li>p-lists</li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((data '(<span style="color: #006FE0;">:key1</span> 4 <span style="color: #006FE0;">:key2</span> <span style="color: #008000;">"tree"</span>)))
+  (plist-get data <span style="color: #006FE0;">:key2</span>))
+</pre>
+</div>
+
+<ul class="org-ul">
+<li>A hash table</li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((data #s(hash-table data (key1 4 key2 <span style="color: #008000;">"tree"</span>))))
+  (gethash 'key2 data))
+</pre>
+</div>
+
+<p>
+Each of these uses some function to get data out of them. I have been learning about closures today, and realized a way you can make a "callable" data structure using them. In a closure, the data is stored as part of a function. We will use a <a href="http://letoverlambda.com">"let over lambda"</a> with a defalias in a lexical environment to achieve this. I will wrap a p-list with this approach, but it could work with any of the examples above. We will make the function have a few behaviors that allow us to see the whole data structure with no args, to get a value with one arg that is a key, and to set a value if there are more than two args add them as key-val pairs to the data structure. This block binds the function to the symbol "d" which is then a callable function.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((data '(<span style="color: #006FE0;">:key1</span> 4 <span style="color: #006FE0;">:key2</span> <span style="color: #008000;">"tree"</span>)))
+  (<span style="color: #0000FF;">defalias</span> '<span style="color: #006699;">d</span>
+    (<span style="color: #0000FF;">lambda</span> (<span style="color: #6434A3;">&amp;rest</span> key-vals)
+      (<span style="color: #0000FF;">cond</span>
+       <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">no args, return data</span>
+       ((= 0 (length key-vals))
+        data)
+       <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">just a key, get val</span>
+       ((= 1 (length key-vals))
+        (plist-get data (car key-vals)))
+       (t
+        (<span style="color: #0000FF;">loop</span> for key in (-slice key-vals 0 nil 2)
+              for val in (-slice key-vals 1 nil 2)
+              do
+              (plist-put data key val))
+        data)))))
+</pre>
+</div>
+
+<p>
+Now we can use it like to get some data out:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(d <span style="color: #006FE0;">:key2</span>)
+</pre>
+</div>
+
+<p>
+And add new values like:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(d <span style="color: #006FE0;">:key3</span> <span style="color: #008000;">"oak"</span>)
+</pre>
+</div>
+
+<p>
+You can update a value with this too:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(d <span style="color: #006FE0;">:key3</span> <span style="color: #008000;">"pine"</span>)
+</pre>
+</div>
+
+<p>
+or add multiple values like this:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(d <span style="color: #006FE0;">:key4</span> 0 <span style="color: #006FE0;">:key5</span> 9)
+</pre>
+</div>
+
+<p>
+And see the whole plist with no args:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(d)
+</pre>
+</div>
+
+<p>
+Pretty nice! It seems like there ought to be a macro to facilitate creating those. Here is one.
+This macro basically expands to the same code as above, but for fun I add a default value option.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defmacro</span> <span style="color: #006699;">default-dict</span> (var <span style="color: #6434A3;">&amp;optional</span> default <span style="color: #6434A3;">&amp;rest</span> key-vals)
+  <span style="color: #036A07;">"Bind a callable plist to VAR that contains KEY-VALS."</span>
+  (<span style="color: #0000FF;">let</span> ()
+    `<span style="color: #D0372D;">(let ((data </span>',key-vals))
+       (<span style="color: #0000FF;">defalias</span> ',var
+         (<span style="color: #0000FF;">lambda</span> (<span style="color: #6434A3;">&amp;rest</span> key-vals)
+           (message <span style="color: #008000;">"%s"</span> key-vals)
+           (<span style="color: #0000FF;">cond</span>
+            <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">no args, return data</span>
+            ((= 0 (length key-vals))
+             data)
+            <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">just a key, get val</span>
+            ((= 1 (length key-vals))
+             (<span style="color: #0000FF;">or</span>  (plist-get data (car key-vals)) ,default))
+            (t
+             (<span style="color: #0000FF;">loop</span> for key in (-slice key-vals 0 nil 2)
+                   for val in (-slice key-vals 1 nil 2)
+                   do
+                   (plist-put data key val))
+             data)))))))
+</pre>
+</div>
+
+<p>
+Here is an instance of it.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">default-dict</span> d2 <span style="color: #008000;">"None"</span> <span style="color: #006FE0;">:key1</span> 4 <span style="color: #006FE0;">:key2</span> <span style="color: #008000;">"tree"</span>)
+</pre>
+</div>
+
+<p>
+And here it is in use.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(d2 <span style="color: #006FE0;">:key1</span>)
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(d2 <span style="color: #006FE0;">:new-key</span>)
+</pre>
+</div>
+
+<p>
+Not bad. If you come from Python, you might find this style of data structure to be more similar to what you are used to seeing. It sure seems less verbose than the usual plist boilerplate I have used before.
+</p>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/04/16/A-callable-plist-data-structure-for-Emacs.org">org-mode source</a></p>
+<p>Org-mode version = 9.0.5</p>

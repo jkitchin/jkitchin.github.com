@@ -3286,3 +3286,164 @@ Here is the implementation:
 #+END_SRC
 
 This is now a feature in scimax. This marks the 500^{th} blog post! That is ½ way to 1000. At the current rate of posting, it will be at least 5 years until I hit That!
+* A callable plist data structure for Emacs
+  :PROPERTIES:
+  :categories: emacs,macro,elisp
+  :date:     2017/04/16 16:44:53
+  :updated:  2017/04/16 16:44:53
+  :END:
+
+Emacs lisp has a few data structures that store key-value pairs. Here are some canonical examples of these data structures and the way to get data out of them.
+
+- a-lists
+
+#+BEGIN_SRC emacs-lisp
+(let ((data '((key1 . 4)
+	      (key2 . "tree"))))
+  (cdr (assoc 'key2 data)))
+#+END_SRC
+
+#+RESULTS:
+: tree
+
+- p-lists
+
+#+BEGIN_SRC emacs-lisp
+(let ((data '(:key1 4 :key2 "tree")))
+  (plist-get data :key2))
+#+END_SRC
+
+#+RESULTS:
+: tree
+
+- A hash table
+
+#+BEGIN_SRC emacs-lisp
+(let ((data #s(hash-table data (key1 4 key2 "tree"))))
+  (gethash 'key2 data))
+#+END_SRC
+
+#+RESULTS:
+: tree
+
+Each of these uses some function to get data out of them. I have been learning about closures today, and realized a way you can make a "callable" data structure using them. In a closure, the data is stored as part of a function. We will use a [[http://letoverlambda.com]["let over lambda"]] with a defalias in a lexical environment to achieve this. I will wrap a p-list with this approach, but it could work with any of the examples above. We will make the function have a few behaviors that allow us to see the whole data structure with no args, to get a value with one arg that is a key, and to set a value if there are more than two args add them as key-val pairs to the data structure. This block binds the function to the symbol "d" which is then a callable function.
+
+#+BEGIN_SRC emacs-lisp :lexical t
+(let ((data '(:key1 4 :key2 "tree")))
+  (defalias 'd
+    (lambda (&rest key-vals)
+      (cond
+       ;; no args, return data
+       ((= 0 (length key-vals))
+	data)
+       ;; just a key, get val
+       ((= 1 (length key-vals))
+	(plist-get data (car key-vals)))
+       (t
+	(loop for key in (-slice key-vals 0 nil 2)
+	      for val in (-slice key-vals 1 nil 2)
+	      do
+	      (plist-put data key val))
+	data)))))
+#+END_SRC
+
+#+RESULTS:
+: d
+
+Now we can use it like to get some data out:
+
+#+BEGIN_SRC emacs-lisp
+(d :key2)
+#+END_SRC
+
+#+RESULTS:
+: tree
+
+And add new values like:
+
+#+BEGIN_SRC emacs-lisp
+(d :key3 "oak")
+#+END_SRC
+
+#+RESULTS:
+| :key1 | 4 | :key2 | tree | :key3 | oak |
+
+You can update a value with this too:
+
+#+BEGIN_SRC emacs-lisp
+(d :key3 "pine")
+#+END_SRC
+
+#+RESULTS:
+| :key1 | 4 | :key2 | tree | :key3 | pine |
+
+or add multiple values like this:
+
+#+BEGIN_SRC emacs-lisp
+(d :key4 0 :key5 9)
+#+END_SRC
+
+#+RESULTS:
+| :key1 | 4 | :key2 | tree | :key3 | pine | :key4 | 0 | :key5 | 9 |
+
+And see the whole plist with no args:
+
+#+BEGIN_SRC emacs-lisp
+(d)
+#+END_SRC
+
+#+RESULTS:
+| :key1 | 4 | :key2 | tree | :key3 | pine | :key4 | 0 | :key5 | 9 |
+
+Pretty nice! It seems like there ought to be a macro to facilitate creating those. Here is one.
+This macro basically expands to the same code as above, but for fun I add a default value option.
+
+#+BEGIN_SRC emacs-lisp :lexical t
+(defmacro default-dict (var &optional default &rest key-vals)
+  "Bind a callable plist to VAR that contains KEY-VALS."
+  (let ()
+    `(let ((data ',key-vals))
+       (defalias ',var
+	 (lambda (&rest key-vals)
+	   (message "%s" key-vals)
+	   (cond
+	    ;; no args, return data
+	    ((= 0 (length key-vals))
+	     data)
+	    ;; just a key, get val
+	    ((= 1 (length key-vals))
+	     (or  (plist-get data (car key-vals)) ,default))
+	    (t
+	     (loop for key in (-slice key-vals 0 nil 2)
+		   for val in (-slice key-vals 1 nil 2)
+		   do
+		   (plist-put data key val))
+	     data)))))))
+#+END_SRC
+
+Here is an instance of it.
+
+#+BEGIN_SRC emacs-lisp
+(default-dict d2 "None" :key1 4 :key2 "tree")
+#+END_SRC
+
+#+RESULTS:
+: d2
+
+And here it is in use.
+
+#+BEGIN_SRC emacs-lisp
+(d2 :key1)
+#+END_SRC
+
+#+RESULTS:
+: 4
+
+#+BEGIN_SRC emacs-lisp
+(d2 :new-key)
+#+END_SRC
+
+#+RESULTS:
+: None
+
+Not bad. If you come from Python, you might find this style of data structure to be more similar to what you are used to seeing. It sure seems less verbose than the usual plist boilerplate I have used before.
