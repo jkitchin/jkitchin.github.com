@@ -1563,7 +1563,7 @@ It is no news to lispers that macros are good for this kind of application.
   :PROPERTIES:
   :categories: emacs,orgmode
   :date:     2017/04/09 10:56:42
-  :updated:  2017/04/15 13:42:40
+  :updated:  2017/04/20 09:19:56
   :END:
 
 Over on [[http://emacs.stackexchange.com/questions/24574/org-mode-default-to-alt-enter-for-bullets][Stackoverflow]] someone wanted a better return in org-mode. They wanted return to add items in a list (instead of M-Ret). Someone posted a partial solution, and here I improve on it to add new items to lists, new headings after a heading, and new rows to tables. In each case, a double return on an empty item, headline or table row will delete that line, and terminate the list, headlines or table. You can still use M-Ret, and this function falls through to org-return like it did before. You can use a prefix arg to get a regular return if you want one (e.g. you want to press enter on a headline to push it down).
@@ -1581,35 +1581,46 @@ Use a prefix arg to get regular RET. "
   (if ignore
       (org-return)
     (cond
+
      ((eq 'line-break (car (org-element-context)))
       (org-return-indent))
-     ;; Open links like usual
-     ((eq 'link (car (org-element-context)))
-      (org-open-at-point-global))
+
+     ;; Open links like usual, unless point is at the end of a line.
+     ;; and if at beginning of line, just press enter.
+     ((or (and (eq 'link (car (org-element-context))) (not (eolp)))
+	  (bolp))
+      (org-return))
+
      ;; It doesn't make sense to add headings in inline tasks. Thanks Anders
      ;; Johansson!
      ((org-inlinetask-in-task-p)
       (org-return))
-     ;; add checkboxes
+
+     ;; checkboxes too
      ((org-at-item-checkbox-p)
       (org-insert-todo-heading nil))
+
      ;; lists end with two blank lines, so we need to make sure we are also not
      ;; at the beginning of a line to avoid a loop where a new entry gets
      ;; created with only one blank line.
-     ((and (org-in-item-p) (not (bolp)))
-      (if (org-element-property :contents-begin (org-element-context))
+     ((org-in-item-p)
+      (if (save-excursion (beginning-of-line) (org-element-property :contents-begin (org-element-context)))
 	  (org-insert-heading)
 	(beginning-of-line)
-	(setf (buffer-substring
-	       (line-beginning-position) (line-end-position)) "")
+	(delete-region (line-beginning-position) (line-end-position))
 	(org-return)))
+
+     ;; org-heading
      ((org-at-heading-p)
       (if (not (string= "" (org-element-property :title (org-element-context))))
 	  (progn (org-end-of-meta-data)
-		 (org-insert-heading))
+		 (org-insert-heading-respect-content)
+		 (outline-show-entry))
 	(beginning-of-line)
 	(setf (buffer-substring
 	       (line-beginning-position) (line-end-position)) "")))
+
+     ;; tables
      ((org-at-table-p)
       (if (-any?
 	   (lambda (x) (not (string= "" x)))
@@ -1622,6 +1633,8 @@ Use a prefix arg to get regular RET. "
 	(setf (buffer-substring
 	       (line-beginning-position) (line-end-position)) "")
 	(org-return)))
+
+     ;; fall-through case
      (t
       (org-return)))))
 
@@ -1664,6 +1677,241 @@ With some content
 ** another Subheading
 
 
+* DONE Autoformatting ordinal numbers and fractions in orgmode
+  CLOSED: [2017-04-11 Tue 15:05]
+  :PROPERTIES:
+  :categories: emacs,orgmode
+  :date:     2017/04/11 15:05:56
+  :updated:  2017/04/11 15:05:56
+  :END:
+
+MS Word has a /few/ things I like. One of them is the ability to autoformat things to make an ordinal number string like 1st to the superscripted version 1^{st} while you type or a 1/2 to ½.  I thought it would be pretty easy to implement that for org-mode. It turns out it was not so easy!
+
+There does not appear to be a way to specify a regexp pattern as an abbreviation, or an abbrev that starts with a number. What we need for ordinal numbers is to recognize a sequence of numbers followed by "st", "nd", "rd" or "th" followed by a space or punctuation, and then superscript the letters. In case you didn't want the replacement to occur, you should be able to undo it and get back the original string. This addition was a little hard won, so I am sharing the lessons here.
+
+The logic I used is to put a function in the post-self-insert-hook. The function only works in org-mode, when not in a codeblock and when looking back at a regexp that matches a pattern to be replaced. Getting it to undo was trickier than expected. Eventually I worked out that you put an undo boundary in place before the change, and then it seems like you can undo the changes. I created a minor mode so it is easy to toggle this on and off.
+
+Here is the implementation:
+
+#+BEGIN_SRC emacs-lisp
+(defcustom scimax-autoformat-ordinals t
+  "Determines if scimax autoformats ordinal numbers."
+  :group 'scimax)
+
+(defun scimax-org-autoformat-ordinals ()
+  "Expand ordinal words to superscripted versions in org-mode.
+1st to 1^{st}.
+2nd to 2^{nd}
+3rd to 3^{rd}
+4th to 4^{th}"
+  (interactive)
+  (when (and scimax-autoformat-ordinals
+	     (eq major-mode 'org-mode)
+	     (not (org-in-src-block-p))
+	     (looking-back "\\(?3:\\<\\(?1:[0-9]+\\)\\(?2:st\\|nd\\|rd\\|th\\)\\>\\)\\(?:[[:punct:]]\\|[[:space:]]\\)"
+			   (line-beginning-position)))
+    (undo-boundary)
+    (save-excursion
+      (replace-match "\\1^{\\2}" nil nil nil 3))))
+
+
+(defcustom scimax-autoformat-fractions t
+  "Determines if scimax autoformats fractions."
+  :group 'scimax)
+
+
+(defun scimax-org-autoformat-fractions ()
+  "Expand fractions to take up space."
+  (interactive)
+  (when (and scimax-autoformat-fractions
+	     (eq major-mode 'org-mode)
+	     (not (org-in-src-block-p))
+	     (looking-back "\\(?3:\\<\\(1/4\\|1/2\\|3/4\\)\\>\\)\\(?:[[:punct:]]\\|[[:space:]]\\)"
+			   (line-beginning-position)))
+    (undo-boundary)
+    (save-excursion
+      (replace-match (cdr (assoc (match-string 3) '(("1/4" . "¼")
+						    ("1/2" . "½")
+						    ("3/4" . "¾"))))
+		     nil nil nil 3))))
+
+(defun scimax-org-autoformat ()
+  "Autoformat functions."
+  (scimax-org-autoformat-ordinals)
+  (scimax-org-autoformat-fractions))
+
+(define-minor-mode scimax-autoformat-mode
+  "Toggle `scimax-autoformat-mode'.  Converts 1st to 1^{st} as you type."
+  :init-value nil
+  :lighter (" om")
+  (if scimax-ordinal-mode
+      (add-hook 'post-self-insert-hook #'scimax-org-autoformat nil 'local)
+    (remove-hook 'post-self-insert-hook #'scimax-org-autoformat 'local)))
+#+END_SRC
+
+This is now a feature in scimax. This marks the 500^{th} blog post! That is ½ way to 1000. At the current rate of posting, it will be at least 5 years until I hit That!
+* DONE A callable plist data structure for Emacs
+  CLOSED: [2017-04-16 Sun 16:44]
+  :PROPERTIES:
+  :categories: emacs,macro,elisp
+  :date:     2017/04/16 16:44:53
+  :updated:  2017/04/16 16:44:53
+  :END:
+
+Emacs lisp has a few data structures that store key-value pairs. Here are some canonical examples of these data structures and the way to get data out of them.
+
+- a-lists
+
+#+BEGIN_SRC emacs-lisp
+(let ((data '((key1 . 4)
+	      (key2 . "tree"))))
+  (cdr (assoc 'key2 data)))
+#+END_SRC
+
+#+RESULTS:
+: tree
+
+- p-lists
+
+#+BEGIN_SRC emacs-lisp
+(let ((data '(:key1 4 :key2 "tree")))
+  (plist-get data :key2))
+#+END_SRC
+
+#+RESULTS:
+: tree
+
+- A hash table
+
+#+BEGIN_SRC emacs-lisp
+(let ((data #s(hash-table data (key1 4 key2 "tree"))))
+  (gethash 'key2 data))
+#+END_SRC
+
+#+RESULTS:
+: tree
+
+Each of these uses some function to get data out of them. I have been learning about closures today, and realized a way you can make a "callable" data structure using them. In a closure, the data is stored as part of a function. We will use a [[http://letoverlambda.com]["let over lambda"]] with a defalias in a lexical environment to achieve this. I will wrap a p-list with this approach, but it could work with any of the examples above. We will make the function have a few behaviors that allow us to see the whole data structure with no args, to get a value with one arg that is a key, and to set a value if there are more than two args add them as key-val pairs to the data structure. This block binds the function to the symbol "d" which is then a callable function.
+
+#+BEGIN_SRC emacs-lisp :lexical t
+(let ((data '(:key1 4 :key2 "tree")))
+  (defalias 'd
+    (lambda (&rest key-vals)
+      (cond
+       ;; no args, return data
+       ((= 0 (length key-vals))
+	data)
+       ;; just a key, get val
+       ((= 1 (length key-vals))
+	(plist-get data (car key-vals)))
+       (t
+	(loop for key in (-slice key-vals 0 nil 2)
+	      for val in (-slice key-vals 1 nil 2)
+	      do
+	      (plist-put data key val))
+	data)))))
+#+END_SRC
+
+#+RESULTS:
+: d
+
+Now we can use it like to get some data out:
+
+#+BEGIN_SRC emacs-lisp
+(d :key2)
+#+END_SRC
+
+#+RESULTS:
+: tree
+
+And add new values like:
+
+#+BEGIN_SRC emacs-lisp
+(d :key3 "oak")
+#+END_SRC
+
+#+RESULTS:
+| :key1 | 4 | :key2 | tree | :key3 | oak |
+
+You can update a value with this too:
+
+#+BEGIN_SRC emacs-lisp
+(d :key3 "pine")
+#+END_SRC
+
+#+RESULTS:
+| :key1 | 4 | :key2 | tree | :key3 | pine |
+
+or add multiple values like this:
+
+#+BEGIN_SRC emacs-lisp
+(d :key4 0 :key5 9)
+#+END_SRC
+
+#+RESULTS:
+| :key1 | 4 | :key2 | tree | :key3 | pine | :key4 | 0 | :key5 | 9 |
+
+And see the whole plist with no args:
+
+#+BEGIN_SRC emacs-lisp
+(d)
+#+END_SRC
+
+#+RESULTS:
+| :key1 | 4 | :key2 | tree | :key3 | pine | :key4 | 0 | :key5 | 9 |
+
+Pretty nice! It seems like there ought to be a macro to facilitate creating those. Here is one.
+This macro basically expands to the same code as above, but for fun I add a default value option.
+
+#+BEGIN_SRC emacs-lisp :lexical t
+(defmacro default-dict (var &optional default &rest key-vals)
+  "Bind a callable plist to VAR that contains KEY-VALS."
+  (let ()
+    `(let ((data ',key-vals))
+       (defalias ',var
+	 (lambda (&rest key-vals)
+	   (message "%s" key-vals)
+	   (cond
+	    ;; no args, return data
+	    ((= 0 (length key-vals))
+	     data)
+	    ;; just a key, get val
+	    ((= 1 (length key-vals))
+	     (or  (plist-get data (car key-vals)) ,default))
+	    (t
+	     (loop for key in (-slice key-vals 0 nil 2)
+		   for val in (-slice key-vals 1 nil 2)
+		   do
+		   (plist-put data key val))
+	     data)))))))
+#+END_SRC
+
+Here is an instance of it.
+
+#+BEGIN_SRC emacs-lisp
+(default-dict d2 "None" :key1 4 :key2 "tree")
+#+END_SRC
+
+#+RESULTS:
+: d2
+
+And here it is in use.
+
+#+BEGIN_SRC emacs-lisp
+(d2 :key1)
+#+END_SRC
+
+#+RESULTS:
+: 4
+
+#+BEGIN_SRC emacs-lisp
+(d2 :new-key)
+#+END_SRC
+
+#+RESULTS:
+: None
+
+Not bad. If you come from Python, you might find this style of data structure to be more similar to what you are used to seeing. It sure seems less verbose than the usual plist boilerplate I have used before.
 
 * A comint mode for mongo
 * Adapted from: https://www.masteringemacs.org/article/comint-writing-command-interpreter
@@ -3213,237 +3461,3 @@ You may want to reopen a recently opened file. I use the recentf package, and he
 
 ** Bookmarks
 
-* DONE Autoformatting ordinal numbers and fractions in orgmode
-  CLOSED: [2017-04-11 Tue 15:05]
-  :PROPERTIES:
-  :categories: emacs,orgmode
-  :date:     2017/04/11 15:05:56
-  :updated:  2017/04/11 15:05:56
-  :END:
-
-MS Word has a /few/ things I like. One of them is the ability to autoformat things to make an ordinal number string like 1st to the superscripted version 1^{st} while you type or a 1/2 to ½.  I thought it would be pretty easy to implement that for org-mode. It turns out it was not so easy!
-
-There does not appear to be a way to specify a regexp pattern as an abbreviation, or an abbrev that starts with a number. What we need for ordinal numbers is to recognize a sequence of numbers followed by "st", "nd", "rd" or "th" followed by a space or punctuation, and then superscript the letters. In case you didn't want the replacement to occur, you should be able to undo it and get back the original string. This addition was a little hard won, so I am sharing the lessons here.
-
-The logic I used is to put a function in the post-self-insert-hook. The function only works in org-mode, when not in a codeblock and when looking back at a regexp that matches a pattern to be replaced. Getting it to undo was trickier than expected. Eventually I worked out that you put an undo boundary in place before the change, and then it seems like you can undo the changes. I created a minor mode so it is easy to toggle this on and off.
-
-Here is the implementation:
-
-#+BEGIN_SRC emacs-lisp
-(defcustom scimax-autoformat-ordinals t
-  "Determines if scimax autoformats ordinal numbers."
-  :group 'scimax)
-
-(defun scimax-org-autoformat-ordinals ()
-  "Expand ordinal words to superscripted versions in org-mode.
-1st to 1^{st}.
-2nd to 2^{nd}
-3rd to 3^{rd}
-4th to 4^{th}"
-  (interactive)
-  (when (and scimax-autoformat-ordinals
-	     (eq major-mode 'org-mode)
-	     (not (org-in-src-block-p))
-	     (looking-back "\\(?3:\\<\\(?1:[0-9]+\\)\\(?2:st\\|nd\\|rd\\|th\\)\\>\\)\\(?:[[:punct:]]\\|[[:space:]]\\)"
-			   (line-beginning-position)))
-    (undo-boundary)
-    (save-excursion
-      (replace-match "\\1^{\\2}" nil nil nil 3))))
-
-
-(defcustom scimax-autoformat-fractions t
-  "Determines if scimax autoformats fractions."
-  :group 'scimax)
-
-
-(defun scimax-org-autoformat-fractions ()
-  "Expand fractions to take up space."
-  (interactive)
-  (when (and scimax-autoformat-fractions
-	     (eq major-mode 'org-mode)
-	     (not (org-in-src-block-p))
-	     (looking-back "\\(?3:\\<\\(1/4\\|1/2\\|3/4\\)\\>\\)\\(?:[[:punct:]]\\|[[:space:]]\\)"
-			   (line-beginning-position)))
-    (undo-boundary)
-    (save-excursion
-      (replace-match (cdr (assoc (match-string 3) '(("1/4" . "¼")
-						    ("1/2" . "½")
-						    ("3/4" . "¾"))))
-		     nil nil nil 3))))
-
-(defun scimax-org-autoformat ()
-  "Autoformat functions."
-  (scimax-org-autoformat-ordinals)
-  (scimax-org-autoformat-fractions))
-
-(define-minor-mode scimax-autoformat-mode
-  "Toggle `scimax-autoformat-mode'.  Converts 1st to 1^{st} as you type."
-  :init-value nil
-  :lighter (" om")
-  (if scimax-ordinal-mode
-      (add-hook 'post-self-insert-hook #'scimax-org-autoformat nil 'local)
-    (remove-hook 'post-self-insert-hook #'scimax-org-autoformat 'local)))
-#+END_SRC
-
-This is now a feature in scimax. This marks the 500^{th} blog post! That is ½ way to 1000. At the current rate of posting, it will be at least 5 years until I hit That!
-* A callable plist data structure for Emacs
-  :PROPERTIES:
-  :categories: emacs,macro,elisp
-  :date:     2017/04/16 16:44:53
-  :updated:  2017/04/16 16:44:53
-  :END:
-
-Emacs lisp has a few data structures that store key-value pairs. Here are some canonical examples of these data structures and the way to get data out of them.
-
-- a-lists
-
-#+BEGIN_SRC emacs-lisp
-(let ((data '((key1 . 4)
-	      (key2 . "tree"))))
-  (cdr (assoc 'key2 data)))
-#+END_SRC
-
-#+RESULTS:
-: tree
-
-- p-lists
-
-#+BEGIN_SRC emacs-lisp
-(let ((data '(:key1 4 :key2 "tree")))
-  (plist-get data :key2))
-#+END_SRC
-
-#+RESULTS:
-: tree
-
-- A hash table
-
-#+BEGIN_SRC emacs-lisp
-(let ((data #s(hash-table data (key1 4 key2 "tree"))))
-  (gethash 'key2 data))
-#+END_SRC
-
-#+RESULTS:
-: tree
-
-Each of these uses some function to get data out of them. I have been learning about closures today, and realized a way you can make a "callable" data structure using them. In a closure, the data is stored as part of a function. We will use a [[http://letoverlambda.com]["let over lambda"]] with a defalias in a lexical environment to achieve this. I will wrap a p-list with this approach, but it could work with any of the examples above. We will make the function have a few behaviors that allow us to see the whole data structure with no args, to get a value with one arg that is a key, and to set a value if there are more than two args add them as key-val pairs to the data structure. This block binds the function to the symbol "d" which is then a callable function.
-
-#+BEGIN_SRC emacs-lisp :lexical t
-(let ((data '(:key1 4 :key2 "tree")))
-  (defalias 'd
-    (lambda (&rest key-vals)
-      (cond
-       ;; no args, return data
-       ((= 0 (length key-vals))
-	data)
-       ;; just a key, get val
-       ((= 1 (length key-vals))
-	(plist-get data (car key-vals)))
-       (t
-	(loop for key in (-slice key-vals 0 nil 2)
-	      for val in (-slice key-vals 1 nil 2)
-	      do
-	      (plist-put data key val))
-	data)))))
-#+END_SRC
-
-#+RESULTS:
-: d
-
-Now we can use it like to get some data out:
-
-#+BEGIN_SRC emacs-lisp
-(d :key2)
-#+END_SRC
-
-#+RESULTS:
-: tree
-
-And add new values like:
-
-#+BEGIN_SRC emacs-lisp
-(d :key3 "oak")
-#+END_SRC
-
-#+RESULTS:
-| :key1 | 4 | :key2 | tree | :key3 | oak |
-
-You can update a value with this too:
-
-#+BEGIN_SRC emacs-lisp
-(d :key3 "pine")
-#+END_SRC
-
-#+RESULTS:
-| :key1 | 4 | :key2 | tree | :key3 | pine |
-
-or add multiple values like this:
-
-#+BEGIN_SRC emacs-lisp
-(d :key4 0 :key5 9)
-#+END_SRC
-
-#+RESULTS:
-| :key1 | 4 | :key2 | tree | :key3 | pine | :key4 | 0 | :key5 | 9 |
-
-And see the whole plist with no args:
-
-#+BEGIN_SRC emacs-lisp
-(d)
-#+END_SRC
-
-#+RESULTS:
-| :key1 | 4 | :key2 | tree | :key3 | pine | :key4 | 0 | :key5 | 9 |
-
-Pretty nice! It seems like there ought to be a macro to facilitate creating those. Here is one.
-This macro basically expands to the same code as above, but for fun I add a default value option.
-
-#+BEGIN_SRC emacs-lisp :lexical t
-(defmacro default-dict (var &optional default &rest key-vals)
-  "Bind a callable plist to VAR that contains KEY-VALS."
-  (let ()
-    `(let ((data ',key-vals))
-       (defalias ',var
-	 (lambda (&rest key-vals)
-	   (message "%s" key-vals)
-	   (cond
-	    ;; no args, return data
-	    ((= 0 (length key-vals))
-	     data)
-	    ;; just a key, get val
-	    ((= 1 (length key-vals))
-	     (or  (plist-get data (car key-vals)) ,default))
-	    (t
-	     (loop for key in (-slice key-vals 0 nil 2)
-		   for val in (-slice key-vals 1 nil 2)
-		   do
-		   (plist-put data key val))
-	     data)))))))
-#+END_SRC
-
-Here is an instance of it.
-
-#+BEGIN_SRC emacs-lisp
-(default-dict d2 "None" :key1 4 :key2 "tree")
-#+END_SRC
-
-#+RESULTS:
-: d2
-
-And here it is in use.
-
-#+BEGIN_SRC emacs-lisp
-(d2 :key1)
-#+END_SRC
-
-#+RESULTS:
-: 4
-
-#+BEGIN_SRC emacs-lisp
-(d2 :new-key)
-#+END_SRC
-
-#+RESULTS:
-: None
-
-Not bad. If you come from Python, you might find this style of data structure to be more similar to what you are used to seeing. It sure seems less verbose than the usual plist boilerplate I have used before.
