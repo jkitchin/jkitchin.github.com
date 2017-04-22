@@ -87,8 +87,9 @@
       <div id="A-callable-plist-data-structure-for-Emacs"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/04/16/A-callable-plist-data-structure-for-Emacs/" rel="bookmark" title="Permanent Link to A callable plist data structure for Emacs">A callable plist data structure for Emacs</a></h2>
       <p><small><span class="blog_post_date">Posted April 16, 2017 at 04:44 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/macro/'>macro</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/elisp/'>elisp</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/elisp/'>elisp</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/macro/'>macro</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/04/16/A-callable-plist-data-structure-for-Emacs#disqus_thread">View Comments</a>
+      <p><small><span class="blog_post_date">Updated April 21, 2017 at 08:01 PM</span>
       </small></p>
     </header>
     <div class="post_prose">
@@ -96,6 +97,14 @@
 
 
 
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#orgbe53949">1. An update <span class="timestamp-wrapper"><span class="timestamp">&lt;2017-04-21 Fri&gt;</span></span></a></li>
+</ul>
+</div>
+</div>
 <p>
 Emacs lisp has a few data structures that store key-value pairs. Here are some canonical examples of these data structures and the way to get data out of them.
 </p>
@@ -255,6 +264,90 @@ And here it is in use.
 <p>
 Not bad. If you come from Python, you might find this style of data structure to be more similar to what you are used to seeing. It sure seems less verbose than the usual plist boilerplate I have used before.
 </p>
+
+<div id="outline-container-orgbe53949" class="outline-2">
+<h2 id="orgbe53949"><span class="section-number-2">1</span> An update <span class="timestamp-wrapper"><span class="timestamp">&lt;2017-04-21 Fri&gt;</span></span></h2>
+<div class="outline-text-2" id="text-1">
+<p>
+One (perhaps undesirable even) feature of the approach above is that it creates a function in the global namespace. This might have unintended consequences with name clashes or shadowing, and if you later use the same variable name for a plist, you would change the function behavior. Here we consider a way to limit the scope of where these functions exist and work. The labels macro provides one way to do this, we just create temporary functions that only exist within a scope. There is a lot of backticking and comma operators in this, and it took quite a few iterations to get it working!
+</p>
+
+<p>
+This macro creates temporary functions for each keyword that return the value in the plist.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defmacro</span> <span style="color: #006699;">with-dict</span> (key-vals <span style="color: #6434A3;">&amp;rest</span> body)
+  <span style="color: #036A07;">"A context-manager for a plist where each key is a callable</span>
+<span style="color: #036A07;">function that returns the value."</span>
+  (<span style="color: #0000FF;">declare</span> (indent 1))
+  (<span style="color: #0000FF;">let*</span> ((g (<span style="color: #0000FF;">if</span> (symbolp key-vals)
+                (symbol-value key-vals)
+              key-vals))
+         (keys (-slice g 0 nil 2)))
+    `(<span style="color: #0000FF;">labels</span> ,(<span style="color: #0000FF;">loop</span> for key in keys
+                    collect
+                    (list key '() `<span style="color: #D0372D;">(plist-get </span>',g  ,key)))
+       ,@body)))
+</pre>
+</div>
+
+<p>
+Here is how we use it:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">with-dict</span> (<span style="color: #006FE0;">:a</span> 1 <span style="color: #006FE0;">:b</span> 'some-symbol <span style="color: #006FE0;">:c</span> 3)
+  (<span style="color: #006FE0;">:b</span>))
+</pre>
+</div>
+
+<p>
+We can also use it with variables that hold mappings like this.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((d '(<span style="color: #006FE0;">:key1</span> 1 <span style="color: #006FE0;">:key2</span> some-other-symbol <span style="color: #006FE0;">:key3</span> 3)))
+  (<span style="color: #0000FF;">with-dict</span> d
+    (format <span style="color: #008000;">"We got %s"</span> (<span style="color: #006FE0;">:key2</span>))))
+</pre>
+</div>
+
+<p>
+That is pretty interesting! In case that looks similar to a context manager in Python, now you know where Python got that idea ;)
+</p>
+
+<p>
+Another related idea is to let-bind the values to variables withing a scope. We can't use the keywords directly here, so I use some hackery to strip off the colon so it is a regular symbol. That is not quite as nice I guess since you have to remember to remove the : from the symbols in the body of your code.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defmacro</span> <span style="color: #006699;">with-plist-vals</span> (plist <span style="color: #6434A3;">&amp;rest</span> body)
+  <span style="color: #036A07;">"Bind the values of a plist to variables with the name of the keys."</span>
+  (<span style="color: #0000FF;">declare</span> (indent 1))
+  `(<span style="color: #0000FF;">let</span> ,(<span style="color: #0000FF;">loop</span> for key in (-slice plist 0 nil 2)
+               for val in (-slice plist 1 nil 2)
+               collect (list (intern
+                              (substring (symbol-name key) 1))
+                             val))
+     ,@body))
+</pre>
+</div>
+
+<p>
+Here is an example usage.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">with-plist-vals</span> (<span style="color: #006FE0;">:a</span> 4 <span style="color: #006FE0;">:b</span> 6)
+ (* 2 a))
+</pre>
+</div>
+
+<p>
+Obviously that is just an alternate syntax for the let statement, but it lets you leverage the plist syntax for multiple purposes.</p>
+</div>
+</div>
 <p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
 <p><a href="/org/2017/04/16/A-callable-plist-data-structure-for-Emacs.org">org-mode source</a></p>
 <p>Org-mode version = 9.0.5</p>
@@ -281,7 +374,7 @@ Not bad. If you come from Python, you might find this style of data structure to
       <div id="A-new-org-mode-exporter-to-Word-for-scimax"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/04/15/A-new-org-mode-exporter-to-Word-for-scimax/" rel="bookmark" title="Permanent Link to A new org-mode exporter to Word for scimax">A new org-mode exporter to Word for scimax</a></h2>
       <p><small><span class="blog_post_date">Posted April 15, 2017 at 04:19 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/export/'>export</a>, <a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/export/'>export</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/04/15/A-new-org-mode-exporter-to-Word-for-scimax#disqus_thread">View Comments</a>
       <p><small><span class="blog_post_date">Updated April 15, 2017 at 04:21 PM</span>
       </small></p>
@@ -368,7 +461,7 @@ As a penultimate result it might be ok. The references are reasonably formatted,
       <div id="Autoformatting-ordinal-numbers-and-fractions-in-orgmode"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/04/11/Autoformatting-ordinal-numbers-and-fractions-in-orgmode/" rel="bookmark" title="Permanent Link to Autoformatting ordinal numbers and fractions in orgmode">Autoformatting ordinal numbers and fractions in orgmode</a></h2>
       <p><small><span class="blog_post_date">Posted April 11, 2017 at 03:05 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/04/11/Autoformatting-ordinal-numbers-and-fractions-in-orgmode#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -479,7 +572,7 @@ This is now a feature in scimax. This marks the 500<sup>th</sup> blog post! That
       <div id="A-better-return-in-org-mode"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/04/09/A-better-return-in-org-mode/" rel="bookmark" title="Permanent Link to A better return in org-mode">A better return in org-mode</a></h2>
       <p><small><span class="blog_post_date">Posted April 09, 2017 at 10:56 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/04/09/A-better-return-in-org-mode#disqus_thread">View Comments</a>
       <p><small><span class="blog_post_date">Updated April 20, 2017 at 09:19 AM</span>
       </small></p>
