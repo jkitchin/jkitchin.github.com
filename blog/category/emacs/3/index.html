@@ -84,10 +84,395 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Querying-a-MongoDB-bibtex-database-with-Python-and-emacs-lisp"></div>
+      <h2 class="blog_post_title"><a href="/blog/2017/01/15/Querying-a-MongoDB-bibtex-database-with-Python-and-emacs-lisp/" rel="bookmark" title="Permanent Link to Querying a MongoDB bibtex database with Python and emacs-lisp">Querying a MongoDB bibtex database with Python and emacs-lisp</a></h2>
+      <p><small><span class="blog_post_date">Posted January 15, 2017 at 10:36 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/database/'>database</a>, <a href='/blog/category/python/'>python</a>, <a href='/blog/category/mongodb/'>mongodb</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2017/01/15/Querying-a-MongoDB-bibtex-database-with-Python-and-emacs-lisp#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org41df17a">1. text searching</a></li>
+<li><a href="#org6dcd73e">2. Querying from emacs-lisp</a></li>
+<li><a href="#org6d7544a">3. Summary thoughts</a></li>
+</ul>
+</div>
+</div>
+<p>
+I have been exploring <a href="http://kitchingroup.cheme.cmu.edu/blog/2017/01/03/Find-stuff-in-org-mode-anywhere/">using databases</a> to help with searching my data. In this post we explore using MongoDB for bibtex entries. I am choosing bibtex entries because it is easy to parse bibtex files, I already have a lot of them, and I have several kinds of queries I regularly use. So, they are a good candidate to test out a new database on!
+</p>
+
+<p>
+MongoDB is a noSQL database that is pretty easy to use. I installed it from homebrew, and then followed the directions to run the server.
+</p>
+
+<p>
+With pymongo you can make a database as easy as this:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span style="color: #0000FF;">import</span> bibtexparser
+
+<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">Read the bibtex file to get entries</span>
+<span style="color: #0000FF;">with</span> <span style="color: #006FE0;">open</span>(<span style="color: #008000;">'../../../Dropbox/bibliography/references.bib'</span>, <span style="color: #008000;">'r'</span>) <span style="color: #0000FF;">as</span> bibfile:
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">bp</span> = bibtexparser.load(bibfile)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">entries</span> = bp.entries
+
+<span style="color: #0000FF;">print</span>(<span style="color: #008000;">"N = "</span>, <span style="color: #006FE0;">len</span>(entries))
+
+<span style="color: #0000FF;">print</span>(entries[0])
+
+<span style="color: #0000FF;">import</span> pymongo
+<span style="color: #0000FF;">from</span> pymongo <span style="color: #0000FF;">import</span> MongoClient
+<span style="color: #BA36A5;">client</span> = MongoClient(<span style="color: #008000;">'localhost'</span>, 27017)
+
+<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">This creates the "entries" collection</span>
+<span style="color: #BA36A5;">db</span> = client[<span style="color: #008000;">'bibtex'</span>].entries
+
+<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">add each entry</span>
+<span style="color: #0000FF;">for</span> entry <span style="color: #0000FF;">in</span> entries:
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   db.insert_one(entry)
+</pre>
+</div>
+
+<p>
+N =  1671
+{'keyword': 'test, word', 'year': '2006', 'publisher': 'American Chemical Society (ACS)', 'title': 'The ACS Style Guide', 'ENTRYTYPE': 'book', 'editor': 'Janet S. Dodd', 'address': 'Washington, D.C.', 'ID': '2006-acs-style-guide', 'doi': '10.1021/bk-2006-styg', 'link': 'http://dx.doi.org/10.1021/bk-2006-STYG', 'date_added': 'Wed Apr  1 10:17:54 2015', 'pages': 'nil'}
+</p>
+
+<p>
+That was easy. We have a database with 1671 documents in it, and each document is essentially a dictionary of key-value pairs. You might even argue it was too easy. I didn't specify any structure to the entries at all. No required fields, no validation that the keys are spelled correctly, no validation on the values, e.g. you can see the year looks like a string. The benefit of that is that every entry went in, with no issues. On the other hand, the authors went in as a single string, as did the keywords, which affects our ability to search a little bit later. Note if you run that twice, it will add each entry again, since we do not check if the entry already exists.
+</p>
+
+<p>
+A database is only useful though if it is easy to get stuff out of it. So, let's consider some test queries. First we find entries that have years less than 1950. The query is basically a little json bundle that describes a field and condition that we want to match. Here we use a less than operator, ""$lt"The results come back as a list of dictionaries. This is in stark contrast to a SQL query which is an expression in its own declarative language. A query here is a chunk of data that must get converted to code by the server. I am not 100% clear if the less than here is in the string sense or numeric sense, but for years it probably does not matter for a long time.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span style="color: #0000FF;">import</span> pymongo
+<span style="color: #0000FF;">from</span> pymongo <span style="color: #0000FF;">import</span> MongoClient
+<span style="color: #BA36A5;">client</span> = MongoClient(<span style="color: #008000;">'localhost'</span>, 27017)
+
+<span style="color: #BA36A5;">db</span> = client[<span style="color: #008000;">'bibtex'</span>].entries
+
+<span style="color: #0000FF;">for</span> i, result <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">enumerate</span>(db.find({<span style="color: #008000;">"year"</span> : {<span style="color: #008000;">"$lt"</span>: <span style="color: #008000;">"1950"</span>}})):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">print</span>(<span style="color: #008000;">'{i: 2d}. {author}, {title}, {journal}, {year}.'</span>.<span style="color: #006FE0;">format</span>(i=i+1, **result))
+</pre>
+</div>
+
+<ol class="org-ol">
+<li>Birch, Francis, Finite Elastic Strain of Cubic Crystals, Phys. Rev., 1947.</li>
+<li>Ditchburn, R. W. and Gilmour, J. C., The Vapor Pressures of Monatomic Vapors, Rev. Mod. Phys., 1941.</li>
+<li>J. Korringa, On the Calculation of the Energy of a Bloch Wave in a Metal, Physica, 1947.</li>
+<li>Nix, F. C. and MacNair, D., The Thermal Expansion of Pure Metals. {II}: Molybdenum, Palladium, Silver, Tantalum, Tungsten, Platinum, and Lead, Phys. Rev., 1942.</li>
+</ol>
+
+
+<p>
+That seems easy enough, and those strings could easily be used as candidates for a selection tool like helm.
+</p>
+
+<p>
+How about articles published by myself and my student Jacob Boes? This requires "and" logic. Apparently that is the default, so we just add three queries. One is an exact match on articles, and the other two are case-insensitive regular expression matches.  I guess this has to be done on every document, since there probably is no way to index a regex match! This search was very fast, but it is not clear how fast it would be for a million entries. This matching is necessary because we stored all authors in a single field rather than splitting them into an array. We might still have to match strings for this even in an array since an author might then be "John R. Kitchin", rather than further decomposed into first and last names.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span style="color: #0000FF;">import</span> pymongo
+<span style="color: #0000FF;">from</span> pymongo <span style="color: #0000FF;">import</span> MongoClient
+<span style="color: #BA36A5;">client</span> = MongoClient(<span style="color: #008000;">'localhost'</span>, 27017)
+
+<span style="color: #BA36A5;">db</span> = client[<span style="color: #008000;">'bibtex'</span>]
+<span style="color: #BA36A5;">entries</span> = db[<span style="color: #008000;">'entries'</span>]
+
+<span style="color: #0000FF;">for</span> i, result <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">enumerate</span>(entries.find({<span style="color: #008000;">"ENTRYTYPE"</span>: <span style="color: #008000;">"article"</span>,
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span><span style="color: #008000;">"author"</span> : {<span style="color: #008000;">"$regex"</span>: <span style="color: #008000;">"kitchin"</span>, <span style="color: #008000;">'$options'</span> : <span style="color: #008000;">'i'</span>},
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span><span style="color: #008000;">"author"</span> : {<span style="color: #008000;">"$regex"</span>: <span style="color: #008000;">"boes"</span>, <span style="color: #008000;">'$options'</span> : <span style="color: #008000;">'i'</span>}})):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">if</span> result.get(<span style="color: #008000;">'doi'</span>, <span style="color: #D0372D;">None</span>):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">result</span>[<span style="color: #008000;">'doi'</span>] = <span style="color: #008000;">'http://dx.doi.org/{doi}'</span>.<span style="color: #006FE0;">format</span>(doi=result[<span style="color: #008000;">'doi'</span>])
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">else</span>:
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">result</span>[<span style="color: #008000;">'doi'</span>] = <span style="color: #008000;">''</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">print</span>(<span style="color: #008000;">'{i: 2d}. {author}, {title}, {journal}, {year}. {doi}'</span>.<span style="color: #006FE0;">format</span>(i=i+1, **result).replace(<span style="color: #008000;">"\n"</span>, <span style="color: #008000;">""</span>))
+</pre>
+</div>
+
+<ol class="org-ol">
+<li>Jacob R. Boes and Peter Kondratyuk and Chunrong Yin and JamesB. Miller and Andrew J. Gellman and John R. Kitchin, Core Level Shifts in {Cu-Pd} Alloys As a Function of BulkComposition and Structure, Surface Science, 2015. <a href="http://dx.doi.org/10.1016/j.susc.2015.02.011">http://dx.doi.org/10.1016/j.susc.2015.02.011</a></li>
+<li>Jacob R. Boes and Gamze Gumuslu and James B. Miller and AndrewJ. Gellman and John R. Kitchin, Estimating Bulk-Composition-Dependent \ce{H2} AdsorptionEnergies on \ce{Cu<sub>x</sub>Pd<sub>1-x</sub>} Alloy (111) Surfaces, ACS Catalysis, 2015. <a href="http://dx.doi.org/10.1021/cs501585k">http://dx.doi.org/10.1021/cs501585k</a></li>
+<li>Jacob R. Boes and Gamze Gumuslu and James B. Miller and AndrewJ. Gellman and John R. Kitchin, Supporting Information: Estimating Bulk-Composition-Dependent\ce{H2} Adsorption Energies on \ce{Cu<sub>x</sub>Pd<sub>1-x</sub>} Alloy (111)Surfaces, ACS Catalysis, 2015. <a href="http://dx.doi.org/10.1021/cs501585k">http://dx.doi.org/10.1021/cs501585k</a></li>
+<li>G. Gumuslu and P. Kondratyuk and J. R. Boes and B. Morrealeand J. B. Miller and J. R. Kitchin and A. J. Gellman, Correlation of Electronic Structure With Catalytic Activity:\ce{H2}-\ce{D2} Exchange Across \ce{Cu<sub>x</sub>Pd<sub>1-x</sub>}Composition Space, ACS Catalysis, 2015. <a href="http://dx.doi.org/10.1021/cs501586t">http://dx.doi.org/10.1021/cs501586t</a></li>
+<li>John D. Michael and Ethan L. Demeter and Steven M. Illes andQingqi Fan and Jacob R. Boes and John R. Kitchin, Alkaline Electrolyte and {Fe} Impurity Effects on thePerformance and Active-Phase Structure of {NiOOH} Thin Filmsfor {OER} Catalysis Applications, J. Phys. Chem. C, 2015. <a href="http://dx.doi.org/10.1021/acs.jpcc.5b02458">http://dx.doi.org/10.1021/acs.jpcc.5b02458</a></li>
+<li>Jacob R. Boes and Mitchell C. Groenenboom and John A. Keithand John R. Kitchin, Neural Network and {Reaxff} Comparison for {Au} Properties, Int. J. Quantum Chem., 2016. <a href="http://dx.doi.org/10.1002/qua.25115">http://dx.doi.org/10.1002/qua.25115</a></li>
+<li>Jacob R. Boes and John R. Kitchin, Neural Network Predictions of Oxygen Interactions on a Dynamic Pd Surface, Molecular Simulation, Accepted 12/2016. <a href="http://dx.doi.org/10.1080/08927022.2016.1274984">http://dx.doi.org/10.1080/08927022.2016.1274984</a></li>
+<li>Jacob R. Boes and John R. Kitchin, Modeling Segregation on {AuPd}(111) Surfaces With DensityFunctional Theory and Monte Carlo Simulations, Submitted to J. Phys. Chem. C, 2016.</li>
+</ol>
+
+<p>
+We can find out how many different entry types we have, as well as how many distinct keyword entries there are. The documents do not separate the keywords though, so this is just the unique strings of comma-separated keywords values. We would have had to split those in advance to have a list of keywords to search for a specific one beyond string matching. Curiously, in my bibtex entries, these are in a field called "keywords". It appears the bibtex parser may have changed the name to "keyword".
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span style="color: #0000FF;">import</span> pymongo
+<span style="color: #0000FF;">from</span> pymongo <span style="color: #0000FF;">import</span> MongoClient
+<span style="color: #BA36A5;">client</span> = MongoClient(<span style="color: #008000;">'localhost'</span>, 27017)
+
+<span style="color: #BA36A5;">db</span> = client[<span style="color: #008000;">'bibtex'</span>]
+<span style="color: #BA36A5;">entries</span> = db[<span style="color: #008000;">'entries'</span>]
+
+<span style="color: #0000FF;">print</span>(entries.distinct(<span style="color: #008000;">"ENTRYTYPE"</span>))
+<span style="color: #0000FF;">print</span>(<span style="color: #006FE0;">len</span>(entries.distinct(<span style="color: #008000;">"keyword"</span>)))
+<span style="color: #0000FF;">print</span>(entries.find({<span style="color: #008000;">"keyword"</span>: {<span style="color: #008000;">"$exists"</span>: <span style="color: #008000;">"true"</span>}})[22][<span style="color: #008000;">'keyword'</span>])
+</pre>
+</div>
+
+<p>
+['book', 'article', 'techreport', 'phdthesis', 'inproceedings', 'inbook', 'mastersthesis', 'misc', 'incollection']
+176
+Bildungsw{\"a}rmen, Dichtefunktionalrechnungen, Perowskite, Thermochemie
+</p>
+
+<div id="outline-container-org41df17a" class="outline-2">
+<h2 id="org41df17a"><span class="section-number-2">1</span> text searching</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+You can do text search as well. You first have to create an index on one or more fields, and then use the $text and $search operators. Here I made an index on a few fields, and then searched on it. Note that you can only have one text index, so think about it in advance! This simplifies the query a bit, we do not have to use the regex syntax for matching on a field.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span style="color: #0000FF;">import</span> pymongo
+<span style="color: #0000FF;">from</span> pymongo <span style="color: #0000FF;">import</span> MongoClient
+<span style="color: #BA36A5;">client</span> = MongoClient(<span style="color: #008000;">'localhost'</span>, 27017)
+
+<span style="color: #BA36A5;">db</span> = client[<span style="color: #008000;">'bibtex'</span>]
+<span style="color: #BA36A5;">entries</span> = db[<span style="color: #008000;">'entries'</span>]
+
+entries.create_index([(<span style="color: #008000;">'author'</span>, pymongo.TEXT),
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> (<span style="color: #008000;">'title'</span>, pymongo.TEXT),
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> (<span style="color: #008000;">'keyword'</span>, pymongo.TEXT)], sparse=<span style="color: #D0372D;">True</span>)
+
+<span style="color: #0000FF;">for</span> i, result <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">enumerate</span>(entries.find({<span style="color: #008000;">"$text"</span> : {<span style="color: #008000;">"$search"</span>: <span style="color: #008000;">"kitchin"</span>, <span style="color: #008000;">"$search"</span>: <span style="color: #008000;">"boes"</span>}})):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">print</span>(<span style="color: #008000;">'{i: 2d}. {author}, {title}, {journal}, {year}.'</span>.<span style="color: #006FE0;">format</span>(i=i, **result).replace(<span style="color: #008000;">"\n"</span>, <span style="color: #008000;">""</span>))
+</pre>
+</div>
+
+<ol class="org-ol">
+<li>G. Gumuslu and P. Kondratyuk and J. R. Boes and B. Morrealeand J. B. Miller and J. R. Kitchin and A. J. Gellman, Correlation of Electronic Structure With Catalytic Activity:\ce{H2}-\ce{D2} Exchange Across \ce{Cu<sub>x</sub>Pd<sub>1-x</sub>}Composition Space, ACS Catalysis, 2015.</li>
+<li>Jacob R. Boes and Peter Kondratyuk and Chunrong Yin and JamesB. Miller and Andrew J. Gellman and John R. Kitchin, Core Level Shifts in {Cu-Pd} Alloys As a Function of BulkComposition and Structure, Surface Science, 2015.</li>
+<li>Jacob R. Boes and Gamze Gumuslu and James B. Miller and AndrewJ. Gellman and John R. Kitchin, Estimating Bulk-Composition-Dependent \ce{H2} AdsorptionEnergies on \ce{Cu<sub>x</sub>Pd<sub>1-x</sub>} Alloy (111) Surfaces, ACS Catalysis, 2015.</li>
+<li>Jacob R. Boes and John R. Kitchin, Neural Network Predictions of Oxygen Interactions on a Dynamic Pd Surface, Molecular Simulation, Accepted 12/2016.</li>
+<li>Jacob R. Boes and John R. Kitchin, Modeling Segregation on {AuPd}(111) Surfaces With DensityFunctional Theory and Monte Carlo Simulations, Submitted to J. Phys. Chem. C, 2016.</li>
+<li>Jacob R. Boes and Gamze Gumuslu and James B. Miller and AndrewJ. Gellman and John R. Kitchin, Supporting Information: Estimating Bulk-Composition-Dependent\ce{H2} Adsorption Energies on \ce{Cu<sub>x</sub>Pd<sub>1-x</sub>} Alloy (111)Surfaces, ACS Catalysis, 2015.</li>
+<li>John D. Michael and Ethan L. Demeter and Steven M. Illes andQingqi Fan and Jacob R. Boes and John R. Kitchin, Alkaline Electrolyte and {Fe} Impurity Effects on thePerformance and Active-Phase Structure of {NiOOH} Thin Filmsfor {OER} Catalysis Applications, J. Phys. Chem. C, 2015.</li>
+<li>Jacob R. Boes and Mitchell C. Groenenboom and John A. Keithand John R. Kitchin, Neural Network and {Reaxff} Comparison for {Au} Properties, Int. J. Quantum Chem., 2016.</li>
+</ol>
+
+<p>
+We can use this to search for documents with orgmode in a keyword or title too.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span style="color: #0000FF;">import</span> pymongo
+<span style="color: #0000FF;">from</span> pymongo <span style="color: #0000FF;">import</span> MongoClient
+<span style="color: #BA36A5;">client</span> = MongoClient(<span style="color: #008000;">'localhost'</span>, 27017)
+
+<span style="color: #BA36A5;">db</span> = client[<span style="color: #008000;">'bibtex'</span>]
+<span style="color: #BA36A5;">entries</span> = db[<span style="color: #008000;">'entries'</span>]
+
+entries.create_index([(<span style="color: #008000;">'author'</span>, pymongo.TEXT),
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> (<span style="color: #008000;">'title'</span>, pymongo.TEXT),
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> (<span style="color: #008000;">'keyword'</span>, pymongo.TEXT)], sparse=<span style="color: #D0372D;">True</span>)
+
+<span style="color: #0000FF;">for</span> i, result <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">enumerate</span>(entries.find({<span style="color: #008000;">"$text"</span> : {<span style="color: #008000;">"$search"</span>: <span style="color: #008000;">"orgmode"</span>}})):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">print</span>(<span style="color: #008000;">'{i: 2d}. {author}, {title}, {journal}, {year}.'</span>.<span style="color: #006FE0;">format</span>(i=i, **result).replace(<span style="color: #008000;">"\n"</span>, <span style="color: #008000;">""</span>))
+</pre>
+</div>
+
+<ol class="org-ol">
+<li>John R. Kitchin, Data Sharing in Surface Science, Surface Science, 2016.</li>
+<li>Zhongnan Xu and John R. Kitchin, Probing the Coverage Dependence of Site and AdsorbateConfigurational Correlations on (111) Surfaces of LateTransition Metals, J. Phys. Chem. C, 2014.</li>
+<li>Xu, Zhongnan and Rossmeisl, Jan and Kitchin, John R., A Linear Response {DFT}+{U} Study of Trends in the OxygenEvolution Activity of Transition Metal Rutile Dioxides, The Journal of Physical Chemistry C, 2015.</li>
+<li>Prateek Mehta and Paul A. Salvador and John R. Kitchin, Identifying Potential \ce{BO2} Oxide Polymorphs for EpitaxialGrowth Candidates, ACS Appl. Mater. Interfaces, 2015.</li>
+<li>Xu, Zhongnan and Joshi, Yogesh V. and Raman, Sumathy andKitchin, John R., Accurate Electronic and Chemical Properties of 3d TransitionMetal Oxides Using a Calculated Linear Response {U} and a {DFT+ U(V)} Method, The Journal of Chemical Physics, 2015.</li>
+<li>Zhongnan Xu and John R. Kitchin, Relationships Between the Surface Electronic and ChemicalProperties of Doped 4d and 5d Late Transition Metal Dioxides, The Journal of Chemical Physics, 2015.</li>
+<li>Zhongnan Xu and John R Kitchin, Tuning Oxide Activity Through Modification of the Crystal andElectronic Structure: From Strain To Potential Polymorphs, Phys. Chem. Chem. Phys., 2015.</li>
+<li>Jacob R. Boes and Gamze Gumuslu and James B. Miller and AndrewJ. Gellman and John R. Kitchin, Supporting Information: Estimating Bulk-Composition-Dependent\ce{H2} Adsorption Energies on \ce{Cu<sub>x</sub>Pd<sub>1-x</sub>} Alloy (111)Surfaces, ACS Catalysis, 2015.</li>
+<li>Kitchin, John R., Examples of Effective Data Sharing in Scientific Publishing, ACS Catalysis, 2015.</li>
+<li>Curnan, Matthew T. and Kitchin, John R., Effects of Concentration, Crystal Structure, Magnetism, andElectronic Structure Method on First-Principles Oxygen VacancyFormation Energy Trends in Perovskites, The Journal of Physical Chemistry C, 2014.</li>
+<li>Kitchin, John R. and Van Gulick, Ana E. and Zilinski, Lisa D., Automating Data Sharing Through Authoring Tools, International Journal on Digital Libraries, 2016.</li>
+<li>Jacob R. Boes and Gamze Gumuslu and James B. Miller and AndrewJ. Gellman and John R. Kitchin, Estimating Bulk-Composition-Dependent \ce{H2} AdsorptionEnergies on \ce{Cu<sub>x</sub>Pd<sub>1-x</sub>} Alloy (111) Surfaces, ACS Catalysis, 2015.</li>
+<li>Zhongnan Xu and John R. Kitchin, Relating the Electronic Structure and Reactivity of the 3dTransition Metal Monoxide Surfaces, Catalysis Communications, 2014.</li>
+<li>Spencer D. Miller and Vladimir V. Pushkarev and AndrewJ. Gellman and John R. Kitchin, Simulating Temperature Programmed Desorption of Oxygen on{P}t(111) Using {DFT} Derived Coverage Dependent DesorptionBarriers, Topics in Catalysis, 2014.</li>
+<li>Hallenbeck, Alexander P. and Kitchin, John R., Effects of \ce{O_2} and \ce{SO_2} on the Capture Capacity of aPrimary-Amine Based Polymeric \ce{CO_2} Sorbent, Industrial \&amp; Engineering Chemistry Research, 2013.</li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-org6dcd73e" class="outline-2">
+<h2 id="org6dcd73e"><span class="section-number-2">2</span> Querying from emacs-lisp</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+It is hard to get too excited about this if it is not easy to query from emacs and get data in a form we can use in emacs ;) The json library allows us to convert lisp data structures to json pretty easily. For example:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">json</span>)
+
+(json-encode '((ENTRYTYPE . article)
+               (author . (($regex . kitchin)
+                          ($options . i)))
+               (author . (($regex . boes)
+                          ($options . i)))))
+</pre>
+</div>
+
+<pre class="example">
+{"ENTRYTYPE":"article","author":{"$regex":"kitchin","$options":"i"},"author":{"$regex":"boes","$options":"i"}}
+</pre>
+
+<p>
+So, we can use an a-list syntax to build up the query. Then we can send it to mongo using mongoexport that will return a json string that we can read back into emacs to get lisp data. Here is an example that returns a query. We print the first element here.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(pp
+ (aref (json-read-from-string
+        (shell-command-to-string
+         (format <span style="color: #008000;">"mongoexport --quiet --jsonArray -d bibtex -c entries -q '%s'"</span>
+                 (json-encode '((ENTRYTYPE . article)
+                                (author . (($regex . kitchin)
+                                           ($options . i)))
+                                (author . (($regex . boes)
+                                           ($options . i))))))))
+       0))
+</pre>
+</div>
+
+<pre class="example">
+((_id
+  ($oid . "5878d9644c114f59fe86cb36"))
+ (author . "Jacob R. Boes and Peter Kondratyuk and Chunrong Yin and James\nB. Miller and Andrew J. Gellman and John R. Kitchin")
+ (year . "2015")
+ (title . "Core Level Shifts in {Cu-Pd} Alloys As a Function of Bulk\nComposition and Structure")
+ (ENTRYTYPE . "article")
+ (ID . "boes-2015-core-cu")
+ (keyword . "DESC0004031, early-career")
+ (volume . "640")
+ (doi . "10.1016/j.susc.2015.02.011")
+ (link . "http://dx.doi.org/10.1016/j.susc.2015.02.011")
+ (issn . "0039-6028")
+ (journal . "Surface Science")
+ (pages . "127-132"))
+</pre>
+
+<p>
+That is pretty sweet, we get a lisp data structure we can use. We can wrap that into a reasonable looking function here:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">mongo-find</span> (db collection query)
+  (json-read-from-string
+   (shell-command-to-string
+    (format <span style="color: #008000;">"mongoexport --quiet --jsonArray -d %s -c %s -q '%s'"</span>
+            db collection (json-encode query)))))
+</pre>
+</div>
+
+<pre class="example">
+mongo-find
+</pre>
+
+<p>
+Now we can use the function to query the database, and then format the results. Here we look at the example of articles with authors that match "kitchin" and "boes".
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">loop</span> for counter from 1 for entry across
+      (mongo-find <span style="color: #008000;">"bibtex"</span> <span style="color: #008000;">"entries"</span> '((ENTRYTYPE . article)
+                                       (author . (($regex . kitchin)
+                                                  ($options . i)))
+                                       (author . (($regex . boes)
+                                                  ($options . i)))))
+      do
+      (<span style="color: #0000FF;">setq</span> entry (append `(,(cons <span style="color: #008000;">"counter"</span> counter)) entry))
+      <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">make sure we have a doi field.</span>
+      (<span style="color: #0000FF;">if</span> (assoc 'doi entry)
+          (<span style="color: #0000FF;">push</span> (cons <span style="color: #008000;">"doi"</span> (format <span style="color: #008000;">"http://dx.doi.org/%s"</span> (cdr (assoc 'doi entry)))) entry)
+        (<span style="color: #0000FF;">push</span> (cons <span style="color: #008000;">"doi"</span> <span style="color: #008000;">""</span>) entry))
+      concat
+      (concat (replace-regexp-in-string
+               <span style="color: #008000;">"\n"</span> <span style="color: #008000;">" "</span>
+               (s-format <span style="color: #008000;">"${counter}. ${author}, ${title} (${year}). ${doi}"</span>
+                         'aget entry)) <span style="color: #008000;">"\n"</span>))
+</pre>
+</div>
+
+<pre class="example">
+1. Jacob R. Boes and Peter Kondratyuk and Chunrong Yin and James B. Miller and Andrew J. Gellman and John R. Kitchin, Core Level Shifts in {Cu-Pd} Alloys As a Function of Bulk Composition and Structure (2015). http://dx.doi.org/10.1016/j.susc.2015.02.011
+2. Jacob R. Boes and Gamze Gumuslu and James B. Miller and Andrew J. Gellman and John R. Kitchin, Estimating Bulk-Composition-Dependent \ce{H2} Adsorption Energies on \ce{Cu_{x}Pd_{1-x}} Alloy (111) Surfaces (2015). http://dx.doi.org/10.1021/cs501585k
+3. Jacob R. Boes and Gamze Gumuslu and James B. Miller and Andrew J. Gellman and John R. Kitchin, Supporting Information: Estimating Bulk-Composition-Dependent \ce{H2} Adsorption Energies on \ce{Cu_{x}Pd_{1-x}} Alloy (111) Surfaces (2015). http://dx.doi.org/10.1021/cs501585k
+4. G. Gumuslu and P. Kondratyuk and J. R. Boes and B. Morreale and J. B. Miller and J. R. Kitchin and A. J. Gellman, Correlation of Electronic Structure With Catalytic Activity: \ce{H2}-\ce{D2} Exchange Across \ce{Cu_{x}Pd_{1-x}} Composition Space (2015). http://dx.doi.org/10.1021/cs501586t
+5. John D. Michael and Ethan L. Demeter and Steven M. Illes and Qingqi Fan and Jacob R. Boes and John R. Kitchin, Alkaline Electrolyte and {Fe} Impurity Effects on the Performance and Active-Phase Structure of {NiOOH} Thin Films for {OER} Catalysis Applications (2015). http://dx.doi.org/10.1021/acs.jpcc.5b02458
+6. Jacob R. Boes and Mitchell C. Groenenboom and John A. Keith and John R. Kitchin, Neural Network and {Reaxff} Comparison for {Au} Properties (2016). http://dx.doi.org/10.1002/qua.25115
+7. Jacob R. Boes and John R. Kitchin, Neural Network Predictions of Oxygen Interactions on a Dynamic Pd Surface (Accepted 12/2016). http://dx.doi.org/10.1080/08927022.2016.1274984
+8. Jacob R. Boes and John R. Kitchin, Modeling Segregation on {AuPd}(111) Surfaces With Density Functional Theory and Monte Carlo Simulations (2016). 
+</pre>
+
+<p>
+Wow, that looks like a pretty lispy way to query the database and use the results. It is probably pretty easy to do similar things for inserting and updating documents. I will save that for another day.
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6d7544a" class="outline-2">
+<h2 id="org6d7544a"><span class="section-number-2">3</span> Summary thoughts</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+This is not an exhaustive study of Mongo for a bibtex database. It does illustrate that it is potentially useful. Imagine a group of users can enter bibtex entries, and then share them through a central server. Or you query the server for entries and then select them using helm/ivy. That is probably faster than parsing large bibtex files (note, in org-ref I already cache the files in parsed form for performance reasons!).
+</p>
+
+<p>
+It would make sense to split the authors, and keywords in another version of this database. It also could make sense to have a field that is the bibtex string, and to do text search on that string. That way you get everything in the entry for searching, and an easy way to generate bibtex files without having to reconstruct them.
+</p>
+
+<p>
+It is especially interesting to run the queries through emacs-lisp since we get the benefit of editing lisp code while writing the query, e.g. parenthesis navigation, less quoting, etc&#x2026; and we get back lisp data that can be used to construct helm/ivy queries, or other emacs things. That makes this look competitive with emacsql at least for the syntax. I predict that there will be more posts on this in the future.
+</p>
+</div>
+</div>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/01/15/Querying-a-MongoDB-bibtex-database-with-Python-and-emacs-lisp.org">org-mode source</a></p>
+<p>Org-mode version = 9.0.3</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/01/15/Querying-a-MongoDB-bibtex-database-with-Python-and-emacs-lisp#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Scoring-elfeed-articles"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/01/05/Scoring-elfeed-articles/" rel="bookmark" title="Permanent Link to Scoring elfeed articles">Scoring elfeed articles</a></h2>
       <p><small><span class="blog_post_date">Posted January 05, 2017 at 11:18 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/elfeed/'>elfeed</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/elfeed/'>elfeed</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/01/05/Scoring-elfeed-articles#disqus_thread">View Comments</a>
       <p><small><span class="blog_post_date">Updated January 05, 2017 at 09:12 PM</span>
       </small></p>
@@ -1523,226 +1908,6 @@ Here are few limitations though:
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2016/11/10/Persistent-highlighting-in-Emacs#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="New-and-improved-asynchronous-org-babel-python-blocks"></div>
-      <h2 class="blog_post_title"><a href="/blog/2016/11/09/New-and-improved-asynchronous-org-babel-python-blocks/" rel="bookmark" title="Permanent Link to New and improved asynchronous org-babel python blocks">New and improved asynchronous org-babel python blocks</a></h2>
-      <p><small><span class="blog_post_date">Posted November 09, 2016 at 11:00 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2016/11/09/New-and-improved-asynchronous-org-babel-python-blocks#disqus_thread">View Comments</a>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<div id="table-of-contents">
-<h2>Table of Contents</h2>
-<div id="text-table-of-contents">
-<ul>
-<li><a href="#orgb1ee49d">1. autopep8</a></li>
-<li><a href="#orgcca807a">2. pylint</a></li>
-</ul>
-</div>
-</div>
-<p>
-About a year ago I posted some code to run org-babel python blocks <a href="http://kitchingroup.cheme.cmu.edu/blog/2015/11/20/Asynchronously-running-python-blocks-in-org-mode/">asynchronously</a>. This year, my students asked for some enhancements related to debugging. Basically, they were frustrated by a few things when they got errors. First, they found it difficult to find the line number in the Traceback in the src block because there are no line numbers in the block, and it is annoying to do a special edit just for line numbers.  
-</p>
-
-<p>
-I thought about this, and figured out how to significantly improve the situation. The async python code in scimax now has the following features:
-</p>
-
-<ol class="org-ol">
-<li>When you get a Traceback, it goes in the results, and each file listed in it is hyperlinked to the source file and line so it is easy to get to them.</li>
-<li>The cursor jumps to the last line in the code block that is listed in the Traceback, and a beacon shines to show you the line</li>
-<li>You can turn on temporary line numbers in the code block to see where the lines are in the block, and these disappear when you start typing. This is done in the variable `org-babel-async-python-show-line-numbers'.</li>
-<li>You can control whether a buffer of the results shows or not via the variable `org-babel-async-python-show-results'.</li>
-<li>When you run the block, you get a clickable link in the RESULTS section to kill the process.</li>
-<li>You may also find the `autopep8' and `pylint' functions helpful.</li>
-</ol>
-
-<p>
-The code for this is currently found here:
-<a href="https://github.com/jkitchin/scimax/blob/org-9/scimax-org-babel-python.el">https://github.com/jkitchin/scimax/blob/org-9/scimax-org-babel-python.el</a>
-</p>
-
-<p>
-Eventually, I will merge this into master, after I am sure about all the changes needed for org 9.0. That is not likely to happen until the semester ends, so I do not mess up my students who use scimax in class. So, sometime mid-December it will make into master.
-</p>
-
-<p>
-To make async the default way to run a python block use this code, so that you can use C-c C-c to run them:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">scimax-org-babel-python</span>)
-(add-to-list 'org-ctrl-c-ctrl-c-hook 'org-babel-async-execute:python)
-</pre>
-</div>
-
-<p>
-As with the past few posts, this video will make it much more clear what the post is about: 
-</p>
-
-<iframe width="560" height="315" src="https://www.youtube.com/embed/m4vCXM7_p_o" frameborder="0" allowfullscreen></iframe>
-
-
-<p>
-Here is a prototypical example that shows how it works. While it runs you can view the progress if you click on the link to show the results.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-python"><span style="color: #0000FF;">import</span> time
-
-<span style="color: #0000FF;">for</span> i <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">range</span>(5):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">print</span>(i)
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   time.sleep(2)
-</pre>
-</div>
-
-<p>
-0
-1
-2
-3
-4
-Traceback (most recent call last):
-  File "Org SRC", line 5, in &lt;module&gt;
-    time.sleep(2)
-KeyboardInterrupt
-</p>
-
-
-
-
-<p>
-This block has a pretty obvious issue when we run it. The cursor jumps right to the problem!
-</p>
-
-<div class="org-src-container">
-<pre class="src src-python"><span style="color: #0000FF;">print</span>(<span style="color: #008000;">'This line is ok'</span>)
-<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">5 / 0</span>
-<span style="color: #0000FF;">print</span>(<span style="color: #008000;">'We will not see this'</span>)
-</pre>
-</div>
-
-<p>
-This line is ok
-We will not see this
-</p>
-
-
-
-<p>
-This block shows we can access any of the links in the Traceback. Here we have an error in calling a function that is raised in an external file.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-python"><span style="color: #0000FF;">import</span> numpy <span style="color: #0000FF;">as</span> np
-<span style="color: #0000FF;">from</span> scipy.integrate <span style="color: #0000FF;">import</span> odeint
-
-<span style="color: #BA36A5;">Vspan</span> = np.linspace(0, 2) <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">L</span>
-
-<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">dF/dV = F</span>
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">dFdV</span>(F, V, v0):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> F
-
-
-<span style="color: #0000FF;">print</span>(odeint(dFdV, 1.0, Vspan))
-</pre>
-</div>
-
-<p>
-Traceback (most recent call last):
-  File "Org SRC", line 11, in &lt;module&gt;
-    print(odeint(dFdV, 1.0, Vspan))
-  File "/Users/jkitchin/anaconda3/lib/python3.5/site-packages/scipy/integrate/odepack.py", line 215, in odeint
-    ixpr, mxstep, mxhnil, mxordn, mxords)
-TypeError: dFdV() missing 1 required positional argument: 'v0'
-</p>
-
-
-<p>
-Here we show how nice it is to be able to kill a process. This block will not end on its own.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-python"><span style="color: #0000FF;">while</span> <span style="color: #D0372D;">True</span>:
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">pass</span>
-</pre>
-</div>
-
-<p>
-Traceback (most recent call last):
-  File "Org SRC", line 2, in &lt;module&gt;
-    pass
-KeyboardInterrupt
-</p>
-
-<div id="outline-container-orgb1ee49d" class="outline-2">
-<h2 id="orgb1ee49d"><span class="section-number-2">1</span> autopep8</h2>
-<div class="outline-text-2" id="text-1">
-<p>
-<a href="https://pypi.python.org/pypi/autopep8">autopep8</a> is a tool for reformatting Python code. We wrapped this into an Emacs command so you can quickly reformat a Python code block. 
-</p>
-
-<div class="org-src-container">
-<pre class="src src-python"><span style="color: #BA36A5;">a</span> = 4
-<span style="color: #BA36A5;">b</span> = 5
-<span style="color: #BA36A5;">c</span> = a * b  <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">comment</span>
-<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">another comment</span>
-
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">f</span>(x):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> x
-<span style="color: #0000FF;">print</span>(f(5))
-</pre>
-</div>
-</div>
-</div>
-
-<div id="outline-container-orgcca807a" class="outline-2">
-<h2 id="orgcca807a"><span class="section-number-2">2</span> pylint</h2>
-<div class="outline-text-2" id="text-2">
-<p>
-<a href="https://www.pylint.org">pylint</a> is a great tool for checking your Python code for errors, style and conventions. We also wrapped this into an Emacs command so you can run it on a Python src block. The report that is generated had clickable links to help you get right to the lines in your code block with problems.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-python"><span style="color: #0000FF;">import</span> numpy <span style="color: #0000FF;">as</span> np
-
-<span style="color: #BA36A5;">a</span> = np.array(5, 5)
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">f</span>(x): <span style="color: #0000FF;">return</span> x
-
-<span style="color: #0000FF;">print</span>(f(6))
-</pre>
-</div>
-</div>
-</div>
-<p>Copyright (C) 2016 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2016/11/09/New-and-improved-asynchronous-org-babel-python-blocks.org">org-mode source</a></p>
-<p>Org-mode version = 9.0</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2016/11/09/New-and-improved-asynchronous-org-babel-python-blocks#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="/blog/category/emacs/2">« Previous Page</a>
   --  
  <a href="/blog/category/emacs/4">Next Page »</a>
@@ -1784,11 +1949,11 @@ KeyboardInterrupt
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2017/05/04/An-emacs-lisp-dsl-for-gnuplot/">An emacs-lisp dsl for gnuplot</a></li>
       <li><a href="/blog/2017/04/30/Emulating-Sparql-queries-in-emacs-lisp-with-pattern-matching/">Emulating Sparql queries in emacs-lisp with pattern matching</a></li>
       <li><a href="/blog/2017/04/16/A-callable-plist-data-structure-for-Emacs/">A callable plist data structure for Emacs</a></li>
       <li><a href="/blog/2017/04/15/A-new-org-mode-exporter-to-Word-for-scimax/">A new org-mode exporter to Word for scimax</a></li>
       <li><a href="/blog/2017/04/11/Autoformatting-ordinal-numbers-and-fractions-in-orgmode/">Autoformatting ordinal numbers and fractions in orgmode</a></li>
-      <li><a href="/blog/2017/04/09/A-better-return-in-org-mode/">A better return in org-mode</a></li>
     </ul>
   </section>
 
