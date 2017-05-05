@@ -84,6 +84,301 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="A-new-and-improved-Emacs-gnuplot-DSL"></div>
+      <h2 class="blog_post_title"><a href="/blog/2017/05/05/A-new-and-improved-Emacs-gnuplot-DSL/" rel="bookmark" title="Permanent Link to A new and improved Emacs gnuplot DSL">A new and improved Emacs gnuplot DSL</a></h2>
+      <p><small><span class="blog_post_date">Posted May 05, 2017 at 10:26 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/lisp/'>lisp</a>, <a href='/blog/category/plotting/'>plotting</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2017/05/05/A-new-and-improved-Emacs-gnuplot-DSL#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+A significant limitation of the	<a href="http://kitchingroup.cheme.cmu.edu/blog/2017/05/04/An-emacs-lisp-dsl-for-gnuplot/">previous</a> DSL I wrote is that all the plotting commands have to go in one macro. It would be nice to accumulate them in different forms, and when you want to run them all. A classic way to do that in Emacs lisp is to make a global variable, e.g. <code>*gnuplot-cmds*</code> and append commands to it. Then when you want to, run the commands.
+</p>
+
+<p>
+A more modern approach is to use a closure to encapsulate the commands. Here is a <a href="http://letoverlambda.com">"let over lambda"</a> that defines a few functions that encapsulate an enclosed variable gnuplot-commands. We define one function to add commands to the list of commands, one to clear the commands, one to generate the gnuplot script as a string, and one to run the program. The enclosed variable <code>gnuplot-commands</code> is basically only accessible by these functions. It is encapsulated, similar to if we defined a class in Python then made an instance of it with an attribute that was accessible only be instance methods. On one hand, this "protects" the variable, and keeps it out of the global namespace. On the other hand, we lose the documentation that would have come with a defvar, and we have to define a function to access the contents of that variable.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((gnuplot-commands '(<span style="color: #008000;">"set terminal qt"</span>)))
+
+  (<span style="color: #0000FF;">defun</span> <span style="color: #006699;">gnuplot-add-cmd</span> (s)
+    <span style="color: #036A07;">"Append the command S to gnuplot-cmds."</span>
+    (<span style="color: #0000FF;">setq</span> gnuplot-commands (append gnuplot-commands (list s))))
+
+  (<span style="color: #0000FF;">defun</span> <span style="color: #006699;">gnuplot-clear</span> ()
+    (<span style="color: #0000FF;">setq</span> gnuplot-commands '(<span style="color: #008000;">"set terminal qt"</span>)))
+
+  (<span style="color: #0000FF;">defun</span> <span style="color: #006699;">gnuplot-script</span> ()
+    (s-join <span style="color: #008000;">"\n"</span> gnuplot-commands)))
+</pre>
+</div>
+
+<p>
+To run the commands, we define this function. It does not need to be in the closure because it only accesses the commands through functions we defined in the closure.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">gnuplot-show</span> ()
+    (<span style="color: #0000FF;">let*</span> ((temporary-file-directory <span style="color: #008000;">"."</span>)
+           (cmdfile (make-temp-file <span style="color: #008000;">"gnuplot-cmds-"</span> nil <span style="color: #008000;">".gpl"</span>))
+           (shellcmd (format <span style="color: #008000;">"gnuplot --persist -c \"%s\""</span> cmdfile))
+           (cmds (gnuplot-script)))
+      (<span style="color: #0000FF;">with-temp-file</span> cmdfile
+        (insert cmds))
+      (shell-command shellcmd)
+      (delete-file cmdfile)
+      cmds))
+</pre>
+</div>
+
+<p>
+Last time I noted I had a new idea for the DSL syntax that would give us more flexibility to inject variables and code into the DSL. The idea is to use keywords, symbols that start with :, to indicate they should be replaced by the value of the non-keyword symbol in the environment, and for any form that starts with : to evaluate that form. So, (: - 5 4) would get replaced by 1. Here is the new macro for that.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defmacro</span> <span style="color: #006699;">kargs</span> (<span style="color: #6434A3;">&amp;rest</span> args)
+  <span style="color: #036A07;">"Convert symbols to strings, quote strings, and (expr) to what they evaluate to."</span>
+  `(s-join <span style="color: #008000;">" "</span> (list ,@(cl-mapcan
+                        (<span style="color: #0000FF;">lambda</span> (s)
+                          (list
+                           (<span style="color: #0000FF;">cond</span>
+                            ((keywordp s)
+                             (format <span style="color: #008000;">"%s"</span>
+                                     (symbol-value (intern (substring (symbol-name s) 1)))))
+                            ((symbolp s)
+                             (symbol-name s))
+                            ((stringp s)
+                             (format <span style="color: #008000;">"\"%s\""</span> s))
+                            ((<span style="color: #0000FF;">and</span> (listp s) (eq : (car s)))
+                             `(<span style="color: #0000FF;">with-output-to-string</span>
+                                (princ ,(cdr s))))
+                            (t
+                             (format <span style="color: #008000;">"%s"</span> s)))))
+                        args))))
+</pre>
+</div>
+
+<p>
+Now, our gnuplot macro is simpler, since all it does is add commands to the list. If the form is a string, we add it as is, if the form starts with (: stuff) we evaluate the cdr of the form, and otherwise, we pass the form contents to the kargs macro for processing.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defmacro</span> <span style="color: #006699;">gnuplot</span> (<span style="color: #6434A3;">&amp;rest</span> forms)
+  `(<span style="color: #0000FF;">loop</span> for s in (list ,@(mapcar (<span style="color: #0000FF;">lambda</span> (x)
+                                    (<span style="color: #0000FF;">cond</span>
+                                     ((stringp x)
+                                      x)
+                                     ((<span style="color: #0000FF;">and</span> (listp x) (eq : (car x)))
+                                      `,(cdr x))
+                                     (t
+                                      `(<span style="color: #0000FF;">kargs</span> ,@x))))
+                                  forms))
+         do (gnuplot-add-cmd s)))
+</pre>
+</div>
+
+<p>
+What did that gain us? First, we can break up a script so we can talk about it, maybe do some calculations, etc&#x2026; Let's look at the exmaple at <a href="http://gnuplot.sourceforge.net/demo/linkedaxes.html">http://gnuplot.sourceforge.net/demo/linkedaxes.html</a>.
+</p>
+
+<p>
+We can start with the basic settings.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(gnuplot-clear)
+
+(<span style="color: #0000FF;">gnuplot</span>
+ (set terminal png)
+ (set output <span style="color: #008000;">"linkedaxes.png"</span>)
+ (set encoding utf8)
+ (set key outside Left)
+ (set bmargin 5)
+ (set tmargin 6)
+ (set style data lines)
+ (set tics in)
+ (set ticslevel 0.5)
+ (set xlabel  <span style="color: #008000;">"X-ray energy in eV"</span>)
+
+ (set format y  \'%5.1fe\')
+ (set title <span style="color: #008000;">" Anomalous scattering factors "</span>)
+ (set xrange  [9000:14400])
+ (set offset 0\,0\,1.0\,0)
+ (set xtics nomirror)
+ (set link x via 12398./x inverse 12398./x)
+
+ (set x2label  <span style="color: #008000;">"X-ray wavelength in &#197;"</span>)
+ (set x2tics 0.1  format <span style="color: #008000;">"%.1f &#197;"</span> nomirror))
+</pre>
+</div>
+
+<p>
+We need to download some data files. We can do that, and add another line to the gnuplot script. The escaping on the quotes and commas is especially tedious in this one ;) but, we don't need those pesky line-continuations here.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(shell-command <span style="color: #008000;">"wget http://www.bmsc.washington.edu/scatter/data/Br.dat"</span>)
+(shell-command <span style="color: #008000;">"wget http://www.bmsc.washington.edu/scatter/data/Ta.dat"</span>)
+
+
+(<span style="color: #0000FF;">gnuplot</span>
+ (<span style="color: #0000FF;">plot</span> <span style="color: #008000;">"Br.dat"</span> volatile using 1:3 title \'Br f\"\'  lt 1 lw 3\, \'\' volatile using 1:2 title <span style="color: #008000;">"Br f'"</span>  lt 1 lw 1\,
+       <span style="color: #008000;">"Ta.dat"</span> volatile using 1:3 title \'Ta f\"\' lt 2 lw 3\, \'\' volatile using 1:2 title \"Ta f\'\"  lt 2 lw 1))
+
+(gnuplot-script)
+</pre>
+</div>
+
+<p>
+Finally, we can set the output to png, and run our program.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(gnuplot-show)
+</pre>
+</div>
+
+<p>
+Looks good.
+</p>
+
+
+
+<p>
+<img src="/media/linkedaxes.png"> 
+</p>
+
+<p>
+What about the fancy keyword formatting? Here is an example of that in action. :term gets replaced by the term variable, :png gets replaced by the filename, and :x is replaced by 4.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(gnuplot-clear)
+(<span style="color: #0000FF;">let</span> ((x 4)
+      (term <span style="color: #008000;">"png"</span>)
+      (png <span style="color: #008000;">"\"polar.png\""</span>))
+  (<span style="color: #0000FF;">gnuplot</span>
+   (set terminal <span style="color: #006FE0;">:term</span>)
+   (set output <span style="color: #006FE0;">:png</span>)
+   (set polar)
+   (set dummy t)
+   (<span style="color: #0000FF;">plot</span> sin\( <span style="color: #006FE0;">:x</span> *t\) \,cos\( <span style="color: #006FE0;">:x</span> *t\))
+   (set offset 0\,0\,0\,0)))
+
+(gnuplot-show)
+</pre>
+</div>
+
+<p>
+<img src="/media/polar.png"> 
+</p>
+
+<p>
+There are a few nuances I didn't expect. First, you have to escape the parentheses in this case because otherwise it looks like a form that will be ignored. Second, you have to quote the string to get quotes into the gnuplot script. Third, there has to be a space before and after the keywords for emacs to parse it correctly and do the substitution.
+</p>
+
+<p>
+Let's look at one last example that uses the (: form). We reproduce a figure from <a href="http://gnuplot.sourceforge.net/demo/transparent_solids.html">http://gnuplot.sourceforge.net/demo/transparent_solids.html</a> here.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(gnuplot-clear)
+(<span style="color: #0000FF;">gnuplot</span>
+ (set terminal pngcairo  background <span style="color: #008000;">"#ffffff"</span> enhanced font <span style="color: #008000;">"arial,9"</span> fontscale 1.0 size 512\, 384 )
+ (set output <span style="color: #008000;">"transparent-solids.png"</span>)
+ <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">construct the title</span>
+ (set title (<span style="color: #0000FF;">:</span> format <span style="color: #008000;">"\"%s\""</span> (concat <span style="color: #008000;">"Interlocking Tori - PM3D surface"</span> <span style="color: #008000;">"with depth sorting and transparency"</span>)))
+
+ <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">use lisp code to create a gnuplot command</span>
+ (<span style="color: #0000FF;">:</span> concat <span style="color: #008000;">"unset"</span> <span style="color: #008000;">" "</span> <span style="color: #008000;">"border"</span>)
+
+ (unset key)
+ (set object 1 rect from screen 0\, 0\, 0 to screen 1\, 1\, 0 behind)
+ (set object 1 rect fc  rgb \"gray\"  fillstyle solid 1.0  border -1)
+ (set view 64\, 345\, 1.24375\, 0.995902)
+ (set isosamples 50\, 20)
+ (unset xtics)
+ (unset ytics)
+ (unset ztics)
+ (set dummy u\,v)
+ (set parametric)
+ (set urange [ -pi : pi ])
+ (set vrange [ -pi : pi ])
+
+ (set style fill  transparent solid 0.30 border)
+ (set pm3d depthorder)
+ (set palette rgbformulae 8\, 9\, 7)
+ (set pm3d interpolate 1\,1 flush begin noftriangles border lt black linewidth 0.500 dashtype solid corners2color mean)
+ (set colorbox vertical origin screen 0.9\, 0.2\, 0 size screen 0.05\, 0.6\, 0 front  noinvert bdefault)
+
+ (splot (<span style="color: #0000FF;">:</span> concat <span style="color: #008000;">"cos(u)+.5*cos(u)*cos(v),sin(u)+.5*sin(u)*cos(v),.5*sin(v) with pm3d,"</span>
+           <span style="color: #008000;">"1+cos(u)+.5*cos(u)*cos(v),.5*sin(v),sin(u)+.5*sin(u)*cos(v) with pm3d"</span>)))
+(gnuplot-show)
+</pre>
+</div>
+
+
+<p>
+<img src="/media/transparent-solids.png"> 
+</p>
+
+<p>
+Overall this seems like an improvement to the DSL. I didn't invent the idea of reusing keywords this way out of the blue. In On Lisp, Paul graham uses "special" variable names in Chapter 18, where he shows how to use gensyms for special purposes, and also variables with special names like ?x. Even Emacs is using a variation of this idea. Check out this <a href="http://endlessparentheses.com/new-on-elpa-and-in-emacs-25-1-let-alist.html">new let-alist</a> macro:
+</p>
+
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let-alist</span> '((x . 5))
+  (+ 1 .x))
+</pre>
+</div>
+
+<p>
+There is a special variable inside the body that is a dot-name. The macro expands to provide a value for that symbol. I wonder if I should have tried to use an approach like this instead. Maybe another day. After I read and study the four defuns and single defmacro that make this possible!
+</p>
+
+<p>
+You can see here what happens:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(macroexpand '(let-alist '((x . 5))
+  (+ 1 .x)))
+</pre>
+</div>
+
+<p>
+The macro builds up an internal alist for the dot-names.
+</p>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/05/05/A-new-and-improved-Emacs-gnuplot-DSL.org">org-mode source</a></p>
+<p>Org-mode version = 9.0.5</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/05/05/A-new-and-improved-Emacs-gnuplot-DSL#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="An-emacs-lisp-dsl-for-gnuplot"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/05/04/An-emacs-lisp-dsl-for-gnuplot/" rel="bookmark" title="Permanent Link to An emacs-lisp dsl for gnuplot">An emacs-lisp dsl for gnuplot</a></h2>
       <p><small><span class="blog_post_date">Posted May 04, 2017 at 07:33 PM</span> | categories:
@@ -652,7 +947,7 @@ Pretty cool! Clearly there is still a lot to do to make this practical. The impl
       <div id="Writing-lisp-code-from-Python"></div>
       <h2 class="blog_post_title"><a href="/blog/2016/05/30/Writing-lisp-code-from-Python/" rel="bookmark" title="Permanent Link to Writing lisp code from Python">Writing lisp code from Python</a></h2>
       <p><small><span class="blog_post_date">Posted May 30, 2016 at 09:26 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/python/'>python</a>, <a href='/blog/category/lisp/'>lisp</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/lisp/'>lisp</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2016/05/30/Writing-lisp-code-from-Python#disqus_thread">View Comments</a>
       <p><small><span class="blog_post_date">Updated May 30, 2016 at 12:38 PM</span>
       </small></p>
@@ -862,7 +1157,7 @@ I am not too sure where this will be super useful, but it is an interesting proo
       <div id="OMG-A-Lisp-that-runs-python"></div>
       <h2 class="blog_post_title"><a href="/blog/2016/03/30/OMG-A-Lisp-that-runs-python/" rel="bookmark" title="Permanent Link to OMG A Lisp that runs python">OMG A Lisp that runs python</a></h2>
       <p><small><span class="blog_post_date">Posted March 30, 2016 at 05:10 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/python/'>python</a>, <a href='/blog/category/lisp/'>lisp</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/lisp/'>lisp</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2016/03/30/OMG-A-Lisp-that-runs-python#disqus_thread">View Comments</a>
       <p><small><span class="blog_post_date">Updated March 31, 2016 at 01:54 PM</span>
       </small></p>
@@ -1018,286 +1313,6 @@ Ascii art courtesy of <a href="http://chris.com/ascii/index.php?art=people/body%
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2016/03/30/OMG-A-Lisp-that-runs-python#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="A-sexp-version-of-a-bibtex-entry"></div>
-      <h2 class="blog_post_title"><a href="/blog/2015/06/10/A-sexp-version-of-a-bibtex-entry/" rel="bookmark" title="Permanent Link to A sexp version of a bibtex entry">A sexp version of a bibtex entry</a></h2>
-      <p><small><span class="blog_post_date">Posted June 10, 2015 at 08:54 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/bibtex/'>bibtex</a>, <a href='/blog/category/lisp/'>lisp</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2015/06/10/A-sexp-version-of-a-bibtex-entry#disqus_thread">View Comments</a>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-
-<p>
-Below you see a typical bibtex entry. Today we explore an alternate approach to represent the information (data) in that entry as s-expressions, i.e. as a lisp data structure. Why? because it seems like an interesting exploration!
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-bibtex"><span style="color: #006699;">@article</span>{<span style="color: #D0372D;">hallenbeck-2013-effec-o2</span>,
-  <span style="color: #BA36A5;">author</span> =       "Hallenbeck, Alexander P. and Kitchin, John R.",
-  <span style="color: #BA36A5;">title</span> =        {Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a
-                  primary-amine based polymeric \ce{CO_2} sorbent},
-  <span style="color: #BA36A5;">keywords</span> =     {RUA, orgmode},
-  <span style="color: #BA36A5;">journal</span> =      "Industrial \&amp; Engineering Chemistry Research",
-  <span style="color: #BA36A5;">pages</span> =        "10788-10794",
-  <span style="color: #BA36A5;">year</span> =         2013,
-  <span style="color: #BA36A5;">volume</span> =       {52},
-  <span style="color: #BA36A5;">number</span> =       {31},
-  <span style="color: #BA36A5;">doi</span> =          "<span style="color: #006DAF; text-decoration: underline;">10.1021/ie400582a</span>",
-  <span style="color: #BA36A5;">url</span> =          "<span style="color: #006DAF; text-decoration: underline;">http://pubs.acs.org/doi/abs/10.1021/ie400582a</span>",
-  <span style="color: #BA36A5;">eprint</span> =       "http://pubs.acs.org/doi/pdf/10.1021/ie400582a",
-}
-</pre>
-</div>
-
-<p>
-Here is what that same data structure might look like as a sexp-based lisp data structure.
-</p>
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(article <span style="color: #008000;">"hallenbeck-2013-effec-o2"</span>
-         (author <span style="color: #008000;">"Hallenbeck, Alexander P. and Kitchin, John R."</span>)
-         (title <span style="color: #008000;">"Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a primary-amine based polymeric \ce{CO_2} sorbent"</span>)
-         (journal <span style="color: #008000;">"Industrial \&amp; Engineering Chemistry Research"</span>)
-         (pages <span style="color: #008000;">"10788-10794"</span>)
-         (year 2013)
-         (number 31)
-         (doi <span style="color: #008000;">"10.1021/ie400582a"</span>)
-         (url <span style="color: #008000;">"http://pubs.acs.org/doi/abs/10.1021/ie400582a"</span>)
-         (eprint <span style="color: #008000;">"http://pubs.acs.org/doi/pdf/10.1021/ie400582a"</span>))
-</pre>
-</div>
-
-<p>
-We can retrieve data from the sexp form pretty easily. Here we get the authors.
-</p>
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let*</span> ((art '(article <span style="color: #008000;">"hallenbeck-2013-effec-o2"</span>
-                      (author <span style="color: #008000;">"Hallenbeck, Alexander P. and Kitchin, John R."</span>)
-                      (title <span style="color: #008000;">"Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a primary-amine based polymeric \ce{CO_2} sorbent"</span>)
-                      (journal <span style="color: #008000;">"Industrial \&amp; Engineering Chemistry Research"</span>)
-                      (pages <span style="color: #008000;">"10788-10794"</span>)
-                      (year 2013)
-                      (number 31)
-                      (doi <span style="color: #008000;">"10.1021/ie400582a"</span>)
-                      (url <span style="color: #008000;">"http://pubs.acs.org/doi/abs/10.1021/ie400582a"</span>)
-                      (eprint <span style="color: #008000;">"http://pubs.acs.org/doi/pdf/10.1021/ie400582a"</span>)))
-       (fields (cddr art)))
-  (cadr (assoc 'author fields)))
-</pre>
-</div>
-
-<pre class="example">
-Hallenbeck, Alexander P. and Kitchin, John R.
-</pre>
-
-<p>
-That is simple enough you might just write a little function to streamline it like this, and return a formatted string.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">get-article-field</span> (article field)
-  <span style="color: #036A07;">"Return value of FIELD in ARTICLE."</span>
-  (cadr (assoc field (cddr article))))
-
-(<span style="color: #0000FF;">let</span> ((art '(article <span style="color: #008000;">"hallenbeck-2013-effec-o2"</span>
-                     (author <span style="color: #008000;">"Hallenbeck, Alexander P. and Kitchin, John R."</span>)
-                     (title <span style="color: #008000;">"Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a primary-amine based polymeric \ce{CO_2} sorbent"</span>)
-                     (journal <span style="color: #008000;">"Industrial \&amp; Engineering Chemistry Research"</span>)
-                     (pages <span style="color: #008000;">"10788-10794"</span>)
-                     (year 2013)
-                     (number 31)
-                     (doi <span style="color: #008000;">"10.1021/ie400582a"</span>)
-                     (url <span style="color: #008000;">"http://pubs.acs.org/doi/abs/10.1021/ie400582a"</span>)
-                     (eprint <span style="color: #008000;">"http://pubs.acs.org/doi/pdf/10.1021/ie400582a"</span>))))
-  (format <span style="color: #008000;">"%s, doi:%s (%s)"</span>
-          (get-article-field art 'author)
-          (get-article-field art 'doi)
-          (get-article-field art 'year)))
-</pre>
-</div>
-
-<pre class="example">
-Hallenbeck, Alexander P. and Kitchin, John R., doi:10.1021/ie400582a (2013)
-</pre>
-
-<p>
-You might be wondering, why is that even a little bit interesting? One reason is that it looks a little like what lisp returns after parsing an xml file. Another is, the data structure looks kind of like data, but it is also some code, if article was defined as a function!  Let us consider what this might look like. I use a macro to define the field functions since in this case they all do the same thing, and these simply return a string with the field-name and value in curly brackets. We eval the macro to make sure it defines the function. I define an article function that wraps the fields in @bibtex-key{fields}, which defines a bibtex entry.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defmacro</span> <span style="color: #006699;">make-field</span> (field-name)
-  <span style="color: #036A07;">"define a field that returns a string"</span>
-  `(<span style="color: #0000FF;">defun</span> ,(intern field-name) (content)
-     (format <span style="color: #008000;">"  %s = {%s}"</span> ,field-name content)))
-
-(<span style="color: #0000FF;">loop</span> for field in '(<span style="color: #008000;">"author"</span> <span style="color: #008000;">"title"</span> <span style="color: #008000;">"journal"</span> <span style="color: #008000;">"pages"</span> <span style="color: #008000;">"number"</span> <span style="color: #008000;">"doi"</span> <span style="color: #008000;">"url"</span> <span style="color: #008000;">"eprint"</span> <span style="color: #008000;">"year"</span>)
-  do (eval `(make-field ,field)))
-
-(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">article</span> (bibtex-key <span style="color: #6434A3;">&amp;rest</span> fields)
-  (concat
-   (format <span style="color: #008000;">"@article{%s,\n"</span> bibtex-key)
-   (mapconcat (<span style="color: #0000FF;">lambda</span> (field) (eval field)) fields <span style="color: #008000;">",\n"</span>)
-   <span style="color: #008000;">"\n}\n"</span>))
-
-(article <span style="color: #008000;">"hallenbeck-2013-effec-o2"</span>
-         (author <span style="color: #008000;">"Hallenbeck, Alexander P. and Kitchin, John R."</span>)
-         (title <span style="color: #008000;">"Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a primary-amine based polymeric \ce{CO_2} sorbent"</span>)
-         (journal <span style="color: #008000;">"Industrial \&amp; Engineering Chemistry Research"</span>)
-         (pages <span style="color: #008000;">"10788-10794"</span>)
-         (number 31)
-         (year 2013)
-         (doi <span style="color: #008000;">"10.1021/ie400582a"</span>)
-         (url <span style="color: #008000;">"http://pubs.acs.org/doi/abs/10.1021/ie400582a"</span>)
-         (eprint <span style="color: #008000;">"http://pubs.acs.org/doi/pdf/10.1021/ie400582a"</span>))
-</pre>
-</div>
-
-<pre class="example">
-@article{hallenbeck-2013-effec-o2,
-  author = {Hallenbeck, Alexander P. and Kitchin, John R.},
-  title = {Effects of ce{O_2} and ce{SO_2} on the capture capacity of a primary-amine based polymeric ce{CO_2} sorbent},
-  journal = {Industrial &amp; Engineering Chemistry Research},
-  pages = {10788-10794},
-  number = {31},
-  year = {2013},
-  doi = {10.1021/ie400582a},
-  url = {http://pubs.acs.org/doi/abs/10.1021/ie400582a},
-  eprint = {http://pubs.acs.org/doi/pdf/10.1021/ie400582a}
-}
-</pre>
-
-<p>
-Wow. We <i>executed</i> our data structure, and got a bibtex entry! That seems moderately interesting to me. Next is an example of taking the same data structure and rendering it as xml. This is some lispy wizardry, rather than use a macro to define functions, I temporarily define functions within a cl-flet macro, which I have to collect as a list of code. Then, I eval the list. This feels pretty odd, but seems like a lispy kind of thing to do.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(eval
- (list 'cl-flet
-       (append (<span style="color: #0000FF;">loop</span> for field in '(<span style="color: #008000;">"author"</span> <span style="color: #008000;">"title"</span> <span style="color: #008000;">"journal"</span> <span style="color: #008000;">"pages"</span>
-                                      <span style="color: #008000;">"number"</span> <span style="color: #008000;">"doi"</span> <span style="color: #008000;">"url"</span> <span style="color: #008000;">"eprint"</span> <span style="color: #008000;">"year"</span>)
-                       collect (list (intern field)
-                                     '(content)
-                                     `(format <span style="color: #008000;">"  &lt;%s&gt;%s&lt;/%s&gt;"</span> ,field content ,field)))
-               '((article (bibtex-key <span style="color: #6434A3;">&amp;rest</span> fields)
-                          (concat
-                           (format
-                            <span style="color: #008000;">"&lt;article bibtex-key=\"%s\"&gt;\n"</span> bibtex-key)
-                           (mapconcat (<span style="color: #0000FF;">lambda</span> (field) (eval field)) fields <span style="color: #008000;">"\n"</span>)
-                           <span style="color: #008000;">"\n&lt;/article&gt;"</span>)))
-               )
-       <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">body of cl-flet</span>
-       '(article <span style="color: #008000;">"hallenbeck-2013-effec-o2"</span>
-                (author <span style="color: #008000;">"Hallenbeck, Alexander P. and Kitchin, John R."</span>)
-                (title <span style="color: #008000;">"Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a primary-amine based polymeric \ce{CO_2} sorbent"</span>)
-                (journal <span style="color: #008000;">"Industrial \&amp; Engineering Chemistry Research"</span>)
-                (pages <span style="color: #008000;">"10788-10794"</span>)
-                (number 31)
-                (year 2013)
-                (doi <span style="color: #008000;">"10.1021/ie400582a"</span>)
-                (url <span style="color: #008000;">"http://pubs.acs.org/doi/abs/10.1021/ie400582a"</span>)
-                (eprint <span style="color: #008000;">"http://pubs.acs.org/doi/pdf/10.1021/ie400582a"</span>))))
-</pre>
-</div>
-
-<pre class="example">
-&lt;article bibtex-key="hallenbeck-2013-effec-o2"&gt;
-  &lt;author&gt;Hallenbeck, Alexander P. and Kitchin, John R.&lt;/author&gt;
-  &lt;title&gt;Effects of ce{O_2} and ce{SO_2} on the capture capacity of a primary-amine based polymeric ce{CO_2} sorbent&lt;/title&gt;
-  &lt;journal&gt;Industrial &amp; Engineering Chemistry Research&lt;/journal&gt;
-  &lt;pages&gt;10788-10794&lt;/pages&gt;
-  &lt;number&gt;31&lt;/number&gt;
-  &lt;year&gt;2013&lt;/year&gt;
-  &lt;doi&gt;10.1021/ie400582a&lt;/doi&gt;
-  &lt;url&gt;http://pubs.acs.org/doi/abs/10.1021/ie400582a&lt;/url&gt;
-  &lt;eprint&gt;http://pubs.acs.org/doi/pdf/10.1021/ie400582a&lt;/eprint&gt;
-&lt;/article&gt;
-</pre>
-
-<p>
-Prefer json? No problem, just reformat the functions!
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(eval
- (list 'cl-flet
-       (append (<span style="color: #0000FF;">loop</span> for field in '(<span style="color: #008000;">"author"</span> <span style="color: #008000;">"title"</span> <span style="color: #008000;">"journal"</span> <span style="color: #008000;">"pages"</span>
-                                      <span style="color: #008000;">"number"</span> <span style="color: #008000;">"doi"</span> <span style="color: #008000;">"url"</span> <span style="color: #008000;">"eprint"</span> <span style="color: #008000;">"year"</span>)
-                       collect (list (intern field)
-                                     '(content)
-                                     `(format <span style="color: #008000;">"   \"%s\": \"%s\""</span> ,field content)))
-               '((article (bibtex-key <span style="color: #6434A3;">&amp;rest</span> fields)
-                          (concat
-                           (format
-                            <span style="color: #008000;">"{\"article\":\n  {\"bibtex-key\": \"%s\",\n"</span> bibtex-key)
-                           (mapconcat (<span style="color: #0000FF;">lambda</span> (field) (eval field)) fields <span style="color: #008000;">",\n"</span>)
-                           <span style="color: #008000;">"}\n}"</span>))))
-       <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">body of cl-flet</span>
-       '(article <span style="color: #008000;">"hallenbeck-2013-effec-o2"</span>
-                (author <span style="color: #008000;">"Hallenbeck, Alexander P. and Kitchin, John R."</span>)
-                (title <span style="color: #008000;">"Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a primary-amine based polymeric \ce{CO_2} sorbent"</span>)
-                (journal <span style="color: #008000;">"Industrial \&amp; Engineering Chemistry Research"</span>)
-                (pages <span style="color: #008000;">"10788-10794"</span>)
-                (number 31)
-                (year 2013)
-                (doi <span style="color: #008000;">"10.1021/ie400582a"</span>)
-                (url <span style="color: #008000;">"http://pubs.acs.org/doi/abs/10.1021/ie400582a"</span>)
-                (eprint <span style="color: #008000;">"http://pubs.acs.org/doi/pdf/10.1021/ie400582a"</span>))))
-</pre>
-</div>
-
-<pre class="example">
-{"article":
-  {"bibtex-key": "hallenbeck-2013-effec-o2",
-   "author": "Hallenbeck, Alexander P. and Kitchin, John R.",
-   "title": "Effects of ce{O_2} and ce{SO_2} on the capture capacity of a primary-amine based polymeric ce{CO_2} sorbent",
-   "journal": "Industrial &amp; Engineering Chemistry Research",
-   "pages": "10788-10794",
-   "number": "31",
-   "year": "2013",
-   "doi": "10.1021/ie400582a",
-   "url": "http://pubs.acs.org/doi/abs/10.1021/ie400582a",
-   "eprint": "http://pubs.acs.org/doi/pdf/10.1021/ie400582a"}
-}
-</pre>
-
-<p>
-Is this useful? Great question. I don't plan to convert by bibtex files to sexp format anytime soon ;) The format I used above is just a simple one. It might be desirable to include individual authors instead of an author string, and maybe support attributes to establish an author order. An author structure might be more complex to include scientific ids like an orcid, alternative names, etc&#x2026; Finally, the s-exp data structure is super easy to use in lisp, but other languages would have parse it into some native structure the way they parse json or xml. There is limited support for s-expressions in most other non-lispy languages.
-</p>
-
-<p>
-I like the idea of data representation as code, and its conversion to some other kind of format. It is subtle here, but notice we <i>never</i> had to write a parser for the sexp notation. That <i>already exists as the lisp interpreter</i>. We did write code to use the data, and convert the data. The sexp notation is pretty easy to write, in contrast to the xml or json representations. Some interesting issues might be what to do with fields that are not defined, perhaps a macro would be used on the fly, or in the cl-flet definition. It is hard to imagine doing these things in another language than lisp!
-</p>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/06/10/A-sexp-version-of-a-bibtex-entry.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/06/10/A-sexp-version-of-a-bibtex-entry#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="/blog/category/lisp/2">Next Page »</a>
 
           </div>
@@ -1337,11 +1352,11 @@ I like the idea of data representation as code, and its conversion to some other
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2017/05/05/A-new-and-improved-Emacs-gnuplot-DSL/">A new and improved Emacs gnuplot DSL</a></li>
       <li><a href="/blog/2017/05/04/An-emacs-lisp-dsl-for-gnuplot/">An emacs-lisp dsl for gnuplot</a></li>
       <li><a href="/blog/2017/04/30/Emulating-Sparql-queries-in-emacs-lisp-with-pattern-matching/">Emulating Sparql queries in emacs-lisp with pattern matching</a></li>
       <li><a href="/blog/2017/04/16/A-callable-plist-data-structure-for-Emacs/">A callable plist data structure for Emacs</a></li>
       <li><a href="/blog/2017/04/15/A-new-org-mode-exporter-to-Word-for-scimax/">A new org-mode exporter to Word for scimax</a></li>
-      <li><a href="/blog/2017/04/11/Autoformatting-ordinal-numbers-and-fractions-in-orgmode/">Autoformatting ordinal numbers and fractions in orgmode</a></li>
     </ul>
   </section>
 
