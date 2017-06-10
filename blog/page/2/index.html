@@ -84,10 +84,231 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Emulating-Sparql-queries-in-emacs-lisp-with-pattern-matching"></div>
+      <h2 class="blog_post_title"><a href="/blog/2017/04/30/Emulating-Sparql-queries-in-emacs-lisp-with-pattern-matching/" rel="bookmark" title="Permanent Link to Emulating Sparql queries in emacs-lisp with pattern matching">Emulating Sparql queries in emacs-lisp with pattern matching</a></h2>
+      <p><small><span class="blog_post_date">Posted April 30, 2017 at 01:46 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/lisp/'>lisp</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2017/04/30/Emulating-Sparql-queries-in-emacs-lisp-with-pattern-matching#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+Sqarql is a query language for RDF triples. A triple is a data structure that consists of a (subject predicate object). Sparql lets you query the triples to extract data from them. I have been interested in using these to augment the <a href="http://kitchingroup.cheme.cmu.edu/blog/2017/01/03/Find-stuff-in-org-mode-anywhere/">SQL databases I generate</a> from my org-files to be able to infer relationships between subjects and objects. For example, I could encode relationships into the contact database I use, and then infer new information that is not encoded explicitly. So far though I haven't found a good Sparql database that I can easily integrate into Emacs (or even play around with). I am reading On Lisp these days and chapters 18 and 19 talk about destructuring and pattern matching, and I realized these can be used to implement something like Sparql queries on simple lisp data structures. In this post I explore what it looks like and how to do it.
+</p>
+
+<p>
+Let's consider a small database of triples that codify relationships between two people. For example, we can codify that Ann is Bob's mother with (Bob mother Ann). Here is our little database.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">setq</span> triples '((Bob mother Ann)
+                (Bill father Bob)
+                (Lucy mother Jane)
+                (Bob wife Jane)))
+</pre>
+</div>
+
+<p>
+We can filter out facts from the database with a -filter. Here we filter out triples about Bob. Emacs has nice pattern matching in the pcase macro (see <a href="http://www.wilfred.me.uk/blog/2017/03/19/pattern-matching-in-emacs-lisp/">http://www.wilfred.me.uk/blog/2017/03/19/pattern-matching-in-emacs-lisp/</a> and <a href="http://newartisans.com/2016/01/pattern-matching-with-pcase/">http://newartisans.com/2016/01/pattern-matching-with-pcase/</a> for example). It turns out this is an amazing way to solve this problem. Here we look at triples with the pattern that they start with Bob.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(-filter (<span style="color: #0000FF;">lambda</span> (triple) (<span style="color: #0000FF;">pcase</span> triple (`(Bob ,_ ,_) t))) triples)
+</pre>
+</div>
+
+<p>
+And here we get all the mothers.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(-filter (<span style="color: #0000FF;">lambda</span> (triple) (<span style="color: #0000FF;">pcase</span> triple (`(,_ mother ,_) t))) triples)
+</pre>
+</div>
+
+<p>
+We can infer some facts about these people from the database by using some "rules". For example, there is not an entry that tells us directly who Bill's grandmother is. If we assume that the mother of a person's father is their grandmother, then we can infer Bill's grandmother is Ann. In this post, we examine how to write code that can find that answer. We will use pattern matching on pairs of triples to do it.
+</p>
+
+<p>
+We can enumerate pairs of triples, and use pattern matching to find the pair of triples that meet the criteria we specify. The criteria we want to match is (in pseudo-sparql):
+</p>
+
+<pre class="example">
+(Bill father ?dad) (?dad mother ?grandmother)
+</pre>
+
+<p>
+In other words, we want to find a triple that contains Bill as the subject, father as the predication, and then his father will be the object, and then find another triple that matches a predicate of mother with the subject equal to the father object we found in the first triple, and the object of the second triple will be Bill's grandmother. We enumerate pairs of triples for the comparison. Here is a way to do that. It is not a very efficient way to do it; it would be better to first filter out the triples that match (Bill father <i>something</i>) and then filter out the triples that match (<i>anything</i> mother <i>any other thing</i>) <i>and</i> then consider the pairs of those triples. I will save that for another day; efficiency is not the point today ;)
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">loop</span> for i below (length triples)
+      append
+      (<span style="color: #0000FF;">loop</span>
+       for j below (length triples)
+       if (not (= i j))
+       collect
+       (list (nth i triples) (nth j triples))))
+</pre>
+</div>
+
+<p>
+You can see the pair that matches is the fourth one down (actually the first one matches too, but not exactly in the order of the pattern we specified). Next, we use pcase for the pattern matching. This amazing macro allows you to specify a pattern in terms of reusable variables so we can specify that the same value exists in multiple places. We will use this pattern (in pcase syntax):
+</p>
+
+<pre class="example">
+`((Bill father ,dad) (,dad mother ,grandmother))
+</pre>
+
+<p>
+That means match a list that has the first element of (Bill father <i>something</i>) and store the value of <i>something</i> in the variable dad. The second element of the list must match (<i>something</i> mother <i>another thing</i>) and store the value of <i>another thing</i> in the variable grandmother. The two variables dad and grandmother are then available in the body of the pcase statement. Here is the code to loop over the triples and return the result when we find a match.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">catch</span> '<span style="color: #D0372D;">result</span>
+  (<span style="color: #0000FF;">loop</span> for i below (length triples)
+        do
+        (<span style="color: #0000FF;">loop</span>
+         for j below (length triples)
+         if (not (= i j))
+         collect
+         (<span style="color: #0000FF;">pcase</span> (list (nth i triples) (nth j triples))
+           (`((Bill father ,dad) (,dad mother ,grandmother))
+            (<span style="color: #0000FF;">throw</span> '<span style="color: #D0372D;">result</span> (format <span style="color: #008000;">"Bill's dad is %s and his grandmother is %s"</span> dad grandmother)))))))
+</pre>
+</div>
+
+<p>
+Not bad. It would be worthwhile to encapsulate that into a macro perhaps, so you could just write something like this:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">select</span> (dad grandmother) from triples where `((Bill father ,dad) (,dad mother ,grandmother)))
+</pre>
+</div>
+
+<p>
+For fun I implemented a limited version of this below. It is fairly limited, and lightly tested. The biggest limitation is we hard-coded the search over pairs of triples. This version searches by brute force too, because I don't know how to build in filtering yet. It is another exercise for another day to remove these limitations. Here I just want to try out the macro with the syntactic sugar of "from" and "where" (which are totally ignored) as well at the backquoted query.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defmacro</span> <span style="color: #006699;">select</span> (<span style="color: #6434A3;">&amp;rest</span> args)
+  (<span style="color: #0000FF;">let</span> ((values (first args))
+        (db (third args))
+        (query (fifth args)))
+    `<span style="color: #D0372D;">(catch </span>'<span style="color: #D0372D;">result</span>
+       (<span style="color: #0000FF;">loop</span> for i below (length ,db)
+             do
+             (<span style="color: #0000FF;">loop</span>
+              for j below (length ,db)
+              if (not (= i j))
+              do
+              (<span style="color: #0000FF;">pcase</span> (list (nth i triples) (nth j triples))
+                (,query
+                 (<span style="color: #0000FF;">throw</span> '<span style="color: #D0372D;">result</span> (list ,@values)))))))))
+</pre>
+</div>
+
+<p>
+Here is a fun way to write the query that finds the grandmother of the person named Bill with variable capture.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">select</span> (person dad grandmother) from triples
+        where `((,(<span style="color: #0000FF;">and</span> person (<span style="color: #0000FF;">let</span> Bill person)) father ,dad) (,dad mother ,grandmother)))
+</pre>
+</div>
+
+<p>
+We can see the grandmother is Ann, as we found before.
+</p>
+
+<p>
+Let's have a look at the macro expansion. Clearly our macro hides a lot of work from us!
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(macroexpand '(select (person dad grandmother) from triples
+        where `((,(<span style="color: #0000FF;">and</span> person (<span style="color: #0000FF;">let</span> Bill person)) father ,dad) (,dad mother ,grandmother))))
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">Bill</td>
+<td class="org-left">Bob</td>
+<td class="org-left">Ann</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+How about another example query. Who is Lucy's dad? The most direct query would be `(Lucy father ,dad), but a) that fact is not in the database, and b) our select macro won't search a single query anyway. So, let's examine how to find the answer by inference.
+</p>
+
+<p>
+Let's assume that Lucy's dad is also the husband of her mother. Let's also assume that we can infer that if we know Jane is the wife of Bob, then Bob is the husband of Jane, and so we can infer from our database that Bob is Lucy's dad. This results in a query on a pair of triples that matches a pattern like:
+</p>
+
+<pre class="example">
+(Lucy mother ?mom) (?dad wife ?mom)
+</pre>
+
+<p>
+Here is that query in our select macro.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">select</span> (person mom dad) from triples
+        where `((,(<span style="color: #0000FF;">and</span> person (<span style="color: #0000FF;">let</span> Lucy person)) mother ,mom) (,dad wife ,mom)))
+</pre>
+</div>
+
+<p>
+Pretty cool! Clearly there is still a lot to do to make this practical. The implementation I used here wouldn't scale well with large numbers of triples, and its limited to a single kind of query. Chapters 18 and 19 in On Lisp address the query limitation (and they are not even limited to triples) and a different syntax style that is more Sparql like. When I get through them, I will probably add a new post on it. There are a lot of interesting problems to solve here including what to do if there are multiple matches, or inconsistent data? The Sparql select command allows you to group, order and limit the results which would be increasingly useful with larger triple stores. That would definitely add a lot of code to the macro!
+</p>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/04/30/Emulating-Sparql-queries-in-emacs-lisp-with-pattern-matching.org">org-mode source</a></p>
+<p>Org-mode version = 9.0.5</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/04/30/Emulating-Sparql-queries-in-emacs-lisp-with-pattern-matching#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="A-callable-plist-data-structure-for-Emacs"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/04/16/A-callable-plist-data-structure-for-Emacs/" rel="bookmark" title="Permanent Link to A callable plist data structure for Emacs">A callable plist data structure for Emacs</a></h2>
       <p><small><span class="blog_post_date">Posted April 16, 2017 at 04:44 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/elisp/'>elisp</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/macro/'>macro</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/elisp/'>elisp</a>, <a href='/blog/category/macro/'>macro</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/04/16/A-callable-plist-data-structure-for-Emacs#disqus_thread">View Comments</a>
       <p><small><span class="blog_post_date">Updated April 21, 2017 at 08:01 PM</span>
       </small></p>
@@ -737,229 +958,6 @@ With some content
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/04/09/A-better-return-in-org-mode#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Object-oriented-font-locking-in-emacs-lisp"></div>
-      <h2 class="blog_post_title"><a href="/blog/2017/04/07/Object-oriented-font-locking-in-emacs-lisp/" rel="bookmark" title="Permanent Link to Object-oriented font-locking in emacs-lisp">Object-oriented font-locking in emacs-lisp</a></h2>
-      <p><small><span class="blog_post_date">Posted April 07, 2017 at 03:00 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/fontlock/'>fontlock</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2017/04/07/Object-oriented-font-locking-in-emacs-lisp#disqus_thread">View Comments</a>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<div id="table-of-contents">
-<h2>Table of Contents</h2>
-<div id="text-table-of-contents">
-<ul>
-<li><a href="#orga752041">1. Font-locking the elements</a></li>
-<li><a href="#org4b6ed31">2. Summary</a></li>
-</ul>
-</div>
-</div>
-<p>
-I have been interested in functional text for a long time. With functional text you can read it, but also interact with it <a class='org-ref-reference' href="#kitchin-2015-examp">kitchin-2015-examp</a>. Lately I have been thinking about how to use some features of object-oriented programming to functional text. The premise is to use an object hierarchy to encapsulate some knowledge, and provide <i>functionality</i> on the objects. We can use inheritance to customize some of this knowledge and functionality.
-</p>
-
-<p>
-The example I will work out here is to provide functional text for chemical elements. The goal is to define some objects that represent elements, and construct font-lock rules from the objects to make the text functional in Emacs. Functional here means it stands out so we know there is something special about it, it has a tooltip to get some information (like what type of element it is, and its atomic mass), and it is clickable to get more functionality.
-</p>
-
-<p>
-This post will make a lot more sense in this video: <a href="https://www.youtube.com/watch?v=IWxCj5cr8rY">https://www.youtube.com/watch?v=IWxCj5cr8rY</a>
-</p>
-
-<iframe width="560" height="315" src="https://www.youtube.com/embed/IWxCj5cr8rY" frameborder="0" allowfullscreen></iframe>
-
-<p>
-First, we create a base class of an Element. I use an instance tracker for this to make book keeping easy later. The base class will have a name, synonyms for the name, and a default face to color it. We define a few methods to get an atomic mass and search google for the element. Finally, we provide a function to generate a tooltip, and a font-lock rule.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">atomic-masses</span> '((<span style="color: #008000;">"Hydrogen"</span> . 1.008)
-                        (<span style="color: #008000;">"Argon"</span> . 39.948)
-                        (<span style="color: #008000;">"Sodium"</span> . 22.989)
-                        (<span style="color: #008000;">"Palladium"</span> . 106.42))
-  <span style="color: #036A07;">"a-list of atomic masses."</span>)
-
-(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">elements</span> '() <span style="color: #036A07;">"List of known elements"</span>)
-(<span style="color: #0000FF;">setq</span> elements '()) <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">this is to start over</span>
-
-(<span style="color: #0000FF;">defclass</span> <span style="color: #6434A3;">element</span> (eieio-instance-tracker)
-  ((tracking-symbol <span style="color: #006FE0;">:initform</span> elements
-                    <span style="color: #006FE0;">:documentation</span> <span style="color: #036A07;">"Variable that holds all class instances."</span>)
-   (name <span style="color: #006FE0;">:initarg</span> <span style="color: #006FE0;">:name</span>
-         <span style="color: #006FE0;">:documentation</span> <span style="color: #036A07;">"The name of the element"</span>)
-   (synonyms <span style="color: #006FE0;">:initarg</span> <span style="color: #006FE0;">:synonyms</span> <span style="color: #006FE0;">:initform</span> '()
-             <span style="color: #006FE0;">:documentation</span> <span style="color: #036A07;">"List of regular expressions that match the element."</span>)
-   (face <span style="color: #006FE0;">:initarg</span> <span style="color: #006FE0;">:face</span> <span style="color: #006FE0;">:initform</span> 'font-lock-type-face
-         <span style="color: #006FE0;">:documentation</span> <span style="color: #036A07;">"The face to use with font-lock."</span>))
-  <span style="color: #036A07;">"Base class for a chemical element."</span>)
-
-(<span style="color: #0000FF;">defmethod</span> <span style="color: #006699;">element-atomic-mass</span> ((x element))
-  <span style="color: #036A07;">"Return atomic mass from `</span><span style="color: #D0372D;">atomic-masses</span><span style="color: #036A07;">'."</span>
-  (cdr (assoc (<span style="color: #0000FF;">oref</span> x <span style="color: #006FE0;">:name</span>) atomic-masses)))
-
-(<span style="color: #0000FF;">defmethod</span> <span style="color: #006699;">element-help-echo</span> ((x element))
-  <span style="color: #036A07;">"A tooltip for the element.</span>
-<span style="color: #036A07;">It will look like class (inherited classes) mass=atomic-mass"</span>
-  (format <span style="color: #008000;">"%s %s: mass=%s"</span>
-          (eieio-object-class x)
-          (mapcar 'eieio-class-name (eieio-class-parents (eieio-object-class x)))
-          (<span style="color: #0000FF;">or</span> (element-atomic-mass x) <span style="color: #008000;">"unknown"</span>)))
-
-(<span style="color: #0000FF;">defmethod</span> <span style="color: #006699;">element-search</span> ((x element))
-  <span style="color: #036A07;">"Search google for the element"</span>
-  (google-this-string nil (<span style="color: #0000FF;">oref</span> x <span style="color: #006FE0;">:name</span>) t))
-
-(<span style="color: #0000FF;">defmethod</span> <span style="color: #006699;">element-font-lock-rule</span> ((x element))
-  <span style="color: #036A07;">"Return font-lock rule for the element."</span>
-  (<span style="color: #0000FF;">let</span> ((map (make-sparse-keymap)))
-    (define-key map [mouse-1]
-      (<span style="color: #0000FF;">lambda</span> ()
-        <span style="color: #036A07;">"Construct the object and run `</span><span style="color: #D0372D;">element-search</span><span style="color: #036A07;">' on it."</span>
-        (<span style="color: #0000FF;">interactive</span>)
-        (element-search
-         (eieio-instance-tracker-find
-          (get-text-property (point) 'element-name)
-          <span style="color: #006FE0;">:name</span> 'elements))))
-
-    (list
-     <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Construct the pattern to match</span>
-     (rx-to-string `(: bow
-                       (<span style="color: #0000FF;">or</span>  ,(<span style="color: #0000FF;">oref</span> x <span style="color: #006FE0;">:name</span>)
-                            ,@(<span style="color: #0000FF;">loop</span> for sy in (<span style="color: #0000FF;">oref</span> x <span style="color: #006FE0;">:synonyms</span>)
-                                    collect `(regexp ,sy)))
-                       eow))
-     0  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">font-lock the whole match</span>
-     <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">These are the properties to put on the matches</span>
-     `(<span style="color: #0000FF;">quote</span> (face ,(<span style="color: #0000FF;">oref</span> x <span style="color: #006FE0;">:face</span>)
-                   element-name ,(<span style="color: #0000FF;">oref</span> x <span style="color: #006FE0;">:name</span>)
-                   local-map ,map
-                   mouse-face 'highlight
-                   help-echo ,(element-help-echo x))))))
-</pre>
-</div>
-
-<p>
-Now, we can define some sub-classes. These are families of elements. For a metal, we change the face. For noble gases, we override the help-echo function, and for alkali metals we override the search function. The point is that we can customize the behavior for different classes.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defclass</span> <span style="color: #6434A3;">metal</span> (element)
-  ((face <span style="color: #006FE0;">:initform</span> '(<span style="color: #006FE0;">:foreground</span> <span style="color: #008000;">"orange"</span> <span style="color: #006FE0;">:underline</span> t)))
-  <span style="color: #036A07;">"Metal"</span>)
-
-(<span style="color: #0000FF;">defclass</span> <span style="color: #6434A3;">noble-gas</span> (element)
-  ()
-  <span style="color: #036A07;">"A noble gas"</span>)
-
-(<span style="color: #0000FF;">defmethod</span> <span style="color: #006699;">element-help-echo</span> ((x noble-gas))
-  <span style="color: #036A07;">"I am not a common element."</span>)
-
-(<span style="color: #0000FF;">defclass</span> <span style="color: #6434A3;">alkali</span> (element metal)
-  ()
-  <span style="color: #036A07;">"Alkali metal"</span>)
-
-(<span style="color: #0000FF;">defmethod</span> <span style="color: #006699;">element-search</span> ((x alkali))
-  (<span style="color: #0000FF;">let</span> ((visible-bell t))
-    (beep)
-    (message <span style="color: #008000;">"You clicked on an alkali metal: %s."</span> (<span style="color: #0000FF;">oref</span> x <span style="color: #006FE0;">:name</span>))))
-</pre>
-</div>
-
-<p>
-Now we can define some elements. These are all instances of each class. For some, we define synonyms, and alternate appearances. Note the synonyms are regular expressions.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(element <span style="color: #006FE0;">:name</span> <span style="color: #008000;">"Hydrogen"</span> <span style="color: #006FE0;">:synonyms</span> '(<span style="color: #008000;">"H"</span> <span style="color: #008000;">"[hH]ydrogen"</span>))
-
-(noble-gas <span style="color: #006FE0;">:name</span> <span style="color: #008000;">"Argon"</span> <span style="color: #006FE0;">:synonyms</span> '(<span style="color: #008000;">"Ar"</span>))
-
-(alkali <span style="color: #006FE0;">:name</span> <span style="color: #008000;">"Sodium"</span> <span style="color: #006FE0;">:synonyms</span> '(<span style="color: #008000;">"Na"</span> <span style="color: #008000;">"[nN]atrium"</span>))
-(alkali <span style="color: #006FE0;">:name</span> <span style="color: #008000;">"Potassium"</span> <span style="color: #006FE0;">:synonyms</span> '(<span style="color: #008000;">"K"</span>) <span style="color: #006FE0;">:face</span> '(<span style="color: #006FE0;">:foreground</span> <span style="color: #008000;">"red"</span>))
-
-(metal <span style="color: #006FE0;">:name</span> <span style="color: #008000;">"Palladium"</span>)
-</pre>
-</div>
-
-<p>
-The instance tracker shows us the defined objects.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">elements
-</pre>
-</div>
-
-<div id="outline-container-orga752041" class="outline-2">
-<h2 id="orga752041"><span class="section-number-2">1</span> Font-locking the elements</h2>
-<div class="outline-text-2" id="text-1">
-<p>
-Here we generate font-lock rules from the set of objects. Each object will return its font-lock rule, so we just map over each object to get the list of rules.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(font-lock-add-keywords
- nil
- (mapcar 'element-font-lock-rule elements))
-
-(font-lock-fontify-buffer)
-</pre>
-</div>
-
-
-<p>
-Now any time we have Palladium or Hydrogen it will be highlighted.  And Sodium and Argon.
-</p>
-
-<p>
-Here are some synonyms: hydrogen H Natrium natrium.
-</p>
-
-<p>
-Potassium has a different color than Na.
-</p>
-</div>
-</div>
-
-<div id="outline-container-org4b6ed31" class="outline-2">
-<h2 id="org4b6ed31"><span class="section-number-2">2</span> Summary</h2>
-<div class="outline-text-2" id="text-2">
-<p>
-This seems like a pretty useful way to encapsulate functionality for functional text. Clearly most of the work should go in the base class, and the inheritance model, so you do not have to repeat things unnecessarily. Some features are missing, like conveniently adding synonyms and regenerating the font-lock rules. It is also the case that we do not persist these objects. They could be written to disk so that they can be reloaded later.
-</p>
-
-<p>
-The actions you can use on a highlighted word are pretty limited in this implementation. It would be nice if you got a menu of options that was user extendable and dynamic. Either a popup menu, or a hydra would be fine.
-</p>
-</div>
-</div>
-<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2017/04/07/Object-oriented-font-locking-in-emacs-lisp.org">org-mode source</a></p>
-<p>Org-mode version = 9.0.5</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/04/07/Object-oriented-font-locking-in-emacs-lisp#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="../1">« Previous Page</a>
   --  
  <a href="../3">Next Page »</a>
@@ -1001,11 +999,11 @@ The actions you can use on a highlighted word are pretty limited in this impleme
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2017/06/10/Adding-keymaps-to-src-blocks-via-org-font-lock-hook/">Adding keymaps to src blocks via org-font-lock-hook</a></li>
       <li><a href="/blog/2017/05/26/Org-mode-and-ipython-enhancements-in-scimax/">Org-mode and ipython enhancements in scimax</a></li>
       <li><a href="/blog/2017/05/21/A-partial-symbolic-numeric-solver-in-emacs-lisp/">A partial symbolic numeric solver in emacs-lisp</a></li>
       <li><a href="/blog/2017/05/05/A-new-and-improved-Emacs-gnuplot-DSL/">A new and improved Emacs gnuplot DSL</a></li>
       <li><a href="/blog/2017/05/04/An-emacs-lisp-dsl-for-gnuplot/">An emacs-lisp dsl for gnuplot</a></li>
-      <li><a href="/blog/2017/04/30/Emulating-Sparql-queries-in-emacs-lisp-with-pattern-matching/">Emulating Sparql queries in emacs-lisp with pattern matching</a></li>
     </ul>
   </section>
 
