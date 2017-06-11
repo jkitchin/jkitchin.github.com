@@ -3,7 +3,7 @@
   :PROPERTIES:
   :categories: orgmode,emacs
   :date:     2017/06/10 15:27:07
-  :updated:  2017/06/10 22:39:43
+  :updated:  2017/06/11 16:10:11
   :END:
 
 I had an idea to use custom keymaps in src-blocks. For example, you could then use lispy directly in your org-files without entering org-special-edit, or the elpy key-bindings in python blocks. There are other solutions I have seen, e.g. polymode, that claim to do this. You might guess that if they worked, I would not be writing this! There was some nice discussion about this idea on the org-mode mailing list, and Nicolas Goaziou pointed out this might be accomplished with the org-font-lock-hook.
@@ -30,43 +30,54 @@ Here is the definition of the keymaps. Generally I just copy the mode-map I want
 		    (define-key map (kbd "C-c C-c") 'org-ctrl-c-ctrl-c)
 		    (define-key map (kbd "C-c '") 'org-edit-special)
 		    map))
-    ("emacs-lisp" . ,(let* ((map (copy-keymap lispy-mode-map)))
+    ("python" . ,(let* ((map (copy-keymap python-mode-map)))
+		   (define-key map (kbd "C-c C-c") 'org-ctrl-c-ctrl-c)
+		   (define-key map (kbd "C-c '") 'org-edit-special)
+		   map))
+    ("emacs-lisp" . ,(let* ((map (make-composed-keymap '(org-mode-map lisp-mode-map lispy-mode-map))))
 		       (define-key map (kbd "C-c C-c") 'org-ctrl-c-ctrl-c)
 		       (define-key map (kbd "C-c '") 'org-edit-special)
 		       map)))
   "alist of custom keymaps for src blocks.")
 #+END_SRC
 
+#+RESULTS:
+: scimax-src-block-keymaps
+
 Next we define the function that will apply the keymap to each src block. The keymaps are only applied when they are defined in the variable above. This function is derived from org-fontify-meta-lines-and-blocks-1.
 
 #+BEGIN_SRC emacs-lisp nil
 (defun scimax-add-keymap-to-src-blocks (limit)
   "Add keymaps to src-blocks defined in `scimax-src-block-keymaps'."
-  (let ((case-fold-search t))
-    (when (re-search-forward
-	   "^\\([ \t]*#\\(\\(\\+[a-zA-Z]+:?\\| \\|$\\)\\(_\\([a-zA-Z]+\\)\\)?\\)[ \t]*\\(\\([^ \t\n]*\\)[ \t]*\\(.*\\)\\)\\)"
-	   limit t)
-      (let ((beg (match-beginning 0))
-	    (lang (match-string 7))
-	    (dc3 (downcase (match-string 3)))
-	    end)
-	(cond
-	 ((and (match-end 4) (equal dc3 "+begin"))
-	  (when (re-search-forward
-		 (concat "^[ \t]*#\\+end" (match-string 4) "\\>.*")
-		 nil t)	;; on purpose, we look further than LIMIT
-	    (setq end (min (point-max) (match-end 0)))
-	    (add-text-properties
-	     beg end '(font-lock-fontified t font-lock-multiline t))
-
-	    ;; Add keymap
-	    (when (assoc (org-no-properties lang) scimax-src-block-keymaps)
+  (save-match-data
+    (let ((case-fold-search t))
+      (when (re-search-forward
+	     "^\\([ \t]*#\\(\\(\\+[a-zA-Z]+:?\\| \\|$\\)\\(_\\([a-zA-Z]+\\)\\)?\\)[ \t]*\\(\\([^ \t\n]*\\)[ \t]*\\(.*\\)\\)\\)"
+	     limit t)
+	(let ((beg (match-beginning 0))
+	      (lang (match-string 7))
+	      (dc3 (downcase (match-string 3)))
+	      end)
+	  (cond
+	   ((and (match-end 4) (equal dc3 "+begin"))
+	    (when (re-search-forward
+		   (concat "^[ \t]*#\\+end" (match-string 4) "\\>.*")
+		   nil t) ;; on purpose, we look further than LIMIT
+	      (setq end (min (point-max) (match-end 0)))
 	      (add-text-properties
-	       beg end `(local-map ,(cdr (assoc
-					  (org-no-properties lang)
-					  scimax-src-block-keymaps)))))
-	    t)))))))
+	       beg end '(font-lock-fontified t font-lock-multiline t))
+
+	      ;; Add keymap
+	      (when (assoc (org-no-properties lang) scimax-src-block-keymaps)
+		(add-text-properties
+		 beg end `(local-map ,(cdr (assoc
+					    (org-no-properties lang)
+					    scimax-src-block-keymaps)))))
+	      t))))))))
 #+END_SRC
+
+#+RESULTS:
+: scimax-add-keymap-to-src-blocks
 
 Here we create an advice to trick any functions that need to know the major mode. We only apply the spoof if we are in org-mode and in a src block though. Otherwise we call the original function. So far lispy--eval is the only function I have needed it for. This might be a general strategy though to do other things like narrow to the src-block, or even go into special edit mode temporarily if there are commands that require it.
 
@@ -81,6 +92,9 @@ It is for commands that depend on the major mode. One example is
     (apply orig-func args)))
 #+END_SRC
 
+#+RESULTS:
+: scimax-spoof-mode
+
 We define a minor mode so we can toggle this on and off. Here we add the function to the org-font-lock-hook and advise the lispy--eval function. I had to add the font-lock-function to the end of the org-font-lock hook for some reason, and also add local-map as an extra-managed property so it would be removed when we toggle it off.
 
 #+BEGIN_SRC emacs-lisp
@@ -91,12 +105,43 @@ We define a minor mode so we can toggle this on and off. Here we add the functio
       (progn
 	(add-hook 'org-font-lock-hook #'scimax-add-keymap-to-src-blocks t)
 	(add-to-list 'font-lock-extra-managed-props 'local-map)
-	(advice-add 'lispy--eval :around 'scimax-spoof-mode))
+	(advice-add 'lispy--eval :around 'scimax-spoof-mode)
+	(message "enabled"))
     (remove-hook 'org-font-lock-hook #'scimax-add-keymap-to-src-blocks)
     (advice-remove 'lispy--eval 'scimax-spoof-mode))
   (font-lock-fontify-buffer))
 #+END_SRC
 
+#+RESULTS:
+
 That is it! I am pretty sure this is a good idea. It helps a lot when you are writing a lot of short code blocks and near equal amounts of text (like in this blog post). It also helps write the code since many things like indentation, parentheses, etc. are automatically handled. That is what I used to go into special-edit mode all the time for!
 
 I have not used this long enough to know if it causes any other surprises. If you try it and find any, leave a comment!
+
+** Update
+
+It turns out you can have the best of all the worlds by combining keymaps. The make-composed-keymap creates a new keymap that combines a keymaps and falls through to a parent keymap. So here we use that to combine several keymaps, falling through to org-mode. The only subtlety I have come across is that I remapped <return> in orgmode to scimax/org-return, and not all modes define it, so I redefine it in some places to just be newline.
+
+I use a few maps here, and some of them seem to just add menus that are only active when your cursor is in the block. Pretty handy!
+
+#+BEGIN_SRC emacs-lisp :results silent
+(setq scimax-src-block-keymaps
+      `(("ipython" . ,(let ((map (make-composed-keymap
+				  `(,elpy-mode-map ,python-mode-map ,pyvenv-mode-map)
+				  org-mode-map)))
+			;; In org-mode I define RET so we f
+			(define-key map (kbd "<return>") 'newline)
+			map))
+	("python" . ,(let ((map (make-composed-keymap
+				  `(,elpy-mode-map ,python-mode-map ,pyvenv-mode-map)
+				  org-mode-map)))
+			;; In org-mode I define RET so we f
+			(define-key map (kbd "<return>") 'newline)
+			map))
+	("emacs-lisp" . ,(make-composed-keymap `(,lispy-mode-map
+	 					  ,emacs-lisp-mode-map
+	 					  ,outline-minor-mode-map)
+	 				       org-mode-map))))
+#+END_SRC
+
+
