@@ -3,7 +3,7 @@
   :PROPERTIES:
   :categories: orgmode,emacs
   :date:     2017/06/10 15:27:07
-  :updated:  2017/06/11 19:23:04
+  :updated:  2017/06/12 11:28:50
   :END:
 
 I had an idea to use custom keymaps in src-blocks. For example, you could then use lispy directly in your org-files without entering org-special-edit, or the elpy key-bindings in python blocks. There are other solutions I have seen, e.g. polymode, that claim to do this. You might guess that if they worked, I would not be writing this! There was some nice discussion about this idea on the org-mode mailing list, and Nicolas Goaziou pointed out this might be accomplished with the org-font-lock-hook.
@@ -25,20 +25,27 @@ Here is the definition of the keymaps. Generally I just copy the mode-map I want
 (require 'lispy)
 (require 'elpy)
 
-(defcustom scimax-src-block-keymaps
-  `(("ipython" . ,(let* ((map (copy-keymap elpy-mode-map)))
-		    (define-key map (kbd "C-c C-c") 'org-ctrl-c-ctrl-c)
-		    (define-key map (kbd "C-c '") 'org-edit-special)
-		    map))
-    ("python" . ,(let* ((map (copy-keymap python-mode-map)))
-		   (define-key map (kbd "C-c C-c") 'org-ctrl-c-ctrl-c)
-		   (define-key map (kbd "C-c '") 'org-edit-special)
-		   map))
-    ("emacs-lisp" . ,(let* ((map (copy-keymap lispy-mode-map)))
+(setq scimax-src-block-keymaps
+      `(("ipython" . ,(let ((map (make-composed-keymap
+				  `(,elpy-mode-map ,python-mode-map ,pyvenv-mode-map)
+				  org-mode-map)))
+			;; In org-mode I define RET so we f
+			(define-key map (kbd "<return>") 'newline)
+			(define-key map (kbd "C-c C-c") 'org-ctrl-c-ctrl-c)
+			map))
+	("python" . ,(let ((map (make-composed-keymap
+				 `(,elpy-mode-map ,python-mode-map ,pyvenv-mode-map)
+				 org-mode-map)))
+		       ;; In org-mode I define RET so we f
+		       (define-key map (kbd "<return>") 'newline)
 		       (define-key map (kbd "C-c C-c") 'org-ctrl-c-ctrl-c)
-		       (define-key map (kbd "C-c '") 'org-edit-special)
-		       map)))
-  "alist of custom keymaps for src blocks.")
+		       map))
+	("emacs-lisp" . ,(let ((map (make-composed-keymap `(,lispy-mode-map
+							    ,emacs-lisp-mode-map
+							    ,outline-minor-mode-map)
+							  org-mode-map)))
+			   (define-key map (kbd "C-c C-c") 'org-ctrl-c-ctrl-c)
+			   map))))
 #+END_SRC
 
 #+RESULTS:
@@ -49,31 +56,23 @@ Next we define the function that will apply the keymap to each src block. The ke
 #+BEGIN_SRC emacs-lisp nil
 (defun scimax-add-keymap-to-src-blocks (limit)
   "Add keymaps to src-blocks defined in `scimax-src-block-keymaps'."
-  (save-match-data
-    (let ((case-fold-search t))
-      (when (re-search-forward
-	     "^\\([ \t]*#\\(\\(\\+[a-zA-Z]+:?\\| \\|$\\)\\(_\\([a-zA-Z]+\\)\\)?\\)[ \t]*\\(\\([^ \t\n]*\\)[ \t]*\\(.*\\)\\)\\)"
-	     limit t)
-	(let ((beg (match-beginning 0))
-	      (lang (match-string 7))
-	      (dc3 (downcase (match-string 3)))
-	      end)
-	  (cond
-	   ((and (match-end 4) (equal dc3 "+begin"))
-	    (when (re-search-forward
-		   (concat "^[ \t]*#\\+end" (match-string 4) "\\>.*")
-		   nil t) ;; on purpose, we look further than LIMIT
-	      (setq end (min (point-max) (match-end 0)))
+  (let ((case-fold-search t)
+	lang)
+    (while (re-search-forward org-babel-src-block-regexp limit t)
+      (let ((lang (match-string 2))
+	    (beg (match-beginning 0))
+	    (end (match-end 0)))
+	(if (assoc (org-no-properties lang) scimax-src-block-keymaps)
+	    (progn
 	      (add-text-properties
-	       beg end '(font-lock-fontified t font-lock-multiline t))
-
-	      ;; Add keymap
-	      (when (assoc (org-no-properties lang) scimax-src-block-keymaps)
-		(add-text-properties
-		 beg end `(local-map ,(cdr (assoc
-					    (org-no-properties lang)
-					    scimax-src-block-keymaps)))))
-	      t))))))))
+	       beg end `(local-map ,(cdr (assoc
+					  (org-no-properties lang)
+					  scimax-src-block-keymaps))))
+	      (add-text-properties
+	       beg end `(cursor-sensor-functions
+			 ((lambda (win prev-pos sym)
+			    ;; This simulates a mouse click and makes a menu change
+			    (org-mouse-down-mouse nil)))))))))))
 #+END_SRC
 
 #+RESULTS:
@@ -105,11 +104,16 @@ We define a minor mode so we can toggle this on and off. Here we add the functio
       (progn
 	(add-hook 'org-font-lock-hook #'scimax-add-keymap-to-src-blocks t)
 	(add-to-list 'font-lock-extra-managed-props 'local-map)
+	(add-to-list 'font-lock-extra-managed-props 'cursor-sensor-functions)
 	(advice-add 'lispy--eval :around 'scimax-spoof-mode)
-	(message "enabled"))
+	(cursor-sensor-mode +1))
     (remove-hook 'org-font-lock-hook #'scimax-add-keymap-to-src-blocks)
-    (advice-remove 'lispy--eval 'scimax-spoof-mode))
+    (advice-remove 'lispy--eval 'scimax-spoof-mode)
+    (cursor-sensor-mode -1))
   (font-lock-fontify-buffer))
+
+(add-hook 'org-mode-hook (lambda ()
+			   (scimax-src-keymap-mode +1)))
 #+END_SRC
 
 #+RESULTS:
@@ -147,3 +151,8 @@ I use a few maps here, and some of them seem to just add menus that are only act
 			   (define-key map (kbd "C-c C-c") 'org-ctrl-c-ctrl-c)
 			   map))))
 #+END_SRC
+** Update #2
+
+The previous version had some issues where it would only add a keymap to the first block. The code in this post now addresses that and uses cursor-sensor-functions to make sure we change key map on entering and leaving blocks. That might mean you need an emacs of at least version 25 to use this. I guess it will work with an earlier version, but the cursor-sensor-functions might get ignored. You might have to comment out the cursor-sensor-mode line
+
+Thanks to those brave people alpha-testing this and helping refine the idea!
