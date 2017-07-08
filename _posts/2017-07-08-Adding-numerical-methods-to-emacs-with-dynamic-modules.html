@@ -1,0 +1,211 @@
+---
+title: Adding numerical methods to emacs with dynamic modules
+date: 2017/07/08 10:12:45
+updated: 2017/07/08 10:13:02
+categories: emacs
+tags: 
+---
+
+
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org898e761">1. Using the GSL to calculate a Bessel function value</a></li>
+<li><a href="#org68ad3a9">2. A GSL dynamic module for a Bessel function</a></li>
+<li><a href="#orgbdd6a46">3. Summary</a></li>
+</ul>
+</div>
+</div>
+<p>
+There is a relatively new feature in Emacs 25 that allows you to extend Emacs using compiled libraries (<a href="http://diobla.info/blog-archive/modules-tut.html">http://diobla.info/blog-archive/modules-tut.html</a>). This could be very helpful in a few ways:
+</p>
+
+<ol class="org-ol">
+<li>To add functionality that exists in other libraries, e.g.
+<ol class="org-ol">
+<li><a href="https://github.com/syohex/emacs-libyaml">libyaml</a></li>
+<li><a href="https://github.com/syohex/emacs-memcached">libmemcached</a></li>
+<li><a href="https://github.com/syohex/emacs-mruby-test">Embedding Ruby in Emacs</a></li>
+</ol></li>
+<li>Interface Emacs with hardware, e.g. <a href="http://nullprogram.com/blog/2016/11/05/">a joystick</a>, or <a href="https://github.com/syohex/emacs-eject">ejecting a CD</a>.</li>
+<li>To speed up slow elisp functions
+<ol class="org-ol">
+<li>A c implementation of a fibonacci function is 150 times faster than an elisp version <a href="https://coldnew.github.io/2d16cc25/">here</a>.</li>
+<li>This <a href="https://github.com/syohex/emacs-parson">json parser</a> is up to 4 times faster than the json.el library for some operations.</li>
+</ol></li>
+</ol>
+
+<p>
+I am interested in this in particular to bring numerical methods into Emacs. It is fair to ask why. Even I think the numpy/scipy/matplotlib Python stack is currently unparalleled in functionality for scientific programming. But I like writing elisp code so much more! So, we will take a look today at a simple example of integrating a function from the GNU Scientific Library into Emacs.
+</p>
+
+<div id="outline-container-org898e761" class="outline-2">
+<h2 id="org898e761"><span class="section-number-2">1</span> Using the GSL to calculate a Bessel function value</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+A canonical example of using the GSL is given at <a href="https://www.gnu.org/software/gsl/manual/html_node/An-Example-Program.html">https://www.gnu.org/software/gsl/manual/html_node/An-Example-Program.html</a>. Here it is for reference. It just calculates a value for a Bessel function. We save this program in a file called example.c.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-C"><span style="color: #808080;">#include</span> <span style="color: #008000;">&lt;stdio.h&gt;</span>
+<span style="color: #808080;">#include</span> <span style="color: #008000;">&lt;gsl/gsl_sf_bessel.h&gt;</span>
+
+<span style="color: #6434A3;">int</span>
+<span style="color: #006699;">main</span> (<span style="color: #6434A3;">void</span>)
+{
+  <span style="color: #6434A3;">double</span> <span style="color: #BA36A5;">x</span> = 5.0;
+  <span style="color: #6434A3;">double</span> <span style="color: #BA36A5;">y</span> = gsl_sf_bessel_J0 (x);
+  printf (<span style="color: #008000;">"J0(%g) = %.18e\n"</span>, x, y);
+  <span style="color: #0000FF;">return</span> 0;
+}
+</pre>
+</div>
+
+<p>
+We have to compile and run this program. Here are the commands to do that.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh">gcc -Wall -I/usr/local/include/ -c example.c
+gcc -L/usr/local/include -lgsl example.o 
+./a.out
+</pre>
+</div>
+
+<p>
+That is a lot of code and steps to get one number. 
+</p>
+
+<p>
+What I would like to do instead is this:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">gsl-sf-bessel</span>)
+(gsl-sf-bessel-J0 5)
+</pre>
+</div>
+
+<p>
+So, enter the dynamic module!
+</p>
+</div>
+</div>
+
+<div id="outline-container-org68ad3a9" class="outline-2">
+<h2 id="org68ad3a9"><span class="section-number-2">2</span> A GSL dynamic module for a Bessel function</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+To create the dynamic module we need a small c file that wraps the GSL function and adds it to the Emacs environment. Here is the smallest example I could come up with for this one function.  Basically, we create a function that takes the emacs environment and arguments, extract what we want from them, and use that to calculate what we need and return it to the environment. Then we register that function  and define what the module provides in emacs_module_init.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-c"><span style="color: #808080;">#include</span> <span style="color: #008000;">&lt;assert.h&gt;</span>
+<span style="color: #808080;">#include</span> <span style="color: #008000;">&lt;gsl/gsl_sf_bessel.h&gt;</span>
+<span style="color: #808080;">#include</span> <span style="color: #008000;">"emacs-module.h"</span>
+
+<span style="color: #6434A3;">int</span> <span style="color: #BA36A5;">plugin_is_GPL_compatible</span>;
+
+<span style="color: #0000FF;">static</span> <span style="color: #6434A3;">emacs_value</span>
+<span style="color: #006699;">F_gsl_sf_bessel_J0</span> (<span style="color: #6434A3;">emacs_env</span> *<span style="color: #BA36A5;">env</span>, <span style="color: #6434A3;">ptrdiff_t</span> <span style="color: #BA36A5;">nargs</span>, <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">args</span>[], <span style="color: #6434A3;">void</span> *<span style="color: #BA36A5;">data</span>)
+{
+  assert (nargs == 1);
+  <span style="color: #6434A3;">double</span> <span style="color: #BA36A5;">x</span> = env-&gt;extract_float (env, args[0]);
+  <span style="color: #0000FF;">return</span> env-&gt;make_float (env, gsl_sf_bessel_J0 (x));
+}
+
+<span style="color: #6434A3;">int</span>
+<span style="color: #006699;">emacs_module_init</span>(<span style="color: #0000FF;">struct</span> <span style="color: #6434A3;">emacs_runtime</span> *<span style="color: #BA36A5;">ert</span>)
+{
+        <span style="color: #6434A3;">emacs_env</span> *<span style="color: #BA36A5;">env</span> = ert-&gt;get_environment(ert);
+
+        <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">gsl_sf_bessel_J0_fn</span> = env-&gt;make_function(env, 1, 1, F_gsl_sf_bessel_J0, <span style="color: #008000;">"Regular cylindrical Bessel function of zeroth order, J_0(x)"</span>, <span style="color: #D0372D;">NULL</span>);
+
+        <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">Qfset</span> = env-&gt;intern(env, <span style="color: #008000;">"fset"</span>);
+        <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">Q_gsl_sf_bessel_J0</span> = env-&gt;intern(env, <span style="color: #008000;">"gsl-sf-bessel-J0"</span>);
+        <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">fset_args</span>[] = { Q_gsl_sf_bessel_J0, gsl_sf_bessel_J0_fn };
+        env-&gt;funcall(env, Qfset, 2, fset_args);
+
+        <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">Qprovide</span> = env-&gt;intern(env, <span style="color: #008000;">"provide"</span>);
+        <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">Q_gsl_sf_bessel</span> = env-&gt;intern(env, <span style="color: #008000;">"gsl-sf-bessel"</span>);
+        <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">provide_args</span>[] = { Q_gsl_sf_bessel };
+        env-&gt;funcall(env, Qprovide, 1, provide_args);
+
+        <span style="color: #0000FF;">return</span> 0;
+}
+</pre>
+</div>
+
+<p>
+Now we compile it into a shared library.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh">gcc -Wall -I/usr/local/include -fPIC -c gsl-sf-bessel.c
+gcc -shared -L/usr/local/include -lgsl -o gsl-sf-bessel.so gsl-sf-bessel.o
+</pre>
+</div>
+
+<p>
+That creates our shared library in gsl-sf-bessel.so.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh">ls *.so
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(add-to-list 'load-path <span style="color: #008000;">"/Users/jkitchin/vc/blogofile-jkitchin.github.com/_blog/dynamic-module/"</span>)
+(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">gsl-sf-bessel</span>)
+(gsl-sf-bessel-J0 5.0)
+</pre>
+</div>
+
+<p>
+That is the same answer as we got before. Here is the documentation we defined. It could use some improvement, e.g. to note that the argument has to be a float, and that only one argument is allowed. I am not sure why the signature doesn't show a single argument.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(describe-function 'gsl-sf-bessel-J0)
+</pre>
+</div>
+
+<p>
+I am not a very skilled C-programmer yet, so I don't know how hard it would be to make this function accept integers as well, or to vectorize it so you could have an arbitrary number of args to it and return a list.
+</p>
+</div>
+</div>
+
+
+<div id="outline-container-orgbdd6a46" class="outline-2">
+<h2 id="orgbdd6a46"><span class="section-number-2">3</span> Summary</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+Dynamic modules look promising to extend Emacs with. This example is about the simplest function from the GSL there is. There are many more (<a href="https://www.gnu.org/software/gsl/doc/html/index.html">https://www.gnu.org/software/gsl/doc/html/index.html</a>) functions that do linear algebra on arrays, integration or optimization of functions, interpolation of data, etc. I don't have a sense yet of how easy it will be to integrate these into a module.
+</p>
+
+<p>
+It looks like you are not limited to writing these in C. There is an example of a plugin written in Rust <a href="https://github.com/lunaryorn/emacs-module.rs/blob/master/src/lib.rs">here</a>, and a framework to write them in <a href="https://github.com/sigma/go-emacs/">Go</a>. Maybe any language that can make a shared library with the required plugin_is_GPL_compatible symbol and emacs_module_init function would work. Those examples do not look significantly easier to write than the C versions though since I am not that fluent in those languages either.
+</p>
+
+<p>
+There are some challenges to figure out in developing and using dynamic modules. Here are a few:
+</p>
+
+<ol class="org-ol">
+<li>The documentation on what is possible is not that great yet, so there is a lot of exploring to do. There are a fair number of examples out there though to learn from (<a href="https://github.com/emacs-pe/emacs-modules">https://github.com/emacs-pe/emacs-modules</a>). The <a href="https://github.com/emacs-mirror/emacs/tree/emacs-25/modules/mod-test">official example</a> shows a lot of the functionality.</li>
+<li>I guess it will be tricky to distribute these. I don't know how easy it would be to build all the libraries for each platform for distribution on MELPA for example. I don't think there is a standard way to incorporate a compile step in elisp package installation. Also, you need an Emacs version of at least 25 with the dynamic module feature compiled in. It is not yet a default enabled option. The required emacs-module.h should be gotten from the emacs build, so people with binaries might not be able to build it anyway.</li>
+<li>Users will need the libraries the dynamic module uses. In this example, they will need libgsl.</li>
+<li>Once you require the module, it does not seem possible to modify it, rebuild it, and reload it. It appears you have to close Emacs and reload it. That is tedious.</li>
+</ol>
+
+<p>
+It would be nice to have a more generic foreign function interface that would allow you to develop more on the elisp side. One effort in that direction is <a href="https://github.com/tromey/emacs-ffi">https://github.com/tromey/emacs-ffi</a>. It looks like it might be a lot simpler to use than creating a dynamic module. Once it is installed, it looks like you can write elisp code to wrap the library functions. I will write about this on another day.
+</p>
+</div>
+</div>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/07/08/Adding-numerical-methods-to-emacs-with-dynamic-modules.org">org-mode source</a></p>
+<p>Org-mode version = 9.0.7</p>
