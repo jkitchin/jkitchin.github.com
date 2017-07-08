@@ -84,6 +84,116 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Saving-the-current-restriction-and-restoring-it-while-following-links"></div>
+      <h2 class="blog_post_title"><a href="/blog/2015/10/24/Saving-the-current-restriction-and-restoring-it-while-following-links/" rel="bookmark" title="Permanent Link to Saving the current restriction and restoring it while following links">Saving the current restriction and restoring it while following links</a></h2>
+      <p><small><span class="blog_post_date">Posted October 24, 2015 at 01:41 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2015/10/24/Saving-the-current-restriction-and-restoring-it-while-following-links#disqus_thread">View Comments</a>
+      <p><small><span class="blog_post_date">Updated October 25, 2015 at 07:09 AM</span>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+
+<p>
+On the org-mode mailing list there has been some discussion about following id links. The issue is that if your buffer is narrowed, clicking on the link does not change the restriction to actually take you to the entry. This is debatably desirable. If I click on a link, I want it to go where it points. But, I might also like to go back to my narrowed view. So here consider how to save the state of narrowing, and restore it. We modify the function that opens an id link to save the restriction, and widen the buffer if necessary.
+</p>
+
+<p>
+Saving the restriction seems easy, we just save a marker to point, and the point-min and point-max. We save the marker for a convenient way to get the buffer, and perhaps the actual point. We advise the C-c &amp; function to restore the restriction after we leave it. This should fix the restriction in whatever buffer we undid it in.
+</p>
+
+<p>
+Here is the code that seems to work for me. Thanks to Rasmus for the idea on saving the restriction data.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">*saved-restriction*</span> nil
+ <span style="color: #036A07;">"A global var containing the current restriction.</span>
+<span style="color: #036A07;">Returns (current-buffer point-min point-max"</span>)
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">save-current-restriction</span> ()
+  <span style="color: #036A07;">"Save the current restriction at point."</span>
+  (<span style="color: #0000FF;">setq</span> *saved-restriction*
+        (<span style="color: #0000FF;">if</span> (buffer-narrowed-p)
+            (list (current-buffer) (point-min) (point-max))
+          nil)))
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">restore-saved-restriction</span> ()
+  <span style="color: #036A07;">"Restore the last saved restriction."</span>
+  (<span style="color: #0000FF;">when</span> *saved-restriction*
+    (set-buffer (car *saved-restriction*))
+    (narrow-to-region (nth 1 *saved-restriction*)
+                      (nth 2 *saved-restriction*)))
+  (<span style="color: #0000FF;">setq</span> *saved-restriction* nil))
+
+<span style="color: #8D8D84;">;</span><span style="color: #8D8D84; font-style: italic;">' actually modify this function to save the restriction, and widen if needed.</span>
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-id-open</span> (id)
+  <span style="color: #036A07;">"Go to the entry with id ID."</span>
+  (org-mark-ring-push)
+  (<span style="color: #0000FF;">let</span> ((m (org-id-find id 'marker))
+        cmd)
+    (<span style="color: #0000FF;">unless</span> m
+      (<span style="color: #ff0000; font-weight: bold;">error</span> <span style="color: #008000;">"Cannot find entry with ID \"%s\""</span> id))
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Use a buffer-switching command in analogy to finding files</span>
+    (<span style="color: #0000FF;">setq</span> cmd
+          (<span style="color: #0000FF;">or</span>
+           (cdr
+            (assq
+             (cdr (assq 'file org-link-frame-setup))
+             '((find-file . switch-to-buffer)
+               (find-file-other-window . switch-to-buffer-other-window)
+               (find-file-other-frame . switch-to-buffer-other-frame))))
+           'switch-to-buffer-other-window))
+    (<span style="color: #0000FF;">if</span> (not (equal (current-buffer) (marker-buffer m)))
+        (funcall cmd (marker-buffer m)))
+    (save-current-restriction)
+    (<span style="color: #0000FF;">when</span> (&gt; m (point-max))
+      (widen))
+    (goto-char m)
+    (move-marker m nil)
+    (org-show-context)))
+
+
+<span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">And we advise the function going back to restore the restriction.</span>
+(<span style="color: #0000FF;">defadvice</span> <span style="color: #006699;">org-mark-ring-goto</span> (after restore-my-restriction () activate)
+  <span style="color: #036A07;">"Restore narrowing."</span>
+  (restore-saved-restriction))
+</pre>
+</div>
+
+<pre class="example">
+org-mark-ring-goto
+</pre>
+
+<p>
+This seems to preserve restrictions in the current buffer and in other buffers, as long as I use C-c &amp; to invoke org-mark-ring goto. I am not sure how easy it would be to make this work for all links. Each link has its own function for following so I am not sure we can easily get them all to do this unless there is some high level function to advise like org-mouse-down-mouse or something similar. It also has the limitation that the restoration only occurs using org-mark-ring-goto, unless you specifically run the  (restore-saved-restriction) function yourself. That could be made an interactive function for that purpose. Otherwise, this seems like a reasonable approach.
+</p>
+<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/10/24/Saving-the-current-restriction-and-restoring-it-while-following-links.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/10/24/Saving-the-current-restriction-and-restoring-it-while-following-links#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Line-numbers-in-org-mode-code-blocks"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/10/13/Line-numbers-in-org-mode-code-blocks/" rel="bookmark" title="Permanent Link to Line numbers in org-mode code blocks">Line numbers in org-mode code blocks</a></h2>
       <p><small><span class="blog_post_date">Posted October 13, 2015 at 08:58 AM</span> | categories:
@@ -769,7 +879,7 @@ Maybe it would make sense to use unittests, or nose or some other testing framew
       <div id="A-cursor-goto-hydra-for-emacs"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/09/28/A-cursor-goto-hydra-for-emacs/" rel="bookmark" title="Permanent Link to A cursor goto hydra for emacs">A cursor goto hydra for emacs</a></h2>
       <p><small><span class="blog_post_date">Posted September 28, 2015 at 04:38 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/hydra/'>hydra</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/hydra/'>hydra</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2015/09/28/A-cursor-goto-hydra-for-emacs#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -864,148 +974,6 @@ As with the last navigation hydra, this is a pretty massive set of options and t
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/09/28/A-cursor-goto-hydra-for-emacs#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Upping-my-Emacs-navigation-game"></div>
-      <h2 class="blog_post_title"><a href="/blog/2015/09/27/Upping-my-Emacs-navigation-game/" rel="bookmark" title="Permanent Link to Upping my Emacs navigation game">Upping my Emacs navigation game</a></h2>
-      <p><small><span class="blog_post_date">Posted September 27, 2015 at 09:21 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/hydra/'>hydra</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2015/09/27/Upping-my-Emacs-navigation-game#disqus_thread">View Comments</a>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-
-<p>
-I have been trying to up my navigation game in Emacs, by which I mean I want to get my cursor where I want it with a minimal number of keystrokes, and preferrably no mouse actions. There are lots of little and big navigations I do a lot:
-</p>
-<ol class="org-ol">
-<li>forward/backward by a character
-</li>
-<li>forward/backward by a word/subword
-</li>
-<li>forward/backward by a sentence
-</li>
-<li>forward/backward by a line
-</li>
-<li>to the beginning and end of a line
-</li>
-<li>to the beginning and end of a sentence
-</li>
-<li>to the beginning and end of a paragraph
-</li>
-<li>to the beginning and end of a page
-</li>
-<li>to the beginning and end of a buffer
-</li>
-<li>scrolling up/down
-</li>
-<li>into another window
-</li>
-<li>back and forth to buffers
-</li>
-</ol>
-
-<p>
-Occasionally, I want to save a location so I can easily get back to it. Not all of these are strictly speaking navigation in the usual sense, but they are things I do often enough. There are Emacs commands for all these, and keyboard shortcuts for many of them, but I don't use them often, and as a result I don't remember them either.
-</p>
-
-<p>
-Here I develop a <a href="https://github.com/abo-abo/hydra">hydra</a> that will provide these features. Hydra is a super amazing, menu prompting system that provides hints to remind you of what can be done, and to access it from a character. It is possible to pass numeric and universal arguments to the commands by typing -, a number, or C-u before pressing the character.
-</p>
-
-<p>
-I want some commands to be repeatable, which we get with a "red" hydra, and some commands to exit on running, which we get with a "blue" head. So, here is an over-the-top hydra for navigation.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defhydra</span> hydra-navigate (<span style="color: #006FE0;">:color</span> red
-                          <span style="color: #006FE0;">:hint</span> nil)
-  <span style="color: #008000;">"</span>
-<span style="color: #008000;">_f_: forward-char       _w_: forward-word       _n_: next-line</span>
-<span style="color: #008000;">_b_: backward-char      _W_: backward-word      _p_: previous-line</span>
-<span style="color: #008000;">^ ^                     _o_: subword-right      _,_: beginning-of-line</span>
-<span style="color: #008000;">^ ^                     _O_: subword-left       _._: end-of-line</span>
-
-<span style="color: #008000;">_s_: forward sentence   _a_: forward paragraph  _g_: forward page</span>
-<span style="color: #008000;">_S_: backward sentence  _A_: backward paragraph _G_: backward page</span>
-
-<span style="color: #008000;">_h_: helm mini _B_: buffer list _i_: window</span>
-<span style="color: #008000;">_&lt;left&gt;_: previous buffer   _&lt;right&gt;_: next buffer</span>
-<span style="color: #008000;">_&lt;up&gt;_: scroll-up           _&lt;down&gt;_: scroll-down</span>
-
-<span style="color: #008000;">_[_: backward-sexp _]_: forward-sexp</span>
-<span style="color: #008000;">_&lt;_ beginning of buffer _&gt;_ end of buffer _m_: set mark _/_: jump to mark</span>
-<span style="color: #008000;">"</span>
-  (<span style="color: #008000;">"f"</span> forward-char)
-  (<span style="color: #008000;">"b"</span> backward-char)
-  (<span style="color: #008000;">"w"</span> forward-word)
-  (<span style="color: #008000;">"W"</span> backward-word)
-  (<span style="color: #008000;">"n"</span> next-line)
-  (<span style="color: #008000;">"p"</span> previous-line)
-  (<span style="color: #008000;">"o"</span> subword-right)
-  (<span style="color: #008000;">"O"</span> subword-left)
-  (<span style="color: #008000;">"s"</span> forward-sentence)
-  (<span style="color: #008000;">"S"</span> backward-sentence)
-  (<span style="color: #008000;">"a"</span> forward-paragraph)
-  (<span style="color: #008000;">"A"</span> backward-paragraph)
-  (<span style="color: #008000;">"g"</span> forward-page)
-  (<span style="color: #008000;">"G"</span> backward-page)
-  (<span style="color: #008000;">"&lt;right&gt;"</span> next-buffer)
-  (<span style="color: #008000;">"&lt;left&gt;"</span> previous-buffer)
-  (<span style="color: #008000;">"h"</span> helm-mini <span style="color: #006FE0;">:color</span> blue)
-  (<span style="color: #008000;">"i"</span> ace-window <span style="color: #006FE0;">:color</span> blue)
-  (<span style="color: #008000;">"m"</span> org-mark-ring-push)
-  (<span style="color: #008000;">"/"</span> org-mark-ring-goto <span style="color: #006FE0;">:color</span> blue)
-  (<span style="color: #008000;">"B"</span> helm-buffers-list)
-  (<span style="color: #008000;">"&lt;up&gt;"</span> scroll-up)
-  (<span style="color: #008000;">"&lt;down&gt;"</span> scroll-down)
-  (<span style="color: #008000;">"&lt;"</span> beginning-of-buffer)
-  (<span style="color: #008000;">"&gt;"</span> end-of-buffer)
-  (<span style="color: #008000;">"."</span> end-of-line)
-  (<span style="color: #008000;">"["</span> backward-sexp)
-  (<span style="color: #008000;">"]"</span> forward-sexp)
-  (<span style="color: #008000;">","</span> beginning-of-line)
-  (<span style="color: #008000;">"q"</span> nil <span style="color: #008000;">"quit"</span> <span style="color: #006FE0;">:color</span> blue))
-
-(global-set-key (kbd <span style="color: #008000;">"s-n"</span>) 'hydra-navigate/body)
-</pre>
-</div>
-
-<pre class="example">
-hydra-navigate/body
-</pre>
-
-<p>
-I basically like it. The menu is a little on the large side, but it makes for easy modal navigation in a buffer, to other windows, and other buffers. On the whole for moderate cursor movements, this results in basically equal keystrokes. For example, to move 3 characters forward, we have C-f C-f C-f or C-u 3 C-f, or s-n 3 f. The advantage (I think) is a single interface to all these navigation commands with hints on what to do.
-</p>
-
-<p>
-There is still another level of navigation, which is related to navigation by searching. That is a whole different level of navigation I will work on another day!
-</p>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/09/27/Upping-my-Emacs-navigation-game.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/09/27/Upping-my-Emacs-navigation-game#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="/blog/category/emacs/10">« Previous Page</a>
   --  
  <a href="/blog/category/emacs/12">Next Page »</a>
@@ -1047,11 +1015,11 @@ There is still another level of navigation, which is related to navigation by se
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2017/07/08/Adding-numerical-methods-to-emacs-with-dynamic-modules/">Adding numerical methods to emacs with dynamic modules</a></li>
       <li><a href="/blog/2017/06/10/Adding-keymaps-to-src-blocks-via-org-font-lock-hook/">Adding keymaps to src blocks via org-font-lock-hook</a></li>
       <li><a href="/blog/2017/05/26/Org-mode-and-ipython-enhancements-in-scimax/">Org-mode and ipython enhancements in scimax</a></li>
       <li><a href="/blog/2017/05/21/A-partial-symbolic-numeric-solver-in-emacs-lisp/">A partial symbolic numeric solver in emacs-lisp</a></li>
       <li><a href="/blog/2017/05/05/A-new-and-improved-Emacs-gnuplot-DSL/">A new and improved Emacs gnuplot DSL</a></li>
-      <li><a href="/blog/2017/05/04/An-emacs-lisp-dsl-for-gnuplot/">An emacs-lisp dsl for gnuplot</a></li>
     </ul>
   </section>
 
