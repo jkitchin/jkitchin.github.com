@@ -12,11 +12,204 @@
     <title>The Kitchin Research Group</title>
     <link>http://jkitchin.github.io/blog</link>
     <description>Chemical Engineering at Carnegie Mellon University</description>
-    <pubDate>Sat, 08 Jul 2017 14:13:09 GMT</pubDate>
+    <pubDate>Sun, 09 Jul 2017 11:22:07 GMT</pubDate>
     <generator>Blogofile</generator>
     <sy:updatePeriod>hourly</sy:updatePeriod>
     <sy:updateFrequency>1</sy:updateFrequency>
     
+    <item>
+      <title>Adding a GSL integration function to Emacs with a dynamic module</title>
+      <link>http://jkitchin.github.io/blog/2017/07/09/Adding-a-GSL-integration-function-to-Emacs-with-a-dynamic-module</link>
+      <pubDate>Sun, 09 Jul 2017 07:22:01 EDT</pubDate>
+      <category><![CDATA[integration]]></category>
+      <category><![CDATA[dynamic-module]]></category>
+      <category><![CDATA[emacs]]></category>
+      <guid isPermaLink="false">Puc-UXuQT5BoMD9UjDsEBorq17Y=</guid>
+      <description>Adding a GSL integration function to Emacs with a dynamic module</description>
+      <content:encoded><![CDATA[
+
+
+&lt;p&gt;
+Here we work out how to run this program: &lt;a href="https://www.gnu.org/software/gsl/doc/html/integration.html#adaptive-integration-example"&gt;https://www.gnu.org/software/gsl/doc/html/integration.html#adaptive-integration-example&lt;/a&gt; in a dynamic module in emacs. The goal is to be able to evaluate \(\int_0^1 x^{1/2} \log(x) dx\). According to the example page the answer is -4. We will define an integration function that takes at least a function and integration bounds as arguments, and several optional arguments to specify tolerances and limits. In other words we want to evaluate integrals of the form:
+&lt;/p&gt;
+
+&lt;p&gt;
+\(\int_a^b f(x; params) dx\)
+&lt;/p&gt;
+
+&lt;p&gt;
+I want that to happen in an elisp function with a signature like:
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-emacs-lisp"&gt;(gsl-integration-qags (&lt;span style="color: #0000FF;"&gt;lambda&lt;/span&gt; (x params) body) a b &lt;span style="color: #6434A3;"&gt;&amp;amp;optional&lt;/span&gt; params epsabs epsrel limit)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+And that function will return a list containing (result error-estimate). Here is the C-code that makes this happen. It is more complex that the &lt;a href="http://kitchingroup.cheme.cmu.edu/blog/2017/07/08/Adding-numerical-methods-to-emacs-with-dynamic-modules/"&gt;last example&lt;/a&gt;, and only compiles with gcc that allows nested functions. I don't know how to write this without that feature. This is more complex also because you have to create a workspace to do the integration inside the function that does the integration. The C-module also has extra code in it to allow for optional arguments.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-c"&gt;&lt;span style="color: #808080;"&gt;#include&lt;/span&gt; &lt;span style="color: #008000;"&gt;&amp;lt;gsl/gsl_integration.h&amp;gt;&lt;/span&gt;
+&lt;span style="color: #808080;"&gt;#include&lt;/span&gt; &lt;span style="color: #008000;"&gt;"emacs-module.h"&lt;/span&gt;
+
+&lt;span style="color: #6434A3;"&gt;int&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;plugin_is_GPL_compatible&lt;/span&gt;;
+
+&lt;span style="color: #0000FF;"&gt;static&lt;/span&gt; &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #006699;"&gt;F_gsl_integrate&lt;/span&gt; (&lt;span style="color: #6434A3;"&gt;emacs_env&lt;/span&gt; *&lt;span style="color: #BA36A5;"&gt;env&lt;/span&gt;, &lt;span style="color: #6434A3;"&gt;ptrdiff_t&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;nargs&lt;/span&gt;, &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;args&lt;/span&gt;[], &lt;span style="color: #6434A3;"&gt;void&lt;/span&gt; *&lt;span style="color: #BA36A5;"&gt;data&lt;/span&gt;)
+{
+  &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;nested function - only supported as an extension in gcc&lt;/span&gt;
+  &lt;span style="color: #6434A3;"&gt;double&lt;/span&gt; &lt;span style="color: #006699;"&gt;f&lt;/span&gt; (&lt;span style="color: #6434A3;"&gt;double&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;x&lt;/span&gt;, &lt;span style="color: #6434A3;"&gt;void&lt;/span&gt; *&lt;span style="color: #BA36A5;"&gt;params&lt;/span&gt;) 
+  {
+    &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;fn&lt;/span&gt; = args[0];  &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;function we will integrate&lt;/span&gt;
+    &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;x2&lt;/span&gt;[] = { env-&amp;gt;make_float(env, x), params };
+    &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;y&lt;/span&gt; = env-&amp;gt;funcall(env, fn, 2, &amp;amp;x2);   
+    
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; env-&amp;gt;extract_float (env, y);
+  }
+
+  &lt;span style="color: #6434A3;"&gt;double&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;a&lt;/span&gt; = env-&amp;gt;extract_float (env, args[1]);
+  &lt;span style="color: #6434A3;"&gt;double&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;b&lt;/span&gt; = env-&amp;gt;extract_float (env, args[2]);
+
+  &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;default values for optional arguments&lt;/span&gt;
+  &lt;span style="color: #6434A3;"&gt;double&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;epsabs&lt;/span&gt; = 0.0;
+  &lt;span style="color: #6434A3;"&gt;double&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;epsrel&lt;/span&gt; = 1e-7;
+  &lt;span style="color: #6434A3;"&gt;size_t&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;limit&lt;/span&gt; = 1000;
+  &lt;span style="color: #6434A3;"&gt;double&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;result&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;error&lt;/span&gt;; 
+
+  &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;Here is how I handle the optional arguments&lt;/span&gt;
+  &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;(gsl-integrate func a b params epsabs epsrel limit)&lt;/span&gt;
+  &lt;span style="color: #6434A3;"&gt;gsl_function&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;F&lt;/span&gt;;
+  F.function = &amp;amp;f;
+  &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; (nargs &amp;gt;= 4) {F.params = args[3];}
+  &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; (nargs &amp;gt;= 5 &amp;amp;&amp;amp; env-&amp;gt;is_not_nil(env, args[4])) {epsabs = env-&amp;gt;extract_float(env, args[4]);}
+  &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; (nargs &amp;gt;= 6 &amp;amp;&amp;amp; env-&amp;gt;is_not_nil(env, args[5])) {epsrel = env-&amp;gt;extract_float(env, args[5]);}
+  &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; (nargs &amp;gt;= 7 &amp;amp;&amp;amp; env-&amp;gt;is_not_nil(env, args[6])) {limit = env-&amp;gt;extract_integer(env, args[6]);}
+
+  &lt;span style="color: #6434A3;"&gt;gsl_integration_workspace&lt;/span&gt; * &lt;span style="color: #BA36A5;"&gt;w&lt;/span&gt; = gsl_integration_workspace_alloc (limit);
+
+  gsl_integration_qags (&amp;amp;F, &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;gsl_function pointer&lt;/span&gt;
+                        a, &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;lower integration bound&lt;/span&gt;
+                        b, &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;upper integration bound&lt;/span&gt;
+                        epsabs, &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;absolute error tolerance&lt;/span&gt;
+                        epsrel, &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;relative error tolerance&lt;/span&gt;
+                        limit, &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;max number of subintervals for integration&lt;/span&gt;
+                        w, &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;the workspace&lt;/span&gt;
+                        &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;pointers to put results and error in&lt;/span&gt;
+                        &amp;amp;result, &amp;amp;error);
+
+  gsl_integration_workspace_free (w);
+    
+  &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;make a list of (result error) to return&lt;/span&gt;
+  &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;Qlist&lt;/span&gt; = env-&amp;gt;intern(env, &lt;span style="color: #008000;"&gt;"list"&lt;/span&gt;);
+  &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;Qresult&lt;/span&gt; = env-&amp;gt;make_float (env, result);
+  &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;Qerror&lt;/span&gt; = env-&amp;gt;make_float (env, error);
+  &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;list_args&lt;/span&gt;[] = { Qresult, Qerror };
+  &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; env-&amp;gt;funcall(env, Qlist, 2, list_args);
+}
+
+&lt;span style="color: #6434A3;"&gt;int&lt;/span&gt; &lt;span style="color: #006699;"&gt;emacs_module_init&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;struct&lt;/span&gt; &lt;span style="color: #6434A3;"&gt;emacs_runtime&lt;/span&gt; *&lt;span style="color: #BA36A5;"&gt;ert&lt;/span&gt;)
+{
+  &lt;span style="color: #6434A3;"&gt;emacs_env&lt;/span&gt; *&lt;span style="color: #BA36A5;"&gt;env&lt;/span&gt; = ert-&amp;gt;get_environment(ert);
+  
+  &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;Here we create the function.&lt;/span&gt;
+  &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;fset&lt;/span&gt; = env-&amp;gt;intern(env, &lt;span style="color: #008000;"&gt;"fset"&lt;/span&gt;);
+  &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;args&lt;/span&gt;[2];
+  args[0] = env-&amp;gt;intern(env, &lt;span style="color: #008000;"&gt;"gsl-integration-qags"&lt;/span&gt;); &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;symbol to create for function&lt;/span&gt;
+  &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;The function we set that symbol to.&lt;/span&gt;
+  args[1] = env-&amp;gt;make_function(env,
+                               3, &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;min nargs&lt;/span&gt;
+                               7, &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;max nargs&lt;/span&gt;
+                               F_gsl_integrate,
+                               &lt;span style="color: #008000;"&gt;"(gsl-integration-qags F A B &amp;amp;optional PARAMS EPSABS EPSREL LIMIT)\n"&lt;/span&gt; \
+                               &lt;span style="color: #008000;"&gt;"Integrate F(x; params) from A to B.\n"&lt;/span&gt; \
+                               &lt;span style="color: #008000;"&gt;"F is a function of a single variable and parameters.\n"&lt;/span&gt; \
+                               &lt;span style="color: #008000;"&gt;"A is the lower bound of integration\n"&lt;/span&gt;  \
+                               &lt;span style="color: #008000;"&gt;"B is the upper bound of integration.\n"&lt;/span&gt; \
+                               &lt;span style="color: #008000;"&gt;"Optional parameters:\n"&lt;/span&gt;\
+                               &lt;span style="color: #008000;"&gt;"PARAMS is a list of params to pass to F.\n"&lt;/span&gt; \
+                               &lt;span style="color: #008000;"&gt;"EPSABS is a float (default 0.0) and is the absolute error tolerance.\n"&lt;/span&gt; \
+                               &lt;span style="color: #008000;"&gt;"EPSREL is a float (default 1e-7) and is the relative error tolerance.\n"&lt;/span&gt; \
+                               &lt;span style="color: #008000;"&gt;"LIMIT is the maximum number of subintervals for the integration (default 1000).\n"&lt;/span&gt; \
+                               &lt;span style="color: #008000;"&gt;"Returns (list result error-estimate).\n"&lt;/span&gt; \
+                               &lt;span style="color: #008000;"&gt;"See https://www.gnu.org/software/gsl/manual/html_node/QAGS-adaptive-integration-with-singularities.html."&lt;/span&gt;,
+                               0);
+  &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;This is basically (fset 'gsl-integration-qags (lambda func))&lt;/span&gt;
+  env-&amp;gt;funcall(env, fset, 2, args);
+  
+  &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;This is what allows the shared library to provide a feature &lt;/span&gt;
+  &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;provide&lt;/span&gt; = env-&amp;gt;intern(env, &lt;span style="color: #008000;"&gt;"provide"&lt;/span&gt;);
+  &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;provide_args&lt;/span&gt;[] = { env-&amp;gt;intern(env, &lt;span style="color: #008000;"&gt;"gsl-integration"&lt;/span&gt;) };
+  env-&amp;gt;funcall(env, provide, 1, provide_args);
+  
+  &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; 0;
+}
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Building this was moderately tricky. It appears the first gcc on my path uses clang which does not support nested functions in C. I don't know enough C to figure out how to do this without a nested function though, since the function has to be defined at run-time based on the emacs env and args. gcc does support inline functions, so the code below uses a gcc that does compile it.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-sh"&gt;rm -f gsl-integration.so gsl-integration.o
+/usr/local/Cellar/gcc/6.1.0/bin/gcc-6 -Wall -I/usr/local/include -fPIC -c gsl-integration.c
+/usr/local/Cellar/gcc/6.1.0/bin/gcc-6  -shared -L/usr/local/include -lgsl -o gsl-integration.so gsl-integration.o
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Now we add this directory to our path since it is not on it and require our new module.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-emacs-lisp"&gt;(add-to-list 'load-path &lt;span style="color: #008000;"&gt;"/Users/jkitchin/vc/blogofile-jkitchin.github.com/_blog/dynamic-module/"&lt;/span&gt;)
+(&lt;span style="color: #0000FF;"&gt;require&lt;/span&gt; '&lt;span style="color: #D0372D;"&gt;gsl-integration&lt;/span&gt;)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Let us see our new function in action. We evaluate \(\int_0^1 x^{1/2} \log(x) dx\). According to the example page the answer is -4. Here is an example where we ignore the parameters. You have to be careful; Emacs sometimes segfaults and crashes if you use an integer or float argument when it expects the other type.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-emacs-lisp"&gt;(gsl-integration-qags (&lt;span style="color: #0000FF;"&gt;lambda&lt;/span&gt; (x params) (/ (log x) (sqrt x))) 0.0 1.0)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Here are some optional arguments. 
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-emacs-lisp"&gt;(gsl-integration-qags (&lt;span style="color: #0000FF;"&gt;lambda&lt;/span&gt; (x params) (/ (log x) (sqrt x))) 0.0 1.0 nil nil 0.01)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Nice, with a larger epsrel argument we get a larger error. Note the arguments are positional, so we have to include them all just to set the epsrel argument. How about an easier example with parameters that we actually use. Here we integrate a constant, and set the value of the constant from the params arg. The integral should be the area of a rectangle of length 1 and width of the param we use.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-emacs-lisp"&gt;(list
+ (gsl-integration-qags (&lt;span style="color: #0000FF;"&gt;lambda&lt;/span&gt; (x params) (first params)) 0.0 1.0 '(1.0))
+ (gsl-integration-qags (&lt;span style="color: #0000FF;"&gt;lambda&lt;/span&gt; (x params) (first params)) 0.0 1.0 '(0.5)))
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Wow! It actually works!!! That was harder won success than usual for me. I am claiming victory for now and leaving the following notes to future me:
+&lt;/p&gt;
+
+&lt;ol class="org-ol"&gt;
+&lt;li&gt;It would be nice to have optional keyword arguments. This would take some handling of the arguments beyond what I know how to do for now, unless it is possible to pull in something like plist-get the way we pull in fset, provide and list in this example.&lt;/li&gt;
+&lt;li&gt;Error checking on types would be helpful. It is not good for Emacs to crash because 0 is not 0.0!&lt;/li&gt;
+&lt;li&gt;In numpy there is often a feature to get full_output. Here, the workspace created in the function has more information available in a struct that might be helpful to have access to at times. It seems like it might be possible to get that here too.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Copyright (C) 2017 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
+&lt;p&gt;&lt;a href="/org/2017/07/09/Adding-a-GSL-integration-function-to-Emacs-with-a-dynamic-module.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Org-mode version = 9.0.7&lt;/p&gt;]]></content:encoded>
+    </item>
     <item>
       <title>Adding numerical methods to emacs with dynamic modules</title>
       <link>http://jkitchin.github.io/blog/2017/07/08/Adding-numerical-methods-to-emacs-with-dynamic-modules</link>
@@ -234,8 +427,8 @@ It would be nice to have a more generic foreign function interface that would al
       <title>Adding keymaps to src blocks via org-font-lock-hook</title>
       <link>http://jkitchin.github.io/blog/2017/06/10/Adding-keymaps-to-src-blocks-via-org-font-lock-hook</link>
       <pubDate>Sat, 10 Jun 2017 15:27:07 EDT</pubDate>
-      <category><![CDATA[emacs]]></category>
       <category><![CDATA[orgmode]]></category>
+      <category><![CDATA[emacs]]></category>
       <guid isPermaLink="false">vAsDcb07joQ_xulHaGfKP0V6CIY=</guid>
       <description>Adding keymaps to src blocks via org-font-lock-hook</description>
       <content:encoded><![CDATA[
@@ -434,9 +627,9 @@ Thanks to those brave people alpha-testing this and helping refine the idea!
       <title>Org-mode and ipython enhancements in scimax</title>
       <link>http://jkitchin.github.io/blog/2017/05/26/Org-mode-and-ipython-enhancements-in-scimax</link>
       <pubDate>Fri, 26 May 2017 16:54:16 EDT</pubDate>
-      <category><![CDATA[emacs]]></category>
       <category><![CDATA[ipython]]></category>
       <category><![CDATA[orgmode]]></category>
+      <category><![CDATA[emacs]]></category>
       <guid isPermaLink="false">2U7yqcTW38o7Ws3S_FWYgzkOIag=</guid>
       <description>Org-mode and ipython enhancements in scimax</description>
       <content:encoded><![CDATA[
@@ -868,9 +1061,9 @@ Occasionally you will run into an issue. You can clear the queue with &lt;code&g
       <title>A partial symbolic numeric solver in emacs-lisp</title>
       <link>http://jkitchin.github.io/blog/2017/05/21/A-partial-symbolic-numeric-solver-in-emacs-lisp</link>
       <pubDate>Sun, 21 May 2017 11:33:15 EDT</pubDate>
-      <category><![CDATA[emacs]]></category>
       <category><![CDATA[emacs-lisp]]></category>
       <category><![CDATA[math]]></category>
+      <category><![CDATA[emacs]]></category>
       <guid isPermaLink="false">yXBmBn5c2JK1DkEAlZuJewhh724=</guid>
       <description>A partial symbolic numeric solver in emacs-lisp</description>
       <content:encoded><![CDATA[
@@ -1094,9 +1287,9 @@ This is an emacs-lisp implementation of Newton's method. It is a simple implemen
       <title>A new and improved Emacs gnuplot DSL</title>
       <link>http://jkitchin.github.io/blog/2017/05/05/A-new-and-improved-Emacs-gnuplot-DSL</link>
       <pubDate>Fri, 05 May 2017 10:26:00 EDT</pubDate>
-      <category><![CDATA[emacs]]></category>
-      <category><![CDATA[lisp]]></category>
       <category><![CDATA[plotting]]></category>
+      <category><![CDATA[lisp]]></category>
+      <category><![CDATA[emacs]]></category>
       <guid isPermaLink="false">SKkqBSazd8jxa4md_x_2Xt31v8A=</guid>
       <description>A new and improved Emacs gnuplot DSL</description>
       <content:encoded><![CDATA[
@@ -1370,9 +1563,9 @@ The macro builds up an internal alist for the dot-names.
       <title>An emacs-lisp dsl for gnuplot</title>
       <link>http://jkitchin.github.io/blog/2017/05/04/An-emacs-lisp-dsl-for-gnuplot</link>
       <pubDate>Thu, 04 May 2017 19:33:55 EDT</pubDate>
-      <category><![CDATA[emacs]]></category>
-      <category><![CDATA[lisp]]></category>
       <category><![CDATA[plotting]]></category>
+      <category><![CDATA[lisp]]></category>
+      <category><![CDATA[emacs]]></category>
       <guid isPermaLink="false">0UZjXdfBOloIK7bnw4odvEI2ep0=</guid>
       <description>An emacs-lisp dsl for gnuplot</description>
       <content:encoded><![CDATA[
@@ -1695,8 +1888,8 @@ This has the benefit of a little cleaner injection of variables and selective ex
       <title>Emulating Sparql queries in emacs-lisp with pattern matching</title>
       <link>http://jkitchin.github.io/blog/2017/04/30/Emulating-Sparql-queries-in-emacs-lisp-with-pattern-matching</link>
       <pubDate>Sun, 30 Apr 2017 13:46:47 EDT</pubDate>
-      <category><![CDATA[emacs]]></category>
       <category><![CDATA[lisp]]></category>
+      <category><![CDATA[emacs]]></category>
       <guid isPermaLink="false">R3y1c_-hnfEQdQtr5ieB1MNVUk8=</guid>
       <description>Emulating Sparql queries in emacs-lisp with pattern matching</description>
       <content:encoded><![CDATA[
@@ -1896,9 +2089,9 @@ Pretty cool! Clearly there is still a lot to do to make this practical. The impl
       <title>A callable plist data structure for Emacs</title>
       <link>http://jkitchin.github.io/blog/2017/04/16/A-callable-plist-data-structure-for-Emacs</link>
       <pubDate>Sun, 16 Apr 2017 16:44:53 EDT</pubDate>
-      <category><![CDATA[emacs]]></category>
-      <category><![CDATA[elisp]]></category>
       <category><![CDATA[macro]]></category>
+      <category><![CDATA[elisp]]></category>
+      <category><![CDATA[emacs]]></category>
       <guid isPermaLink="false">g-L-SDSuJKkcZwHQyGqqiWpzU7k=</guid>
       <description>A callable plist data structure for Emacs</description>
       <content:encoded><![CDATA[
@@ -2163,9 +2356,9 @@ Obviously that is just an alternate syntax for the let statement, but it lets yo
       <title>A new org-mode exporter to Word for scimax</title>
       <link>http://jkitchin.github.io/blog/2017/04/15/A-new-org-mode-exporter-to-Word-for-scimax</link>
       <pubDate>Sat, 15 Apr 2017 16:19:05 EDT</pubDate>
-      <category><![CDATA[emacs]]></category>
-      <category><![CDATA[export]]></category>
       <category><![CDATA[orgmode]]></category>
+      <category><![CDATA[export]]></category>
+      <category><![CDATA[emacs]]></category>
       <guid isPermaLink="false">G2OqnAq_1YfN4yGs1NWp5LH4yQc=</guid>
       <description>A new org-mode exporter to Word for scimax</description>
       <content:encoded><![CDATA[
@@ -2224,97 +2417,6 @@ As a penultimate result it might be ok. The references are reasonably formatted,
 &lt;/p&gt;
 &lt;p&gt;Copyright (C) 2017 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
 &lt;p&gt;&lt;a href="/org/2017/04/15/A-new-org-mode-exporter-to-Word-for-scimax.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
-&lt;p&gt;Org-mode version = 9.0.5&lt;/p&gt;]]></content:encoded>
-    </item>
-    <item>
-      <title>Autoformatting ordinal numbers and fractions in orgmode</title>
-      <link>http://jkitchin.github.io/blog/2017/04/11/Autoformatting-ordinal-numbers-and-fractions-in-orgmode</link>
-      <pubDate>Tue, 11 Apr 2017 15:05:56 EDT</pubDate>
-      <category><![CDATA[emacs]]></category>
-      <category><![CDATA[orgmode]]></category>
-      <guid isPermaLink="false">aBxgPZr2cpO_yP5zCdWuoaXpm7Y=</guid>
-      <description>Autoformatting ordinal numbers and fractions in orgmode</description>
-      <content:encoded><![CDATA[
-
-
-&lt;p&gt;
-MS Word has a &lt;i&gt;few&lt;/i&gt; things I like. One of them is the ability to autoformat things to make an ordinal number string like 1st to the superscripted version 1&lt;sup&gt;st&lt;/sup&gt; while you type or a 1/2 to ½.  I thought it would be pretty easy to implement that for org-mode. It turns out it was not so easy!
-&lt;/p&gt;
-
-&lt;p&gt;
-There does not appear to be a way to specify a regexp pattern as an abbreviation, or an abbrev that starts with a number. What we need for ordinal numbers is to recognize a sequence of numbers followed by "st", "nd", "rd" or "th" followed by a space or punctuation, and then superscript the letters. In case you didn't want the replacement to occur, you should be able to undo it and get back the original string. This addition was a little hard won, so I am sharing the lessons here.
-&lt;/p&gt;
-
-&lt;p&gt;
-The logic I used is to put a function in the post-self-insert-hook. The function only works in org-mode, when not in a codeblock and when looking back at a regexp that matches a pattern to be replaced. Getting it to undo was trickier than expected. Eventually I worked out that you put an undo boundary in place before the change, and then it seems like you can undo the changes. I created a minor mode so it is easy to toggle this on and off.
-&lt;/p&gt;
-
-&lt;p&gt;
-Here is the implementation:
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-emacs-lisp"&gt;(&lt;span style="color: #0000FF;"&gt;defcustom&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;scimax-autoformat-ordinals&lt;/span&gt; t
-  &lt;span style="color: #036A07;"&gt;"Determines if scimax autoformats ordinal numbers."&lt;/span&gt;
-  &lt;span style="color: #006FE0;"&gt;:group&lt;/span&gt; 'scimax)
-
-(&lt;span style="color: #0000FF;"&gt;defun&lt;/span&gt; &lt;span style="color: #006699;"&gt;scimax-org-autoformat-ordinals&lt;/span&gt; ()
-  &lt;span style="color: #036A07;"&gt;"Expand ordinal words to superscripted versions in org-mode.&lt;/span&gt;
-&lt;span style="color: #036A07;"&gt;1st to 1^{st}.&lt;/span&gt;
-&lt;span style="color: #036A07;"&gt;2nd to 2^{nd}&lt;/span&gt;
-&lt;span style="color: #036A07;"&gt;3rd to 3^{rd}&lt;/span&gt;
-&lt;span style="color: #036A07;"&gt;4th to 4^{th}"&lt;/span&gt;
-  (&lt;span style="color: #0000FF;"&gt;interactive&lt;/span&gt;)
-  (&lt;span style="color: #0000FF;"&gt;when&lt;/span&gt; (&lt;span style="color: #0000FF;"&gt;and&lt;/span&gt; scimax-autoformat-ordinals
-             (eq major-mode 'org-mode)
-             (not (org-in-src-block-p))
-             (looking-back &lt;span style="color: #008000;"&gt;"&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;\\&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;(?3:&lt;/span&gt;&lt;span style="color: #008000;"&gt;\\&amp;lt;&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;\\&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;(?1:&lt;/span&gt;&lt;span style="color: #008000;"&gt;[0-9]+&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;\\&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;)&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;\\&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;(?2:&lt;/span&gt;&lt;span style="color: #008000;"&gt;st&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;\\&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;|&lt;/span&gt;&lt;span style="color: #008000;"&gt;nd&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;\\&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;|&lt;/span&gt;&lt;span style="color: #008000;"&gt;rd&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;\\&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;|&lt;/span&gt;&lt;span style="color: #008000;"&gt;th&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;\\&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;)&lt;/span&gt;&lt;span style="color: #008000;"&gt;\\&amp;gt;&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;\\&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;)&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;\\&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;(?:&lt;/span&gt;&lt;span style="color: #008000;"&gt;[[:punct:]]&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;\\&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;|&lt;/span&gt;&lt;span style="color: #008000;"&gt;[[:space:]]&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;\\&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;)&lt;/span&gt;&lt;span style="color: #008000;"&gt;"&lt;/span&gt;
-                           (line-beginning-position)))
-    (undo-boundary)
-    (&lt;span style="color: #0000FF;"&gt;save-excursion&lt;/span&gt;
-      (replace-match &lt;span style="color: #008000;"&gt;"\\1^{\\2}"&lt;/span&gt; nil nil nil 3))))
-
-
-(&lt;span style="color: #0000FF;"&gt;defcustom&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;scimax-autoformat-fractions&lt;/span&gt; t
-  &lt;span style="color: #036A07;"&gt;"Determines if scimax autoformats fractions."&lt;/span&gt;
-  &lt;span style="color: #006FE0;"&gt;:group&lt;/span&gt; 'scimax)
-
-
-(&lt;span style="color: #0000FF;"&gt;defun&lt;/span&gt; &lt;span style="color: #006699;"&gt;scimax-org-autoformat-fractions&lt;/span&gt; ()
-  &lt;span style="color: #036A07;"&gt;"Expand fractions to take up space."&lt;/span&gt;
-  (&lt;span style="color: #0000FF;"&gt;interactive&lt;/span&gt;)
-  (&lt;span style="color: #0000FF;"&gt;when&lt;/span&gt; (&lt;span style="color: #0000FF;"&gt;and&lt;/span&gt; scimax-autoformat-fractions
-             (eq major-mode 'org-mode)
-             (not (org-in-src-block-p))
-             (looking-back &lt;span style="color: #008000;"&gt;"&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;\\&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;(?3:&lt;/span&gt;&lt;span style="color: #008000;"&gt;\\&amp;lt;&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;\\&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;(&lt;/span&gt;&lt;span style="color: #008000;"&gt;1/4&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;\\&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;|&lt;/span&gt;&lt;span style="color: #008000;"&gt;1/2&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;\\&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;|&lt;/span&gt;&lt;span style="color: #008000;"&gt;3/4&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;\\&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;)&lt;/span&gt;&lt;span style="color: #008000;"&gt;\\&amp;gt;&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;\\&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;)&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;\\&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;(?:&lt;/span&gt;&lt;span style="color: #008000;"&gt;[[:punct:]]&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;\\&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;|&lt;/span&gt;&lt;span style="color: #008000;"&gt;[[:space:]]&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;\\&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold;"&gt;)&lt;/span&gt;&lt;span style="color: #008000;"&gt;"&lt;/span&gt;
-                           (line-beginning-position)))
-    (undo-boundary)
-    (&lt;span style="color: #0000FF;"&gt;save-excursion&lt;/span&gt;
-      (replace-match (cdr (assoc (match-string 3) '((&lt;span style="color: #008000;"&gt;"1/4"&lt;/span&gt; . &lt;span style="color: #008000;"&gt;"&amp;#188;"&lt;/span&gt;)
-                                                    (&lt;span style="color: #008000;"&gt;"1/2"&lt;/span&gt; . &lt;span style="color: #008000;"&gt;"&amp;#189;"&lt;/span&gt;)
-                                                    (&lt;span style="color: #008000;"&gt;"3/4"&lt;/span&gt; . &lt;span style="color: #008000;"&gt;"&amp;#190;"&lt;/span&gt;))))
-                     nil nil nil 3))))
-
-(&lt;span style="color: #0000FF;"&gt;defun&lt;/span&gt; &lt;span style="color: #006699;"&gt;scimax-org-autoformat&lt;/span&gt; ()
-  &lt;span style="color: #036A07;"&gt;"Autoformat functions."&lt;/span&gt;
-  (scimax-org-autoformat-ordinals)
-  (scimax-org-autoformat-fractions))
-
-(&lt;span style="color: #0000FF;"&gt;define-minor-mode&lt;/span&gt; &lt;span style="color: #006699;"&gt;scimax-autoformat-mode&lt;/span&gt;
-  &lt;span style="color: #036A07;"&gt;"Toggle `&lt;/span&gt;&lt;span style="color: #D0372D;"&gt;scimax-autoformat-mode&lt;/span&gt;&lt;span style="color: #036A07;"&gt;'.  Converts 1st to 1^{st} as you type."&lt;/span&gt;
-  &lt;span style="color: #006FE0;"&gt;:init-value&lt;/span&gt; nil
-  &lt;span style="color: #006FE0;"&gt;:lighter&lt;/span&gt; (&lt;span style="color: #008000;"&gt;" om"&lt;/span&gt;)
-  (&lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; scimax-ordinal-mode
-      (add-hook 'post-self-insert-hook #'scimax-org-autoformat nil 'local)
-    (remove-hook 'post-self-insert-hook #'scimax-org-autoformat 'local)))
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-This is now a feature in scimax. This marks the 500&lt;sup&gt;th&lt;/sup&gt; blog post! That is ½ way to 1000. At the current rate of posting, it will be at least 5 years until I hit that!
-&lt;/p&gt;
-&lt;p&gt;Copyright (C) 2017 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
-&lt;p&gt;&lt;a href="/org/2017/04/11/Autoformatting-ordinal-numbers-and-fractions-in-orgmode.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
 &lt;p&gt;Org-mode version = 9.0.5&lt;/p&gt;]]></content:encoded>
     </item>
   </channel>

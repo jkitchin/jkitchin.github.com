@@ -1,0 +1,215 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<feed
+  xmlns="http://www.w3.org/2005/Atom"
+  xmlns:thr="http://purl.org/syndication/thread/1.0"
+  xml:lang="en"
+  >
+  <title type="text">The Kitchin Research Group</title>
+  <subtitle type="text">Chemical Engineering at Carnegie Mellon University</subtitle>
+
+  <updated>2017-07-09T11:22:07Z</updated>
+  <generator uri="http://blogofile.com/">Blogofile</generator>
+
+  <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog" />
+  <id>http://jkitchin.github.io/blog/feed/atom/</id>
+  <link rel="self" type="application/atom+xml" href="http://jkitchin.github.io/blog/feed/atom/" />
+  <entry>
+    <author>
+      <name></name>
+      <uri>http://jkitchin.github.io/blog</uri>
+    </author>
+    <title type="html"><![CDATA[Adding a GSL integration function to Emacs with a dynamic module]]></title>
+    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2017/07/09/Adding-a-GSL-integration-function-to-Emacs-with-a-dynamic-module" />
+    <id>http://jkitchin.github.io/blog/2017/07/09/Adding-a-GSL-integration-function-to-Emacs-with-a-dynamic-module</id>
+    <updated>2017-07-09T07:22:01Z</updated>
+    <published>2017-07-09T07:22:01Z</published>
+    <category scheme="http://jkitchin.github.io/blog" term="integration" />
+    <category scheme="http://jkitchin.github.io/blog" term="dynamic-module" />
+    <category scheme="http://jkitchin.github.io/blog" term="emacs" />
+    <summary type="html"><![CDATA[Adding a GSL integration function to Emacs with a dynamic module]]></summary>
+    <content type="html" xml:base="http://jkitchin.github.io/blog/2017/07/09/Adding-a-GSL-integration-function-to-Emacs-with-a-dynamic-module"><![CDATA[
+
+
+&lt;p&gt;
+Here we work out how to run this program: &lt;a href="https://www.gnu.org/software/gsl/doc/html/integration.html#adaptive-integration-example"&gt;https://www.gnu.org/software/gsl/doc/html/integration.html#adaptive-integration-example&lt;/a&gt; in a dynamic module in emacs. The goal is to be able to evaluate \(\int_0^1 x^{1/2} \log(x) dx\). According to the example page the answer is -4. We will define an integration function that takes at least a function and integration bounds as arguments, and several optional arguments to specify tolerances and limits. In other words we want to evaluate integrals of the form:
+&lt;/p&gt;
+
+&lt;p&gt;
+\(\int_a^b f(x; params) dx\)
+&lt;/p&gt;
+
+&lt;p&gt;
+I want that to happen in an elisp function with a signature like:
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-emacs-lisp"&gt;(gsl-integration-qags (&lt;span style="color: #0000FF;"&gt;lambda&lt;/span&gt; (x params) body) a b &lt;span style="color: #6434A3;"&gt;&amp;amp;optional&lt;/span&gt; params epsabs epsrel limit)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+And that function will return a list containing (result error-estimate). Here is the C-code that makes this happen. It is more complex that the &lt;a href="http://kitchingroup.cheme.cmu.edu/blog/2017/07/08/Adding-numerical-methods-to-emacs-with-dynamic-modules/"&gt;last example&lt;/a&gt;, and only compiles with gcc that allows nested functions. I don't know how to write this without that feature. This is more complex also because you have to create a workspace to do the integration inside the function that does the integration. The C-module also has extra code in it to allow for optional arguments.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-c"&gt;&lt;span style="color: #808080;"&gt;#include&lt;/span&gt; &lt;span style="color: #008000;"&gt;&amp;lt;gsl/gsl_integration.h&amp;gt;&lt;/span&gt;
+&lt;span style="color: #808080;"&gt;#include&lt;/span&gt; &lt;span style="color: #008000;"&gt;"emacs-module.h"&lt;/span&gt;
+
+&lt;span style="color: #6434A3;"&gt;int&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;plugin_is_GPL_compatible&lt;/span&gt;;
+
+&lt;span style="color: #0000FF;"&gt;static&lt;/span&gt; &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #006699;"&gt;F_gsl_integrate&lt;/span&gt; (&lt;span style="color: #6434A3;"&gt;emacs_env&lt;/span&gt; *&lt;span style="color: #BA36A5;"&gt;env&lt;/span&gt;, &lt;span style="color: #6434A3;"&gt;ptrdiff_t&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;nargs&lt;/span&gt;, &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;args&lt;/span&gt;[], &lt;span style="color: #6434A3;"&gt;void&lt;/span&gt; *&lt;span style="color: #BA36A5;"&gt;data&lt;/span&gt;)
+{
+  &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;nested function - only supported as an extension in gcc&lt;/span&gt;
+  &lt;span style="color: #6434A3;"&gt;double&lt;/span&gt; &lt;span style="color: #006699;"&gt;f&lt;/span&gt; (&lt;span style="color: #6434A3;"&gt;double&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;x&lt;/span&gt;, &lt;span style="color: #6434A3;"&gt;void&lt;/span&gt; *&lt;span style="color: #BA36A5;"&gt;params&lt;/span&gt;) 
+  {
+    &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;fn&lt;/span&gt; = args[0];  &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;function we will integrate&lt;/span&gt;
+    &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;x2&lt;/span&gt;[] = { env-&amp;gt;make_float(env, x), params };
+    &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;y&lt;/span&gt; = env-&amp;gt;funcall(env, fn, 2, &amp;amp;x2);   
+    
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; env-&amp;gt;extract_float (env, y);
+  }
+
+  &lt;span style="color: #6434A3;"&gt;double&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;a&lt;/span&gt; = env-&amp;gt;extract_float (env, args[1]);
+  &lt;span style="color: #6434A3;"&gt;double&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;b&lt;/span&gt; = env-&amp;gt;extract_float (env, args[2]);
+
+  &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;default values for optional arguments&lt;/span&gt;
+  &lt;span style="color: #6434A3;"&gt;double&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;epsabs&lt;/span&gt; = 0.0;
+  &lt;span style="color: #6434A3;"&gt;double&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;epsrel&lt;/span&gt; = 1e-7;
+  &lt;span style="color: #6434A3;"&gt;size_t&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;limit&lt;/span&gt; = 1000;
+  &lt;span style="color: #6434A3;"&gt;double&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;result&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;error&lt;/span&gt;; 
+
+  &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;Here is how I handle the optional arguments&lt;/span&gt;
+  &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;(gsl-integrate func a b params epsabs epsrel limit)&lt;/span&gt;
+  &lt;span style="color: #6434A3;"&gt;gsl_function&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;F&lt;/span&gt;;
+  F.function = &amp;amp;f;
+  &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; (nargs &amp;gt;= 4) {F.params = args[3];}
+  &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; (nargs &amp;gt;= 5 &amp;amp;&amp;amp; env-&amp;gt;is_not_nil(env, args[4])) {epsabs = env-&amp;gt;extract_float(env, args[4]);}
+  &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; (nargs &amp;gt;= 6 &amp;amp;&amp;amp; env-&amp;gt;is_not_nil(env, args[5])) {epsrel = env-&amp;gt;extract_float(env, args[5]);}
+  &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; (nargs &amp;gt;= 7 &amp;amp;&amp;amp; env-&amp;gt;is_not_nil(env, args[6])) {limit = env-&amp;gt;extract_integer(env, args[6]);}
+
+  &lt;span style="color: #6434A3;"&gt;gsl_integration_workspace&lt;/span&gt; * &lt;span style="color: #BA36A5;"&gt;w&lt;/span&gt; = gsl_integration_workspace_alloc (limit);
+
+  gsl_integration_qags (&amp;amp;F, &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;gsl_function pointer&lt;/span&gt;
+                        a, &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;lower integration bound&lt;/span&gt;
+                        b, &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;upper integration bound&lt;/span&gt;
+                        epsabs, &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;absolute error tolerance&lt;/span&gt;
+                        epsrel, &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;relative error tolerance&lt;/span&gt;
+                        limit, &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;max number of subintervals for integration&lt;/span&gt;
+                        w, &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;the workspace&lt;/span&gt;
+                        &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;pointers to put results and error in&lt;/span&gt;
+                        &amp;amp;result, &amp;amp;error);
+
+  gsl_integration_workspace_free (w);
+    
+  &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;make a list of (result error) to return&lt;/span&gt;
+  &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;Qlist&lt;/span&gt; = env-&amp;gt;intern(env, &lt;span style="color: #008000;"&gt;"list"&lt;/span&gt;);
+  &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;Qresult&lt;/span&gt; = env-&amp;gt;make_float (env, result);
+  &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;Qerror&lt;/span&gt; = env-&amp;gt;make_float (env, error);
+  &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;list_args&lt;/span&gt;[] = { Qresult, Qerror };
+  &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; env-&amp;gt;funcall(env, Qlist, 2, list_args);
+}
+
+&lt;span style="color: #6434A3;"&gt;int&lt;/span&gt; &lt;span style="color: #006699;"&gt;emacs_module_init&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;struct&lt;/span&gt; &lt;span style="color: #6434A3;"&gt;emacs_runtime&lt;/span&gt; *&lt;span style="color: #BA36A5;"&gt;ert&lt;/span&gt;)
+{
+  &lt;span style="color: #6434A3;"&gt;emacs_env&lt;/span&gt; *&lt;span style="color: #BA36A5;"&gt;env&lt;/span&gt; = ert-&amp;gt;get_environment(ert);
+  
+  &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;Here we create the function.&lt;/span&gt;
+  &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;fset&lt;/span&gt; = env-&amp;gt;intern(env, &lt;span style="color: #008000;"&gt;"fset"&lt;/span&gt;);
+  &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;args&lt;/span&gt;[2];
+  args[0] = env-&amp;gt;intern(env, &lt;span style="color: #008000;"&gt;"gsl-integration-qags"&lt;/span&gt;); &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;symbol to create for function&lt;/span&gt;
+  &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;The function we set that symbol to.&lt;/span&gt;
+  args[1] = env-&amp;gt;make_function(env,
+                               3, &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;min nargs&lt;/span&gt;
+                               7, &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;max nargs&lt;/span&gt;
+                               F_gsl_integrate,
+                               &lt;span style="color: #008000;"&gt;"(gsl-integration-qags F A B &amp;amp;optional PARAMS EPSABS EPSREL LIMIT)\n"&lt;/span&gt; \
+                               &lt;span style="color: #008000;"&gt;"Integrate F(x; params) from A to B.\n"&lt;/span&gt; \
+                               &lt;span style="color: #008000;"&gt;"F is a function of a single variable and parameters.\n"&lt;/span&gt; \
+                               &lt;span style="color: #008000;"&gt;"A is the lower bound of integration\n"&lt;/span&gt;  \
+                               &lt;span style="color: #008000;"&gt;"B is the upper bound of integration.\n"&lt;/span&gt; \
+                               &lt;span style="color: #008000;"&gt;"Optional parameters:\n"&lt;/span&gt;\
+                               &lt;span style="color: #008000;"&gt;"PARAMS is a list of params to pass to F.\n"&lt;/span&gt; \
+                               &lt;span style="color: #008000;"&gt;"EPSABS is a float (default 0.0) and is the absolute error tolerance.\n"&lt;/span&gt; \
+                               &lt;span style="color: #008000;"&gt;"EPSREL is a float (default 1e-7) and is the relative error tolerance.\n"&lt;/span&gt; \
+                               &lt;span style="color: #008000;"&gt;"LIMIT is the maximum number of subintervals for the integration (default 1000).\n"&lt;/span&gt; \
+                               &lt;span style="color: #008000;"&gt;"Returns (list result error-estimate).\n"&lt;/span&gt; \
+                               &lt;span style="color: #008000;"&gt;"See https://www.gnu.org/software/gsl/manual/html_node/QAGS-adaptive-integration-with-singularities.html."&lt;/span&gt;,
+                               0);
+  &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;This is basically (fset 'gsl-integration-qags (lambda func))&lt;/span&gt;
+  env-&amp;gt;funcall(env, fset, 2, args);
+  
+  &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;This is what allows the shared library to provide a feature &lt;/span&gt;
+  &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;provide&lt;/span&gt; = env-&amp;gt;intern(env, &lt;span style="color: #008000;"&gt;"provide"&lt;/span&gt;);
+  &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;provide_args&lt;/span&gt;[] = { env-&amp;gt;intern(env, &lt;span style="color: #008000;"&gt;"gsl-integration"&lt;/span&gt;) };
+  env-&amp;gt;funcall(env, provide, 1, provide_args);
+  
+  &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; 0;
+}
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Building this was moderately tricky. It appears the first gcc on my path uses clang which does not support nested functions in C. I don't know enough C to figure out how to do this without a nested function though, since the function has to be defined at run-time based on the emacs env and args. gcc does support inline functions, so the code below uses a gcc that does compile it.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-sh"&gt;rm -f gsl-integration.so gsl-integration.o
+/usr/local/Cellar/gcc/6.1.0/bin/gcc-6 -Wall -I/usr/local/include -fPIC -c gsl-integration.c
+/usr/local/Cellar/gcc/6.1.0/bin/gcc-6  -shared -L/usr/local/include -lgsl -o gsl-integration.so gsl-integration.o
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Now we add this directory to our path since it is not on it and require our new module.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-emacs-lisp"&gt;(add-to-list 'load-path &lt;span style="color: #008000;"&gt;"/Users/jkitchin/vc/blogofile-jkitchin.github.com/_blog/dynamic-module/"&lt;/span&gt;)
+(&lt;span style="color: #0000FF;"&gt;require&lt;/span&gt; '&lt;span style="color: #D0372D;"&gt;gsl-integration&lt;/span&gt;)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Let us see our new function in action. We evaluate \(\int_0^1 x^{1/2} \log(x) dx\). According to the example page the answer is -4. Here is an example where we ignore the parameters. You have to be careful; Emacs sometimes segfaults and crashes if you use an integer or float argument when it expects the other type.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-emacs-lisp"&gt;(gsl-integration-qags (&lt;span style="color: #0000FF;"&gt;lambda&lt;/span&gt; (x params) (/ (log x) (sqrt x))) 0.0 1.0)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Here are some optional arguments. 
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-emacs-lisp"&gt;(gsl-integration-qags (&lt;span style="color: #0000FF;"&gt;lambda&lt;/span&gt; (x params) (/ (log x) (sqrt x))) 0.0 1.0 nil nil 0.01)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Nice, with a larger epsrel argument we get a larger error. Note the arguments are positional, so we have to include them all just to set the epsrel argument. How about an easier example with parameters that we actually use. Here we integrate a constant, and set the value of the constant from the params arg. The integral should be the area of a rectangle of length 1 and width of the param we use.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-emacs-lisp"&gt;(list
+ (gsl-integration-qags (&lt;span style="color: #0000FF;"&gt;lambda&lt;/span&gt; (x params) (first params)) 0.0 1.0 '(1.0))
+ (gsl-integration-qags (&lt;span style="color: #0000FF;"&gt;lambda&lt;/span&gt; (x params) (first params)) 0.0 1.0 '(0.5)))
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Wow! It actually works!!! That was harder won success than usual for me. I am claiming victory for now and leaving the following notes to future me:
+&lt;/p&gt;
+
+&lt;ol class="org-ol"&gt;
+&lt;li&gt;It would be nice to have optional keyword arguments. This would take some handling of the arguments beyond what I know how to do for now, unless it is possible to pull in something like plist-get the way we pull in fset, provide and list in this example.&lt;/li&gt;
+&lt;li&gt;Error checking on types would be helpful. It is not good for Emacs to crash because 0 is not 0.0!&lt;/li&gt;
+&lt;li&gt;In numpy there is often a feature to get full_output. Here, the workspace created in the function has more information available in a struct that might be helpful to have access to at times. It seems like it might be possible to get that here too.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Copyright (C) 2017 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
+&lt;p&gt;&lt;a href="/org/2017/07/09/Adding-a-GSL-integration-function-to-Emacs-with-a-dynamic-module.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Org-mode version = 9.0.7&lt;/p&gt;]]></content>
+  </entry>
+</feed>
