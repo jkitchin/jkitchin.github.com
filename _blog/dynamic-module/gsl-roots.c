@@ -60,7 +60,6 @@ static emacs_value Fgsl_root_fsolver_brent (emacs_env *env, ptrdiff_t nargs, ema
   return env->make_float (env, result);
 }
 
-
 int emacs_module_init(struct emacs_runtime *ert)
 {
   emacs_env *env = ert->get_environment(ert);
@@ -74,7 +73,7 @@ int emacs_module_init(struct emacs_runtime *ert)
 			       3, // min nargs
 			       7, // max nargs
 			       Fgsl_root_fsolver_brent,
-			       "(gsl-root-fsolver-brent f xlo xhi)\n" 
+			       "(gsl-root-fsolver-brent f xlo xhi params &optional epsabs epsrel)\n" 
 			       "https://www.gnu.org/software/gsl/doc/html/roots.html#examples",
 			       0);
 
