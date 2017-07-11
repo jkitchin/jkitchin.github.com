@@ -1,0 +1,130 @@
+* Adding linear algebra to Emacs with the GSL and dynamic modules
+  :PROPERTIES:
+  :categories: emacs,dynamic-module
+  :date:     2017/07/11 10:27:13
+  :updated:  2017/07/11 10:27:13
+  :org-url:  http://kitchingroup.cheme.cmu.edu/org/2017/07/11/Adding-linear-algebra-to-Emacs-with-the-GSL-and-dynamic-modules.org
+  :permalink: http://kitchingroup.cheme.cmu.edu/blog/2017/07/11/Adding-linear-algebra-to-Emacs-with-the-GSL-and-dynamic-modules/index.html
+  :END:
+
+The goal of this post is to be able to solve equations like this one:
+
+\[\left(\begin{array}{cccc}
+ 0.18& 0.60& 0.57& 0.96 \\
+ 0.41& 0.24& 0.99& 0.58 \\
+ 0.14& 0.30& 0.97& 0.66 \\
+ 0.51& 0.13& 0.19& 0.85 \end{array} \right ) 
+\left ( \begin{array}{c} x_0 \\ x_1 \\ x_2 \\ x_3 \end{array} \right )
+= \left ( \begin{array}{c} 1.0 \\ 2.0 \\ 3.0 \\ 4.0 \end{array} \right ) \]
+
+The answer is [[https://www.gnu.org/software/gsl/doc/html/linalg.html#examples:][given]] as
+
+\[x = \left ( \begin{array}{c} -4.05205 \\ -12.6056 \\ 1.66091 \\ 8.69377 \end{array} \right ) \]
+
+The syntax we want to use is shown below, and we want it to return a vector containing the solution:
+
+#+BEGIN_SRC emacs-lisp
+(let ((A [[0.18 0.60 0.57 0.96]
+	  [0.41 0.24 0.99 0.58]
+	  [0.14 0.30 0.97 0.66]
+	  [0.51 0.13 0.19 0.85]])
+      (b [1.0 2.0 3.0 4.0]))
+  (gsl-linalg-LU-solve A b))
+#+END_SRC
+
+Rather than put all the code in here like I have for the past several posts, I started a git repo at https://github.com/jkitchin/emacs-modules that contains this code. 
+
+
+The module for this post can be found here: https://github.com/jkitchin/emacs-modules/blob/master/gsl-linalg.c. There are a few notable features in it. First, I started writing/collecting [[https://github.com/jkitchin/emacs-modules/blob/master/emacs-module-helpers.c][some helper functions]] to make these modules simpler to write. For example, look how nice this looks to declare the functions and provide the feature.
+
+#+BEGIN_SRC c
+int emacs_module_init(struct emacs_runtime *ert)
+{
+  emacs_env *env = ert->get_environment(ert);
+  
+  DEFUN("gsl-linalg-LU-solve", Fgsl_linalg_LU_solve, 2, 2,
+	"(gsl-linalg-LU-solve A b).\n" \
+	"Solve A x = b for x.\n" \
+	"Returns a vector containing the solution x.",
+	NULL);
+  provide(env, "gsl-linalg");
+  
+  return 0;
+}
+#+END_SRC 
+
+The DEFUN and provide function are defined in https://github.com/jkitchin/emacs-modules/blob/master/emacs-module-helpers.c.
+
+Within the module itself, we have to loop over the inputs to create the arrays that GSL wants to solve this problem. Second, after the solution is obtained, we have to build up a vector to return. The solution is in a gsl_vector, and we need to create an array of emacs_value elements containing each element of the gsl_vector as a float, and then create a vector to return to emacs. I use vectors here because it was easy to get the size of the b vector, which is also related to the size of the A matrix.
+
+The repo has a Makefile in it, so we can build this module with:
+
+#+BEGIN_SRC sh
+make gsl-linalg.so
+#+END_SRC
+
+Once it is compiled, we load it like this. In this post we are in the emacs-modules directory where the gsl-linalg.so library is, and it is not on my load-path, so I add it here.
+
+#+BEGIN_SRC emacs-lisp
+(add-to-list 'load-path (expand-file-name "."))
+(require 'gsl-linalg)
+#+END_SRC
+
+#+RESULTS:
+: gsl-linalg
+
+Here is one function in the module:
+
+#+BEGIN_SRC emacs-lisp
+(describe-function 'gsl-linalg-LU-solve)
+#+END_SRC
+
+#+RESULTS:
+: gsl-linalg-LU-solve is a Lisp function.
+: 
+: (gsl-linalg-LU-solve &rest ARGS)
+: 
+: For more information check the manuals.
+: 
+: (gsl-linalg-LU-solve A b).
+: Solve A x = b for x.
+: Returns a vector containing the solution x.
+
+Now, we can solve linear equations like this:
+
+#+BEGIN_SRC emacs-lisp
+(gsl-linalg-LU-solve
+ [[0.18 0.60 0.57 0.96]
+  [0.41 0.24 0.99 0.58]
+  [0.14 0.30 0.97 0.66]
+  [0.51 0.13 0.19 0.85]]
+ [1.0 2.0 3.0 4.0])
+#+END_SRC
+
+#+RESULTS:
+: [-4.052050229573973 -12.605611395906903 1.6609116267088417 8.693766928795227]
+
+
+We have a limited ability to confirm this answer. I have written a function that uses blas for multiplication of 2d vectors. You can see from this:
+
+#+BEGIN_SRC emacs-lisp
+(gsl-blas-dgemm [[0.18 0.60 0.57 0.96]
+		 [0.41 0.24 0.99 0.58]
+		 [0.14 0.30 0.97 0.66]
+		 [0.51 0.13 0.19 0.85]]
+		[[-4.052050229573973]
+		 [-12.605611395906903]
+		 [1.6609116267088417]
+		 [8.693766928795227]])
+#+END_SRC
+
+#+RESULTS:
+: [[1.0] [1.9999999999999991] [2.9999999999999996] [4.0]]
+
+That within float that indeed $A x = b$.
+
+The main limitation of this module at the moment is that you have to use vectors; you cannot put in a list of numbers. It is possible to make it take lists and vectors, but for now I am leaving it at vectors. Also, it only produces solutions of float numbers (not integers).
+
+The module does not handle 1d vectors well,, e.g. in gsl-linalg-LU-solve example, the right hand side is implied to be a column vector, and we don't have the array broadcasting features of Python yet. Those are doable things for some future day perhaps. For now I am happy to have figured out how to handle arrays!
+
+
