@@ -169,12 +169,12 @@ It would be nice to have a more generic foreign function interface that would al
   :PROPERTIES:
   :categories: emacs,integration,dynamic-module
   :date:     2017/07/09 07:22:01
-  :updated:  2017/07/09 07:30:20
+  :updated:  2017/07/11 07:37:29
   :org-url:  http://kitchingroup.cheme.cmu.edu/org/2017/07/09/Adding-a-GSL-integration-function-to-Emacs-with-a-dynamic-module.org
   :permalink: http://kitchingroup.cheme.cmu.edu/blog/2017/07/09/Adding-a-GSL-integration-function-to-Emacs-with-a-dynamic-module/index.html
   :END:
 
-Here we work out how to run this program: https://www.gnu.org/software/gsl/doc/html/integration.html#adaptive-integration-example in a dynamic module in emacs. The goal is to be able to evaluate $\int_0^1 x^{1/2} \log(x) dx$. According to the example page the answer is -4. We will define an integration function that takes at least a function and integration bounds as arguments, and several optional arguments to specify tolerances and limits. In other words we want to evaluate integrals of the form:
+Here we work out how to run this program: https://www.gnu.org/software/gsl/doc/html/integration.html#adaptive-integration-example in a dynamic module in emacs. The goal is to be able to evaluate $\int_0^1 x^{-1/2} \log(x) dx$. According to the example page the answer is -4. We will define an integration function that takes at least a function and integration bounds as arguments, and several optional arguments to specify tolerances and limits. In other words we want to evaluate integrals of the form:
 
 $\int_a^b f(x; params) dx$
 
@@ -302,7 +302,7 @@ Now we add this directory to our path since it is not on it and require our new 
 #+RESULTS:
 : gsl-integration
 
-Let us see our new function in action. We evaluate $\int_0^1 x^{1/2} \log(x) dx$. According to the example page the answer is -4. Here is an example where we ignore the parameters. You have to be careful; Emacs sometimes segfaults and crashes if you use an integer or float argument when it expects the other type.
+Let us see our new function in action. We evaluate $\int_0^1 x^{-1/2} \log(x) dx$. According to the example page the answer is -4. Here is an example where we ignore the parameters. You have to be careful; Emacs sometimes segfaults and crashes if you use an integer or float argument when it expects the other type.
 
 #+BEGIN_SRC emacs-lisp
 (gsl-integration-qags (lambda (x params) (/ (log x) (sqrt x))) 0.0 1.0)
@@ -340,7 +340,8 @@ Wow! It actually works!!! That was harder won success than usual for me. I am cl
 
 
 
-* Adding GSL constants to Emacs in a dynamic module
+* DONE Adding GSL constants to Emacs in a dynamic module
+  CLOSED: [2017-07-10 Mon 09:38]
   :PROPERTIES:
   :categories: emacs,dynamic-module
   :date:     2017/07/10 09:38:21
@@ -355,33 +356,10 @@ The only other notable feature of this module is that I created a defconst funct
 
 #+BEGIN_SRC c :tangle gsl-constants.c
 #include <gsl/gsl_const_mksa.h>
-#include <string.h>
 #include "emacs-module.h"
+#include "emacs-module-helpers.h"
 
 int plugin_is_GPL_compatible;
-
-// I assume here that all values will be double. I can't think of any that would
-// be ints
-static void defconst (emacs_env *env, const char *name, double value, const char *doc)
-{
-  // These are functions we will call
-  emacs_value eval = env->intern(env, "eval");  
-  emacs_value list = env->intern(env, "list");
-
-  // These will make up the list we will eventally eval
-  emacs_value fdefconst = env->intern(env, "defconst");
-  emacs_value sym = env->intern(env, name);
-  emacs_value val = env->make_float(env, value);
-  emacs_value sdoc = env->make_string(env, doc, strlen(doc));
-
-  // make a list of (defconst sym val doc)
-  emacs_value largs[] = {fdefconst, sym, val, sdoc};
-  emacs_value qlist = env->funcall(env, list, 4, &largs);   
-
-  // now eval the list of symbols
-  emacs_value args[] = { qlist };  
-  env->funcall(env, eval, 1, &args);
-}
 
 int emacs_module_init(struct emacs_runtime *ert)
 {
@@ -395,10 +373,7 @@ int emacs_module_init(struct emacs_runtime *ert)
 	   GSL_CONST_MKSA_PLANCKS_CONSTANT_H,
 	   "Plank's constant, h");
 
-  // This is what allows the shared library to provide a feature 
-  emacs_value provide = env->intern(env, "provide");
-  emacs_value provide_args[] = { env->intern(env, "gsl-constants") };
-  env->funcall(env, provide, 1, provide_args);
+  provide(env, "gsl-constants");
   
   return 0;
 }
@@ -407,10 +382,14 @@ int emacs_module_init(struct emacs_runtime *ert)
 
 Regular gcc will work to compile this module. 
 
+
 #+BEGIN_SRC sh
-rm -f gsl-constants.so gsl-constants.o
+rm -f gsl-constants.so gsl-constants.o emacs-module-helpers.o libemacs-module-helpers.so
+gcc -Wall -I/usr/local/include -fPIC -c emacs-module-helpers.c 
+gcc -shared -o libemacs-module-helpers.so emacs-module-helpers.o 
+
 gcc -Wall -I/usr/local/include -fPIC -c gsl-constants.c
-gcc -shared -L/usr/local/include -lgsl -o gsl-constants.so gsl-constants.o
+gcc -shared -L/usr/local/include -lgsl -L. -lemacs-module-helpers -o gsl-constants.so gsl-constants.o 
 #+END_SRC
 
 #+RESULTS:
@@ -464,162 +443,40 @@ It is worth thinking about what we accomplished here. The value of each constant
 
 It seems like it might be possible to partially automate creation of this module by parsing the gsl_const*.h files. There is no automating adding the doc strings though, I am pretty sure that will have to be done by hand ;(
 
-* A GSL root finder in a dynamic module
+
+
+
+* Adding Linear algebra to Emacs with the GSL and dynamic modules
   :PROPERTIES:
   :categories: emacs,dynamic-module
   :END:
 
-In a previous [[http://kitchingroup.cheme.cmu.edu/blog/2017/05/21/A-partial-symbolic-numeric-solver-in-emacs-lisp/][post]] I implemented a Newton solver in elisp to solve some problems numerically. Today, we continue the dynamic module studies and implement a bracketed root solver from the GNU Scientific Library (https://www.gnu.org/software/gsl/doc/html/roots.html#examples). I will implement the Brent solver here, which is a bracketed root finder: You specify a bracket that contains the root, and the software automatically finds it. It isn't my favorite solver, I prefer a single initial guess, but this one was easier to implement for now, and the root polishing algorithms in GSL seem to all require the function and derivatives, which I did not want to get into now. 
-
-The elisp signature I want to solve an equation $f(x; params) = 0$ is to following.
-
-#+BEGIN_SRC emacs-lisp
-(gsl-root-fsolver-brent f xlo xhi &optional params epsabs epsrel)
-#+END_SRC
-
-There is not much new in the C-code, it uses the same nested function strategy as the [[http://kitchingroup.cheme.cmu.edu/blog/2017/07/09/Adding-a-GSL-integration-function-to-Emacs-with-a-dynamic-module/][integration module]]. I won't show the code here, but you can check it out [[./gsl-roots.c][here]]. The build instructions are basically the same too.
-
-#+BEGIN_SRC c :tangle gsl-roots.c :exports none
-#include <gsl/gsl_errno.h>
-#include <gsl/gsl_roots.h>
-#include "emacs-module.h"
-
-int plugin_is_GPL_compatible;
-
-static emacs_value Fgsl_root_fsolver_brent (emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
-{
-
-// nested function - only supported as an extension in gcc
-  double f (double x, void *params) 
-  {
-    emacs_value fn = args[0];  // function we will integrate
-    emacs_value x2[] = { env->make_float(env, x), params };
-    emacs_value y = env->funcall(env, fn, 2, &x2);   
-    
-    return env->extract_float (env, y);
-  }
-
-  int status;
-  int iter = 0, max_iter = 100;
-  const gsl_root_fsolver_type *T;
-  gsl_root_fsolver *s;
-  double result = 0;
-
-  double x_lo = env->extract_float (env, args[1]);
-  double x_hi = env->extract_float (env, args[2]);
-
- gsl_function F;
-
-  F.function = &f;
-  if (nargs >= 4) {F.params = args[3];}
-
-  // default values for optional arguments
-  double epsabs = 0.0;
-  double epsrel = 0.001;
-
-  if (nargs >= 5 && env->is_not_nil(env, args[4])) {epsabs = env->extract_float(env, args[4]);}
-  if (nargs >= 6 && env->is_not_nil(env, args[5])) {epsrel = env->extract_float(env, args[5]);}
-  
-  T = gsl_root_fsolver_brent;
-  s = gsl_root_fsolver_alloc (T);
-  gsl_root_fsolver_set (s, &F, x_lo, x_hi);
-
-  do
-    {
-      iter++;
-      status = gsl_root_fsolver_iterate (s);
-      result = gsl_root_fsolver_root (s);
-      x_lo = gsl_root_fsolver_x_lower (s);
-      x_hi = gsl_root_fsolver_x_upper (s);
-      status = gsl_root_test_interval (x_lo, x_hi,
-                                       epsabs, epsrel);
-
-    }
-  while (status == GSL_CONTINUE && iter < max_iter);
-
-  gsl_root_fsolver_free (s);
-
-  return env->make_float (env, result);
-}
-
-int emacs_module_init(struct emacs_runtime *ert)
-{
-  emacs_env *env = ert->get_environment(ert);
-  
-  // Here we create the function.
-  emacs_value fset = env->intern(env, "fset");
-  emacs_value args[2];
-  args[0] = env->intern(env, "gsl-root-fsolver-brent"); // symbol to create for function
-  // The function we set that symbol to.
-  args[1] = env->make_function(env,
-			       3, // min nargs
-			       7, // max nargs
-			       Fgsl_root_fsolver_brent,
-			       "(gsl-root-fsolver-brent f xlo xhi params &optional epsabs epsrel)\n" 
-			       "https://www.gnu.org/software/gsl/doc/html/roots.html#examples",
-			       0);
-
-  env->funcall(env, fset, 2, args);
-  
-  // This is what allows the shared library to provide a feature 
-  emacs_value provide = env->intern(env, "provide");
-  emacs_value provide_args[] = { env->intern(env, "gsl-roots") };
-  env->funcall(env, provide, 1, provide_args);
-  
-  return 0;
-}
-#+END_SRC
-
-
-#+BEGIN_SRC sh :exports none
-rm -f gsl-roots.so gsl-roots.o
-/usr/local/Cellar/gcc/6.1.0/bin/gcc-6 -Wall -I/usr/local/include -fPIC -c gsl-roots.c
-/usr/local/Cellar/gcc/6.1.0/bin/gcc-6  -shared -L/usr/local/include -lgsl -o gsl-roots.so gsl-roots.o
-#+END_SRC
-
-#+RESULTS:
-
-So, here it is in action.
-
-#+BEGIN_SRC emacs-lisp
-(add-to-list 'load-path "/Users/jkitchin/vc/blogofile-jkitchin.github.com/_blog/dynamic-module/")
-(require 'gsl-roots)
-#+END_SRC
-
-#+RESULTS:
-: gsl-roots
-
-Here is a simple equation $f(x; params) = x^2 - 5 = 0$. The solution should be $\sqrt(5)$
-
-#+BEGIN_SRC emacs-lisp
-(gsl-root-fsolver-brent (lambda (x params) (- (* x x) 5)) 0.0 5.0)
-#+END_SRC
-
-#+RESULTS:
-: 2.2360634081902244
-
-For comparison:
-
-#+BEGIN_SRC emacs-lisp
-(sqrt 5)
-#+END_SRC
-
-#+RESULTS:
-: 2.23606797749979
-
-These differ in about the 5th decimal place. If we lower the relative error (the default is only 1e-3), we get quantitative agreement with the analytical solution.
-
-#+BEGIN_SRC emacs-lisp
-(gsl-root-fsolver-brent (lambda (x params) (- (* x x) 5)) 0.0 5.0 nil nil 1e-6)
-#+END_SRC
-
-#+RESULTS:
-: 2.23606797749979
-
-* Linear algebra
-
 The goal is to be able to solve https://www.gnu.org/software/gsl/doc/html/linalg.html#examples:
 
+\[\left(\begin{array}{cccc}
+ 0.18& 0.60& 0.57& 0.96 \\
+ 0.41& 0.24& 0.99& 0.58 \\
+ 0.14& 0.30& 0.97& 0.66 \\
+ 0.51& 0.13& 0.19& 0.85 \end{array} \right ) 
+\left ( \begin{array}{c} x_0 \\ x_1 \\ x_2 \\ x_3 \end{array} \right )
+= \left ( \begin{array}{c} 1.0 \\ 2.0 \\ 3.0 \\ 4.0 \end{array} \right ) \]
+
+The answer is given as
+
+\[x = \left ( \begin{array}{c} -4.05205 \\ -12.6056 \\ 1.66091 \\ 8.69377 \end{Array} \right ) \]
+
+The syntax we want to use is:
+
+#+BEGIN_SRC emacs-lisp
+(let ((A [[0.18 0.60 0.57 0.96]
+	  [0.41 0.24 0.99 0.58]
+	  [0.14 0.30 0.97 0.66]
+	  [0.51 0.13 0.19 0.85]])
+      (b [1.0 2.0 3.0 4.0]))
+  (gsl-linalg-LU-solve A b))
+#+END_SRC
+
+The module is written below. There are a few notable features. First, we have to loop over the inputs to create the arrays that GSL wants to solve this problem. I could not figure out a better way to do that than is shown below. Second, after the solution is obtained, we have to build up a vector to return. The solution is in a gsl_vector, and we need to create an array of emacs_value elements containing each element of the gsl_vector as a float, and then create a vector to return to emacs. I use vectors here because it was easy to get the size of the b vector, which is also related to the size of the A matrix.
 
 #+BEGIN_SRC c :tangle gsl-linalg.c
 #include "emacs-module.h"
@@ -657,20 +514,14 @@ static emacs_value Fgsl_linalg_LU_solve (emacs_env *env, ptrdiff_t nargs, emacs_
 	}
     }
   
-  gsl_matrix_view m
-    = gsl_matrix_view_array (a_data, n, n);
-
-  gsl_vector_view bb
-    = gsl_vector_view_array (b_data, n);
-
+  gsl_matrix_view m = gsl_matrix_view_array (a_data, n, n);
+  gsl_vector_view bb = gsl_vector_view_array (b_data, n);
   gsl_vector *x = gsl_vector_alloc (n);
 
   int s;
 
   gsl_permutation * p = gsl_permutation_alloc (n);
-
   gsl_linalg_LU_decomp (&m.matrix, p, &s);
-
   gsl_linalg_LU_solve (&m.matrix, p, &bb.vector, x);
  
   emacs_value *array = malloc(sizeof(emacs_value) * n);
@@ -737,6 +588,10 @@ rm -f gsl-linalg.so gsl-linalg.o
   [0.51 0.13 0.19 0.85]]
  [1.0 2.0 3.0 4.0])
 #+END_SRC
+
+#+RESULTS:
+: [-4.052050229573973 -12.605611395906903 1.6609116267088417 8.693766928795227]
+
   double a_data[] = {
                       
                       
@@ -754,74 +609,30 @@ rm -f gsl-linalg.so gsl-linalg.o
 #+RESULTS:
 : [[0 0 0 0 0] [0 0 0 0 0] [0 0 0 42 0] [0 0 0 0 0]]
 
-* List/vector functions
 
-#+BEGIN_SRC c :tangle mod-vector.c
+* Improving dynamic module writing
+
+- [[./emacs-module-helpers.h]] 
+- [[./emacs-module-helpers.c]]
+
+Build these files with this:
+
+#+BEGIN_SRC sh
+rm -f gsl-constants.so gsl-constants.o emacs-module-helpers.o libemacs-module-helpers.so
+gcc -Wall -I/usr/local/include -fPIC -c emacs-module-helpers.c 
+gcc -shared -o libemacs-module-helpers.so emacs-module-helpers.o 
+#+END_SRC
+
+#+RESULTS:
+
+For modules put this at the top:
+
+#+BEGIN_SRC c :tangle pretty.c
 #include "emacs-module.h"
-#include <stdlib.h>
+#include "emacs-module-helpers.h"
 
-/* Declare mandatory GPL symbol.  */
 int plugin_is_GPL_compatible;
 
-/* Bind NAME to FUN.  */
-static void bind_function (emacs_env *env, const char *name, emacs_value Sfun)
-{
-  /* Set the function cell of the symbol named NAME to SFUN using
-     the 'fset' function.  */
-
-  /* Convert the strings to symbols by interning them */
-  emacs_value Qfset = env->intern (env, "fset");
-  emacs_value Qsym = env->intern (env, name);
-
-  /* Prepare the arguments array */
-  emacs_value args[] = { Qsym, Sfun };
-
-  /* Make the call (2 == nb of arguments) */
-  env->funcall (env, Qfset, 2, args);
-}
-
-/* Provide FEATURE to Emacs.  */
-static void
-provide (emacs_env *env, const char *feature)
-{
-  /* call 'provide' with FEATURE converted to a symbol */
-
-  emacs_value Qfeat = env->intern (env, feature);
-  emacs_value Qprovide = env->intern (env, "provide");
-  emacs_value args[] = { Qfeat };
-
-  env->funcall (env, Qprovide, 1, args);
-}
-
-/*                                                                  */
-
-// This just returns the argument, works for a list.
-static emacs_value Ff1 (emacs_env *env, int nargs, emacs_value args[], void *data)
-{
-  return args[0];
-}
-
-// get first element of a vector
-static emacs_value Ff2 (emacs_env *env, int nargs, emacs_value args[], void *data)
-{
-  return env->vec_get(env, args[0], 0);
-}
-
-// This just returns a vector of integers!!!
-static emacs_value Ff3 (emacs_env *env, int nargs, emacs_value args[], void *data)
-{
- int len = 2;
- emacs_value *array = malloc(sizeof(emacs_value) * len);
- array[0] = env->make_integer(env, 2);
- array[1] = env->make_integer(env, 4);
-
- emacs_value Fvector = env->intern(env, "vector");
- emacs_value vec = env->funcall(env, Fvector, len, array);
- free(array);
- return vec;
-}
-
-// return vector * n
 static emacs_value Ff4 (emacs_env *env, int nargs, emacs_value args[], void *data)
 {
  emacs_value input = args[0];
@@ -846,65 +657,37 @@ static emacs_value Ff4 (emacs_env *env, int nargs, emacs_value args[], void *dat
  return vec;
 }
 
-// return 2nd element of vector
-static emacs_value Ff5 (emacs_env *env, int nargs, emacs_value args[], void *data)
-{
- emacs_value vec = args[0];
-
- return env->vec_get (env, vec, 1);
-}
-
-// get second value of second vector
-static emacs_value Ff6 (emacs_env *env, int nargs, emacs_value args[], void *data)
-{
- emacs_value vec = args[0];
- emacs_value v2 = env->vec_get (env, vec, 1);
- return env->vec_get (env, v2, 1);
-}
-
-// index a list
-static emacs_value Ff7 (emacs_env *env, int nargs, emacs_value args[], void *data)
-{
- emacs_value nth = env->intern(env, "nth");
-
- return env->funcall (env, nth, 2, args);
-}
-
 int emacs_module_init (struct emacs_runtime *ert)
 {
   emacs_env *env = ert->get_environment (ert);
 
-#define DEFUN(lsym, csym, amin, amax, doc, data) \
-  bind_function (env, lsym, \
-		 env->make_function (env, amin, amax, csym, doc, data))
+  DEFUN("g4", Ff4, 2, 2, "testdoc", NULL);
 
-  DEFUN("f1", Ff1, 1, 1, NULL, NULL);
-  DEFUN("f2", Ff2, 1, 1, NULL, NULL);
-  DEFUN("f3", Ff3, 0, 0, NULL, NULL);
-  DEFUN("f4", Ff4, 2, 2, NULL, NULL);
-  DEFUN("f5", Ff5, 1, 1, NULL, NULL);
-  DEFUN("f6", Ff6, 1, 1, NULL, NULL);
-  DEFUN("f7", Ff7, 2, 2, NULL, NULL);
-
-  provide (env, "mod-vector");
+  provide (env, "pretty");
 
   /* loaded successfully */
   return 0;
 }
 #+END_SRC
 
-#+NAME: build
-#+BEGIN_SRC sh :var data=""
-rm -f mod-vector.so mod-vector.o
-gcc -Wall -I/usr/local/include -fPIC -c mod-vector.c
-gcc  -shared -L/usr/local/include -lgsl -o mod-vector.so mod-vector.o
-#+END_SRC
+Finally build the module like this.
 
-#+RESULTS: build
-
-#+BEGIN_SRC emacs-lisp :post build(data=*this*)
-(org-babel-tangle)
+#+BEGIN_SRC sh
+rm -f gsl-constants.so gsl-constants.o emacs-module-helpers.o libemacs-module-helpers.so
+gcc -Wall -I/usr/local/include -fPIC -c emacs-module-helpers.c 
+gcc -shared -o libemacs-module-helpers.so emacs-module-helpers.o 
 #+END_SRC
 
 #+RESULTS:
-: nil
+
+#+BEGIN_SRC sh
+gcc -Wall -I/usr/local/include -fPIC -c pretty.c
+gcc -shared -L. -lemacs-module-helpers -o pretty.so pretty.o 
+#+END_SRC
+
+#+RESULTS:
+
+#+BEGIN_SRC emacs-lisp
+(add-to-list 'load-path "/Users/jkitchin/vc/blogofile-jkitchin.github.com/_blog/dynamic-module/")
+(require 'pretty)
+#+END_SRC
