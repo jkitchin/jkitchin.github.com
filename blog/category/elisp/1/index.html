@@ -84,10 +84,467 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Overloading-mathematical-operators-in-elisp"></div>
+      <h2 class="blog_post_title"><a href="/blog/2017/07/23/Overloading-mathematical-operators-in-elisp/" rel="bookmark" title="Permanent Link to Overloading mathematical operators in elisp">Overloading mathematical operators in elisp</a></h2>
+      <p><small><span class="blog_post_date">Posted July 23, 2017 at 02:13 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/elisp/'>elisp</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2017/07/23/Overloading-mathematical-operators-in-elisp#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+In Python I am used to some simple idioms like this:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span style="color: #0000FF;">print</span>([1, 2, 3] * 2)
+<span style="color: #0000FF;">print</span>(<span style="color: #008000;">"ab"</span> * 3)
+</pre>
+</div>
+
+<p>
+[1, 2, 3, 1, 2, 3]
+ababab
+</p>
+
+<p>
+There is even such fanciness as defining operators for objects, as long as they have the appropriate dunder methods defined:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span style="color: #0000FF;">class</span> <span style="color: #6434A3;">Point</span>:
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">def</span> <span style="color: #006699;">__init__</span>(<span style="color: #0000FF;">self</span>, x, y):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">self</span>.x = x
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">self</span>.y = y
+
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">def</span> <span style="color: #006699;">__str__</span>(<span style="color: #0000FF;">self</span>):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> <span style="color: #008000;">"Point ({}, {})"</span>.<span style="color: #006FE0;">format</span>(<span style="color: #0000FF;">self</span>.x, <span style="color: #0000FF;">self</span>.y)
+
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">def</span> <span style="color: #006699;">__mul__</span>(<span style="color: #0000FF;">self</span>, a):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> Point(<span style="color: #0000FF;">self</span>.x * a, <span style="color: #0000FF;">self</span>.y * a)
+
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">def</span> <span style="color: #006699;">__rmul__</span>(<span style="color: #0000FF;">self</span>, a):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> Point(<span style="color: #0000FF;">self</span>.x * a, <span style="color: #0000FF;">self</span>.y * a)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   
+<span style="color: #BA36A5;">p</span> = Point(1, 1)
+<span style="color: #0000FF;">print</span>(p * 2)
+<span style="color: #0000FF;">print</span>(3 * p)
+</pre>
+</div>
+
+<p>
+Point (2, 2)
+Point (3, 3)
+</p>
+
+<p>
+Out of the box, these things are not possible in elisp. Operators like  * in elisp only take numbers or markers. We have a few options to change this. The worst option is to simply redefine these functions. That is bad because it is not reversible. We could define new functions that have the behavior we want, but then we lose the semantic meaning of "*" that we were aiming for. A better option is to <a href="https://www.gnu.org/software/emacs/manual/html_node/elisp/Advising-Functions.html">advise</a> these functions. This is reversible, because you can later unadvise them. Today we look at some strategies to do this.
+</p>
+
+<p>
+We will use "around" advise because it will let us bypass the original intent of the function when we want to, or use it when we do. First, we create a function that will be the advice and add it to the * function. This first draft won't actually change the behavior of *; if all the args are numbers or markers it will simply use the original function as before.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">dash</span>)
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">*--*-around</span> (orig-fun <span style="color: #6434A3;">&amp;rest</span> args)
+  <span style="color: #036A07;">"if every arg is a number do *, else do something else."</span>
+  (<span style="color: #0000FF;">cond</span>
+   ((-every? (<span style="color: #0000FF;">lambda</span> (x) (<span style="color: #0000FF;">or</span> (numberp x) (markerp x))) args)
+    (apply orig-fun args))))
+
+(advice-add '* <span style="color: #006FE0;">:around</span> #'*--*-around)
+</pre>
+</div>
+
+<p>
+Let's just confirm
+</p>
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(* 1 2 3)
+</pre>
+</div>
+
+<pre class="example">
+6
+
+</pre>
+
+<p>
+Now, we can start modifying our function to handle some other cases. Let's do the list and string first. The * function is variadic, but in these cases it makes sense to limit to two arguments. We need two cases for each type since we can write (* 2 list) or (* list 2). We also should create a fall-through case that raises an error to alert us we can't multiply things.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">*--*-around</span> (orig-fun <span style="color: #6434A3;">&amp;rest</span> args)
+  <span style="color: #036A07;">"if every arg is a number do *, else do something else."</span>
+  (<span style="color: #0000FF;">cond</span>
+   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">The original behavior</span>
+   ((-every? (<span style="color: #0000FF;">lambda</span> (x) (<span style="color: #0000FF;">or</span> (numberp x) (markerp x))) args)
+    (apply orig-fun args))
+
+   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">create repeated copies of list</span>
+   ((<span style="color: #0000FF;">and</span> (listp (first args))
+         (integerp (second args))
+         (= 2 (length args)))
+    (<span style="color: #0000FF;">loop</span> for i from 0 below (second args) append (copy-list (first args))))
+
+   ((<span style="color: #0000FF;">and</span> (integerp (first args))
+         (listp (second args))
+         (= 2 (length args)))
+    (<span style="color: #0000FF;">loop</span> for i from 0 below (first args) append (copy-list (second args))))
+
+   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Make repeated string</span>
+   ((<span style="color: #0000FF;">and</span> (stringp (first args))
+         (integerp (second args))
+         (= 2 (length args)))
+    (<span style="color: #0000FF;">loop</span> for i from 0 below (second args) concat (first args)))
+
+   ((<span style="color: #0000FF;">and</span> (integerp (first args))
+         (stringp (second args))
+         (= 2 (length args)))
+    (<span style="color: #0000FF;">loop</span> for i from 0 below (first args) concat (second args)))
+
+   (t
+    (<span style="color: #ff0000; font-weight: bold;">error</span> <span style="color: #008000;">"You cannot * %s"</span> args))))
+</pre>
+</div>
+
+<pre class="example">
+*--*-around
+
+</pre>
+
+<p>
+Here is the new advice in action. 
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(list
+ (* '(a b) 2)
+ (* 2 '(c d))
+ (* 2 <span style="color: #008000;">"ab"</span>)
+ (* <span style="color: #008000;">"cd"</span> 2))
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">(a b a b)</td>
+<td class="org-left">(c d c d)</td>
+<td class="org-left">abab</td>
+<td class="org-left">cdcd</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+That captures the spirit of overloading * for lists and strings. What about that object example? We have to make some assumptions here. Python looks for an uses a dunder <span class="underline"><span class="underline">mul</span></span> method. We will assume a double dash method (&#x2013;mul&#x2013;) in a similar spirit. We have to modify the advice one final time. We just add a condition to check if one of the arguments is an eieio-object, and then call the &#x2013;mul&#x2013; function on the arguments.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">*--*-around</span> (orig-fun <span style="color: #6434A3;">&amp;rest</span> args)
+  <span style="color: #036A07;">"if every arg is a number do *, else do something else."</span>
+  (<span style="color: #0000FF;">cond</span>
+   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">The original behavior</span>
+   ((-every? (<span style="color: #0000FF;">lambda</span> (x) (<span style="color: #0000FF;">or</span> (numberp x) (markerp x))) args)
+    (apply orig-fun args))
+
+   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">create repeated copies of list</span>
+   ((<span style="color: #0000FF;">and</span> (listp (first args))
+         (integerp (second args))
+         (= 2 (length args)))
+    (<span style="color: #0000FF;">loop</span> for i from 0 below (second args) append (copy-list (first args))))
+
+   ((<span style="color: #0000FF;">and</span> (integerp (first args))
+         (listp (second args))
+         (= 2 (length args)))
+    (<span style="color: #0000FF;">loop</span> for i from 0 below (first args) append (copy-list (second args))))
+
+   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Make repeated string</span>
+   ((<span style="color: #0000FF;">and</span> (stringp (first args))
+         (integerp (second args))
+         (= 2 (length args)))
+    (<span style="color: #0000FF;">loop</span> for i from 0 below (second args) concat (first args)))
+
+   ((<span style="color: #0000FF;">and</span> (integerp (first args))
+         (stringp (second args))
+         (= 2 (length args)))
+    (<span style="color: #0000FF;">loop</span> for i from 0 below (first args) concat (second args)))
+
+   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Handle object</span>
+   ((<span style="color: #0000FF;">or</span> (<span style="color: #0000FF;">and</span> (eieio-object-p (first args))
+             (numberp (second args)))
+        (<span style="color: #0000FF;">and</span> (numberp (first args))
+             (eieio-object-p (second args))))
+    (apply '--mul-- args))
+
+   (t
+    (<span style="color: #ff0000; font-weight: bold;">error</span> <span style="color: #008000;">"You cannot * %s"</span> args))))
+</pre>
+</div>
+
+<pre class="example">
+*--*-around
+
+</pre>
+
+<p>
+Now, we can define a class and the &#x2013;mul&#x2013; function and show that our overloaded * function works. Note we can define two signatures of &#x2013;mul&#x2013; so it is not necessary to define an &#x2013;rmul&#x2013; in this case as it was with Python (although we still create two functions in the end).
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">eieio</span>)
+
+(<span style="color: #0000FF;">defclass</span> <span style="color: #6434A3;">Point</span> ()
+  ((x <span style="color: #006FE0;">:initarg</span> <span style="color: #006FE0;">:x</span>)
+   (y <span style="color: #006FE0;">:initarg</span> <span style="color: #006FE0;">:y</span>)))
+
+(<span style="color: #0000FF;">cl-defmethod</span> <span style="color: #006699;">--mul--</span> ((p Point) a)
+  (Point <span style="color: #006FE0;">:x</span> (* (<span style="color: #0000FF;">oref</span> p <span style="color: #006FE0;">:x</span>) a) <span style="color: #006FE0;">:y</span> (* (<span style="color: #0000FF;">oref</span> p <span style="color: #006FE0;">:y</span>) a)))
+
+(<span style="color: #0000FF;">cl-defmethod</span> <span style="color: #006699;">--mul--</span> (a (p Point))
+  (Point <span style="color: #006FE0;">:x</span> (* (<span style="color: #0000FF;">oref</span> p <span style="color: #006FE0;">:x</span>) a) <span style="color: #006FE0;">:y</span> (* (<span style="color: #0000FF;">oref</span> p <span style="color: #006FE0;">:y</span>) a)))
+
+(<span style="color: #0000FF;">cl-defmethod</span> <span style="color: #006699;">--str--</span> ((p Point))
+  (format <span style="color: #008000;">"Point (%s, %s)"</span> (<span style="color: #0000FF;">oref</span> p <span style="color: #006FE0;">:x</span>) (<span style="color: #0000FF;">oref</span> p <span style="color: #006FE0;">:y</span>)))
+
+(<span style="color: #0000FF;">let</span> ((P (Point <span style="color: #006FE0;">:x</span> 1 <span style="color: #006FE0;">:y</span> 1)))
+  (list
+   (--str-- (* P 2))
+   (--str-- (* 3 P))))
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">Point (2, 2)</td>
+<td class="org-left">Point (3, 3)</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+That is pretty awesome. Before going on, here is how you remove the advice:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(advice-remove '* '*--*-around)
+</pre>
+</div>
+
+<p>
+This example has been pretty instructive. You have to handle overloading for all the intrinsic types. We did lists and strings here; you might also consider vectors. For objects, it looks like we can at least try using a generic method like &#x2013;mul&#x2013;. One detail I neglected to consider here is that * is natively variadic. For these special cases, we did not implement variadic versions. This isn't a feature of Python which uses infix notation, so every call is with two arguments. In some cases it might make sense to support variadic args, but that seems like a generally challenging thing to do. While (* "a" 2 3) might be expected to create a string of "aaaaaa", (* "a" 2 '(3)) doesn't make sense at all.
+</p>
+
+<p>
+It would be straightforward to extend this to other operators like '+ to concatenate strings, lists and vectors, or '- to remove chars or elements, including extensions to objects using double-dash functions like &#x2013;add&#x2013;, &#x2013;subtract&#x2013;, etc. Another nice idea might be to advise print to use &#x2013;str&#x2013; on objects.
+</p>
+
+<p>
+On the surface this looks useful so far. Python defines <i>a lot</i> of dunder methods that cover all kinds of scenarios including logical comparisons, bit shifting, mod, incrementing operators, casting, comparisons, right/left operations, indexing and assignment, length and others. That would be a lot of advices. This approach is moderately tedious to expand though; you have to keep adding conditional cases. 
+</p>
+
+<p>
+An alternative to the big conditional statement used in the advice might be the use of a <a href="https://www.gnu.org/software/emacs/manual/html_node/elisp/Generic-Functions.html">generic function</a>. With this approach we define a generic function that just does multiplication by default. Then we define specific cases with specific signatures that are used for lists, strings, objects, etc. That is basically all our conditional above was doing, matching signatures and executing a chunk of code accordingly.
+</p>
+
+<p>
+Here is our default case that does the original behavior. We still use advice to apply the function.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">cl-defgeneric</span> <span style="color: #006699;">generic-multiply</span> (orig-fun <span style="color: #6434A3;">&amp;rest</span> args)
+  <span style="color: #036A07;">"Generic multiply for when no specific case exists."</span>
+  (apply orig-fun args))
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">*--*-around-generic</span> (orig-fun <span style="color: #6434A3;">&amp;rest</span> args)
+  (apply 'generic-multiply orig-fun args))
+
+(advice-add '* <span style="color: #006FE0;">:around</span> #'*--*-around-generic)
+</pre>
+</div>
+
+<p>
+That should just work as usual for regular multiplication.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(* 1 2 3 4)
+</pre>
+</div>
+
+<pre class="example">
+24
+
+</pre>
+
+<p>
+Sure enough it does. Now, we can define a specific method for a string. We need a specialized method for each signature, e.g. pre and post multiplication.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">cl-defmethod</span> <span style="color: #006699;">generic-multiply</span> ((orig-fun subr) (s string) (n integer))
+  (<span style="color: #0000FF;">loop</span> for i from 0 below n concat s))
+
+(<span style="color: #0000FF;">cl-defmethod</span> <span style="color: #006699;">generic-multiply</span> ((orig-fun subr) (n integer) (s string))
+  (<span style="color: #0000FF;">loop</span> for i from 0 below n concat s))
+
+(list
+ (* <span style="color: #008000;">"Ac"</span> 2)
+ (* 2 <span style="color: #008000;">"Ad"</span>))
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">AcAc</td>
+<td class="org-left">AdAd</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+That works fine, and we did not have to modify our original advice function at all! Next the  list:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">cl-defmethod</span> <span style="color: #006699;">generic-multiply</span> ((orig-fun subr) (L list) (n integer))
+  (<span style="color: #0000FF;">loop</span> for i from 0 below n append (copy-list L)))
+
+(<span style="color: #0000FF;">cl-defmethod</span> <span style="color: #006699;">generic-multiply</span> ((orig-fun subr) (n integer) (L list))
+  (<span style="color: #0000FF;">loop</span> for i from 0 below n append (copy-list L)))
+
+(list (* '(1 2) 2)
+      (* 2 '(3 4)))
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+
+<col  class="org-right" />
+
+<col  class="org-right" />
+
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-right">1</td>
+<td class="org-right">2</td>
+<td class="org-right">1</td>
+<td class="org-right">2</td>
+</tr>
+
+<tr>
+<td class="org-right">3</td>
+<td class="org-right">4</td>
+<td class="org-right">3</td>
+<td class="org-right">4</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+That also works fine. Last, our class example. This should work on all objects I think (unless there is some way to make classes that do not inherit the default superclass).
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">cl-defmethod</span> <span style="color: #006699;">generic-multiply</span> ((orig-fun subr) (n integer) (obj eieio-default-superclass))
+  (--mul-- n obj))
+
+(<span style="color: #0000FF;">cl-defmethod</span> <span style="color: #006699;">generic-multiply</span> ((orig-fun subr) (obj eieio-default-superclass) (n integer))
+  (--mul-- n obj))
+
+(<span style="color: #0000FF;">let</span> ((P (Point <span style="color: #006FE0;">:x</span> 1 <span style="color: #006FE0;">:y</span> 1)))
+  (list
+   (--str-- (* P 2))
+   (--str-- (* 3 P))))
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">Point (2, 2)</td>
+<td class="org-left">Point (3, 3)</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+This is a much better approach to extending the multiplication operator! If I continue this path in the future I would probably take this one.  This could be useful to make elisp more like some more popular contemporary languages like Python, as well as to add linear algebra like notation or mathematical operations on objects in elisp. It kind of feels like these operations ought to be generic functions to start with to make this kind of overloading easier from the beginning.  Functions like "*" are currently defined in the C source code though, maybe for performance reasons. It is not obvious what the consequences of making them generic might be.
+</p>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/07/23/Overloading-mathematical-operators-in-elisp.org">org-mode source</a></p>
+<p>Org-mode version = 9.0.7</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/07/23/Overloading-mathematical-operators-in-elisp#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="A-callable-plist-data-structure-for-Emacs"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/04/16/A-callable-plist-data-structure-for-Emacs/" rel="bookmark" title="Permanent Link to A callable plist data structure for Emacs">A callable plist data structure for Emacs</a></h2>
       <p><small><span class="blog_post_date">Posted April 16, 2017 at 04:44 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/elisp/'>elisp</a>, <a href='/blog/category/macro/'>macro</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/elisp/'>elisp</a>, <a href='/blog/category/macro/'>macro</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/04/16/A-callable-plist-data-structure-for-Emacs#disqus_thread">View Comments</a>
       <p><small><span class="blog_post_date">Updated April 21, 2017 at 08:01 PM</span>
       </small></p>
@@ -374,7 +831,7 @@ Obviously that is just an alternate syntax for the let statement, but it lets yo
       <div id="A-better-defun-for-emacs-lisp"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/03/22/A-better-defun-for-emacs-lisp/" rel="bookmark" title="Permanent Link to A better defun for emacs-lisp">A better defun for emacs-lisp</a></h2>
       <p><small><span class="blog_post_date">Posted March 22, 2017 at 04:30 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/elisp/'>elisp</a>, <a href='/blog/category/macro/'>macro</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/elisp/'>elisp</a>, <a href='/blog/category/macro/'>macro</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/03/22/A-better-defun-for-emacs-lisp#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -595,11 +1052,11 @@ It is no news to lispers that macros are good for this kind of application.
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2017/07/23/Overloading-mathematical-operators-in-elisp/">Overloading mathematical operators in elisp</a></li>
       <li><a href="/blog/2017/07/21/Linear-algebra-in-Emacs-using-MKL-and-dynamic-modules/">Linear algebra in Emacs using MKL and dynamic modules</a></li>
       <li><a href="/blog/2017/07/13/An-Emacs-zeromq-library-using-an-ffi/">An Emacs zeromq library using an ffi</a></li>
       <li><a href="/blog/2017/07/12/Zeromq-bindings-for-Emacs-via-dynamic-modules/">Zeromq bindings for Emacs via dynamic modules</a></li>
       <li><a href="/blog/2017/07/11/Adding-linear-algebra-to-Emacs-with-the-GSL-and-dynamic-modules/">Adding linear algebra to Emacs with the GSL and dynamic modules</a></li>
-      <li><a href="/blog/2017/07/10/Adding-GSL-constants-to-Emacs-in-a-dynamic-module/">Adding GSL constants to Emacs in a dynamic module</a></li>
     </ul>
   </section>
 

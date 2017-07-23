@@ -84,10 +84,179 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Adding-GSL-constants-to-Emacs-in-a-dynamic-module"></div>
+      <h2 class="blog_post_title"><a href="/blog/2017/07/10/Adding-GSL-constants-to-Emacs-in-a-dynamic-module/" rel="bookmark" title="Permanent Link to Adding GSL constants to Emacs in a dynamic module">Adding GSL constants to Emacs in a dynamic module</a></h2>
+      <p><small><span class="blog_post_date">Posted July 10, 2017 at 09:38 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/dynamic-module/'>dynamic-module</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2017/07/10/Adding-GSL-constants-to-Emacs-in-a-dynamic-module#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+The GNU Scientific Library defines a lot of <a href="https://www.gnu.org/software/gsl/doc/html/const.html">physical constants</a>. Since we are exploring how to make Emacs a more scientific environment to work in, it would be nice to import these constants to elisp. We do that through a dynamic module. This turned out to be tricky. I thought we could just use a funcall to defconst or defvar, but these are special forms and you cannot funcall them. @polizta on Stackoverflow <a href="https://emacs.stackexchange.com/questions/34049/how-do-you-define-constants-in-an-emacs-dynamic-module/34063#34063">pointed me to the path</a> that led to success: You make a list like '(defconst sym val doc) and then eval it. That can be funcall'd, and it works nicely in the module below. It is a growing theme that it takes much hacking around to figure out how to do things like this.
+</p>
+
+<p>
+The only other notable feature of this module is that I created a defconst function to make adding multiple constants less verbose. Here I only add two constants. There are about 408 constants defined in gsl_const_*.h, so brevity might be a good idea! Here is the module.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-c"><span style="color: #808080;">#include</span> <span style="color: #008000;">&lt;gsl/gsl_const_mksa.h&gt;</span>
+<span style="color: #808080;">#include</span> <span style="color: #008000;">&lt;string.h&gt;</span>
+<span style="color: #808080;">#include</span> <span style="color: #008000;">"emacs-module.h"</span>
+
+<span style="color: #6434A3;">int</span> <span style="color: #BA36A5;">plugin_is_GPL_compatible</span>;
+
+<span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">I assume here that all values will be double. I can't think of any that would</span>
+<span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">be ints</span>
+<span style="color: #0000FF;">static</span> <span style="color: #6434A3;">void</span> <span style="color: #006699;">defconst</span> (<span style="color: #6434A3;">emacs_env</span> *<span style="color: #BA36A5;">env</span>, <span style="color: #0000FF;">const</span> <span style="color: #6434A3;">char</span> *<span style="color: #BA36A5;">name</span>, <span style="color: #6434A3;">double</span> <span style="color: #BA36A5;">value</span>, <span style="color: #0000FF;">const</span> <span style="color: #6434A3;">char</span> *<span style="color: #BA36A5;">doc</span>)
+{
+  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">These are functions we will call</span>
+  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">eval</span> = env-&gt;intern(env, <span style="color: #008000;">"eval"</span>);  
+  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">list</span> = env-&gt;intern(env, <span style="color: #008000;">"list"</span>);
+
+  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">These will make up the list we will eventally eval</span>
+  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">fdefconst</span> = env-&gt;intern(env, <span style="color: #008000;">"defconst"</span>);
+  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">sym</span> = env-&gt;intern(env, name);
+  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">val</span> = env-&gt;make_float(env, value);
+  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">sdoc</span> = env-&gt;make_string(env, doc, strlen(doc));
+
+  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">make a list of (defconst sym val doc)</span>
+  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">largs</span>[] = {fdefconst, sym, val, sdoc};
+  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">qlist</span> = env-&gt;funcall(env, list, 4, &amp;largs);   
+
+  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">now eval the list of symbols</span>
+  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">args</span>[] = { qlist };  
+  env-&gt;funcall(env, eval, 1, &amp;args);
+}
+
+<span style="color: #6434A3;">int</span> <span style="color: #006699;">emacs_module_init</span>(<span style="color: #0000FF;">struct</span> <span style="color: #6434A3;">emacs_runtime</span> *<span style="color: #BA36A5;">ert</span>)
+{
+  <span style="color: #6434A3;">emacs_env</span> *<span style="color: #BA36A5;">env</span> = ert-&gt;get_environment(ert);
+
+  defconst(env, <span style="color: #008000;">"GSL-CONST-MKSA-SPEED-OF-LIGHT"</span>,
+           GSL_CONST_MKSA_SPEED_OF_LIGHT,
+           <span style="color: #008000;">"Speed of light in vacuum (m/s)."</span>);
+  
+  defconst(env, <span style="color: #008000;">"GSL-CONST-MKSA-PLANCKS-CONSTANT-H"</span>,
+           GSL_CONST_MKSA_PLANCKS_CONSTANT_H,
+           <span style="color: #008000;">"Plank's constant, h"</span>);
+
+  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">This is what allows the shared library to provide a feature </span>
+  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">provide</span> = env-&gt;intern(env, <span style="color: #008000;">"provide"</span>);
+  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">provide_args</span>[] = { env-&gt;intern(env, <span style="color: #008000;">"gsl-constants"</span>) };
+  env-&gt;funcall(env, provide, 1, provide_args);
+  
+  <span style="color: #0000FF;">return</span> 0;
+}
+</pre>
+</div>
+
+
+<p>
+Regular gcc will work to compile this module. 
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh">rm -f gsl-constants.so gsl-constants.o
+gcc -Wall -I/usr/local/include -fPIC -c gsl-constants.c
+gcc -shared -L/usr/local/include -lgsl -o gsl-constants.so gsl-constants.o
+</pre>
+</div>
+
+<p>
+Here is in action. 
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(add-to-list 'load-path <span style="color: #008000;">"/Users/jkitchin/vc/blogofile-jkitchin.github.com/_blog/dynamic-module/"</span>)
+(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">gsl-constants</span>)
+GSL-CONST-MKSA-SPEED-OF-LIGHT
+</pre>
+</div>
+
+<pre class="example">
+299792458.0
+
+</pre>
+
+<p>
+We can see there is a docstring on that constant:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(describe-variable 'GSL-CONST-MKSA-SPEED-OF-LIGHT)
+</pre>
+</div>
+
+<pre class="example">
+GSL-CONST-MKSA-SPEED-OF-LIGHT's value is 299792458.0
+
+
+  This variable can be risky when used as a file-local variable.
+
+Documentation:
+Speed of light in vacuum (m/s).
+
+For more information check the manuals.
+
+</pre>
+
+
+<p>
+It is worth thinking about what we accomplished here. The value of each constant in GSL is stored in a header file. The units are stored in a comment next to the value, and the documentation is in an html page somewhere. It is not easy to introspect that! Getting it all into an Emacs variable makes that more introspectable, and findable. That means while typing elisp code you will get completion on these variables. Check this out:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(apropos-variable <span style="color: #008000;">"GSL-*"</span>)
+(<span style="color: #0000FF;">with-current-buffer</span> <span style="color: #008000;">"*Apropos*"</span> (buffer-string))
+</pre>
+</div>
+
+<pre class="example">
+Type RET on a type label to view its full documentation.
+
+GSL-CONST-MKSA-PLANCKS-CONSTANT-H
+  Variable: Plank's constant, h
+GSL-CONST-MKSA-SPEED-OF-LIGHT
+  Variable: Speed of light in vacuum (m/s).
+
+</pre>
+
+<p>
+It seems like it might be possible to partially automate creation of this module by parsing the gsl_const*.h files. There is no automating adding the doc strings though, I am pretty sure that will have to be done by hand ;(
+</p>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/07/10/Adding-GSL-constants-to-Emacs-in-a-dynamic-module.org">org-mode source</a></p>
+<p>Org-mode version = 9.0.7</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/07/10/Adding-GSL-constants-to-Emacs-in-a-dynamic-module#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Adding-a-GSL-integration-function-to-Emacs-with-a-dynamic-module"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/07/09/Adding-a-GSL-integration-function-to-Emacs-with-a-dynamic-module/" rel="bookmark" title="Permanent Link to Adding a GSL integration function to Emacs with a dynamic module">Adding a GSL integration function to Emacs with a dynamic module</a></h2>
       <p><small><span class="blog_post_date">Posted July 09, 2017 at 07:22 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/dynamic-module/'>dynamic-module</a>, <a href='/blog/category/integration/'>integration</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/dynamic-module/'>dynamic-module</a>, <a href='/blog/category/integration/'>integration</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/07/09/Adding-a-GSL-integration-function-to-Emacs-with-a-dynamic-module#disqus_thread">View Comments</a>
       <p><small><span class="blog_post_date">Updated July 11, 2017 at 07:37 AM</span>
       </small></p>
@@ -636,11 +805,11 @@ It would be nice to have a more generic foreign function interface that would al
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2017/07/23/Overloading-mathematical-operators-in-elisp/">Overloading mathematical operators in elisp</a></li>
       <li><a href="/blog/2017/07/21/Linear-algebra-in-Emacs-using-MKL-and-dynamic-modules/">Linear algebra in Emacs using MKL and dynamic modules</a></li>
       <li><a href="/blog/2017/07/13/An-Emacs-zeromq-library-using-an-ffi/">An Emacs zeromq library using an ffi</a></li>
       <li><a href="/blog/2017/07/12/Zeromq-bindings-for-Emacs-via-dynamic-modules/">Zeromq bindings for Emacs via dynamic modules</a></li>
       <li><a href="/blog/2017/07/11/Adding-linear-algebra-to-Emacs-with-the-GSL-and-dynamic-modules/">Adding linear algebra to Emacs with the GSL and dynamic modules</a></li>
-      <li><a href="/blog/2017/07/10/Adding-GSL-constants-to-Emacs-in-a-dynamic-module/">Adding GSL constants to Emacs in a dynamic module</a></li>
     </ul>
   </section>
 
