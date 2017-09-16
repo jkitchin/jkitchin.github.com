@@ -84,10 +84,242 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Finding-similar-bibtex-entries"></div>
+      <h2 class="blog_post_title"><a href="/blog/2017/09/16/Finding-similar-bibtex-entries/" rel="bookmark" title="Permanent Link to Finding similar bibtex entries">Finding similar bibtex entries</a></h2>
+      <p><small><span class="blog_post_date">Posted September 16, 2017 at 10:00 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/bibtex/'>bibtex</a>, <a href='/blog/category/similarity/'>similarity</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2017/09/16/Finding-similar-bibtex-entries#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+A common task while writing scientific papers is citing previous research. I use org-ref extensively for that, and it makes it pretty easy to find similar references, e.g. that have common authors, or common keywords. It also lets me find similar articles in Web of Science or Scopus. Suppose that I have cited a particular paper, e.g. e <a class='org-ref-reference' href="#boes-2016-neural-networ">boes-2016-neural-networ</a>, and I want to find similar references to it that are <i>already</i> in my bibtex file, and similar by <i>my definition</i>. With org-ref I can easily search by keyword or author to find similar entries, but these are limited by what I search for, and they are not sorted. Today, I will explore the first step in a recommender system that calculates similarity, and provides a sorted list of candidates with the most relevant ones first. 
+</p>
+
+<p>
+The idea is to calculate some measure of similarity between the title of that reference, and the titles of other references in my bibtex file, and then sort them by similarity. This is the reference I want to find similar entries for:
+</p>
+
+<p>
+Boes, J. R., Groenenboom, M. C., Keith, J. A., &amp; Kitchin, J. R., Neural network and Reaxff comparison for Au properties, Int. J. Quantum Chem., 116(13), 979–987 (2016).  <a href="http://dx.doi.org/10.1002/qua.25115">http://dx.doi.org/10.1002/qua.25115</a>
+</p>
+
+<p>
+The first thing we do is read in our bibtex file, and print a representative entry.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">import</span> bibtexparser
+<span style="color: #0000FF;">from</span> bibtexparser.bparser <span style="color: #0000FF;">import</span> BibTexParser
+
+<span style="color: #0000FF;">with</span> <span style="color: #006FE0;">open</span>(<span style="color: #008000;">'/Users/jkitchin/Dropbox/bibliography/references.bib'</span>) <span style="color: #0000FF;">as</span> bibtex_file:
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">parser</span> = BibTexParser()
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">bib_database</span> = bibtexparser.load(bibtex_file, parser=parser)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">entries</span> = bib_database.entries
+
+<span style="color: #0000FF;">print</span>(entries[10])
+</pre>
+</div>
+
+<p>
+{'author': 'Jaan Aarik and Aleks Aidla and V{\\"a}ino Sammelselg and Teet\nUustare', 'title': 'Effect of Growth Conditions on Formation of \\ce{TiO_2}-{II}\nThin Films in Atomic Layer Deposition Process', 'journal': 'Journal of Crystal Growth', 'volume': '181', 'number': '3', 'pages': '259 - 264', 'year': '1997', 'doi': '10.1016/S0022-0248(97)00279-0', 'link': 'http://www.sciencedirect.com/science/article/pii/S0022024897002790', 'issn': '0022-0248', 'ENTRYTYPE': 'article', 'ID': 'aarik-1997-effec-growt'}
+</p>
+
+<p>
+Each entry is a dictionary containing the fields and their values. For this exploration, I will only consider similarities between titles. The next step is we find which entry corresponds to the reference we want to find similarities to.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #BA36A5;">ids</span> = [e[<span style="color: #008000;">'ID'</span>] <span style="color: #0000FF;">for</span> e <span style="color: #0000FF;">in</span> entries]
+<span style="color: #BA36A5;">i</span> = ids.index(<span style="color: #008000;">'boes-2016-neural-networ'</span>)
+<span style="color: #0000FF;">print</span>(entries[i])
+</pre>
+</div>
+
+<p>
+{'author': 'Jacob R. Boes and Mitchell C. Groenenboom and John A. Keith\nand John R. Kitchin', 'title': 'Neural Network and {Reaxff} Comparison for {Au} Properties', 'journal': 'Int. J. Quantum Chem.', 'volume': '116', 'number': '13', 'pages': '979-987', 'year': '2016', 'doi': '10.1002/qua.25115', 'link': 'http://dx.doi.org/10.1002/qua.25115', 'issn': '1097-461X', 'keyword': 'Kohn-Sham density functional theory, neural networks, reactive\nforce fields, potential energy surfaces, machine learning', 'ENTRYTYPE': 'article', 'ID': 'boes-2016-neural-networ'}
+</p>
+
+<p>
+It is best if we make the entry we want to find similarities to the first one, so here we swap the first and i<sup>th</sup> entries.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython">entries[0], <span style="color: #BA36A5;">entries</span>[i] = entries[i], entries[0]
+</pre>
+</div>
+
+<p>
+Now, we prepare the list of strings to get similarities for. 
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #BA36A5;">titles</span> = [e.get(<span style="color: #008000;">'title'</span>, <span style="color: #008000;">''</span>) <span style="color: #0000FF;">for</span> e <span style="color: #0000FF;">in</span> entries]
+</pre>
+</div>
+
+
+<p>
+We will use <a href="https://en.wikipedia.org/wiki/Tf%E2%80%93idf">term frequency–inverse document frequency</a> to get a vector that represents each title, and then use <a href="https://en.wikipedia.org/wiki/Cosine_similarity">cosine similarity</a> as a measure of similarity. Here is the place to note that <i>I chose</i> these, and could choose other ones too. Also, it is worth noting that in this measure of similarity I did <i>not</i> choose which keywords to measure similarity on.
+</p>
+
+<p>
+The functionality for this is provided by <a href="http://scikit-learn.org/stable/">sklearn</a>. It has implemented functions for the algorithms above, and in just a few lines of code you get an array of tf-idf features to analyze. The array we get from our vectorizer contains normalized vectors, so we can get the cosine similarity just from a dot product of the vectors. The first row corresponds to the similarity of the first string to all the others. I want them sorted in descending order. The argsort function returns ascending order, so we use a trick to sort the negative of the similarity score which achieves that. There are certainly more advanced treatments of the text we could use by <a href="http://scikit-learn.org/stable/modules/feature_extraction.html#customizing-the-vectorizer-classes">customizing the vectorizer</a>, e.g. word stemming, but for now we neglect that.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">from</span> sklearn.feature_extraction.text <span style="color: #0000FF;">import</span> TfidfVectorizer
+
+<span style="color: #BA36A5;">vectorizer</span> = TfidfVectorizer(stop_words=<span style="color: #008000;">'english'</span>)
+<span style="color: #BA36A5;">X</span> = vectorizer.fit_transform(titles)
+
+<span style="color: #BA36A5;">cosine_similarities</span> = (X * X.T).A[0]
+
+<span style="color: #BA36A5;">related_docs_indices</span> = (-cosine_similarities).argsort()
+
+<span style="color: #0000FF;">print</span>(<span style="color: #008000;">'The top 10 recommendations for {} are:\n'</span>.<span style="color: #006FE0;">format</span>(S[0]))
+<span style="color: #0000FF;">for</span> i, j <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">enumerate</span>(related_docs_indices[1:11]):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">print</span>(<span style="color: #008000;">'{i}. {ID}: {title}, {author}\n'</span>.<span style="color: #006FE0;">format</span>(i=i + 1, **entries[j]))
+</pre>
+</div>
+
+<p>
+The top 10 recommendations for Neural Network and {Reaxff} Comparison for {Au} Properties are:
+</p>
+
+<ol class="org-ol">
+<li>behler-2010-neural: Neural network potential-energy surfaces for atomistic</li>
+</ol>
+<p>
+simulations, J{\"o}rg Behler
+</p>
+
+<ol class="org-ol">
+<li>boes-2017-neural-networ: Neural Network Predictions of Oxygen Interactions on a Dynamic</li>
+</ol>
+<p>
+{Pd} Surface, Jacob R. Boes and John R. Kitchin
+</p>
+
+<ol class="org-ol">
+<li>eshet-2010-ab: Ab Initio Quality Neural-Network Potential for Sodium, Hagai Eshet and Rustam Z. Khaliullin and Thomas D. K{\"u}hne</li>
+</ol>
+<p>
+and J{\"o}rg Behler and Michele Parrinello
+</p>
+
+<ol class="org-ol">
+<li>behler-2014-repres-poten: Representing Potential Energy Surfaces By High-Dimensional</li>
+</ol>
+<p>
+Neural Network Potentials, J Behler
+</p>
+
+<ol class="org-ol">
+<li>behler-2007-gener-neural: Generalized Neural-Network Representation of High-Dimensional</li>
+</ol>
+<p>
+Potential-Energy Surfaces, J{\"o}rg Behler and Michele Parrinello
+</p>
+
+<ol class="org-ol">
+<li>artrith-2012-high: High-Dimensional Neural Network Potentials for Metal Surfaces:</li>
+</ol>
+<p>
+A Prototype Study for Copper, Nongnuch Artrith and J{\"o}rg Behler
+</p>
+
+<ol class="org-ol">
+<li>behler-2015-const: Constructing High-Dimensional Neural Network Potentials: A</li>
+</ol>
+<p>
+Tutorial Review, J{\"o}rg Behler
+</p>
+
+<ol class="org-ol">
+<li>artrith-2011-high: High-Dimensional Neural-Network Potentials for Multicomponent</li>
+</ol>
+<p>
+Systems: Applications To Zinc Oxide, Nongnuch Artrith and Tobias Morawietz and J{\"o}rg Behler
+</p>
+
+<ol class="org-ol">
+<li>sosso-2012-neural-gete: Neural Network Interatomic Potential for the Phase Change</li>
+</ol>
+<p>
+Material \ce{GeTe}, Gabriele C. Sosso and Giacomo Miceli and Sebastiano Caravati
+and J{\"o}rg Behler and Marco Bernasconi
+</p>
+
+<ol class="org-ol">
+<li>lorenz-2006-descr: Descriptions of Surface Chemical Reactions Using a Neural</li>
+</ol>
+<p>
+Network Representation of the Potential-Energy Surface, S{\"o}nke Lorenz and Matthias Scheffler and Axel Gross
+</p>
+
+<p>
+It is evident that this is showing other references containing the words "neural network"! I guess that is a little disappointing, since these would just as easily been narrowed down in org-ref. On the other hand, they are sorted and grouped, which would not happen in org-ref. This is a comparison of pretty short strings (just the titles), so maybe this would be much more interesting if abstracts were also included. Including authors would give a different set as well (I tried it, and got a bunch of my own references!).
+</p>
+
+<p>
+I don't think it would be very difficult to get this into an Emacs selection tool, e.g. helm/ivy. Check this out:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">import</span> pycse.lisp
+
+related_docs_indices[1:6].lisp
+</pre>
+</div>
+
+<p>
+
+</p>
+
+<p>
+'(1592 1650 299 1751 103)'
+</p>
+
+
+<p>
+That is a result that can be read directly by lisp, so we could simply write the code above as a shell script that takes an argument, and returns a list of indices to sort the candidates on. The alternative is to implement this in elisp, perhaps via a dynamic module if there is already a good C library for this. My sense is the Python libraries are more advanced in functionality.
+</p>
+
+<p>
+This could have a number of other applications. Given some reference content, you could imagine finding emails that are similar to it, finding RSS entries that are similar to it, finding org headlines that are related, similar files, or similarity with any other set of strings that can be gathered, e.g. from Crossref or some other search, etc. I predict there will be more on these topics in the future!
+</p>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/09/16/Finding-similar-bibtex-entries.org">org-mode source</a></p>
+<p>Org-mode version = 9.0.7</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/09/16/Finding-similar-bibtex-entries#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Automated-bibtex-entry-tweeting"></div>
       <h2 class="blog_post_title"><a href="/blog/2016/08/25/Automated-bibtex-entry-tweeting/" rel="bookmark" title="Permanent Link to Automated bibtex entry tweeting">Automated bibtex entry tweeting</a></h2>
       <p><small><span class="blog_post_date">Posted August 25, 2016 at 12:14 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/twitter/'>twitter</a>, <a href='/blog/category/bibtex/'>bibtex</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/bibtex/'>bibtex</a>, <a href='/blog/category/twitter/'>twitter</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2016/08/25/Automated-bibtex-entry-tweeting#disqus_thread">View Comments</a>
       <p><small><span class="blog_post_date">Updated August 25, 2016 at 02:09 PM</span>
       </small></p>
@@ -487,7 +719,7 @@ So, it seems Python can do some things like lisp in treating functions like firs
       <div id="A-sexp-version-of-a-bibtex-entry"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/06/10/A-sexp-version-of-a-bibtex-entry/" rel="bookmark" title="Permanent Link to A sexp version of a bibtex entry">A sexp version of a bibtex entry</a></h2>
       <p><small><span class="blog_post_date">Posted June 10, 2015 at 08:54 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/lisp/'>lisp</a>, <a href='/blog/category/bibtex/'>bibtex</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/bibtex/'>bibtex</a>, <a href='/blog/category/lisp/'>lisp</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2015/06/10/A-sexp-version-of-a-bibtex-entry#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -767,7 +999,7 @@ I like the idea of data representation as code, and its conversion to some other
       <div id="Bibtex-Entries-from-Arxiv-org"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/03/09/Bibtex-Entries-from-Arxiv-org/" rel="bookmark" title="Permanent Link to Bibtex Entries from Arxiv.org">Bibtex Entries from Arxiv.org</a></h2>
       <p><small><span class="blog_post_date">Posted March 09, 2015 at 03:14 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/bibtex/'>bibtex</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/bibtex/'>bibtex</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2015/03/09/Bibtex-Entries-from-Arxiv-org#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -868,258 +1100,6 @@ I do not use arxiv.org a lot, so this is not super well tested on many articles 
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/03/09/Bibtex-Entries-from-Arxiv-org#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Turn-an-ISBN-to-a-bibtex-entry"></div>
-      <h2 class="blog_post_title"><a href="/blog/2015/01/31/Turn-an-ISBN-to-a-bibtex-entry/" rel="bookmark" title="Permanent Link to Turn an ISBN to a bibtex entry">Turn an ISBN to a bibtex entry</a></h2>
-      <p><small><span class="blog_post_date">Posted January 31, 2015 at 03:48 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/bibtex/'>bibtex</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2015/01/31/Turn-an-ISBN-to-a-bibtex-entry#disqus_thread">View Comments</a>
-      <p><small><span class="blog_post_date">Updated January 31, 2015 at 03:50 PM</span>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-Occasionally, I need a bibtex entry for a book. Books are often identified by an ISBN number. Similar to using Crossref to get metadata about a DOI, we can use a web service to get metadata about an ISBN. From that, we might be able to construct a bibtex entry.
-</p>
-
-<p>
-Here is an example of what we can get for ISBN 9780309095211. It does not seem to matter if there are dashes in the ISBN or not.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">with-current-buffer</span>
-        (url-retrieve-synchronously
-<span style="color: #008000;">"http://xisbn.worldcat.org/webservices/xid/isbn/9780309095211?method=getMetadata&amp;format=json&amp;fl=*"</span>)
-      (buffer-substring url-http-end-of-headers (point-max)))
-</pre>
-</div>
-
-<pre class="example">
-{
- "stat":"ok",
- "list":[{
-	"url":["http://www.worldcat.org/oclc/224969280?referer=xid"],
-	"publisher":"National Academies Press",
-	"form":["BC"],
-	"lccn":["2006016786"],
-	"lang":"eng",
-	"city":"Washington, D.C.",
-	"author":"Committee on the Guide to Recruiting and Advancing Women Scientists and Engineers in Academia, Committee on Women in Science and Engineering, Policy and Global Affairs, National Research Council of the National Academies.",
-	"ed":"[Online-Ausg.]",
-	"year":"2006",
-	"isbn":["9780309095211"],
-	"title":"To recruit and advance women students and faculty in science and engineering",
-	"oclcnum":["224969280",
-	 "70060944",
-	 "756709329",
-	 "804792476",
-	 "817950524",
-	 "833420290",
-	 "836338922",
-	 "704551455"]}]}
-</pre>
-
-<p>
-We get a nice json data string back. We can parst that to get an actual data structure.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">with-current-buffer</span>
-        (url-retrieve-synchronously
-<span style="color: #008000;">"http://xisbn.worldcat.org/webservices/xid/isbn/9780309095211?method=getMetadata&amp;format=json&amp;fl=*"</span>)
-      (json-read-from-string
-        (buffer-substring url-http-end-of-headers (point-max))))
-</pre>
-</div>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">((list .
-       [((oclcnum .
-                  [<span style="color: #008000;">"224969280"</span> <span style="color: #008000;">"70060944"</span> <span style="color: #008000;">"756709329"</span> <span style="color: #008000;">"804792476"</span> <span style="color: #008000;">"817950524"</span> <span style="color: #008000;">"833420290"</span> <span style="color: #008000;">"836338922"</span> <span style="color: #008000;">"704551455"</span>])
-         (title . <span style="color: #008000;">"To recruit and advance women students and faculty in science and engineering"</span>)
-         (isbn .
-               [<span style="color: #008000;">"9780309095211"</span>])
-         (year . <span style="color: #008000;">"2006"</span>)
-         (ed . <span style="color: #008000;">"[Online-Ausg.]"</span>)
-         (author . <span style="color: #008000;">"Committee on the Guide to Recruiting and Advancing Women Scientists and Engineers in Academia, Committee on Women in Science and Engineering, Policy and Global Affairs, National Research Council of the National Academies."</span>)
-         (city . <span style="color: #008000;">"Washington, D.C."</span>)
-         (lang . <span style="color: #008000;">"eng"</span>)
-         (lccn .
-               [<span style="color: #008000;">"2006016786"</span>])
-         (form .
-               [<span style="color: #008000;">"BC"</span>])
-         (publisher . <span style="color: #008000;">"National Academies Press"</span>)
-         (url .
-              [<span style="color: #008000;">"http://www.worldcat.org/oclc/224969280?referer=xid"</span>]))])
- (stat . <span style="color: #008000;">"ok"</span>))
-</pre>
-</div>
-
-<p>
-Ok, so we should check that stat is ok, then build the bibtex entry. Accessing the metadata below seems pretty hacky; but it works, and I don't understand the deep nesting of results, and there seems to be a vector in there.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let*</span> ((results  (<span style="color: #0000FF;">with-current-buffer</span>
-                    (url-retrieve-synchronously
-                     <span style="color: #008000;">"http://xisbn.worldcat.org/webservices/xid/isbn/9780309095211?method=getMetadata&amp;format=json&amp;fl=*"</span>)
-                  (json-read-from-string
-                   (buffer-substring url-http-end-of-headers (point-max)))))
-       (status (cdr (nth 1 results)))
-       (metadata (aref (cdar results) 0)))
-
-  (<span style="color: #0000FF;">unless</span> (string= <span style="color: #008000;">"ok"</span> status)
-    (<span style="color: #ff0000; font-weight: bold;">error</span> <span style="color: #008000;">"Status is %s"</span> status))
-
-  (concat <span style="color: #008000;">"@book{,\n"</span>
-          (mapconcat (<span style="color: #0000FF;">lambda</span> (x)
-                       (format <span style="color: #008000;">"  %s={%s},"</span> (car x) (cdr x)))
-                     metadata <span style="color: #008000;">"\n"</span>)
-          <span style="color: #008000;">"}\n"</span>))
-</pre>
-</div>
-
-<pre class="example">
-@book{,
-  oclcnum={[224969280 70060944 756709329 804792476 817950524 833420290 836338922 704551455]},
-  title={To recruit and advance women students and faculty in science and engineering},
-  isbn={[9780309095211]},
-  year={2006},
-  ed={[Online-Ausg.]},
-  author={Committee on the Guide to Recruiting and Advancing Women Scientists and Engineers in Academia, Committee on Women in Science and Engineering, Policy and Global Affairs, National Research Council of the National Academies.},
-  city={Washington, D.C.},
-  lang={eng},
-  lccn={[2006016786]},
-  form={[BC]},
-  publisher={National Academies Press},
-  url={[http://www.worldcat.org/oclc/224969280?referer=xid]},}
-</pre>
-
-<p>
-That looks good to me. Let us finally wrap it into a function that will take an ISBN and bibtex file interactively, create a bibtex entry, and insert it if there is not an entry with a key like that already. If we have selected region, lI should note this code uses some functionality from my org-ref package (and when I am done here, I am adding it to the doi-utils package inside org-ref). This is a fancy function, built from the experience I have from writing doi-utils.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">isbn-to-bibtex</span> (isbn bibfile)
-  <span style="color: #036A07;">"Get bibtex entry for ISBN and insert it into BIBFILE unless an</span>
-<span style="color: #036A07;">entry with the generated key already exists in the file."</span>
-  (interactive
-   (list
-    (read-input
-     <span style="color: #008000;">"ISBN: "</span>
-     <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">now set initial input</span>
-     (<span style="color: #0000FF;">cond</span>
-      <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">If region is active and it starts with a number, we use it</span>
-      ((and  (region-active-p)
-             (s-match <span style="color: #008000;">"^[0-9]"</span> (buffer-substring (region-beginning) (region-end))))
-       (buffer-substring (region-beginning) (region-end)))
-      <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">if first entry in kill ring starts with a number assume it is an isbn</span>
-      <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">and use it as the guess</span>
-      ((<span style="color: #0000FF;">if</span> (s-match <span style="color: #008000;">"^[0-9]"</span> (car kill-ring))
-           (car kill-ring)))
-      <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">type or paste it in</span>
-      (t
-       nil)))
-    (ido-completing-read
-     <span style="color: #008000;">"Bibfile: "</span>
-     (append (f-entries <span style="color: #008000;">"."</span> (<span style="color: #0000FF;">lambda</span> (f) (f-ext? f <span style="color: #008000;">"bib"</span>)))
-             org-ref-default-bibliography))))
-
-  (<span style="color: #0000FF;">let*</span> ((results (<span style="color: #0000FF;">with-current-buffer</span>
-                      (url-retrieve-synchronously
-                       (format
-                        <span style="color: #008000;">"http://xisbn.worldcat.org/webservices/xid/isbn/%s?method=getMetadata&amp;format=json&amp;fl=*"</span>
-                        isbn))
-                    (json-read-from-string
-                     (buffer-substring url-http-end-of-headers (point-max)))))
-         (status (cdr (nth 1 results)))
-         (metadata (aref (cdar results) 0))
-         (new-entry)
-         (new-key))
-
-    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">check if we got something</span>
-    (<span style="color: #0000FF;">unless</span> (string= <span style="color: #008000;">"ok"</span> status)
-      (<span style="color: #ff0000; font-weight: bold;">error</span> <span style="color: #008000;">"Status is %s"</span> status))
-
-    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">construct an alphabetically sorted bibtex entry. I assume ISBN numbers go</span>
-    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">with book entries.</span>
-    (setq new-entry
-          (concat <span style="color: #008000;">"\n@book{,\n"</span>
-                  (mapconcat
-                   'identity
-                   (loop for field in (-sort 'string-lessp (mapcar 'car metadata))
-                         collect
-                         (format <span style="color: #008000;">"  %s={%s},"</span> field (cdr (assoc field metadata))))
-                   <span style="color: #008000;">"\n"</span>)
-                  <span style="color: #008000;">"\n}\n"</span>))
-
-    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">build entry in temp buffer to get the key so we can check for duplicates</span>
-    (setq new-entry (<span style="color: #0000FF;">with-temp-buffer</span>
-                      (insert new-entry)
-                      (org-ref-clean-bibtex-entry)
-                      (setq new-key (bibtex-key-in-head))
-                      (buffer-string)))
-    (find-file bibfile)
-    (goto-char (point-min))
-    (<span style="color: #0000FF;">when</span> (search-forward new-key nil t)
-      (beep)
-      (setq new-key (read-input
-                     (format  <span style="color: #008000;">"%s already exists. Enter new key (C-g to cancel): "</span> new-key)
-                     new-key)))
-    (goto-char (point-max))
-    (insert new-entry)
-    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">set key. It is simplest to just replace it, even if it is the same.</span>
-    (bibtex-beginning-of-entry)
-    (re-search-forward bibtex-entry-maybe-empty-head)
-    (<span style="color: #0000FF;">if</span> (match-beginning bibtex-key-in-head)
-        (delete-region (match-beginning bibtex-key-in-head)
-                       (match-end bibtex-key-in-head)))
-    (insert new-key)
-    (bibtex-fill-entry)
-    (save-buffer)))
-</pre>
-</div>
-
-<pre class="example">
-isbn-to-bibtex
-</pre>
-
-<p>
-That is it, for the one ISBN I have tested it on, I get a nicely sorted bibtex entry in the file I select! Hopefully that means no more tedious bibtex entry entering for books! If you use org-ref, just update to the latest version and you should be able to use this function.
-</p>
-
-<p>
-Now, back to that proposal I am writing that needs a lot of citations to books that are not in my bibtex file yet, but will be soon ;)
-</p>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/01/31/Turn-an-ISBN-to-a-bibtex-entry.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/01/31/Turn-an-ISBN-to-a-bibtex-entry#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="/blog/category/bibtex/2">Next Page »</a>
 
           </div>
@@ -1159,11 +1139,11 @@ Now, back to that proposal I am writing that needs a lot of citations to books t
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2017/09/16/Finding-similar-bibtex-entries/">Finding similar bibtex entries</a></li>
       <li><a href="/blog/2017/08/06/New-publication-in-Journal-of-Physics-Condensed-Matter/">New publication in Journal of Physics Condensed Matter</a></li>
       <li><a href="/blog/2017/08/05/New-publication-in-Crystal-Growth-Design/">New publication in Crystal Growth & Design</a></li>
       <li><a href="/blog/2017/07/23/Overloading-mathematical-operators-in-elisp/">Overloading mathematical operators in elisp</a></li>
       <li><a href="/blog/2017/07/21/Linear-algebra-in-Emacs-using-MKL-and-dynamic-modules/">Linear algebra in Emacs using MKL and dynamic modules</a></li>
-      <li><a href="/blog/2017/07/13/An-Emacs-zeromq-library-using-an-ffi/">An Emacs zeromq library using an ffi</a></li>
     </ul>
   </section>
 
