@@ -2,9 +2,13 @@
 
 from scopus.scopus_xml import *
 
+from scopus.utils import load_api_key
+MY_API_KEY = load_api_key()
+
+
 import requests
-import json
-from scopus import MY_API_KEY
+import json, sys
+
 resp = requests.get("http://api.elsevier.com/content/search/scopus?query=AU-ID(7004212771)&field=eid,aggregationType&count=100",
                     headers={'Accept':'application/json',
                              'X-ELS-APIKey': MY_API_KEY})
@@ -50,7 +54,7 @@ The authors are linked to their Scopus page, the title linked to the Scopus abst
         try:
             f.write('<li>{}</li>'.format(get_html_citation(eid)))
         except:
-            print('Error in {}'.format(eid))
+            print('Error in {}: {}'.format(eid, sys.exc_info()))
     f.write('''</ol>
 
 </%self:filter>
