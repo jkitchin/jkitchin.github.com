@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<feed
+  xmlns="http://www.w3.org/2005/Atom"
+  xmlns:thr="http://purl.org/syndication/thread/1.0"
+  xml:lang="en"
+  >
+  <title type="text">The Kitchin Research Group</title>
+  <subtitle type="text">Chemical Engineering at Carnegie Mellon University</subtitle>
+
+  <updated>2017-11-15T05:06:32Z</updated>
+  <generator uri="http://blogofile.com/">Blogofile</generator>
+
+  <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog" />
+  <id>http://jkitchin.github.io/blog/feed/atom/</id>
+  <link rel="self" type="application/atom+xml" href="http://jkitchin.github.io/blog/feed/atom/" />
+  <entry>
+    <author>
+      <name></name>
+      <uri>http://jkitchin.github.io/blog</uri>
+    </author>
+    <title type="html"><![CDATA[Forces by automatic differentiation in molecular simulation]]></title>
+    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2017/11/14/Forces-by-automatic-differentiation-in-molecular-simulation" />
+    <id>http://jkitchin.github.io/blog/2017/11/14/Forces-by-automatic-differentiation-in-molecular-simulation</id>
+    <updated>2017-11-14T21:06:22Z</updated>
+    <published>2017-11-14T21:06:22Z</published>
+    <category scheme="http://jkitchin.github.io/blog" term="autograd" />
+    <category scheme="http://jkitchin.github.io/blog" term="simulation" />
+    <summary type="html"><![CDATA[Forces by automatic differentiation in molecular simulation]]></summary>
+    <content type="html" xml:base="http://jkitchin.github.io/blog/2017/11/14/Forces-by-automatic-differentiation-in-molecular-simulation"><![CDATA[
+
+
+&lt;p&gt;
+In molecular simulation we often use a potential to compute the total energy of a system. For example, we might use something simple like a &lt;a href="https://en.wikipedia.org/wiki/Lennard-Jones_potential"&gt;Lennard-Jones&lt;/a&gt; potential. If we have a potential function, e.g. \(E = V(R)\) where \(R\) are the positions of the atoms, then we know the forces on the atoms are defined by \(f = -\frac{dV}{dR}\). For simple functions, you can derive the derivative pretty easily, but these functions quickly get complicated. In this post, we consider &lt;a href="https://en.wikipedia.org/wiki/Automatic_differentiation"&gt;automatic differentiation&lt;/a&gt; as implemented by &lt;a href="https://github.com/HIPS/autograd"&gt;autograd&lt;/a&gt;. This is neither symbolic nor numerical differentiation. The gist is that the program uses the chain rule to evaluate derivatives. Here we do not delve into how it is done, we just see how it might help us in molecular simulation.
+&lt;/p&gt;
+
+&lt;p&gt;
+For reference, here is a result from the LennardJones calculator in ASE.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org610d524"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; ase.calculators.lj &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; LennardJones
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; ase.cluster.icosahedron &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; Icosahedron
+
+&lt;span style="color: #BA36A5;"&gt;atoms&lt;/span&gt; = Icosahedron(&lt;span style="color: #008000;"&gt;'Ar'&lt;/span&gt;, noshells=2, latticeconstant=3)
+atoms.set_calculator(LennardJones())
+
+atoms.rattle(0.5)
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'LJ: '&lt;/span&gt;, atoms.get_potential_energy())
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+('LJ: ', -3.3553466825679812)
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+First, we define a function for the Lennard-Jones potential. I adapted the code &lt;a href="https://wiki.fysik.dtu.dk/ase/_modules/ase/calculators/lj.html#LennardJones"&gt;here&lt;/a&gt; to implement a function that calculates the Lennard-Jones energy for a cluster of atoms with no periodic boundary conditions. &lt;i&gt;Instead&lt;/i&gt; of using numpy directly, we import it from the autograd package which puts thin wrappers around the functions to enable the derivative calculations. 
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org022fb09"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; autograd.numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;energy&lt;/span&gt;(positions):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #036A07;"&gt;"Compute the energy of a Lennard-Jones system."&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;natoms&lt;/span&gt; = &lt;span style="color: #006FE0;"&gt;len&lt;/span&gt;(positions)
+
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;sigma&lt;/span&gt; = 1.0
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;epsilon&lt;/span&gt; = 1.0
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;rc&lt;/span&gt; = 3 * sigma
+
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;e0&lt;/span&gt; = 4 * epsilon * ((sigma / rc)**12 - (sigma / rc)**6)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;energy&lt;/span&gt; = 0.0
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; a1 &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; &lt;span style="color: #006FE0;"&gt;range&lt;/span&gt;(natoms):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; j &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; &lt;span style="color: #006FE0;"&gt;range&lt;/span&gt;(a1 + 1, natoms):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;r2&lt;/span&gt; = np.&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;((positions[a1] - positions[j])**2)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; r2 &amp;lt;= rc**2:
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;c6&lt;/span&gt; = (sigma**2 / r2)**3
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;energy&lt;/span&gt; -= e0 
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;c12&lt;/span&gt; = c6**2
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;energy&lt;/span&gt; += 4 * epsilon * (c12 - c6)
+
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; energy
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Here is our function in action, and it produces the same result as the ASE calculator. So far there is nothing new.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org4bd1401"&gt;&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'our func: '&lt;/span&gt;, energy(atoms.positions))
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+('our func: ', -3.3553466825679803)
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+Now, we look at the forces from the ASE calculator. If you look at the ASE &lt;a href="https://wiki.fysik.dtu.dk/ase/_modules/ase/calculators/lj.html#LennardJones"&gt;code&lt;/a&gt; you will see that the formula for forces was analytically derived and accumulated in the loop.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org6dc5318"&gt;np.set_printoptions(precision=3, suppress=&lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;)
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(atoms.get_forces())
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+[[ 0.545  1.667  0.721]
+ [-0.068  0.002  0.121]
+ [-0.18   0.018 -0.121]
+ [ 0.902 -0.874 -0.083]
+ [ 0.901 -0.937 -1.815]
+ [ 0.243 -0.19   0.063]
+ [-0.952 -1.776 -0.404]
+ [-0.562  1.822  1.178]
+ [-0.235  0.231  0.081]
+ [-0.023  0.204 -0.294]
+ [ 0.221 -0.342 -0.425]
+ [-5.385 -6.017  1.236]
+ [ 4.593  6.193 -0.258]]
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+Now we look at how to use autograd for this purpose. We want an element-wise gradient of the total energy with respect to the positions. autograd returns functions, so we wrap it in another function so we can take the negative of that function.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org2210bf9"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; autograd &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; elementwise_grad
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;forces&lt;/span&gt;(pos):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;dEdR&lt;/span&gt; = elementwise_grad(energy)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; -dEdR(pos)
+
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(forces(atoms.positions))
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+[[ 0.545  1.667  0.721]
+ [-0.068  0.002  0.121]
+ [-0.18   0.018 -0.121]
+ [ 0.902 -0.874 -0.083]
+ [ 0.901 -0.937 -1.815]
+ [ 0.243 -0.19   0.063]
+ [-0.952 -1.776 -0.404]
+ [-0.562  1.822  1.178]
+ [-0.235  0.231  0.081]
+ [-0.023  0.204 -0.294]
+ [ 0.221 -0.342 -0.425]
+ [-5.385 -6.017  1.236]
+ [ 4.593  6.193 -0.258]]
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+Here we show the results are the same from both approaches.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="orgc41aef4"&gt;&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(np.allclose(atoms.get_forces(), forces(atoms.positions)))
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+True
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+Wow. We got forces without deriving a derivative, or using numerical finite differences, across loops, and conditionals. That is pretty awesome. You can easily modify the potential function now, without the need to rederive the force derivatives! This is an idea worth exploring further. In principle, it should be possible to include periodic boundary conditions and use autograd to compute stresses too. Maybe that will be a future post.
+&lt;/p&gt;
+&lt;p&gt;Copyright (C) 2017 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
+&lt;p&gt;&lt;a href="/org/2017/11/14/Forces-by-automatic-differentiation-in-molecular-simulation.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Org-mode version = 9.1.2&lt;/p&gt;]]></content>
+  </entry>
+</feed>

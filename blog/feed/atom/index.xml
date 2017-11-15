@@ -8,12 +8,177 @@
   <title type="text">The Kitchin Research Group</title>
   <subtitle type="text">Chemical Engineering at Carnegie Mellon University</subtitle>
 
-  <updated>2017-10-15T20:57:28Z</updated>
+  <updated>2017-11-15T05:06:32Z</updated>
   <generator uri="http://blogofile.com/">Blogofile</generator>
 
   <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog" />
   <id>http://jkitchin.github.io/blog/feed/atom/</id>
   <link rel="self" type="application/atom+xml" href="http://jkitchin.github.io/blog/feed/atom/" />
+  <entry>
+    <author>
+      <name></name>
+      <uri>http://jkitchin.github.io/blog</uri>
+    </author>
+    <title type="html"><![CDATA[Forces by automatic differentiation in molecular simulation]]></title>
+    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2017/11/14/Forces-by-automatic-differentiation-in-molecular-simulation" />
+    <id>http://jkitchin.github.io/blog/2017/11/14/Forces-by-automatic-differentiation-in-molecular-simulation</id>
+    <updated>2017-11-14T21:06:22Z</updated>
+    <published>2017-11-14T21:06:22Z</published>
+    <category scheme="http://jkitchin.github.io/blog" term="autograd" />
+    <category scheme="http://jkitchin.github.io/blog" term="simulation" />
+    <summary type="html"><![CDATA[Forces by automatic differentiation in molecular simulation]]></summary>
+    <content type="html" xml:base="http://jkitchin.github.io/blog/2017/11/14/Forces-by-automatic-differentiation-in-molecular-simulation"><![CDATA[
+
+
+&lt;p&gt;
+In molecular simulation we often use a potential to compute the total energy of a system. For example, we might use something simple like a &lt;a href="https://en.wikipedia.org/wiki/Lennard-Jones_potential"&gt;Lennard-Jones&lt;/a&gt; potential. If we have a potential function, e.g. \(E = V(R)\) where \(R\) are the positions of the atoms, then we know the forces on the atoms are defined by \(f = -\frac{dV}{dR}\). For simple functions, you can derive the derivative pretty easily, but these functions quickly get complicated. In this post, we consider &lt;a href="https://en.wikipedia.org/wiki/Automatic_differentiation"&gt;automatic differentiation&lt;/a&gt; as implemented by &lt;a href="https://github.com/HIPS/autograd"&gt;autograd&lt;/a&gt;. This is neither symbolic nor numerical differentiation. The gist is that the program uses the chain rule to evaluate derivatives. Here we do not delve into how it is done, we just see how it might help us in molecular simulation.
+&lt;/p&gt;
+
+&lt;p&gt;
+For reference, here is a result from the LennardJones calculator in ASE.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org610d524"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; ase.calculators.lj &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; LennardJones
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; ase.cluster.icosahedron &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; Icosahedron
+
+&lt;span style="color: #BA36A5;"&gt;atoms&lt;/span&gt; = Icosahedron(&lt;span style="color: #008000;"&gt;'Ar'&lt;/span&gt;, noshells=2, latticeconstant=3)
+atoms.set_calculator(LennardJones())
+
+atoms.rattle(0.5)
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'LJ: '&lt;/span&gt;, atoms.get_potential_energy())
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+('LJ: ', -3.3553466825679812)
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+First, we define a function for the Lennard-Jones potential. I adapted the code &lt;a href="https://wiki.fysik.dtu.dk/ase/_modules/ase/calculators/lj.html#LennardJones"&gt;here&lt;/a&gt; to implement a function that calculates the Lennard-Jones energy for a cluster of atoms with no periodic boundary conditions. &lt;i&gt;Instead&lt;/i&gt; of using numpy directly, we import it from the autograd package which puts thin wrappers around the functions to enable the derivative calculations. 
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org022fb09"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; autograd.numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;energy&lt;/span&gt;(positions):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #036A07;"&gt;"Compute the energy of a Lennard-Jones system."&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;natoms&lt;/span&gt; = &lt;span style="color: #006FE0;"&gt;len&lt;/span&gt;(positions)
+
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;sigma&lt;/span&gt; = 1.0
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;epsilon&lt;/span&gt; = 1.0
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;rc&lt;/span&gt; = 3 * sigma
+
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;e0&lt;/span&gt; = 4 * epsilon * ((sigma / rc)**12 - (sigma / rc)**6)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;energy&lt;/span&gt; = 0.0
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; a1 &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; &lt;span style="color: #006FE0;"&gt;range&lt;/span&gt;(natoms):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; j &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; &lt;span style="color: #006FE0;"&gt;range&lt;/span&gt;(a1 + 1, natoms):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;r2&lt;/span&gt; = np.&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;((positions[a1] - positions[j])**2)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; r2 &amp;lt;= rc**2:
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;c6&lt;/span&gt; = (sigma**2 / r2)**3
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;energy&lt;/span&gt; -= e0 
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;c12&lt;/span&gt; = c6**2
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;energy&lt;/span&gt; += 4 * epsilon * (c12 - c6)
+
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; energy
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Here is our function in action, and it produces the same result as the ASE calculator. So far there is nothing new.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org4bd1401"&gt;&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'our func: '&lt;/span&gt;, energy(atoms.positions))
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+('our func: ', -3.3553466825679803)
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+Now, we look at the forces from the ASE calculator. If you look at the ASE &lt;a href="https://wiki.fysik.dtu.dk/ase/_modules/ase/calculators/lj.html#LennardJones"&gt;code&lt;/a&gt; you will see that the formula for forces was analytically derived and accumulated in the loop.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org6dc5318"&gt;np.set_printoptions(precision=3, suppress=&lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;)
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(atoms.get_forces())
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+[[ 0.545  1.667  0.721]
+ [-0.068  0.002  0.121]
+ [-0.18   0.018 -0.121]
+ [ 0.902 -0.874 -0.083]
+ [ 0.901 -0.937 -1.815]
+ [ 0.243 -0.19   0.063]
+ [-0.952 -1.776 -0.404]
+ [-0.562  1.822  1.178]
+ [-0.235  0.231  0.081]
+ [-0.023  0.204 -0.294]
+ [ 0.221 -0.342 -0.425]
+ [-5.385 -6.017  1.236]
+ [ 4.593  6.193 -0.258]]
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+Now we look at how to use autograd for this purpose. We want an element-wise gradient of the total energy with respect to the positions. autograd returns functions, so we wrap it in another function so we can take the negative of that function.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org2210bf9"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; autograd &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; elementwise_grad
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;forces&lt;/span&gt;(pos):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;dEdR&lt;/span&gt; = elementwise_grad(energy)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; -dEdR(pos)
+
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(forces(atoms.positions))
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+[[ 0.545  1.667  0.721]
+ [-0.068  0.002  0.121]
+ [-0.18   0.018 -0.121]
+ [ 0.902 -0.874 -0.083]
+ [ 0.901 -0.937 -1.815]
+ [ 0.243 -0.19   0.063]
+ [-0.952 -1.776 -0.404]
+ [-0.562  1.822  1.178]
+ [-0.235  0.231  0.081]
+ [-0.023  0.204 -0.294]
+ [ 0.221 -0.342 -0.425]
+ [-5.385 -6.017  1.236]
+ [ 4.593  6.193 -0.258]]
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+Here we show the results are the same from both approaches.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="orgc41aef4"&gt;&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(np.allclose(atoms.get_forces(), forces(atoms.positions)))
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+True
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+Wow. We got forces without deriving a derivative, or using numerical finite differences, across loops, and conditionals. That is pretty awesome. You can easily modify the potential function now, without the need to rederive the force derivatives! This is an idea worth exploring further. In principle, it should be possible to include periodic boundary conditions and use autograd to compute stresses too. Maybe that will be a future post.
+&lt;/p&gt;
+&lt;p&gt;Copyright (C) 2017 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
+&lt;p&gt;&lt;a href="/org/2017/11/14/Forces-by-automatic-differentiation-in-molecular-simulation.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Org-mode version = 9.1.2&lt;/p&gt;]]></content>
+  </entry>
   <entry>
     <author>
       <name></name>
@@ -1489,8 +1654,8 @@ matrix-multiply
     <updated>2017-07-13T06:44:23Z</updated>
     <published>2017-07-13T06:44:23Z</published>
     <category scheme="http://jkitchin.github.io/blog" term="zeromq" />
-    <category scheme="http://jkitchin.github.io/blog" term="dynamic-module" />
     <category scheme="http://jkitchin.github.io/blog" term="ffi" />
+    <category scheme="http://jkitchin.github.io/blog" term="dynamic-module" />
     <category scheme="http://jkitchin.github.io/blog" term="emacs" />
     <summary type="html"><![CDATA[An Emacs zeromq library using an ffi]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2017/07/13/An-Emacs-zeromq-library-using-an-ffi"><![CDATA[
@@ -2125,160 +2290,6 @@ The module does not handle 1d vectors well,, e.g. in gsl-linalg-LU-solve example
 &lt;/p&gt;
 &lt;p&gt;Copyright (C) 2017 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
 &lt;p&gt;&lt;a href="/org/2017/07/11/Adding-linear-algebra-to-Emacs-with-the-GSL-and-dynamic-modules.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
-&lt;p&gt;Org-mode version = 9.0.7&lt;/p&gt;]]></content>
-  </entry>
-  <entry>
-    <author>
-      <name></name>
-      <uri>http://jkitchin.github.io/blog</uri>
-    </author>
-    <title type="html"><![CDATA[Adding GSL constants to Emacs in a dynamic module]]></title>
-    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2017/07/10/Adding-GSL-constants-to-Emacs-in-a-dynamic-module" />
-    <id>http://jkitchin.github.io/blog/2017/07/10/Adding-GSL-constants-to-Emacs-in-a-dynamic-module</id>
-    <updated>2017-07-10T09:38:21Z</updated>
-    <published>2017-07-10T09:38:21Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="dynamic-module" />
-    <category scheme="http://jkitchin.github.io/blog" term="emacs" />
-    <summary type="html"><![CDATA[Adding GSL constants to Emacs in a dynamic module]]></summary>
-    <content type="html" xml:base="http://jkitchin.github.io/blog/2017/07/10/Adding-GSL-constants-to-Emacs-in-a-dynamic-module"><![CDATA[
-
-
-&lt;p&gt;
-The GNU Scientific Library defines a lot of &lt;a href="https://www.gnu.org/software/gsl/doc/html/const.html"&gt;physical constants&lt;/a&gt;. Since we are exploring how to make Emacs a more scientific environment to work in, it would be nice to import these constants to elisp. We do that through a dynamic module. This turned out to be tricky. I thought we could just use a funcall to defconst or defvar, but these are special forms and you cannot funcall them. @polizta on Stackoverflow &lt;a href="https://emacs.stackexchange.com/questions/34049/how-do-you-define-constants-in-an-emacs-dynamic-module/34063#34063"&gt;pointed me to the path&lt;/a&gt; that led to success: You make a list like '(defconst sym val doc) and then eval it. That can be funcall'd, and it works nicely in the module below. It is a growing theme that it takes much hacking around to figure out how to do things like this.
-&lt;/p&gt;
-
-&lt;p&gt;
-The only other notable feature of this module is that I created a defconst function to make adding multiple constants less verbose. Here I only add two constants. There are about 408 constants defined in gsl_const_*.h, so brevity might be a good idea! Here is the module.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-c"&gt;&lt;span style="color: #808080;"&gt;#include&lt;/span&gt; &lt;span style="color: #008000;"&gt;&amp;lt;gsl/gsl_const_mksa.h&amp;gt;&lt;/span&gt;
-&lt;span style="color: #808080;"&gt;#include&lt;/span&gt; &lt;span style="color: #008000;"&gt;&amp;lt;string.h&amp;gt;&lt;/span&gt;
-&lt;span style="color: #808080;"&gt;#include&lt;/span&gt; &lt;span style="color: #008000;"&gt;"emacs-module.h"&lt;/span&gt;
-
-&lt;span style="color: #6434A3;"&gt;int&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;plugin_is_GPL_compatible&lt;/span&gt;;
-
-&lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;I assume here that all values will be double. I can't think of any that would&lt;/span&gt;
-&lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;be ints&lt;/span&gt;
-&lt;span style="color: #0000FF;"&gt;static&lt;/span&gt; &lt;span style="color: #6434A3;"&gt;void&lt;/span&gt; &lt;span style="color: #006699;"&gt;defconst&lt;/span&gt; (&lt;span style="color: #6434A3;"&gt;emacs_env&lt;/span&gt; *&lt;span style="color: #BA36A5;"&gt;env&lt;/span&gt;, &lt;span style="color: #0000FF;"&gt;const&lt;/span&gt; &lt;span style="color: #6434A3;"&gt;char&lt;/span&gt; *&lt;span style="color: #BA36A5;"&gt;name&lt;/span&gt;, &lt;span style="color: #6434A3;"&gt;double&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;value&lt;/span&gt;, &lt;span style="color: #0000FF;"&gt;const&lt;/span&gt; &lt;span style="color: #6434A3;"&gt;char&lt;/span&gt; *&lt;span style="color: #BA36A5;"&gt;doc&lt;/span&gt;)
-{
-  &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;These are functions we will call&lt;/span&gt;
-  &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;eval&lt;/span&gt; = env-&amp;gt;intern(env, &lt;span style="color: #008000;"&gt;"eval"&lt;/span&gt;);  
-  &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;list&lt;/span&gt; = env-&amp;gt;intern(env, &lt;span style="color: #008000;"&gt;"list"&lt;/span&gt;);
-
-  &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;These will make up the list we will eventally eval&lt;/span&gt;
-  &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;fdefconst&lt;/span&gt; = env-&amp;gt;intern(env, &lt;span style="color: #008000;"&gt;"defconst"&lt;/span&gt;);
-  &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;sym&lt;/span&gt; = env-&amp;gt;intern(env, name);
-  &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;val&lt;/span&gt; = env-&amp;gt;make_float(env, value);
-  &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;sdoc&lt;/span&gt; = env-&amp;gt;make_string(env, doc, strlen(doc));
-
-  &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;make a list of (defconst sym val doc)&lt;/span&gt;
-  &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;largs&lt;/span&gt;[] = {fdefconst, sym, val, sdoc};
-  &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;qlist&lt;/span&gt; = env-&amp;gt;funcall(env, list, 4, &amp;amp;largs);   
-
-  &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;now eval the list of symbols&lt;/span&gt;
-  &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;args&lt;/span&gt;[] = { qlist };  
-  env-&amp;gt;funcall(env, eval, 1, &amp;amp;args);
-}
-
-&lt;span style="color: #6434A3;"&gt;int&lt;/span&gt; &lt;span style="color: #006699;"&gt;emacs_module_init&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;struct&lt;/span&gt; &lt;span style="color: #6434A3;"&gt;emacs_runtime&lt;/span&gt; *&lt;span style="color: #BA36A5;"&gt;ert&lt;/span&gt;)
-{
-  &lt;span style="color: #6434A3;"&gt;emacs_env&lt;/span&gt; *&lt;span style="color: #BA36A5;"&gt;env&lt;/span&gt; = ert-&amp;gt;get_environment(ert);
-
-  defconst(env, &lt;span style="color: #008000;"&gt;"GSL-CONST-MKSA-SPEED-OF-LIGHT"&lt;/span&gt;,
-           GSL_CONST_MKSA_SPEED_OF_LIGHT,
-           &lt;span style="color: #008000;"&gt;"Speed of light in vacuum (m/s)."&lt;/span&gt;);
-  
-  defconst(env, &lt;span style="color: #008000;"&gt;"GSL-CONST-MKSA-PLANCKS-CONSTANT-H"&lt;/span&gt;,
-           GSL_CONST_MKSA_PLANCKS_CONSTANT_H,
-           &lt;span style="color: #008000;"&gt;"Plank's constant, h"&lt;/span&gt;);
-
-  &lt;span style="color: #8D8D84;"&gt;// &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;This is what allows the shared library to provide a feature &lt;/span&gt;
-  &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;provide&lt;/span&gt; = env-&amp;gt;intern(env, &lt;span style="color: #008000;"&gt;"provide"&lt;/span&gt;);
-  &lt;span style="color: #6434A3;"&gt;emacs_value&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;provide_args&lt;/span&gt;[] = { env-&amp;gt;intern(env, &lt;span style="color: #008000;"&gt;"gsl-constants"&lt;/span&gt;) };
-  env-&amp;gt;funcall(env, provide, 1, provide_args);
-  
-  &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; 0;
-}
-&lt;/pre&gt;
-&lt;/div&gt;
-
-
-&lt;p&gt;
-Regular gcc will work to compile this module. 
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-sh"&gt;rm -f gsl-constants.so gsl-constants.o
-gcc -Wall -I/usr/local/include -fPIC -c gsl-constants.c
-gcc -shared -L/usr/local/include -lgsl -o gsl-constants.so gsl-constants.o
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-Here is in action. 
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-emacs-lisp"&gt;(add-to-list 'load-path &lt;span style="color: #008000;"&gt;"/Users/jkitchin/vc/blogofile-jkitchin.github.com/_blog/dynamic-module/"&lt;/span&gt;)
-(&lt;span style="color: #0000FF;"&gt;require&lt;/span&gt; '&lt;span style="color: #D0372D;"&gt;gsl-constants&lt;/span&gt;)
-GSL-CONST-MKSA-SPEED-OF-LIGHT
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-299792458.0
-
-&lt;/pre&gt;
-
-&lt;p&gt;
-We can see there is a docstring on that constant:
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-emacs-lisp"&gt;(describe-variable 'GSL-CONST-MKSA-SPEED-OF-LIGHT)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-GSL-CONST-MKSA-SPEED-OF-LIGHT's value is 299792458.0
-
-
-  This variable can be risky when used as a file-local variable.
-
-Documentation:
-Speed of light in vacuum (m/s).
-
-For more information check the manuals.
-
-&lt;/pre&gt;
-
-
-&lt;p&gt;
-It is worth thinking about what we accomplished here. The value of each constant in GSL is stored in a header file. The units are stored in a comment next to the value, and the documentation is in an html page somewhere. It is not easy to introspect that! Getting it all into an Emacs variable makes that more introspectable, and findable. That means while typing elisp code you will get completion on these variables. Check this out:
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-emacs-lisp"&gt;(apropos-variable &lt;span style="color: #008000;"&gt;"GSL-*"&lt;/span&gt;)
-(&lt;span style="color: #0000FF;"&gt;with-current-buffer&lt;/span&gt; &lt;span style="color: #008000;"&gt;"*Apropos*"&lt;/span&gt; (buffer-string))
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-Type RET on a type label to view its full documentation.
-
-GSL-CONST-MKSA-PLANCKS-CONSTANT-H
-  Variable: Plank's constant, h
-GSL-CONST-MKSA-SPEED-OF-LIGHT
-  Variable: Speed of light in vacuum (m/s).
-
-&lt;/pre&gt;
-
-&lt;p&gt;
-It seems like it might be possible to partially automate creation of this module by parsing the gsl_const*.h files. There is no automating adding the doc strings though, I am pretty sure that will have to be done by hand ;(
-&lt;/p&gt;
-&lt;p&gt;Copyright (C) 2017 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
-&lt;p&gt;&lt;a href="/org/2017/07/10/Adding-GSL-constants-to-Emacs-in-a-dynamic-module.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
 &lt;p&gt;Org-mode version = 9.0.7&lt;/p&gt;]]></content>
   </entry>
 </feed>
