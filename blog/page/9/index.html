@@ -84,6 +84,930 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Find-stuff-in-org-mode-anywhere"></div>
+      <h2 class="blog_post_title"><a href="/blog/2017/01/03/Find-stuff-in-org-mode-anywhere/" rel="bookmark" title="Permanent Link to Find stuff in org-mode anywhere">Find stuff in org-mode anywhere</a></h2>
+      <p><small><span class="blog_post_date">Posted January 03, 2017 at 02:33 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/database/'>database</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2017/01/03/Find-stuff-in-org-mode-anywhere#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org961d2be">1. The database design</a></li>
+<li><a href="#orgbda3471">2. Querying the link table</a></li>
+<li><a href="#org8284133">3. Headline queries</a></li>
+<li><a href="#org7d75505">4. Keyword queries</a></li>
+<li><a href="#org08feb51">5. Full text search</a></li>
+<li><a href="#orgbb3d71f">6. Summary</a></li>
+</ul>
+</div>
+</div>
+<p>
+I use org-mode <i>extensively</i>. I write scientific papers, keep notes on meetings, write letters of recommendation, notes on scientific articles, keep TODO lists in projects, help files for software, write lecture notes, students send me homework solutions in it, it is a contact database, &#x2026; Some files are on Dropbox, Google Drive, Box, some in git repos, etc. The problem is that leads to org-files everywhere on my hard drive. At this point I have several thousand org-files that span about five years of work.
+</p>
+
+<p>
+It is not that easy after a while to find them. Yes there are things like recent-files, bookmarks, counsel-find-file, helm-for-files, counsel/helm-locate, helm/counsel-grep/ag/pt, projectile for searching within a project, a slew of tools to search open buffers, there is <a href="https://www.lesbonscomptes.com/recoll/">recoll</a>, etc&#x2026; There are desktop search tools, and of course, good organization habits. Over a five year time span though, these change, and I have yet to find a solution to finding what I want. What about a file I made a year ago that is not in the current directory or this project, and not in my org-agenda-files list? How do I get a dynamic todo list across all these files? Or find all the files that cite a particular bibtex entry, or that were authored by a particular student?
+</p>
+
+<p>
+Previously, <a href="http://kitchingroup.cheme.cmu.edu/blog/2015/07/06/Indexing-headlines-in-org-files-with-swish-e-with-laser-sharp-results/">I indexed org files with Swish-e</a> to make it easy to search them, with an ability to search just headlines, or paragraphs, etc. The problem with that is the nightly indexing was slow since I basically had to regenerate the database each time due to limitations in Swish-e. Finally I have gotten around to the next iteration of this idea, which is a better database. In this post, I explore using sqlite to store headlines and links in org-files.
+</p>
+
+<p>
+The idea is that anytime I open or save <i>any</i> org file, it will be added/updated in the database. The database will store the headlines and its properties and content, as well as the location and properties of all links and file keywords. That means I should be able to efficiently query all org files I have ever visited to find TODO headlines, tagged headlines, different types of links, etc. Here we try it out and see if it is useful.
+</p>
+
+
+<div id="outline-container-org961d2be" class="outline-2">
+<h2 id="org961d2be"><span class="section-number-2">1</span> The database design</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+I used <a href="https://github.com/skeeto/emacsql">emacsql</a> to create and interact with a sqlite3 database. It is a lispy way to generate SQL queries. I will not talk about the code much here, you can see this version <a href="/media/org-db.el">org-db.el</a> . The database design consists of several tables that contain the filenames, headlines, tags, properties, (optionally) headline-content, headline-tags, headline-properties, and links. The lisp code is a work in progress, and not something I use on a daily basis yet. This post is a proof of concept to see how well this approach works. 
+</p>
+
+<p>
+I use hooks to update the database when an org-file is opened (only if it is different than what is in the database based on an md5 hash) and when it is saved. Basically, these functions delete the current entries in the database for a file, then use regular expressions to go to each headline or link in the file, and add data back to the database. I found this to be faster than parsing the org-file with org-element especially for large files. Since this is all done by a hook, anytime I open an org-file anywhere it gets added/updated to the database. The performance of this is ok. This approach will not guarantee the database is 100% accurate all the time (e.g. if something modifies the file outside of emacs, like a git pull), but it doesn't need to be. Most of the files do not change often, the database gets updated each time you open a file, and you can always reindex the database from files it knows about. Time will tell how often that seems necessary.
+</p>
+
+<p>
+emacsql lets you use lisp code to generate SQL that is sent to the database. Here is an example:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql-flatten-sql [<span style="color: #006FE0;">:select</span> [name] <span style="color: #006FE0;">:from</span> main:sqlite_master <span style="color: #006FE0;">:where</span> (= type table)])
+</pre>
+</div>
+
+<pre class="example">
+SELECT name FROM main.sqlite_master WHERE type = "table";
+</pre>
+
+<p>
+There are some nuances, for example, main:sqlite_master gets converted to main.sqlite_master. You use vectors, keywords, and sexps to setup the command. emacsql will turn a name like filename-id into filename_id. It was not too difficulty to figure out, and the author of emacsql was really helpful on a few points. I will be referring to this post in the future to remember some of these nuances!
+</p>
+
+<p>
+Here is a list of tables in the database. There are a few primary tables, and then some that store tags, properties, and keywords on the headlines. This is typical of emacsql code; it is a lisp expression that generates SQL.  In this next expression org-db is a variable that stores the database connection created in org-db.el.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> [name] <span style="color: #006FE0;">:from</span> main:sqlite_master <span style="color: #006FE0;">:where</span> (= type table)])
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">files</td>
+</tr>
+
+<tr>
+<td class="org-left">tags</td>
+</tr>
+
+<tr>
+<td class="org-left">properties</td>
+</tr>
+
+<tr>
+<td class="org-left">keywords</td>
+</tr>
+
+<tr>
+<td class="org-left">headlines</td>
+</tr>
+
+<tr>
+<td class="org-left">headline_content</td>
+</tr>
+
+<tr>
+<td class="org-left">headline_content_content</td>
+</tr>
+
+<tr>
+<td class="org-left">headline_content_segments</td>
+</tr>
+
+<tr>
+<td class="org-left">headline_content_segdir</td>
+</tr>
+
+<tr>
+<td class="org-left">headline_content_docsize</td>
+</tr>
+
+<tr>
+<td class="org-left">headline_content_stat</td>
+</tr>
+
+<tr>
+<td class="org-left">headline_tags</td>
+</tr>
+
+<tr>
+<td class="org-left">headline_properties</td>
+</tr>
+
+<tr>
+<td class="org-left">file_keywords</td>
+</tr>
+
+<tr>
+<td class="org-left">links</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Here is a description of the columns in the files table:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:pragma</span> (funcall table_info files)])
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+
+<col  class="org-left" />
+
+<col  class="org-right" />
+
+<col  class="org-left" />
+
+<col  class="org-right" />
+
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-right">0</td>
+<td class="org-left">rowid</td>
+<td class="org-right">INTEGER</td>
+<td class="org-left">0</td>
+<td class="org-right">nil</td>
+<td class="org-right">1</td>
+</tr>
+
+<tr>
+<td class="org-right">1</td>
+<td class="org-left">filename</td>
+<td class="org-right">0</td>
+<td class="org-left">nil</td>
+<td class="org-right">0</td>
+<td class="org-right">&#xa0;</td>
+</tr>
+
+<tr>
+<td class="org-right">2</td>
+<td class="org-left">md5</td>
+<td class="org-right">0</td>
+<td class="org-left">nil</td>
+<td class="org-right">0</td>
+<td class="org-right">&#xa0;</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+and the headlines table.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:pragma</span> (funcall table_info headlines)])
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+
+<col  class="org-left" />
+
+<col  class="org-right" />
+
+<col  class="org-left" />
+
+<col  class="org-right" />
+
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-right">0</td>
+<td class="org-left">rowid</td>
+<td class="org-right">INTEGER</td>
+<td class="org-left">0</td>
+<td class="org-right">nil</td>
+<td class="org-right">1</td>
+</tr>
+
+<tr>
+<td class="org-right">1</td>
+<td class="org-left">filename_id</td>
+<td class="org-right">0</td>
+<td class="org-left">nil</td>
+<td class="org-right">0</td>
+<td class="org-right">&#xa0;</td>
+</tr>
+
+<tr>
+<td class="org-right">2</td>
+<td class="org-left">title</td>
+<td class="org-right">0</td>
+<td class="org-left">nil</td>
+<td class="org-right">0</td>
+<td class="org-right">&#xa0;</td>
+</tr>
+
+<tr>
+<td class="org-right">3</td>
+<td class="org-left">level</td>
+<td class="org-right">0</td>
+<td class="org-left">nil</td>
+<td class="org-right">0</td>
+<td class="org-right">&#xa0;</td>
+</tr>
+
+<tr>
+<td class="org-right">4</td>
+<td class="org-left">todo_keyword</td>
+<td class="org-right">0</td>
+<td class="org-left">nil</td>
+<td class="org-right">0</td>
+<td class="org-right">&#xa0;</td>
+</tr>
+
+<tr>
+<td class="org-right">5</td>
+<td class="org-left">todo_type</td>
+<td class="org-right">0</td>
+<td class="org-left">nil</td>
+<td class="org-right">0</td>
+<td class="org-right">&#xa0;</td>
+</tr>
+
+<tr>
+<td class="org-right">6</td>
+<td class="org-left">archivedp</td>
+<td class="org-right">0</td>
+<td class="org-left">nil</td>
+<td class="org-right">0</td>
+<td class="org-right">&#xa0;</td>
+</tr>
+
+<tr>
+<td class="org-right">7</td>
+<td class="org-left">commentedp</td>
+<td class="org-right">0</td>
+<td class="org-left">nil</td>
+<td class="org-right">0</td>
+<td class="org-right">&#xa0;</td>
+</tr>
+
+<tr>
+<td class="org-right">8</td>
+<td class="org-left">footnote_section_p</td>
+<td class="org-right">0</td>
+<td class="org-left">nil</td>
+<td class="org-right">0</td>
+<td class="org-right">&#xa0;</td>
+</tr>
+
+<tr>
+<td class="org-right">9</td>
+<td class="org-left">begin</td>
+<td class="org-right">0</td>
+<td class="org-left">nil</td>
+<td class="org-right">0</td>
+<td class="org-right">&#xa0;</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Tags and properties on a headline are stored in headline-tags and headline-properties. 
+</p>
+
+<p>
+The database is not large if all it has is headlines and links (no content). It got up to half a GB with content, and seemed a little slow, so for this post I leave the content out.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh">du -hs ~/org-db/org-db.sqlite
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">56M</td>
+<td class="org-left">/Users/jkitchin/org-db/org-db.sqlite</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Here we count how many files are in the database. These are just the org-files in my Dropbox folder. There are a lot of them! If I include all the org-files from my research and teaching projects this number grows to about 10,000! You do not want to run org-map-entries on that. Note this also includes all of the org_archive files.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> (funcall count) <span style="color: #006FE0;">:from</span> files])
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-right">1569</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Here is the headlines count. You can see there is no chance of remembering where these are because there are so many!
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> (funcall count) <span style="color: #006FE0;">:from</span> headlines])
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-right">38587</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+And the links. So many links!
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> (funcall count) <span style="color: #006FE0;">:from</span> links])
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-right">303739</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+That is a surprising number of links. 
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgbda3471" class="outline-2">
+<h2 id="orgbda3471"><span class="section-number-2">2</span> Querying the link table</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+Let's see how many are cite links from org-ref there are.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> (funcall count) <span style="color: #006FE0;">:from</span> links <span style="color: #006FE0;">:where</span> (= type <span style="color: #008000;">"cite"</span>)])
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-right">14766</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Wow, I find that to also be surprisingly large!  I make a living writing proposals and scientific papers, and I wrote org-ref to make that easier, so maybe it should not be so surprising. We can search the link database for files containing citations of "kitchin-2015-examp" like this.  The links table only stores the filename-id, so we join it with the files table to get useful information. Here we show the list of files that contain a citation of that reference. It is a mix of manuscripts, proposals, presentations, documentation files and notes.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> <span style="color: #006FE0;">:distinct</span> [files:filename]
+                 <span style="color: #006FE0;">:from</span> links <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> files <span style="color: #006FE0;">:on</span> (= links:filename-id files:rowid) 
+                 <span style="color: #006FE0;">:where</span> (<span style="color: #0000FF;">and</span> (= type <span style="color: #008000;">"cite"</span>) (like path <span style="color: #008000;">"%kitchin-2015-examp%"</span>))])
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/2015/Research_Data_Publishing_Paper/manuscript.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/2015/Research_Data_Publishing_Paper/manuscript-2015-06-29/manuscript.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/2015/Research_Data_Publishing_Paper/manuscript-2015-10-10/manuscript.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/2015/Research_Data_Publishing_Paper/manuscript-2016-03-09/manuscript.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/2015/Research_Data_Publishing_Paper/manuscript-2016-04-18/manuscript.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/2015/human-readable-data/manuscript.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/@archive/2015/Research_Data_Publishing_Paper/manuscript.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/@archive/2015/Research_Data_Publishing_Paper/manuscript-2015-06-29/manuscript.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/@archive/2015/Research_Data_Publishing_Paper/manuscript-2015-10-10/manuscript.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/@archive/2015/Research_Data_Publishing_Paper/manuscript-2016-03-09/manuscript.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/@archive/2015/Research_Data_Publishing_Paper/manuscript-2016-04-18/manuscript.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/manuscripts/@archive/2015/human-readable-data/manuscript.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/meetings/@archive/2015/BES-2015/doe-bes-wed-data-briefing/doe-bes-wed-data-sharing.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/meetings/@archive/2015/NIST-july-2015/data-sharing.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/meetings/@archive/2015/UD-webinar/ud-webinar.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/meetings/@archive/2016/AICHE/data-sharing/data-sharing.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/meetings/@archive/2016/Spring-ACS/data-sharing/data-sharing.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/projects/DOE-Early-Career/annual-reports/final-report/kitchin-DESC0004031-final-report.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/proposals/@archive/2015/DOE-renewal/proposal-v2.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/proposals/@archive/2015/DOE-renewal/archive/proposal.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/proposals/@archive/2016/DOE-single-atom-alloy/proposal.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/proposals/@archive/2016/MRSEC/MRSEC-IRG-metastable-materials-preproposal/IRG-concept.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/proposals/@archive/2016/ljaf-open-science/kitchin-proposal.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/proposals/@archive/2016/nsf-germination/project-description.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/proposals/@archive/2016/nsf-reu-supplement/project-description.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/CMU/proposals/@archive/2016/proctor-and-gamble-education/proposal.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/bibliography/notes.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/kitchingroup/jmax/org-ref/citeproc/readme.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/kitchingroup/jmax/org-ref/citeproc/readme-unsrt.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/kitchingroup/jmax/org-ref/citeproc/readme-author-year.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/kitchingroup/jmax/org-ref/tests/test-1.org</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/kitchingroup/jmax/org-ref/tests/sandbox/elpa/org-ref-20160122.1725/citeproc/readme.org</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Obviously we could use this to generate candidates for something like helm or ivy like this. 
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(ivy-read <span style="color: #008000;">"Open: "</span> (emacsql org-db [<span style="color: #006FE0;">:select</span> [files:filename links:begin]
+                                    <span style="color: #006FE0;">:from</span> links <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> files <span style="color: #006FE0;">:on</span> (= links:filename-id files:rowid) 
+                                    <span style="color: #006FE0;">:where</span> (<span style="color: #0000FF;">and</span> (= type <span style="color: #008000;">"cite"</span>) (like path <span style="color: #008000;">"%kitchin-2015-examp%"</span>))])
+          <span style="color: #006FE0;">:action</span> '(1 (<span style="color: #008000;">"o"</span>
+                       (<span style="color: #0000FF;">lambda</span> (c)
+                         (find-file (car c))
+                         (goto-char (nth 1 c))
+                         (org-show-entry)))))
+</pre>
+</div>
+
+<pre class="example">
+/Users/jkitchin/Dropbox/CMU/manuscripts/2015/human-readable-data/manuscript.org
+</pre>
+
+<p>
+Now, you can find every org-file containing any bibtex key as a citation. Since SQL is the query language, you should be able to build really sophisticated queries that combine filters for multiple citations, different kinds of citations, etc.
+</p>
+</div>
+</div>
+
+<div id="outline-container-org8284133" class="outline-2">
+<h2 id="org8284133"><span class="section-number-2">3</span> Headline queries</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+Every headline is stored, along with its location, tags and properties. We can use the database to find headlines that are tagged or with certain properties. You can see here I have 293 tags in the database.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> (funcall count) <span style="color: #006FE0;">:from</span> tags])
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-right">293</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Here we find headlines tagged with electrolyte. I tagged some papers I read with this at some point.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> <span style="color: #006FE0;">:distinct</span> [files:filename headlines:title]
+                 <span style="color: #006FE0;">:from</span> headlines <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> headline-tags <span style="color: #006FE0;">:on</span> (=  headlines:rowid headline-tags:headline-id)
+                 <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> tags <span style="color: #006FE0;">:on</span> (= tags:rowid headline-tags:tag-id)
+                 <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> files <span style="color: #006FE0;">:on</span> (= headlines:filename-id files:rowid)
+                 <span style="color: #006FE0;">:where</span> (= tags:tag <span style="color: #008000;">"electrolyte"</span>) <span style="color: #006FE0;">:limit</span> 5])
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/org-mode/prj-doe-early-career.org</td>
+<td class="org-left">2010 - Nickel-borate oxygen-evolving catalyst that functions under benign conditions</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/bibliography/notes.org</td>
+<td class="org-left">1971 - A Correlation of the Solution Properties and the  Electrochemical Behavior of the Nickel Hydroxide  Electrode in Binary Aqueous Alkali Hydroxides</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/bibliography/notes.org</td>
+<td class="org-left">1981 - Studies concerning charged nickel hydroxide electrodes IV. Reversible potentials in LiOH, NaOH, RbOH and CsOH</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/bibliography/notes.org</td>
+<td class="org-left">1986 - The effect of lithium in preventing iron poisoning in the nickel hydroxide electrode</td>
+</tr>
+
+<tr>
+<td class="org-left">/Users/jkitchin/Dropbox/bibliography/notes.org</td>
+<td class="org-left">1996 - The role of lithium in preventing the detrimental effect of iron on alkaline battery nickel hydroxide electrode: A mechanistic aspect</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Here we see how many entries have an EMAIL property. These could serve as contacts to send email to.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> [(funcall count)] <span style="color: #006FE0;">:from</span>
+                 headlines <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> headline-properties <span style="color: #006FE0;">:on</span> (=  headlines:rowid headline-properties:headline-id)
+                 <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> properties <span style="color: #006FE0;">:on</span> (= properties:rowid headline-properties:property-id)
+                 <span style="color: #006FE0;">:where</span> (<span style="color: #0000FF;">and</span> (= properties:property <span style="color: #008000;">"EMAIL"</span>) (not (null headline-properties:value)))])
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-right">7452</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+If you want to see the ones that match "jkitchin", here they are. 
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> <span style="color: #006FE0;">:distinct</span> [headlines:title headline-properties:value] <span style="color: #006FE0;">:from</span>
+             headlines <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> headline-properties <span style="color: #006FE0;">:on</span> (=  headlines:rowid headline-properties:headline-id)
+             <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> properties <span style="color: #006FE0;">:on</span> (= properties:rowid headline-properties:property-id)
+             <span style="color: #006FE0;">:where</span> (<span style="color: #0000FF;">and</span> (= properties:property <span style="color: #008000;">"EMAIL"</span>) (like headline-properties:value <span style="color: #008000;">"%jkitchin%"</span>))])
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">John Kitchin</td>
+<td class="org-left">jkitchin@andrew.cmu.edu</td>
+</tr>
+
+<tr>
+<td class="org-left">John Kitchin</td>
+<td class="org-left">jkitchin@cmu.edu</td>
+</tr>
+
+<tr>
+<td class="org-left">Kitchin, John</td>
+<td class="org-left">jkitchin@andrew.cmu.edu</td>
+</tr>
+</tbody>
+</table>
+
+
+<p>
+Here is a query to find the number of headlines where the deadline matches 2017. Looks like I am already busy!
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> (funcall count) <span style="color: #006FE0;">:from</span>
+             headlines <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> headline-properties <span style="color: #006FE0;">:on</span> (=  headlines:rowid headline-properties:headline-id)
+             <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> properties <span style="color: #006FE0;">:on</span> (= properties:rowid headline-properties:property-id)
+             <span style="color: #006FE0;">:where</span> (<span style="color: #0000FF;">and</span> (= properties:property <span style="color: #008000;">"DEADLINE"</span>) (glob headline-properties:value <span style="color: #008000;">"*2017*"</span>))])
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-right">50</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<div id="outline-container-org7d75505" class="outline-2">
+<h2 id="org7d75505"><span class="section-number-2">4</span> Keyword queries</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+We also store file keywords, so we can search on document titles, authors, etc. Here are five documents with titles longer than 35 characters sorted in descending order. 
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> <span style="color: #006FE0;">:distinct</span> [value] <span style="color: #006FE0;">:from</span>
+                 file-keywords <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> keywords <span style="color: #006FE0;">:on</span> (= file-keywords:keyword-id keywords:rowid)
+                 <span style="color: #006FE0;">:where</span> (<span style="color: #0000FF;">and</span> (&gt; (funcall length value) 35) (= keywords:keyword <span style="color: #008000;">"TITLE"</span>))
+                 <span style="color: #006FE0;">:order</span> <span style="color: #006FE0;">:by</span> value <span style="color: #006FE0;">:desc</span>
+                 <span style="color: #006FE0;">:limit</span> 5])
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">pycse - Python3 Computations in Science and Engineering</td>
+</tr>
+
+<tr>
+<td class="org-left">org-show - simple presentations in org-mode</td>
+</tr>
+
+<tr>
+<td class="org-left">org-mode - A Human Readable, Machine Addressable Approach to Data Archiving and Sharing in Science and Engineering</td>
+</tr>
+
+<tr>
+<td class="org-left">modifying emacs to make typing easier.</td>
+</tr>
+
+<tr>
+<td class="org-left">jmax - John's customizations to maximize Emacs</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+It is possible to search on AUTHOR, and others. My memos have a #+SUBJECT keyword, so I can find memos on a subject. They also use the LATEX_CLASS of cmu-memo, so I can find all of them easily too:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emacsql org-db [<span style="color: #006FE0;">:select</span> [(funcall count)] <span style="color: #006FE0;">:from</span>
+                 file-keywords <span style="color: #006FE0;">:inner</span> <span style="color: #006FE0;">:join</span> keywords <span style="color: #006FE0;">:on</span> (= file-keywords:keyword-id keywords:rowid)
+                 <span style="color: #006FE0;">:where</span> (<span style="color: #0000FF;">and</span> (= value <span style="color: #008000;">"cmu-memo"</span>) (= keywords:keyword <span style="color: #008000;">"LATEX_CLASS"</span>))
+                 <span style="color: #006FE0;">:limit</span> 5])
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-right">119</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+How about that, 119 memos&#x2026; Still it sure is nice to be able to find them.
+</p>
+</div>
+</div>
+
+<div id="outline-container-org08feb51" class="outline-2">
+<h2 id="org08feb51"><span class="section-number-2">5</span> Full text search</h2>
+<div class="outline-text-2" id="text-5">
+<p>
+In theory, the database has a table for the headline content, and it should be fully searchable. I found the database got a little sluggish, and nearly 1/2 a GB in size when using it so I am leaving it out for now.
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgbb3d71f" class="outline-2">
+<h2 id="orgbb3d71f"><span class="section-number-2">6</span> Summary</h2>
+<div class="outline-text-2" id="text-6">
+<p>
+The foundation for something really good is here. It is still a little tedious to wrote the queries with all the table joins, but some of that could be wrapped into a function for a query. I like the lispy style of the queries, although it can be tricky to map all the concepts onto SQL. A function that might wrap this could look like this:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(org-db-query (<span style="color: #0000FF;">and</span> (= properties:property <span style="color: #008000;">"DEADLINE"</span>) (glob headline-properties:value <span style="color: #008000;">"*2017*"</span>)))
+</pre>
+</div>
+
+<p>
+This is what it would ideally look like using the org tag/property match syntax. Somehow that string would have to get expanded to generate the code above. I do not have a sense for how difficult that would be. It might not be hard with <a href="https://github.com/skeeto/rdp">a recursive descent parser</a>, written by the same author as emacsql.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(org-db-query <span style="color: #008000;">"DEADLINE={2017}"</span>)
+</pre>
+</div>
+
+<p>
+The performance is only ok. For large org files there is a notable lag in updating the database, which is notable because while updating, Emacs is blocked. I could try using an idle timer for updates with a queue, or get more clever about when to update. It is not essential that the updates be real-time, only that they are reasonably accurate or done by the time I next search. For now, it is not too annoying though. As a better database, I have had my eye on <a href="https://xapian.org">xapian</a> since that is what mu4e (and notmuch) uses. It might be good to have an external library for parsing org-files, i.e. not through emacs, for this. It would certainly be faster. It seems like a big project though, maybe next summer ;)
+</p>
+
+<p>
+Another feature this might benefit from is ignore patterns, or some file feature that prevents it from being indexed. For example, I keep an encrypted password file in org-mode, but as soon as I opened it, it got indexed right into the database, in plain text. If you walk your file system, it might make sense to avoid some directories, like .dropbox.cache. Otherwise, this still looks like a promising approach. 
+</p>
+</div>
+</div>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/01/03/Find-stuff-in-org-mode-anywhere.org">org-mode source</a></p>
+<p>Org-mode version = 9.0.3</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/01/03/Find-stuff-in-org-mode-anywhere#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="2016-in-a-nutshell-for-the-Kitchin-Research-group"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/01/01/2016-in-a-nutshell-for-the-Kitchin-Research-group/" rel="bookmark" title="Permanent Link to 2016 in a nutshell for the Kitchin Research group">2016 in a nutshell for the Kitchin Research group</a></h2>
       <p><small><span class="blog_post_date">Posted January 01, 2017 at 06:13 PM</span> | categories:
@@ -328,7 +1252,7 @@ Google analytics on matlab.cheme.cmu.edu for 2016.
       <div id="Context-specific-org-mode-speed-keys"></div>
       <h2 class="blog_post_title"><a href="/blog/2016/12/22/Context-specific-org-mode-speed-keys/" rel="bookmark" title="Permanent Link to Context-specific org-mode speed keys">Context-specific org-mode speed keys</a></h2>
       <p><small><span class="blog_post_date">Posted December 22, 2016 at 01:18 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2016/12/22/Context-specific-org-mode-speed-keys#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -410,7 +1334,7 @@ Org-mode already had this feature in mind for speed keys. All you have to do is 
       <div id="Persistent-highlighting-in-Emacs"></div>
       <h2 class="blog_post_title"><a href="/blog/2016/11/10/Persistent-highlighting-in-Emacs/" rel="bookmark" title="Permanent Link to Persistent highlighting in Emacs">Persistent highlighting in Emacs</a></h2>
       <p><small><span class="blog_post_date">Posted November 10, 2016 at 09:16 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2016/11/10/Persistent-highlighting-in-Emacs#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -523,7 +1447,7 @@ Here are few limitations though:
       <div id="New-and-improved-asynchronous-org-babel-python-blocks"></div>
       <h2 class="blog_post_title"><a href="/blog/2016/11/09/New-and-improved-asynchronous-org-babel-python-blocks/" rel="bookmark" title="Permanent Link to New and improved asynchronous org-babel python blocks">New and improved asynchronous org-babel python blocks</a></h2>
       <p><small><span class="blog_post_date">Posted November 09, 2016 at 11:00 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2016/11/09/New-and-improved-asynchronous-org-babel-python-blocks#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -731,149 +1655,6 @@ KeyboardInterrupt
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2016/11/09/New-and-improved-asynchronous-org-babel-python-blocks#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="New-color-link-in-org-9-0-using-font-lock-to-color-the-text"></div>
-      <h2 class="blog_post_title"><a href="/blog/2016/11/08/New-color-link-in-org-9-0-using-font-lock-to-color-the-text/" rel="bookmark" title="Permanent Link to New color link in org 9.0 using font-lock to color the text">New color link in org 9.0 using font-lock to color the text</a></h2>
-      <p><small><span class="blog_post_date">Posted November 08, 2016 at 06:36 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2016/11/08/New-color-link-in-org-9-0-using-font-lock-to-color-the-text#disqus_thread">View Comments</a>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<div id="table-of-contents">
-<h2>Table of Contents</h2>
-<div id="text-table-of-contents">
-<ul>
-<li><a href="#org7a9df33">1. Code for the color link</a></li>
-</ul>
-</div>
-</div>
-<p>
-I previously blogged about <a href="http://kitchingroup.cheme.cmu.edu/blog/2016/01/16/Colored-text-in-org-mode-with-export-to-HTML/">colored text in org-mode</a> using links. Back in org 8.0, we had to do some tricky work with font-lock to get the colors to work, and particularly had to use overlays to get reliable coloring. Org 9.0 improves this a lot, with the font-lock built right in, and some other nice features like completion. The integration of font-lock means we do not have to deal with overlays! Here is what it looks like in my buffer:
-</p>
-
-<p>
-<img src="/media/date-08-11-2016-time-18-31-18.png"> 
-</p>
-
-<p>
-And it exports nicely to HTML. You can see the code here: <a href="#org7a9df33">Code for the color link</a>. This is good for small bits of text you want colored. It is not good for paragraphs, or text with line breaks in it, because links do not support that. It also is not useful in code blocks since the link syntax would break the code. You need an alternative approach for those applications which is more complicated than these simple links. One nice feature of this is the persistence (I mean it comes back when you open the file after closing it) of the color since it is explicit markup in the file.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">loop</span> for color in color-name-rgb-alist
-      do
-      (princ (format <span style="color: #008000;">"[[color:%s][Text colored in %s]] "</span> (car color) (car color))))
-</pre>
-</div>
-
-<p>
-<span style="color: rgb(255,250,250)">Text colored in snow</span> <span style="color: rgb(248,248,255)">Text colored in ghostwhite</span> <span style="color: rgb(245,245,245)">Text colored in whitesmoke</span> <span style="color: rgb(220,220,220)">Text colored in gainsboro</span> <span style="color: rgb(255,250,240)">Text colored in floralwhite</span> <span style="color: rgb(253,245,230)">Text colored in oldlace</span> <span style="color: rgb(250,240,230)">Text colored in linen</span> <span style="color: rgb(250,235,215)">Text colored in antiquewhite</span> <span style="color: rgb(255,239,213)">Text colored in papayawhip</span> <span style="color: rgb(255,235,205)">Text colored in blanchedalmond</span> <span style="color: rgb(255,228,196)">Text colored in bisque</span> <span style="color: rgb(255,218,185)">Text colored in peachpuff</span> <span style="color: rgb(255,222,173)">Text colored in navajowhite</span> <span style="color: rgb(255,228,181)">Text colored in moccasin</span> <span style="color: rgb(255,248,220)">Text colored in cornsilk</span> <span style="color: rgb(255,255,240)">Text colored in ivory</span> <span style="color: rgb(255,250,205)">Text colored in lemonchiffon</span> <span style="color: rgb(255,245,238)">Text colored in seashell</span> <span style="color: rgb(240,255,240)">Text colored in honeydew</span> <span style="color: rgb(245,255,250)">Text colored in mintcream</span> <span style="color: rgb(240,255,255)">Text colored in azure</span> <span style="color: rgb(240,248,255)">Text colored in aliceblue</span> <span style="color: rgb(230,230,250)">Text colored in lavender</span> <span style="color: rgb(255,240,245)">Text colored in lavenderblush</span> <span style="color: rgb(255,228,225)">Text colored in mistyrose</span> <span style="color: rgb(255,255,255)">Text colored in white</span> <span style="color: rgb(0,0,0)">Text colored in black</span> <span style="color: rgb(47,79,79)">Text colored in darkslategray</span> <span style="color: rgb(47,79,79)">Text colored in darkslategrey</span> <span style="color: rgb(105,105,105)">Text colored in dimgray</span> <span style="color: rgb(105,105,105)">Text colored in dimgrey</span> <span style="color: rgb(112,128,144)">Text colored in slategray</span> <span style="color: rgb(112,128,144)">Text colored in slategrey</span> <span style="color: rgb(119,136,153)">Text colored in lightslategray</span> <span style="color: rgb(119,136,153)">Text colored in lightslategrey</span> <span style="color: rgb(190,190,190)">Text colored in gray</span> <span style="color: rgb(190,190,190)">Text colored in grey</span> <span style="color: rgb(211,211,211)">Text colored in lightgrey</span> <span style="color: rgb(211,211,211)">Text colored in lightgray</span> <span style="color: rgb(25,25,112)">Text colored in midnightblue</span> <span style="color: rgb(0,0,128)">Text colored in navy</span> <span style="color: rgb(0,0,128)">Text colored in navyblue</span> <span style="color: rgb(100,149,237)">Text colored in cornflowerblue</span> <span style="color: rgb(72,61,139)">Text colored in darkslateblue</span> <span style="color: rgb(106,90,205)">Text colored in slateblue</span> <span style="color: rgb(123,104,238)">Text colored in mediumslateblue</span> <span style="color: rgb(132,112,255)">Text colored in lightslateblue</span> <span style="color: rgb(0,0,205)">Text colored in mediumblue</span> <span style="color: rgb(65,105,225)">Text colored in royalblue</span> <span style="color: rgb(0,0,255)">Text colored in blue</span> <span style="color: rgb(30,144,255)">Text colored in dodgerblue</span> <span style="color: rgb(0,191,255)">Text colored in deepskyblue</span> <span style="color: rgb(135,206,235)">Text colored in skyblue</span> <span style="color: rgb(135,206,250)">Text colored in lightskyblue</span> <span style="color: rgb(70,130,180)">Text colored in steelblue</span> <span style="color: rgb(176,196,222)">Text colored in lightsteelblue</span> <span style="color: rgb(173,216,230)">Text colored in lightblue</span> <span style="color: rgb(176,224,230)">Text colored in powderblue</span> <span style="color: rgb(175,238,238)">Text colored in paleturquoise</span> <span style="color: rgb(0,206,209)">Text colored in darkturquoise</span> <span style="color: rgb(72,209,204)">Text colored in mediumturquoise</span> <span style="color: rgb(64,224,208)">Text colored in turquoise</span> <span style="color: rgb(0,255,255)">Text colored in cyan</span> <span style="color: rgb(224,255,255)">Text colored in lightcyan</span> <span style="color: rgb(95,158,160)">Text colored in cadetblue</span> <span style="color: rgb(102,205,170)">Text colored in mediumaquamarine</span> <span style="color: rgb(127,255,212)">Text colored in aquamarine</span> <span style="color: rgb(0,100,0)">Text colored in darkgreen</span> <span style="color: rgb(85,107,47)">Text colored in darkolivegreen</span> <span style="color: rgb(143,188,143)">Text colored in darkseagreen</span> <span style="color: rgb(46,139,87)">Text colored in seagreen</span> <span style="color: rgb(60,179,113)">Text colored in mediumseagreen</span> <span style="color: rgb(32,178,170)">Text colored in lightseagreen</span> <span style="color: rgb(152,251,152)">Text colored in palegreen</span> <span style="color: rgb(0,255,127)">Text colored in springgreen</span> <span style="color: rgb(124,252,0)">Text colored in lawngreen</span> <span style="color: rgb(0,255,0)">Text colored in green</span> <span style="color: rgb(127,255,0)">Text colored in chartreuse</span> <span style="color: rgb(0,250,154)">Text colored in mediumspringgreen</span> <span style="color: rgb(173,255,47)">Text colored in greenyellow</span> <span style="color: rgb(50,205,50)">Text colored in limegreen</span> <span style="color: rgb(154,205,50)">Text colored in yellowgreen</span> <span style="color: rgb(34,139,34)">Text colored in forestgreen</span> <span style="color: rgb(107,142,35)">Text colored in olivedrab</span> <span style="color: rgb(189,183,107)">Text colored in darkkhaki</span> <span style="color: rgb(240,230,140)">Text colored in khaki</span> <span style="color: rgb(238,232,170)">Text colored in palegoldenrod</span> <span style="color: rgb(250,250,210)">Text colored in lightgoldenrodyellow</span> <span style="color: rgb(255,255,224)">Text colored in lightyellow</span> <span style="color: rgb(255,255,0)">Text colored in yellow</span> <span style="color: rgb(255,215,0)">Text colored in gold</span> <span style="color: rgb(238,221,130)">Text colored in lightgoldenrod</span> <span style="color: rgb(218,165,32)">Text colored in goldenrod</span> <span style="color: rgb(184,134,11)">Text colored in darkgoldenrod</span> <span style="color: rgb(188,143,143)">Text colored in rosybrown</span> <span style="color: rgb(205,92,92)">Text colored in indianred</span> <span style="color: rgb(139,69,19)">Text colored in saddlebrown</span> <span style="color: rgb(160,82,45)">Text colored in sienna</span> <span style="color: rgb(205,133,63)">Text colored in peru</span> <span style="color: rgb(222,184,135)">Text colored in burlywood</span> <span style="color: rgb(245,245,220)">Text colored in beige</span> <span style="color: rgb(245,222,179)">Text colored in wheat</span> <span style="color: rgb(244,164,96)">Text colored in sandybrown</span> <span style="color: rgb(210,180,140)">Text colored in tan</span> <span style="color: rgb(210,105,30)">Text colored in chocolate</span> <span style="color: rgb(178,34,34)">Text colored in firebrick</span> <span style="color: rgb(165,42,42)">Text colored in brown</span> <span style="color: rgb(233,150,122)">Text colored in darksalmon</span> <span style="color: rgb(250,128,114)">Text colored in salmon</span> <span style="color: rgb(255,160,122)">Text colored in lightsalmon</span> <span style="color: rgb(255,165,0)">Text colored in orange</span> <span style="color: rgb(255,140,0)">Text colored in darkorange</span> <span style="color: rgb(255,127,80)">Text colored in coral</span> <span style="color: rgb(240,128,128)">Text colored in lightcoral</span> <span style="color: rgb(255,99,71)">Text colored in tomato</span> <span style="color: rgb(255,69,0)">Text colored in orangered</span> <span style="color: rgb(255,0,0)">Text colored in red</span> <span style="color: rgb(255,105,180)">Text colored in hotpink</span> <span style="color: rgb(255,20,147)">Text colored in deeppink</span> <span style="color: rgb(255,192,203)">Text colored in pink</span> <span style="color: rgb(255,182,193)">Text colored in lightpink</span> <span style="color: rgb(219,112,147)">Text colored in palevioletred</span> <span style="color: rgb(176,48,96)">Text colored in maroon</span> <span style="color: rgb(199,21,133)">Text colored in mediumvioletred</span> <span style="color: rgb(208,32,144)">Text colored in violetred</span> <span style="color: rgb(255,0,255)">Text colored in magenta</span> <span style="color: rgb(238,130,238)">Text colored in violet</span> <span style="color: rgb(221,160,221)">Text colored in plum</span> <span style="color: rgb(218,112,214)">Text colored in orchid</span> <span style="color: rgb(186,85,211)">Text colored in mediumorchid</span> <span style="color: rgb(153,50,204)">Text colored in darkorchid</span> <span style="color: rgb(148,0,211)">Text colored in darkviolet</span> <span style="color: rgb(138,43,226)">Text colored in blueviolet</span> <span style="color: rgb(160,32,240)">Text colored in purple</span> <span style="color: rgb(147,112,219)">Text colored in mediumpurple</span> <span style="color: rgb(216,191,216)">Text colored in thistle</span> <span style="color: rgb(255,250,250)">Text colored in snow1</span> <span style="color: rgb(238,233,233)">Text colored in snow2</span> <span style="color: rgb(205,201,201)">Text colored in snow3</span> <span style="color: rgb(139,137,137)">Text colored in snow4</span> <span style="color: rgb(255,245,238)">Text colored in seashell1</span> <span style="color: rgb(238,229,222)">Text colored in seashell2</span> <span style="color: rgb(205,197,191)">Text colored in seashell3</span> <span style="color: rgb(139,134,130)">Text colored in seashell4</span> <span style="color: rgb(255,239,219)">Text colored in antiquewhite1</span> <span style="color: rgb(238,223,204)">Text colored in antiquewhite2</span> <span style="color: rgb(205,192,176)">Text colored in antiquewhite3</span> <span style="color: rgb(139,131,120)">Text colored in antiquewhite4</span> <span style="color: rgb(255,228,196)">Text colored in bisque1</span> <span style="color: rgb(238,213,183)">Text colored in bisque2</span> <span style="color: rgb(205,183,158)">Text colored in bisque3</span> <span style="color: rgb(139,125,107)">Text colored in bisque4</span> <span style="color: rgb(255,218,185)">Text colored in peachpuff1</span> <span style="color: rgb(238,203,173)">Text colored in peachpuff2</span> <span style="color: rgb(205,175,149)">Text colored in peachpuff3</span> <span style="color: rgb(139,119,101)">Text colored in peachpuff4</span> <span style="color: rgb(255,222,173)">Text colored in navajowhite1</span> <span style="color: rgb(238,207,161)">Text colored in navajowhite2</span> <span style="color: rgb(205,179,139)">Text colored in navajowhite3</span> <span style="color: rgb(139,121,94)">Text colored in navajowhite4</span> <span style="color: rgb(255,250,205)">Text colored in lemonchiffon1</span> <span style="color: rgb(238,233,191)">Text colored in lemonchiffon2</span> <span style="color: rgb(205,201,165)">Text colored in lemonchiffon3</span> <span style="color: rgb(139,137,112)">Text colored in lemonchiffon4</span> <span style="color: rgb(255,248,220)">Text colored in cornsilk1</span> <span style="color: rgb(238,232,205)">Text colored in cornsilk2</span> <span style="color: rgb(205,200,177)">Text colored in cornsilk3</span> <span style="color: rgb(139,136,120)">Text colored in cornsilk4</span> <span style="color: rgb(255,255,240)">Text colored in ivory1</span> <span style="color: rgb(238,238,224)">Text colored in ivory2</span> <span style="color: rgb(205,205,193)">Text colored in ivory3</span> <span style="color: rgb(139,139,131)">Text colored in ivory4</span> <span style="color: rgb(240,255,240)">Text colored in honeydew1</span> <span style="color: rgb(224,238,224)">Text colored in honeydew2</span> <span style="color: rgb(193,205,193)">Text colored in honeydew3</span> <span style="color: rgb(131,139,131)">Text colored in honeydew4</span> <span style="color: rgb(255,240,245)">Text colored in lavenderblush1</span> <span style="color: rgb(238,224,229)">Text colored in lavenderblush2</span> <span style="color: rgb(205,193,197)">Text colored in lavenderblush3</span> <span style="color: rgb(139,131,134)">Text colored in lavenderblush4</span> <span style="color: rgb(255,228,225)">Text colored in mistyrose1</span> <span style="color: rgb(238,213,210)">Text colored in mistyrose2</span> <span style="color: rgb(205,183,181)">Text colored in mistyrose3</span> <span style="color: rgb(139,125,123)">Text colored in mistyrose4</span> <span style="color: rgb(240,255,255)">Text colored in azure1</span> <span style="color: rgb(224,238,238)">Text colored in azure2</span> <span style="color: rgb(193,205,205)">Text colored in azure3</span> <span style="color: rgb(131,139,139)">Text colored in azure4</span> <span style="color: rgb(131,111,255)">Text colored in slateblue1</span> <span style="color: rgb(122,103,238)">Text colored in slateblue2</span> <span style="color: rgb(105,89,205)">Text colored in slateblue3</span> <span style="color: rgb(71,60,139)">Text colored in slateblue4</span> <span style="color: rgb(72,118,255)">Text colored in royalblue1</span> <span style="color: rgb(67,110,238)">Text colored in royalblue2</span> <span style="color: rgb(58,95,205)">Text colored in royalblue3</span> <span style="color: rgb(39,64,139)">Text colored in royalblue4</span> <span style="color: rgb(0,0,255)">Text colored in blue1</span> <span style="color: rgb(0,0,238)">Text colored in blue2</span> <span style="color: rgb(0,0,205)">Text colored in blue3</span> <span style="color: rgb(0,0,139)">Text colored in blue4</span> <span style="color: rgb(30,144,255)">Text colored in dodgerblue1</span> <span style="color: rgb(28,134,238)">Text colored in dodgerblue2</span> <span style="color: rgb(24,116,205)">Text colored in dodgerblue3</span> <span style="color: rgb(16,78,139)">Text colored in dodgerblue4</span> <span style="color: rgb(99,184,255)">Text colored in steelblue1</span> <span style="color: rgb(92,172,238)">Text colored in steelblue2</span> <span style="color: rgb(79,148,205)">Text colored in steelblue3</span> <span style="color: rgb(54,100,139)">Text colored in steelblue4</span> <span style="color: rgb(0,191,255)">Text colored in deepskyblue1</span> <span style="color: rgb(0,178,238)">Text colored in deepskyblue2</span> <span style="color: rgb(0,154,205)">Text colored in deepskyblue3</span> <span style="color: rgb(0,104,139)">Text colored in deepskyblue4</span> <span style="color: rgb(135,206,255)">Text colored in skyblue1</span> <span style="color: rgb(126,192,238)">Text colored in skyblue2</span> <span style="color: rgb(108,166,205)">Text colored in skyblue3</span> <span style="color: rgb(74,112,139)">Text colored in skyblue4</span> <span style="color: rgb(176,226,255)">Text colored in lightskyblue1</span> <span style="color: rgb(164,211,238)">Text colored in lightskyblue2</span> <span style="color: rgb(141,182,205)">Text colored in lightskyblue3</span> <span style="color: rgb(96,123,139)">Text colored in lightskyblue4</span> <span style="color: rgb(198,226,255)">Text colored in slategray1</span> <span style="color: rgb(185,211,238)">Text colored in slategray2</span> <span style="color: rgb(159,182,205)">Text colored in slategray3</span> <span style="color: rgb(108,123,139)">Text colored in slategray4</span> <span style="color: rgb(202,225,255)">Text colored in lightsteelblue1</span> <span style="color: rgb(188,210,238)">Text colored in lightsteelblue2</span> <span style="color: rgb(162,181,205)">Text colored in lightsteelblue3</span> <span style="color: rgb(110,123,139)">Text colored in lightsteelblue4</span> <span style="color: rgb(191,239,255)">Text colored in lightblue1</span> <span style="color: rgb(178,223,238)">Text colored in lightblue2</span> <span style="color: rgb(154,192,205)">Text colored in lightblue3</span> <span style="color: rgb(104,131,139)">Text colored in lightblue4</span> <span style="color: rgb(224,255,255)">Text colored in lightcyan1</span> <span style="color: rgb(209,238,238)">Text colored in lightcyan2</span> <span style="color: rgb(180,205,205)">Text colored in lightcyan3</span> <span style="color: rgb(122,139,139)">Text colored in lightcyan4</span> <span style="color: rgb(187,255,255)">Text colored in paleturquoise1</span> <span style="color: rgb(174,238,238)">Text colored in paleturquoise2</span> <span style="color: rgb(150,205,205)">Text colored in paleturquoise3</span> <span style="color: rgb(102,139,139)">Text colored in paleturquoise4</span> <span style="color: rgb(152,245,255)">Text colored in cadetblue1</span> <span style="color: rgb(142,229,238)">Text colored in cadetblue2</span> <span style="color: rgb(122,197,205)">Text colored in cadetblue3</span> <span style="color: rgb(83,134,139)">Text colored in cadetblue4</span> <span style="color: rgb(0,245,255)">Text colored in turquoise1</span> <span style="color: rgb(0,229,238)">Text colored in turquoise2</span> <span style="color: rgb(0,197,205)">Text colored in turquoise3</span> <span style="color: rgb(0,134,139)">Text colored in turquoise4</span> <span style="color: rgb(0,255,255)">Text colored in cyan1</span> <span style="color: rgb(0,238,238)">Text colored in cyan2</span> <span style="color: rgb(0,205,205)">Text colored in cyan3</span> <span style="color: rgb(0,139,139)">Text colored in cyan4</span> <span style="color: rgb(151,255,255)">Text colored in darkslategray1</span> <span style="color: rgb(141,238,238)">Text colored in darkslategray2</span> <span style="color: rgb(121,205,205)">Text colored in darkslategray3</span> <span style="color: rgb(82,139,139)">Text colored in darkslategray4</span> <span style="color: rgb(127,255,212)">Text colored in aquamarine1</span> <span style="color: rgb(118,238,198)">Text colored in aquamarine2</span> <span style="color: rgb(102,205,170)">Text colored in aquamarine3</span> <span style="color: rgb(69,139,116)">Text colored in aquamarine4</span> <span style="color: rgb(193,255,193)">Text colored in darkseagreen1</span> <span style="color: rgb(180,238,180)">Text colored in darkseagreen2</span> <span style="color: rgb(155,205,155)">Text colored in darkseagreen3</span> <span style="color: rgb(105,139,105)">Text colored in darkseagreen4</span> <span style="color: rgb(84,255,159)">Text colored in seagreen1</span> <span style="color: rgb(78,238,148)">Text colored in seagreen2</span> <span style="color: rgb(67,205,128)">Text colored in seagreen3</span> <span style="color: rgb(46,139,87)">Text colored in seagreen4</span> <span style="color: rgb(154,255,154)">Text colored in palegreen1</span> <span style="color: rgb(144,238,144)">Text colored in palegreen2</span> <span style="color: rgb(124,205,124)">Text colored in palegreen3</span> <span style="color: rgb(84,139,84)">Text colored in palegreen4</span> <span style="color: rgb(0,255,127)">Text colored in springgreen1</span> <span style="color: rgb(0,238,118)">Text colored in springgreen2</span> <span style="color: rgb(0,205,102)">Text colored in springgreen3</span> <span style="color: rgb(0,139,69)">Text colored in springgreen4</span> <span style="color: rgb(0,255,0)">Text colored in green1</span> <span style="color: rgb(0,238,0)">Text colored in green2</span> <span style="color: rgb(0,205,0)">Text colored in green3</span> <span style="color: rgb(0,139,0)">Text colored in green4</span> <span style="color: rgb(127,255,0)">Text colored in chartreuse1</span> <span style="color: rgb(118,238,0)">Text colored in chartreuse2</span> <span style="color: rgb(102,205,0)">Text colored in chartreuse3</span> <span style="color: rgb(69,139,0)">Text colored in chartreuse4</span> <span style="color: rgb(192,255,62)">Text colored in olivedrab1</span> <span style="color: rgb(179,238,58)">Text colored in olivedrab2</span> <span style="color: rgb(154,205,50)">Text colored in olivedrab3</span> <span style="color: rgb(105,139,34)">Text colored in olivedrab4</span> <span style="color: rgb(202,255,112)">Text colored in darkolivegreen1</span> <span style="color: rgb(188,238,104)">Text colored in darkolivegreen2</span> <span style="color: rgb(162,205,90)">Text colored in darkolivegreen3</span> <span style="color: rgb(110,139,61)">Text colored in darkolivegreen4</span> <span style="color: rgb(255,246,143)">Text colored in khaki1</span> <span style="color: rgb(238,230,133)">Text colored in khaki2</span> <span style="color: rgb(205,198,115)">Text colored in khaki3</span> <span style="color: rgb(139,134,78)">Text colored in khaki4</span> <span style="color: rgb(255,236,139)">Text colored in lightgoldenrod1</span> <span style="color: rgb(238,220,130)">Text colored in lightgoldenrod2</span> <span style="color: rgb(205,190,112)">Text colored in lightgoldenrod3</span> <span style="color: rgb(139,129,76)">Text colored in lightgoldenrod4</span> <span style="color: rgb(255,255,224)">Text colored in lightyellow1</span> <span style="color: rgb(238,238,209)">Text colored in lightyellow2</span> <span style="color: rgb(205,205,180)">Text colored in lightyellow3</span> <span style="color: rgb(139,139,122)">Text colored in lightyellow4</span> <span style="color: rgb(255,255,0)">Text colored in yellow1</span> <span style="color: rgb(238,238,0)">Text colored in yellow2</span> <span style="color: rgb(205,205,0)">Text colored in yellow3</span> <span style="color: rgb(139,139,0)">Text colored in yellow4</span> <span style="color: rgb(255,215,0)">Text colored in gold1</span> <span style="color: rgb(238,201,0)">Text colored in gold2</span> <span style="color: rgb(205,173,0)">Text colored in gold3</span> <span style="color: rgb(139,117,0)">Text colored in gold4</span> <span style="color: rgb(255,193,37)">Text colored in goldenrod1</span> <span style="color: rgb(238,180,34)">Text colored in goldenrod2</span> <span style="color: rgb(205,155,29)">Text colored in goldenrod3</span> <span style="color: rgb(139,105,20)">Text colored in goldenrod4</span> <span style="color: rgb(255,185,15)">Text colored in darkgoldenrod1</span> <span style="color: rgb(238,173,14)">Text colored in darkgoldenrod2</span> <span style="color: rgb(205,149,12)">Text colored in darkgoldenrod3</span> <span style="color: rgb(139,101,8)">Text colored in darkgoldenrod4</span> <span style="color: rgb(255,193,193)">Text colored in rosybrown1</span> <span style="color: rgb(238,180,180)">Text colored in rosybrown2</span> <span style="color: rgb(205,155,155)">Text colored in rosybrown3</span> <span style="color: rgb(139,105,105)">Text colored in rosybrown4</span> <span style="color: rgb(255,106,106)">Text colored in indianred1</span> <span style="color: rgb(238,99,99)">Text colored in indianred2</span> <span style="color: rgb(205,85,85)">Text colored in indianred3</span> <span style="color: rgb(139,58,58)">Text colored in indianred4</span> <span style="color: rgb(255,130,71)">Text colored in sienna1</span> <span style="color: rgb(238,121,66)">Text colored in sienna2</span> <span style="color: rgb(205,104,57)">Text colored in sienna3</span> <span style="color: rgb(139,71,38)">Text colored in sienna4</span> <span style="color: rgb(255,211,155)">Text colored in burlywood1</span> <span style="color: rgb(238,197,145)">Text colored in burlywood2</span> <span style="color: rgb(205,170,125)">Text colored in burlywood3</span> <span style="color: rgb(139,115,85)">Text colored in burlywood4</span> <span style="color: rgb(255,231,186)">Text colored in wheat1</span> <span style="color: rgb(238,216,174)">Text colored in wheat2</span> <span style="color: rgb(205,186,150)">Text colored in wheat3</span> <span style="color: rgb(139,126,102)">Text colored in wheat4</span> <span style="color: rgb(255,165,79)">Text colored in tan1</span> <span style="color: rgb(238,154,73)">Text colored in tan2</span> <span style="color: rgb(205,133,63)">Text colored in tan3</span> <span style="color: rgb(139,90,43)">Text colored in tan4</span> <span style="color: rgb(255,127,36)">Text colored in chocolate1</span> <span style="color: rgb(238,118,33)">Text colored in chocolate2</span> <span style="color: rgb(205,102,29)">Text colored in chocolate3</span> <span style="color: rgb(139,69,19)">Text colored in chocolate4</span> <span style="color: rgb(255,48,48)">Text colored in firebrick1</span> <span style="color: rgb(238,44,44)">Text colored in firebrick2</span> <span style="color: rgb(205,38,38)">Text colored in firebrick3</span> <span style="color: rgb(139,26,26)">Text colored in firebrick4</span> <span style="color: rgb(255,64,64)">Text colored in brown1</span> <span style="color: rgb(238,59,59)">Text colored in brown2</span> <span style="color: rgb(205,51,51)">Text colored in brown3</span> <span style="color: rgb(139,35,35)">Text colored in brown4</span> <span style="color: rgb(255,140,105)">Text colored in salmon1</span> <span style="color: rgb(238,130,98)">Text colored in salmon2</span> <span style="color: rgb(205,112,84)">Text colored in salmon3</span> <span style="color: rgb(139,76,57)">Text colored in salmon4</span> <span style="color: rgb(255,160,122)">Text colored in lightsalmon1</span> <span style="color: rgb(238,149,114)">Text colored in lightsalmon2</span> <span style="color: rgb(205,129,98)">Text colored in lightsalmon3</span> <span style="color: rgb(139,87,66)">Text colored in lightsalmon4</span> <span style="color: rgb(255,165,0)">Text colored in orange1</span> <span style="color: rgb(238,154,0)">Text colored in orange2</span> <span style="color: rgb(205,133,0)">Text colored in orange3</span> <span style="color: rgb(139,90,0)">Text colored in orange4</span> <span style="color: rgb(255,127,0)">Text colored in darkorange1</span> <span style="color: rgb(238,118,0)">Text colored in darkorange2</span> <span style="color: rgb(205,102,0)">Text colored in darkorange3</span> <span style="color: rgb(139,69,0)">Text colored in darkorange4</span> <span style="color: rgb(255,114,86)">Text colored in coral1</span> <span style="color: rgb(238,106,80)">Text colored in coral2</span> <span style="color: rgb(205,91,69)">Text colored in coral3</span> <span style="color: rgb(139,62,47)">Text colored in coral4</span> <span style="color: rgb(255,99,71)">Text colored in tomato1</span> <span style="color: rgb(238,92,66)">Text colored in tomato2</span> <span style="color: rgb(205,79,57)">Text colored in tomato3</span> <span style="color: rgb(139,54,38)">Text colored in tomato4</span> <span style="color: rgb(255,69,0)">Text colored in orangered1</span> <span style="color: rgb(238,64,0)">Text colored in orangered2</span> <span style="color: rgb(205,55,0)">Text colored in orangered3</span> <span style="color: rgb(139,37,0)">Text colored in orangered4</span> <span style="color: rgb(255,0,0)">Text colored in red1</span> <span style="color: rgb(238,0,0)">Text colored in red2</span> <span style="color: rgb(205,0,0)">Text colored in red3</span> <span style="color: rgb(139,0,0)">Text colored in red4</span> <span style="color: rgb(255,20,147)">Text colored in deeppink1</span> <span style="color: rgb(238,18,137)">Text colored in deeppink2</span> <span style="color: rgb(205,16,118)">Text colored in deeppink3</span> <span style="color: rgb(139,10,80)">Text colored in deeppink4</span> <span style="color: rgb(255,110,180)">Text colored in hotpink1</span> <span style="color: rgb(238,106,167)">Text colored in hotpink2</span> <span style="color: rgb(205,96,144)">Text colored in hotpink3</span> <span style="color: rgb(139,58,98)">Text colored in hotpink4</span> <span style="color: rgb(255,181,197)">Text colored in pink1</span> <span style="color: rgb(238,169,184)">Text colored in pink2</span> <span style="color: rgb(205,145,158)">Text colored in pink3</span> <span style="color: rgb(139,99,108)">Text colored in pink4</span> <span style="color: rgb(255,174,185)">Text colored in lightpink1</span> <span style="color: rgb(238,162,173)">Text colored in lightpink2</span> <span style="color: rgb(205,140,149)">Text colored in lightpink3</span> <span style="color: rgb(139,95,101)">Text colored in lightpink4</span> <span style="color: rgb(255,130,171)">Text colored in palevioletred1</span> <span style="color: rgb(238,121,159)">Text colored in palevioletred2</span> <span style="color: rgb(205,104,137)">Text colored in palevioletred3</span> <span style="color: rgb(139,71,93)">Text colored in palevioletred4</span> <span style="color: rgb(255,52,179)">Text colored in maroon1</span> <span style="color: rgb(238,48,167)">Text colored in maroon2</span> <span style="color: rgb(205,41,144)">Text colored in maroon3</span> <span style="color: rgb(139,28,98)">Text colored in maroon4</span> <span style="color: rgb(255,62,150)">Text colored in violetred1</span> <span style="color: rgb(238,58,140)">Text colored in violetred2</span> <span style="color: rgb(205,50,120)">Text colored in violetred3</span> <span style="color: rgb(139,34,82)">Text colored in violetred4</span> <span style="color: rgb(255,0,255)">Text colored in magenta1</span> <span style="color: rgb(238,0,238)">Text colored in magenta2</span> <span style="color: rgb(205,0,205)">Text colored in magenta3</span> <span style="color: rgb(139,0,139)">Text colored in magenta4</span> <span style="color: rgb(255,131,250)">Text colored in orchid1</span> <span style="color: rgb(238,122,233)">Text colored in orchid2</span> <span style="color: rgb(205,105,201)">Text colored in orchid3</span> <span style="color: rgb(139,71,137)">Text colored in orchid4</span> <span style="color: rgb(255,187,255)">Text colored in plum1</span> <span style="color: rgb(238,174,238)">Text colored in plum2</span> <span style="color: rgb(205,150,205)">Text colored in plum3</span> <span style="color: rgb(139,102,139)">Text colored in plum4</span> <span style="color: rgb(224,102,255)">Text colored in mediumorchid1</span> <span style="color: rgb(209,95,238)">Text colored in mediumorchid2</span> <span style="color: rgb(180,82,205)">Text colored in mediumorchid3</span> <span style="color: rgb(122,55,139)">Text colored in mediumorchid4</span> <span style="color: rgb(191,62,255)">Text colored in darkorchid1</span> <span style="color: rgb(178,58,238)">Text colored in darkorchid2</span> <span style="color: rgb(154,50,205)">Text colored in darkorchid3</span> <span style="color: rgb(104,34,139)">Text colored in darkorchid4</span> <span style="color: rgb(155,48,255)">Text colored in purple1</span> <span style="color: rgb(145,44,238)">Text colored in purple2</span> <span style="color: rgb(125,38,205)">Text colored in purple3</span> <span style="color: rgb(85,26,139)">Text colored in purple4</span> <span style="color: rgb(171,130,255)">Text colored in mediumpurple1</span> <span style="color: rgb(159,121,238)">Text colored in mediumpurple2</span> <span style="color: rgb(137,104,205)">Text colored in mediumpurple3</span> <span style="color: rgb(93,71,139)">Text colored in mediumpurple4</span> <span style="color: rgb(255,225,255)">Text colored in thistle1</span> <span style="color: rgb(238,210,238)">Text colored in thistle2</span> <span style="color: rgb(205,181,205)">Text colored in thistle3</span> <span style="color: rgb(139,123,139)">Text colored in thistle4</span> <span style="color: rgb(0,0,0)">Text colored in gray0</span> <span style="color: rgb(0,0,0)">Text colored in grey0</span> <span style="color: rgb(3,3,3)">Text colored in gray1</span> <span style="color: rgb(3,3,3)">Text colored in grey1</span> <span style="color: rgb(5,5,5)">Text colored in gray2</span> <span style="color: rgb(5,5,5)">Text colored in grey2</span> <span style="color: rgb(8,8,8)">Text colored in gray3</span> <span style="color: rgb(8,8,8)">Text colored in grey3</span> <span style="color: rgb(10,10,10)">Text colored in gray4</span> <span style="color: rgb(10,10,10)">Text colored in grey4</span> <span style="color: rgb(13,13,13)">Text colored in gray5</span> <span style="color: rgb(13,13,13)">Text colored in grey5</span> <span style="color: rgb(15,15,15)">Text colored in gray6</span> <span style="color: rgb(15,15,15)">Text colored in grey6</span> <span style="color: rgb(18,18,18)">Text colored in gray7</span> <span style="color: rgb(18,18,18)">Text colored in grey7</span> <span style="color: rgb(20,20,20)">Text colored in gray8</span> <span style="color: rgb(20,20,20)">Text colored in grey8</span> <span style="color: rgb(23,23,23)">Text colored in gray9</span> <span style="color: rgb(23,23,23)">Text colored in grey9</span> <span style="color: rgb(26,26,26)">Text colored in gray10</span> <span style="color: rgb(26,26,26)">Text colored in grey10</span> <span style="color: rgb(28,28,28)">Text colored in gray11</span> <span style="color: rgb(28,28,28)">Text colored in grey11</span> <span style="color: rgb(31,31,31)">Text colored in gray12</span> <span style="color: rgb(31,31,31)">Text colored in grey12</span> <span style="color: rgb(33,33,33)">Text colored in gray13</span> <span style="color: rgb(33,33,33)">Text colored in grey13</span> <span style="color: rgb(36,36,36)">Text colored in gray14</span> <span style="color: rgb(36,36,36)">Text colored in grey14</span> <span style="color: rgb(38,38,38)">Text colored in gray15</span> <span style="color: rgb(38,38,38)">Text colored in grey15</span> <span style="color: rgb(41,41,41)">Text colored in gray16</span> <span style="color: rgb(41,41,41)">Text colored in grey16</span> <span style="color: rgb(43,43,43)">Text colored in gray17</span> <span style="color: rgb(43,43,43)">Text colored in grey17</span> <span style="color: rgb(46,46,46)">Text colored in gray18</span> <span style="color: rgb(46,46,46)">Text colored in grey18</span> <span style="color: rgb(48,48,48)">Text colored in gray19</span> <span style="color: rgb(48,48,48)">Text colored in grey19</span> <span style="color: rgb(51,51,51)">Text colored in gray20</span> <span style="color: rgb(51,51,51)">Text colored in grey20</span> <span style="color: rgb(54,54,54)">Text colored in gray21</span> <span style="color: rgb(54,54,54)">Text colored in grey21</span> <span style="color: rgb(56,56,56)">Text colored in gray22</span> <span style="color: rgb(56,56,56)">Text colored in grey22</span> <span style="color: rgb(59,59,59)">Text colored in gray23</span> <span style="color: rgb(59,59,59)">Text colored in grey23</span> <span style="color: rgb(61,61,61)">Text colored in gray24</span> <span style="color: rgb(61,61,61)">Text colored in grey24</span> <span style="color: rgb(64,64,64)">Text colored in gray25</span> <span style="color: rgb(64,64,64)">Text colored in grey25</span> <span style="color: rgb(66,66,66)">Text colored in gray26</span> <span style="color: rgb(66,66,66)">Text colored in grey26</span> <span style="color: rgb(69,69,69)">Text colored in gray27</span> <span style="color: rgb(69,69,69)">Text colored in grey27</span> <span style="color: rgb(71,71,71)">Text colored in gray28</span> <span style="color: rgb(71,71,71)">Text colored in grey28</span> <span style="color: rgb(74,74,74)">Text colored in gray29</span> <span style="color: rgb(74,74,74)">Text colored in grey29</span> <span style="color: rgb(77,77,77)">Text colored in gray30</span> <span style="color: rgb(77,77,77)">Text colored in grey30</span> <span style="color: rgb(79,79,79)">Text colored in gray31</span> <span style="color: rgb(79,79,79)">Text colored in grey31</span> <span style="color: rgb(82,82,82)">Text colored in gray32</span> <span style="color: rgb(82,82,82)">Text colored in grey32</span> <span style="color: rgb(84,84,84)">Text colored in gray33</span> <span style="color: rgb(84,84,84)">Text colored in grey33</span> <span style="color: rgb(87,87,87)">Text colored in gray34</span> <span style="color: rgb(87,87,87)">Text colored in grey34</span> <span style="color: rgb(89,89,89)">Text colored in gray35</span> <span style="color: rgb(89,89,89)">Text colored in grey35</span> <span style="color: rgb(92,92,92)">Text colored in gray36</span> <span style="color: rgb(92,92,92)">Text colored in grey36</span> <span style="color: rgb(94,94,94)">Text colored in gray37</span> <span style="color: rgb(94,94,94)">Text colored in grey37</span> <span style="color: rgb(97,97,97)">Text colored in gray38</span> <span style="color: rgb(97,97,97)">Text colored in grey38</span> <span style="color: rgb(99,99,99)">Text colored in gray39</span> <span style="color: rgb(99,99,99)">Text colored in grey39</span> <span style="color: rgb(102,102,102)">Text colored in gray40</span> <span style="color: rgb(102,102,102)">Text colored in grey40</span> <span style="color: rgb(105,105,105)">Text colored in gray41</span> <span style="color: rgb(105,105,105)">Text colored in grey41</span> <span style="color: rgb(107,107,107)">Text colored in gray42</span> <span style="color: rgb(107,107,107)">Text colored in grey42</span> <span style="color: rgb(110,110,110)">Text colored in gray43</span> <span style="color: rgb(110,110,110)">Text colored in grey43</span> <span style="color: rgb(112,112,112)">Text colored in gray44</span> <span style="color: rgb(112,112,112)">Text colored in grey44</span> <span style="color: rgb(115,115,115)">Text colored in gray45</span> <span style="color: rgb(115,115,115)">Text colored in grey45</span> <span style="color: rgb(117,117,117)">Text colored in gray46</span> <span style="color: rgb(117,117,117)">Text colored in grey46</span> <span style="color: rgb(120,120,120)">Text colored in gray47</span> <span style="color: rgb(120,120,120)">Text colored in grey47</span> <span style="color: rgb(122,122,122)">Text colored in gray48</span> <span style="color: rgb(122,122,122)">Text colored in grey48</span> <span style="color: rgb(125,125,125)">Text colored in gray49</span> <span style="color: rgb(125,125,125)">Text colored in grey49</span> <span style="color: rgb(127,127,127)">Text colored in gray50</span> <span style="color: rgb(127,127,127)">Text colored in grey50</span> <span style="color: rgb(130,130,130)">Text colored in gray51</span> <span style="color: rgb(130,130,130)">Text colored in grey51</span> <span style="color: rgb(133,133,133)">Text colored in gray52</span> <span style="color: rgb(133,133,133)">Text colored in grey52</span> <span style="color: rgb(135,135,135)">Text colored in gray53</span> <span style="color: rgb(135,135,135)">Text colored in grey53</span> <span style="color: rgb(138,138,138)">Text colored in gray54</span> <span style="color: rgb(138,138,138)">Text colored in grey54</span> <span style="color: rgb(140,140,140)">Text colored in gray55</span> <span style="color: rgb(140,140,140)">Text colored in grey55</span> <span style="color: rgb(143,143,143)">Text colored in gray56</span> <span style="color: rgb(143,143,143)">Text colored in grey56</span> <span style="color: rgb(145,145,145)">Text colored in gray57</span> <span style="color: rgb(145,145,145)">Text colored in grey57</span> <span style="color: rgb(148,148,148)">Text colored in gray58</span> <span style="color: rgb(148,148,148)">Text colored in grey58</span> <span style="color: rgb(150,150,150)">Text colored in gray59</span> <span style="color: rgb(150,150,150)">Text colored in grey59</span> <span style="color: rgb(153,153,153)">Text colored in gray60</span> <span style="color: rgb(153,153,153)">Text colored in grey60</span> <span style="color: rgb(156,156,156)">Text colored in gray61</span> <span style="color: rgb(156,156,156)">Text colored in grey61</span> <span style="color: rgb(158,158,158)">Text colored in gray62</span> <span style="color: rgb(158,158,158)">Text colored in grey62</span> <span style="color: rgb(161,161,161)">Text colored in gray63</span> <span style="color: rgb(161,161,161)">Text colored in grey63</span> <span style="color: rgb(163,163,163)">Text colored in gray64</span> <span style="color: rgb(163,163,163)">Text colored in grey64</span> <span style="color: rgb(166,166,166)">Text colored in gray65</span> <span style="color: rgb(166,166,166)">Text colored in grey65</span> <span style="color: rgb(168,168,168)">Text colored in gray66</span> <span style="color: rgb(168,168,168)">Text colored in grey66</span> <span style="color: rgb(171,171,171)">Text colored in gray67</span> <span style="color: rgb(171,171,171)">Text colored in grey67</span> <span style="color: rgb(173,173,173)">Text colored in gray68</span> <span style="color: rgb(173,173,173)">Text colored in grey68</span> <span style="color: rgb(176,176,176)">Text colored in gray69</span> <span style="color: rgb(176,176,176)">Text colored in grey69</span> <span style="color: rgb(179,179,179)">Text colored in gray70</span> <span style="color: rgb(179,179,179)">Text colored in grey70</span> <span style="color: rgb(181,181,181)">Text colored in gray71</span> <span style="color: rgb(181,181,181)">Text colored in grey71</span> <span style="color: rgb(184,184,184)">Text colored in gray72</span> <span style="color: rgb(184,184,184)">Text colored in grey72</span> <span style="color: rgb(186,186,186)">Text colored in gray73</span> <span style="color: rgb(186,186,186)">Text colored in grey73</span> <span style="color: rgb(189,189,189)">Text colored in gray74</span> <span style="color: rgb(189,189,189)">Text colored in grey74</span> <span style="color: rgb(191,191,191)">Text colored in gray75</span> <span style="color: rgb(191,191,191)">Text colored in grey75</span> <span style="color: rgb(194,194,194)">Text colored in gray76</span> <span style="color: rgb(194,194,194)">Text colored in grey76</span> <span style="color: rgb(196,196,196)">Text colored in gray77</span> <span style="color: rgb(196,196,196)">Text colored in grey77</span> <span style="color: rgb(199,199,199)">Text colored in gray78</span> <span style="color: rgb(199,199,199)">Text colored in grey78</span> <span style="color: rgb(201,201,201)">Text colored in gray79</span> <span style="color: rgb(201,201,201)">Text colored in grey79</span> <span style="color: rgb(204,204,204)">Text colored in gray80</span> <span style="color: rgb(204,204,204)">Text colored in grey80</span> <span style="color: rgb(207,207,207)">Text colored in gray81</span> <span style="color: rgb(207,207,207)">Text colored in grey81</span> <span style="color: rgb(209,209,209)">Text colored in gray82</span> <span style="color: rgb(209,209,209)">Text colored in grey82</span> <span style="color: rgb(212,212,212)">Text colored in gray83</span> <span style="color: rgb(212,212,212)">Text colored in grey83</span> <span style="color: rgb(214,214,214)">Text colored in gray84</span> <span style="color: rgb(214,214,214)">Text colored in grey84</span> <span style="color: rgb(217,217,217)">Text colored in gray85</span> <span style="color: rgb(217,217,217)">Text colored in grey85</span> <span style="color: rgb(219,219,219)">Text colored in gray86</span> <span style="color: rgb(219,219,219)">Text colored in grey86</span> <span style="color: rgb(222,222,222)">Text colored in gray87</span> <span style="color: rgb(222,222,222)">Text colored in grey87</span> <span style="color: rgb(224,224,224)">Text colored in gray88</span> <span style="color: rgb(224,224,224)">Text colored in grey88</span> <span style="color: rgb(227,227,227)">Text colored in gray89</span> <span style="color: rgb(227,227,227)">Text colored in grey89</span> <span style="color: rgb(229,229,229)">Text colored in gray90</span> <span style="color: rgb(229,229,229)">Text colored in grey90</span> <span style="color: rgb(232,232,232)">Text colored in gray91</span> <span style="color: rgb(232,232,232)">Text colored in grey91</span> <span style="color: rgb(235,235,235)">Text colored in gray92</span> <span style="color: rgb(235,235,235)">Text colored in grey92</span> <span style="color: rgb(237,237,237)">Text colored in gray93</span> <span style="color: rgb(237,237,237)">Text colored in grey93</span> <span style="color: rgb(240,240,240)">Text colored in gray94</span> <span style="color: rgb(240,240,240)">Text colored in grey94</span> <span style="color: rgb(242,242,242)">Text colored in gray95</span> <span style="color: rgb(242,242,242)">Text colored in grey95</span> <span style="color: rgb(245,245,245)">Text colored in gray96</span> <span style="color: rgb(245,245,245)">Text colored in grey96</span> <span style="color: rgb(247,247,247)">Text colored in gray97</span> <span style="color: rgb(247,247,247)">Text colored in grey97</span> <span style="color: rgb(250,250,250)">Text colored in gray98</span> <span style="color: rgb(250,250,250)">Text colored in grey98</span> <span style="color: rgb(252,252,252)">Text colored in gray99</span> <span style="color: rgb(252,252,252)">Text colored in grey99</span> <span style="color: rgb(255,255,255)">Text colored in gray100</span> <span style="color: rgb(255,255,255)">Text colored in grey100</span> <span style="color: rgb(169,169,169)">Text colored in darkgrey</span> <span style="color: rgb(169,169,169)">Text colored in darkgray</span> <span style="color: rgb(0,0,139)">Text colored in darkblue</span> <span style="color: rgb(0,139,139)">Text colored in darkcyan</span> <span style="color: rgb(139,0,139)">Text colored in darkmagenta</span> <span style="color: rgb(139,0,0)">Text colored in darkred</span> <span style="color: rgb(144,238,144)">Text colored in lightgreen</span> 
-</p>
-
-
-<div id="outline-container-org7a9df33" class="outline-2">
-<h2 id="org7a9df33"><a id="ID-FA2E424A-84B3-4DD0-A683-98702F9E51BF"></a><span class="section-number-2">1</span> Code for the color link</h2>
-<div class="outline-text-2" id="text-1">
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">s</span>)
-
-(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">color-comp</span> (<span style="color: #6434A3;">&amp;optional</span> arg)
-  <span style="color: #036A07;">"Completion function for color links."</span>
-  (<span style="color: #0000FF;">let</span> ((color-data (<span style="color: #0000FF;">prog2</span>
-                        (<span style="color: #0000FF;">save-selected-window</span>
-                          (list-colors-display))
-                        (<span style="color: #0000FF;">with-current-buffer</span> (get-buffer <span style="color: #008000;">"*Colors*"</span>)
-                          (mapcar (<span style="color: #0000FF;">lambda</span> (line)
-                                    (append (list line)
-                                            (s-split <span style="color: #008000;">" "</span> line t)))
-                                  (s-split <span style="color: #008000;">"\n"</span> (buffer-string))))
-                      (kill-buffer <span style="color: #008000;">"*Colors*"</span>))))
-    (format <span style="color: #008000;">"color:%s"</span>
-            (s-trim (cadr (assoc (completing-read <span style="color: #008000;">"Color: "</span> color-data) color-data))))))
-
-
-(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">color-link-face</span> (path)
-  <span style="color: #036A07;">"Face function for color links."</span>
-  (<span style="color: #0000FF;">or</span> (cdr (assoc path org-link-colors))
-      `(<span style="color: #006FE0;">:foreground</span> ,path)))
-
-
-(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">color-link-export</span> (path description backend)
-  <span style="color: #036A07;">"Export function for color links."</span>
-  (<span style="color: #0000FF;">cond</span>
-   ((eq backend 'html)
-    (<span style="color: #0000FF;">let</span> ((rgb (assoc (downcase path) color-name-rgb-alist))
-          r g b)
-      (<span style="color: #0000FF;">setq</span> r (* 255 (/ (nth 1 rgb) 65535.0))
-            g (* 255 (/ (nth 2 rgb) 65535.0))
-            b (* 255 (/ (nth 3 rgb) 65535.0)))
-      (format <span style="color: #008000;">"&lt;span style=\"color: rgb(%s,%s,%s)\"&gt;%s&lt;/span&gt;"</span>
-              (truncate r) (truncate g) (truncate b)
-              (<span style="color: #0000FF;">or</span> description path))))))
-
-(org-link-set-parameters <span style="color: #008000;">"color"</span>         
-                         <span style="color: #006FE0;">:face</span> 'color-link-face
-                         <span style="color: #006FE0;">:complete</span> 'color-comp
-                         <span style="color: #006FE0;">:export</span> 'color-link-export)
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-left" />
-
-<col  class="org-left" />
-
-<col  class="org-left" />
-
-<col  class="org-left" />
-
-<col  class="org-left" />
-
-<col  class="org-left" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-left">:face</td>
-<td class="org-left">color-link-face</td>
-<td class="org-left">:complete</td>
-<td class="org-left">color-comp</td>
-<td class="org-left">:export</td>
-<td class="org-left">color-link-export</td>
-</tr>
-</tbody>
-</table>
-</div>
-</div>
-<p>Copyright (C) 2016 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2016/11/08/New-color-link-in-org-9.0-using-font-lock-to-color-the-text.org">org-mode source</a></p>
-<p>Org-mode version = 9.0</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2016/11/08/New-color-link-in-org-9-0-using-font-lock-to-color-the-text#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="../8">« Previous Page</a>
   --  
  <a href="../10">Next Page »</a>
@@ -915,11 +1696,11 @@ And it exports nicely to HTML. You can see the code here: <a href="#org7a9df33">
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2017/11/18/Neural-networks-for-regression-with-autograd/">Neural networks for regression with autograd</a></li>
       <li><a href="/blog/2017/11/17/Using-autograd-in-nonlinear-regression/">Using autograd in nonlinear regression</a></li>
       <li><a href="/blog/2017/11/15/Sensitivity-analysis-using-automatic-differentiation-in-Python/">Sensitivity analysis using automatic differentiation in Python</a></li>
       <li><a href="/blog/2017/11/14/Forces-by-automatic-differentiation-in-molecular-simulation/">Forces by automatic differentiation in molecular simulation</a></li>
       <li><a href="/blog/2017/09/25/New-publication-in-J-Phys-Chem-Lett/">New publication in J. Phys. Chem. Lett.</a></li>
-      <li><a href="/blog/2017/09/16/Finding-similar-bibtex-entries/">Finding similar bibtex entries</a></li>
     </ul>
   </section>
 
