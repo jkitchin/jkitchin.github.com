@@ -1,0 +1,108 @@
+* Training the ASE Lennard-Jones potential to DFT calculations
+  :PROPERTIES:
+  :categories: python, autograd
+  :date:     2017/11/19 19:58:47
+  :updated:  2017/11/19 19:58:47
+  :org-url:  http://kitchingroup.cheme.cmu.edu/org/2017/11/19/Training-the-ASE-Lennard-Jones-potential-to-DFT-calculations.org
+  :permalink: http://kitchingroup.cheme.cmu.edu/blog/2017/11/19/Training-the-ASE-Lennard-Jones-potential-to-DFT-calculations/index.html
+  :END:
+
+The Atomic Simulation Environment provides several useful calculators with configurable parameters. For example, the Lennard-Jones potential has two adjustable parameters, \sigma and \epsilon. I have always thought it would be useful to be able to fit one of these potentials to a reference database, e.g. a DFT database.
+
+I ran a series of DFT calculations of bulk Ar in different crystal structures, at different volumes and saved them in an ase database. We have five crystal structures at three different volumes. Within each of those sets, I rattled the atoms a bunch of times and calculated the energies. Here is the histogram of energies we have to work with:
+
+#+NAME: hawaii-jig-alanine-network
+#+BEGIN_SRC ipython
+%matplotlib inline
+import matplotlib.pyplot as plt
+
+import ase.db
+energies = [row.energy for row in db.select()]
+plt.hist(energies, 20)
+plt.xlabel('Energy')
+#+END_SRC
+
+#+RESULTS: hawaii-jig-alanine-network
+:RESULTS:
+[[file:ipython-inline-images/ob-ipython-d6113dc5f4e887554825f1c669ff3c0d.png]]
+:END:
+
+What I would really like is a set of Lennard-Jones parameters that describe this data. It only recently occurred to me that we just need to define a function that takes the LJ parameters and computes energies for a set of configurations. Then we create a second objective function we can use in a minimization. Here is how we can implement that idea:
+
+#+NAME: pennsylvania-papa-dakota-white
+#+BEGIN_SRC ipython
+from ase.calculators.lj import LennardJones
+
+def my_lj(pars):
+    epsilon, sigma = pars
+    calc = LennardJones(sigma=sigma, epsilon=epsilon)
+    all_atoms = [row.toatoms() for row in db.select()]
+    [atoms.set_calculator(calc) for atoms in all_atoms]
+    predicted_energies = np.array([atoms.get_potential_energy() for atoms in all_atoms])
+    return predicted_energies
+
+def objective(pars):
+    known_energies = np.array([row.energy for row in db.select()])
+    err = known_energies - my_lj(pars)
+    return np.mean(err**2)
+
+from scipy.optimize import fmin
+LJ_pars = fmin(objective, [0.005, 3.5])        
+print(LJ_pars)
+#+END_SRC
+
+#+RESULTS: pennsylvania-papa-dakota-white
+:RESULTS:
+#+BEGIN_EXAMPLE
+Optimization terminated successfully.
+         Current function value: 0.000141
+         Iterations: 28
+         Function evaluations: 53
+[ 0.00593014  3.73314611]
+
+#+END_EXAMPLE
+:END:
+
+Now, let's see how well we do with that fit.
+
+#+NAME: earth-johnny-lake-finch
+#+BEGIN_SRC ipython
+plt.subplot(121)
+
+calc = LennardJones(epsilon=LJ_pars[0], sigma=LJ_pars[1])
+
+for structure, spec in [('fcc', 'b.'),
+                        ('hcp', 'r.'),
+                        ('bcc', 'g.'),
+                        ('diamond', 'gd'),
+                        ('sc', 'bs')]:
+
+    ke, pe = [], []
+    for row in db.select(structure=structure):
+        ke += [row.energy]
+        atoms = row.toatoms()
+        atoms.set_calculator(calc)
+        pe += [atoms.get_potential_energy()]    
+    plt.plot(ke, pe, spec, label=structure)
+
+plt.plot([-0.1, 0], [-0.1, 0], 'k-', label='parity')
+plt.legend()
+plt.xlabel('DFT')
+plt.ylabel('LJ')
+
+pe = my_lj(LJ_pars)
+ke = np.array([row.energy for row in db.select()])
+err = known_energies - pred_e
+
+plt.subplot(122)
+plt.hist(err)
+plt.xlabel('error')
+plt.tight_layout()
+#+END_SRC
+
+#+RESULTS: earth-johnny-lake-finch
+:RESULTS:
+[[file:ipython-inline-images/ob-ipython-3fd078c892ba2e5ee29397f43805d2b2.png]]
+:END:
+
+The results aren't fantastic, but you can see that we get the closer packed structures (fcc, hcp, bcc) more accurately than the loosely packed structures (diamond, sc). Those more open structures tend to have more directional bonding, and the Lennard-Jones potential isn't expected to do too well on those. You could consider a more sophisticated model if those structures were important for your simulation.
