@@ -8,12 +8,254 @@
   <title type="text">The Kitchin Research Group</title>
   <subtitle type="text">Chemical Engineering at Carnegie Mellon University</subtitle>
 
-  <updated>2017-11-20T03:58:57Z</updated>
+  <updated>2017-11-21T05:19:27Z</updated>
   <generator uri="http://blogofile.com/">Blogofile</generator>
 
   <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog" />
   <id>http://jkitchin.github.io/blog/feed/atom/</id>
   <link rel="self" type="application/atom+xml" href="http://jkitchin.github.io/blog/feed/atom/" />
+  <entry>
+    <author>
+      <name></name>
+      <uri>http://jkitchin.github.io/blog</uri>
+    </author>
+    <title type="html"><![CDATA[Timing Lennard-Jones implementations - ASE vs autograd]]></title>
+    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2017/11/20/Timing-Lennard-Jones-implementations-ASE-vs-autograd" />
+    <id>http://jkitchin.github.io/blog/2017/11/20/Timing-Lennard-Jones-implementations-ASE-vs-autograd</id>
+    <updated>2017-11-20T21:19:17Z</updated>
+    <published>2017-11-20T21:19:17Z</published>
+    <category scheme="http://jkitchin.github.io/blog" term="lennardjones" />
+    <category scheme="http://jkitchin.github.io/blog" term="python" />
+    <category scheme="http://jkitchin.github.io/blog" term="autograd" />
+    <summary type="html"><![CDATA[Timing Lennard-Jones implementations - ASE vs autograd]]></summary>
+    <content type="html" xml:base="http://jkitchin.github.io/blog/2017/11/20/Timing-Lennard-Jones-implementations-ASE-vs-autograd"><![CDATA[
+
+
+&lt;div id="table-of-contents"&gt;
+&lt;h2&gt;Table of Contents&lt;/h2&gt;
+&lt;div id="text-table-of-contents"&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href="#org3f06e26"&gt;1. Timing on the forces&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;p&gt;
+In a comment on this &lt;a href="http://kitchingroup.cheme.cmu.edu/blog/2017/11/14/Forces-by-automatic-differentiation-in-molecular-simulation/"&gt;post&lt;/a&gt; Konrad Hinsen asked if the autograd forces on a Lennard-Jones potential would be useable in production. I wasn't sure, and was suspicious that analytical force functions would be faster. It turns out to not be so simple. In this post, I attempt to do some timing experiments for comparison. These are tricky to do right, and in a meaningful way, so I will start by explaining what is tricky and why I think the results are meaningful. 
+&lt;/p&gt;
+
+&lt;p&gt;
+The ASE calculators cache their results, and return the cached results after the first run. We will do these on a 13-atom icosahedron cluster.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="orgb1070c1"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; ase.calculators.lj &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; LennardJones
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; ase.cluster.icosahedron &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; Icosahedron
+
+&lt;span style="color: #BA36A5;"&gt;atoms&lt;/span&gt; = Icosahedron(&lt;span style="color: #008000;"&gt;'Ar'&lt;/span&gt;, noshells=2, latticeconstant=3)
+atoms.set_calculator(LennardJones())
+
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; time
+&lt;span style="color: #BA36A5;"&gt;t0&lt;/span&gt; = time.time()
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(atoms.get_potential_energy())
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(time.time() - t0)
+
+&lt;span style="color: #BA36A5;"&gt;t0&lt;/span&gt; = time.time()
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(atoms.get_potential_energy())
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(time.time() - t0)
+
+&lt;span style="color: #BA36A5;"&gt;atoms.calc.results&lt;/span&gt; = {}
+&lt;span style="color: #BA36A5;"&gt;t0&lt;/span&gt; = time.time()
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(atoms.get_potential_energy())
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(time.time() - t0)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+-1.25741774649
+0.004888057708740234
+-1.25741774649
+0.0008807182312011719
+-1.25741774649
+0.0034499168395996094
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+Note the approximate order of magnitude reduction in elapsed time for the second call. After that, we reset the calculator results, and the time goes back up. So, we have to incorporate that into our timing. Also, in the ASE calculator, the forces are simultaneously calculated. There isn't a way to separate the calls. I am going to use the timeit feature in Ipython for the timing. I don't have a lot of control over what else is running on my machine, so I have observed some variability in the timing results. Finally, I am running these on a MacBook Air.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org2259ecd"&gt;%%timeit
+atoms.get_potential_energy()
+&lt;span style="color: #BA36A5;"&gt;atoms.calc.results&lt;/span&gt; = {} &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;this resets it so it runs each time. Otherwise, we get cached results&lt;/span&gt;
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+1.25 ms ± 34.8 µs per loop (mean ± std. dev. of 7 runs, 1000 loops each)
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+That seems like a surprisingly long time. If you neglect the calculator reset, it looks about 10 times faster because the cache lookup is fast!
+&lt;/p&gt;
+
+&lt;p&gt;
+Let's compare that to an implementation of the Lennard-Jones potential similar to the last time. This implementation differs from &lt;a href="http://kitchingroup.cheme.cmu.edu/blog/2017/11/14/Forces-by-automatic-differentiation-in-molecular-simulation/"&gt;the first one I blogged about&lt;/a&gt;. This one is fully vectorized. It still does not support periodic boundary conditions though. This version may be up to 10 times faster than the previous version. I haven't tested this very well, I only assured it gives the same energy as ASE for the example in this post.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="orga80fa8d"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; autograd.numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;energy&lt;/span&gt;(positions):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #036A07;"&gt;"Compute the energy of a Lennard-Jones system."&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;sigma&lt;/span&gt; = 1.0
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;epsilon&lt;/span&gt; = 1.0
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;rc&lt;/span&gt; = 3 * sigma
+
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;e0&lt;/span&gt; = 4 * epsilon * ((sigma / rc)**12 - (sigma / rc)**6)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;natoms&lt;/span&gt; = &lt;span style="color: #006FE0;"&gt;len&lt;/span&gt;(positions)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;These are the pairs of indices we need to compute distances for.&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;a&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;b&lt;/span&gt; = np.triu_indices(natoms, 1)
+
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;d&lt;/span&gt; = positions[a] - positions[b]
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;r2&lt;/span&gt; = np.&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;(d**2, axis=1)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;c6&lt;/span&gt; = np.where(r2 &amp;lt;= rc**2, (sigma**2 / r2)**3, np.zeros_like(r2))
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;energy&lt;/span&gt; = -e0 * (c6 != 0.0).&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;()
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;c12&lt;/span&gt; = c6**2
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;energy&lt;/span&gt; += np.&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;(4 * epsilon * (c12 - c6))
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; energy
+
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(energy(atoms.positions))
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+-1.25741774649
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+We store the positions in a variable, in case there is any lookup time, since this function only needs an array.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org10be257"&gt;&lt;span style="color: #BA36A5;"&gt;pos&lt;/span&gt; = atoms.positions
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+There is no caching to worry about here, we can just get the timing.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="orgf8488c8"&gt;%%timeit
+energy(pos)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+82.5 µs ± 4.55 µs per loop (mean ± std. dev. of 7 runs, 10000 loops each)
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+Wow, that is a lot faster than the ASE implementation. Score one for vectorization.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org59bf8f3"&gt;&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'Vectorized is {0:1.1f} times faster than ASE at energy.'&lt;/span&gt;.&lt;span style="color: #006FE0;"&gt;format&lt;/span&gt;(1.25e-3 / 82.5e-6))
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+Vectorized is 15.2 times faster than ASE at energy.
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+Yep, a fully vectorized implementation is a lot faster than the ASE version which uses loops. So far the difference has nothing to do with autograd.
+&lt;/p&gt;
+
+&lt;div id="outline-container-org3f06e26" class="outline-2"&gt;
+&lt;h2 id="org3f06e26"&gt;&lt;span class="section-number-2"&gt;1&lt;/span&gt; Timing on the forces&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-1"&gt;
+&lt;p&gt;
+The forces are where derivatives are important, and it is a reasonable question of whether hand-coded derivatives are faster or slower than autograd derivatives. We first look at the forces from ASE. The analytical forces take about the same time as the energy, which is not surprising. The same work is done for both of them.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="orgfe23a59"&gt;%%timeit
+atoms.get_forces()
+&lt;span style="color: #BA36A5;"&gt;atoms.calc.results&lt;/span&gt; = {}
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+1.21 ms ± 16 µs per loop (mean ± std. dev. of 7 runs, 1000 loops each)
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+Here is our auto-differentiated force function.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="orge16fe53"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; autograd &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; elementwise_grad
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;forces&lt;/span&gt;(pos):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;dEdR&lt;/span&gt; = elementwise_grad(energy)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; -dEdR(pos)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+And now performance for that:
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="orgf1947f8"&gt;%%timeit 
+
+forces(pos)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+335 µs ± 15.9 µs per loop (mean ± std. dev. of 7 runs, 1000 loops each)
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+This is faster than the ASE version. I suspect that it is largely because of the faster, vectorized algorithm overall. 
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org3033165"&gt;&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'autograd is {0:1.1f} times faster than ASE on forces.'&lt;/span&gt;.&lt;span style="color: #006FE0;"&gt;format&lt;/span&gt;(1.21e-3 / 335e-6))
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+autograd is 3.6 times faster than ASE on forces.
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+The forces are about about four times slower than the energy time. It could be possible to hand-code a faster function for the forces, if it was fully vectorized. I spent a while seeing what would be required for that, and it is not obvious how to do that. Any solution that uses loops will be slower I think.
+&lt;/p&gt;
+
+&lt;p&gt;
+This doesn't directly answer the question of whether this can work in production. Everything is still written in Python here, which might limit the size and length of calculations you can practically do. With the right implementation though, it looks promising.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;p&gt;Copyright (C) 2017 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
+&lt;p&gt;&lt;a href="/org/2017/11/20/Timing-Lennard-Jones-implementations---ASE-vs-autograd.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Org-mode version = 9.1.2&lt;/p&gt;]]></content>
+  </entry>
   <entry>
     <author>
       <name></name>
@@ -454,8 +696,8 @@ Now you know the secret of a neural network, it is just a nonlinear model. Witho
     <id>http://jkitchin.github.io/blog/2017/11/17/Using-autograd-in-nonlinear-regression</id>
     <updated>2017-11-17T07:49:03Z</updated>
     <published>2017-11-17T07:49:03Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="python" />
     <category scheme="http://jkitchin.github.io/blog" term="regression" />
+    <category scheme="http://jkitchin.github.io/blog" term="python" />
     <category scheme="http://jkitchin.github.io/blog" term="autograd" />
     <summary type="html"><![CDATA[Using autograd in nonlinear regression]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2017/11/17/Using-autograd-in-nonlinear-regression"><![CDATA[
@@ -835,8 +1077,8 @@ That looks like the figure in the paper. To summarize the main takeaway, autogra
     <id>http://jkitchin.github.io/blog/2017/03/19/A-Hy-macro-for-defining-functions-with-docstrings-on-each-argument</id>
     <updated>2017-03-19T19:53:05Z</updated>
     <published>2017-03-19T19:47:22Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="hylang" />
     <category scheme="http://jkitchin.github.io/blog" term="python" />
+    <category scheme="http://jkitchin.github.io/blog" term="hylang" />
     <summary type="html"><![CDATA[A Hy macro for defining functions with docstrings on each argument]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2017/03/19/A-Hy-macro-for-defining-functions-with-docstrings-on-each-argument"><![CDATA[
 
@@ -1184,8 +1426,8 @@ It is true in this case we could have used a spline, or interpolating function a
     <id>http://jkitchin.github.io/blog/2017/01/29/ob-ipython-and-inline-figures-in-org-mode</id>
     <updated>2017-01-29T16:05:22Z</updated>
     <published>2017-01-29T16:05:22Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="python" />
     <category scheme="http://jkitchin.github.io/blog" term="ipython" />
+    <category scheme="http://jkitchin.github.io/blog" term="python" />
     <summary type="html"><![CDATA[ob-ipython and inline figures in org-mode]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2017/01/29/ob-ipython-and-inline-figures-in-org-mode"><![CDATA[
 
@@ -1321,10 +1563,10 @@ org-babel-execute:ipython
     <id>http://jkitchin.github.io/blog/2017/01/21/Exporting-org-mode-to-Jupyter-notebooks</id>
     <updated>2017-01-25T08:50:18Z</updated>
     <published>2017-01-21T19:51:23Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="emacs" />
-    <category scheme="http://jkitchin.github.io/blog" term="python" />
     <category scheme="http://jkitchin.github.io/blog" term="orgmode" />
+    <category scheme="http://jkitchin.github.io/blog" term="python" />
     <category scheme="http://jkitchin.github.io/blog" term="jupyter" />
+    <category scheme="http://jkitchin.github.io/blog" term="emacs" />
     <summary type="html"><![CDATA[Exporting org-mode to Jupyter notebooks]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2017/01/21/Exporting-org-mode-to-Jupyter-notebooks"><![CDATA[
 
@@ -1569,10 +1811,10 @@ Overall, this looks extremely promising to develop lecture notes and assignments
     <id>http://jkitchin.github.io/blog/2017/01/15/Querying-a-MongoDB-bibtex-database-with-Python-and-emacs-lisp</id>
     <updated>2017-01-15T10:36:22Z</updated>
     <published>2017-01-15T10:36:22Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="emacs" />
+    <category scheme="http://jkitchin.github.io/blog" term="mongodb" />
     <category scheme="http://jkitchin.github.io/blog" term="python" />
     <category scheme="http://jkitchin.github.io/blog" term="database" />
-    <category scheme="http://jkitchin.github.io/blog" term="mongodb" />
+    <category scheme="http://jkitchin.github.io/blog" term="emacs" />
     <summary type="html"><![CDATA[Querying a MongoDB bibtex database with Python and emacs-lisp]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2017/01/15/Querying-a-MongoDB-bibtex-database-with-Python-and-emacs-lisp"><![CDATA[
 
@@ -1930,211 +2172,5 @@ It is especially interesting to run the queries through emacs-lisp since we get 
 &lt;p&gt;Copyright (C) 2017 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
 &lt;p&gt;&lt;a href="/org/2017/01/15/Querying-a-MongoDB-bibtex-database-with-Python-and-emacs-lisp.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
 &lt;p&gt;Org-mode version = 9.0.3&lt;/p&gt;]]></content>
-  </entry>
-  <entry>
-    <author>
-      <name></name>
-      <uri>http://jkitchin.github.io/blog</uri>
-    </author>
-    <title type="html"><![CDATA[New and improved asynchronous org-babel python blocks]]></title>
-    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2016/11/09/New-and-improved-asynchronous-org-babel-python-blocks" />
-    <id>http://jkitchin.github.io/blog/2016/11/09/New-and-improved-asynchronous-org-babel-python-blocks</id>
-    <updated>2016-11-09T11:00:01Z</updated>
-    <published>2016-11-09T11:00:01Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="emacs" />
-    <category scheme="http://jkitchin.github.io/blog" term="python" />
-    <category scheme="http://jkitchin.github.io/blog" term="orgmode" />
-    <summary type="html"><![CDATA[New and improved asynchronous org-babel python blocks]]></summary>
-    <content type="html" xml:base="http://jkitchin.github.io/blog/2016/11/09/New-and-improved-asynchronous-org-babel-python-blocks"><![CDATA[
-
-
-&lt;div id="table-of-contents"&gt;
-&lt;h2&gt;Table of Contents&lt;/h2&gt;
-&lt;div id="text-table-of-contents"&gt;
-&lt;ul&gt;
-&lt;li&gt;&lt;a href="#orgb1ee49d"&gt;1. autopep8&lt;/a&gt;&lt;/li&gt;
-&lt;li&gt;&lt;a href="#orgcca807a"&gt;2. pylint&lt;/a&gt;&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;p&gt;
-About a year ago I posted some code to run org-babel python blocks &lt;a href="http://kitchingroup.cheme.cmu.edu/blog/2015/11/20/Asynchronously-running-python-blocks-in-org-mode/"&gt;asynchronously&lt;/a&gt;. This year, my students asked for some enhancements related to debugging. Basically, they were frustrated by a few things when they got errors. First, they found it difficult to find the line number in the Traceback in the src block because there are no line numbers in the block, and it is annoying to do a special edit just for line numbers.  
-&lt;/p&gt;
-
-&lt;p&gt;
-I thought about this, and figured out how to significantly improve the situation. The async python code in scimax now has the following features:
-&lt;/p&gt;
-
-&lt;ol class="org-ol"&gt;
-&lt;li&gt;When you get a Traceback, it goes in the results, and each file listed in it is hyperlinked to the source file and line so it is easy to get to them.&lt;/li&gt;
-&lt;li&gt;The cursor jumps to the last line in the code block that is listed in the Traceback, and a beacon shines to show you the line&lt;/li&gt;
-&lt;li&gt;You can turn on temporary line numbers in the code block to see where the lines are in the block, and these disappear when you start typing. This is done in the variable `org-babel-async-python-show-line-numbers'.&lt;/li&gt;
-&lt;li&gt;You can control whether a buffer of the results shows or not via the variable `org-babel-async-python-show-results'.&lt;/li&gt;
-&lt;li&gt;When you run the block, you get a clickable link in the RESULTS section to kill the process.&lt;/li&gt;
-&lt;li&gt;You may also find the `autopep8' and `pylint' functions helpful.&lt;/li&gt;
-&lt;/ol&gt;
-
-&lt;p&gt;
-The code for this is currently found here:
-&lt;a href="https://github.com/jkitchin/scimax/blob/org-9/scimax-org-babel-python.el"&gt;https://github.com/jkitchin/scimax/blob/org-9/scimax-org-babel-python.el&lt;/a&gt;
-&lt;/p&gt;
-
-&lt;p&gt;
-Eventually, I will merge this into master, after I am sure about all the changes needed for org 9.0. That is not likely to happen until the semester ends, so I do not mess up my students who use scimax in class. So, sometime mid-December it will make into master.
-&lt;/p&gt;
-
-&lt;p&gt;
-To make async the default way to run a python block use this code, so that you can use C-c C-c to run them:
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-emacs-lisp"&gt;(&lt;span style="color: #0000FF;"&gt;require&lt;/span&gt; '&lt;span style="color: #D0372D;"&gt;scimax-org-babel-python&lt;/span&gt;)
-(add-to-list 'org-ctrl-c-ctrl-c-hook 'org-babel-async-execute:python)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-As with the past few posts, this video will make it much more clear what the post is about: 
-&lt;/p&gt;
-
-&lt;iframe width="560" height="315" src="https://www.youtube.com/embed/m4vCXM7_p_o" frameborder="0" allowfullscreen&gt;&lt;/iframe&gt;
-
-
-&lt;p&gt;
-Here is a prototypical example that shows how it works. While it runs you can view the progress if you click on the link to show the results.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-python"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; time
-
-&lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; i &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; &lt;span style="color: #006FE0;"&gt;range&lt;/span&gt;(5):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(i)
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   time.sleep(2)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-0
-1
-2
-3
-4
-Traceback (most recent call last):
-  File "Org SRC", line 5, in &amp;lt;module&amp;gt;
-    time.sleep(2)
-KeyboardInterrupt
-&lt;/p&gt;
-
-
-
-
-&lt;p&gt;
-This block has a pretty obvious issue when we run it. The cursor jumps right to the problem!
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-python"&gt;&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'This line is ok'&lt;/span&gt;)
-&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;5 / 0&lt;/span&gt;
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'We will not see this'&lt;/span&gt;)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-This line is ok
-We will not see this
-&lt;/p&gt;
-
-
-
-&lt;p&gt;
-This block shows we can access any of the links in the Traceback. Here we have an error in calling a function that is raised in an external file.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-python"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
-&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; scipy.integrate &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; odeint
-
-&lt;span style="color: #BA36A5;"&gt;Vspan&lt;/span&gt; = np.linspace(0, 2) &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;L&lt;/span&gt;
-
-&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;dF/dV = F&lt;/span&gt;
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;dFdV&lt;/span&gt;(F, V, v0):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; F
-
-
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(odeint(dFdV, 1.0, Vspan))
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-Traceback (most recent call last):
-  File "Org SRC", line 11, in &amp;lt;module&amp;gt;
-    print(odeint(dFdV, 1.0, Vspan))
-  File "/Users/jkitchin/anaconda3/lib/python3.5/site-packages/scipy/integrate/odepack.py", line 215, in odeint
-    ixpr, mxstep, mxhnil, mxordn, mxords)
-TypeError: dFdV() missing 1 required positional argument: 'v0'
-&lt;/p&gt;
-
-
-&lt;p&gt;
-Here we show how nice it is to be able to kill a process. This block will not end on its own.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-python"&gt;&lt;span style="color: #0000FF;"&gt;while&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;:
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;pass&lt;/span&gt;
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-Traceback (most recent call last):
-  File "Org SRC", line 2, in &amp;lt;module&amp;gt;
-    pass
-KeyboardInterrupt
-&lt;/p&gt;
-
-&lt;div id="outline-container-orgb1ee49d" class="outline-2"&gt;
-&lt;h2 id="orgb1ee49d"&gt;&lt;span class="section-number-2"&gt;1&lt;/span&gt; autopep8&lt;/h2&gt;
-&lt;div class="outline-text-2" id="text-1"&gt;
-&lt;p&gt;
-&lt;a href="https://pypi.python.org/pypi/autopep8"&gt;autopep8&lt;/a&gt; is a tool for reformatting Python code. We wrapped this into an Emacs command so you can quickly reformat a Python code block. 
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-python"&gt;&lt;span style="color: #BA36A5;"&gt;a&lt;/span&gt; = 4
-&lt;span style="color: #BA36A5;"&gt;b&lt;/span&gt; = 5
-&lt;span style="color: #BA36A5;"&gt;c&lt;/span&gt; = a * b  &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;comment&lt;/span&gt;
-&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;another comment&lt;/span&gt;
-
-
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f&lt;/span&gt;(x):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(f(5))
-&lt;/pre&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-
-&lt;div id="outline-container-orgcca807a" class="outline-2"&gt;
-&lt;h2 id="orgcca807a"&gt;&lt;span class="section-number-2"&gt;2&lt;/span&gt; pylint&lt;/h2&gt;
-&lt;div class="outline-text-2" id="text-2"&gt;
-&lt;p&gt;
-&lt;a href="https://www.pylint.org"&gt;pylint&lt;/a&gt; is a great tool for checking your Python code for errors, style and conventions. We also wrapped this into an Emacs command so you can run it on a Python src block. The report that is generated had clickable links to help you get right to the lines in your code block with problems.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-python"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
-
-&lt;span style="color: #BA36A5;"&gt;a&lt;/span&gt; = np.array(5, 5)
-
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f&lt;/span&gt;(x): &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x
-
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(f(6))
-&lt;/pre&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;p&gt;Copyright (C) 2016 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
-&lt;p&gt;&lt;a href="/org/2016/11/09/New-and-improved-asynchronous-org-babel-python-blocks.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
-&lt;p&gt;Org-mode version = 9.0&lt;/p&gt;]]></content>
   </entry>
 </feed>
