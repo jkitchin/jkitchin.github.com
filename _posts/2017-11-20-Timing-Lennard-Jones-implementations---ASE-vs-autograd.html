@@ -1,12 +1,286 @@
 ---
 title: Timing Lennard-Jones implementations - ASE vs autograd
 date: 2017/11/20 21:19:17
-updated: 2017/11/20 21:29:02
+updated: 2017/11/21 07:14:23
 categories: python, autograd, lennardjones
 tags: 
 ---
 
 
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#orgf0a9401">1. Timing on the forces</a></li>
+</ul>
+</div>
+</div>
+<p>
+In a comment on this <a href="http://kitchingroup.cheme.cmu.edu/blog/2017/11/14/Forces-by-automatic-differentiation-in-molecular-simulation/">post</a> Konrad Hinsen asked if the autograd forces on a Lennard-Jones potential would be useable in production. I wasn't sure, and was suspicious that analytical force functions would be faster. It turns out to not be so simple. In this post, I attempt to do some timing experiments for comparison. These are tricky to do right, and in a meaningful way, so I will start by explaining what is tricky and why I think the results are meaningful. 
+</p>
+
+<p>
+The ASE calculators cache their results, and return the cached results after the first run. We will do these on a 13-atom icosahedron cluster.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="orgf7e2cea"><span style="color: #0000FF;">from</span> ase.calculators.lj <span style="color: #0000FF;">import</span> LennardJones
+<span style="color: #0000FF;">from</span> ase.cluster.icosahedron <span style="color: #0000FF;">import</span> Icosahedron
+
+<span style="color: #BA36A5;">atoms</span> = Icosahedron(<span style="color: #008000;">'Ar'</span>, noshells=2, latticeconstant=3)
+atoms.set_calculator(LennardJones())
+
+<span style="color: #0000FF;">import</span> time
+<span style="color: #BA36A5;">t0</span> = time.time()
+<span style="color: #0000FF;">print</span>(atoms.get_potential_energy())
+<span style="color: #0000FF;">print</span>(time.time() - t0)
+
+<span style="color: #BA36A5;">t0</span> = time.time()
+<span style="color: #0000FF;">print</span>(atoms.get_potential_energy())
+<span style="color: #0000FF;">print</span>(time.time() - t0)
+
+<span style="color: #BA36A5;">atoms.calc.results</span> = {}
+<span style="color: #BA36A5;">t0</span> = time.time()
+<span style="color: #0000FF;">print</span>(atoms.get_potential_energy())
+<span style="color: #0000FF;">print</span>(time.time() - t0)
+</pre>
+</div>
+
+<p>
+-1.25741774649
+0.004266262054443359
+-1.25741774649
+0.0007658004760742188
+-1.25741774649
+0.001810312271118164
+</p>
+
+<p>
+Note the approximate order of magnitude reduction in elapsed time for the second call. After that, we reset the calculator results, and the time goes back up. So, we have to incorporate that into our timing. Also, in the ASE calculator, the forces are simultaneously calculated. There isn't a way to separate the calls. I am going to use the timeit feature in Ipython for the timing. I don't have a lot of control over what else is running on my machine, so I have observed some variability in the timing results. Finally, I am running these on a MacBook Air.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="orgc8de46c">%%timeit
+atoms.get_potential_energy()
+<span style="color: #BA36A5;">atoms.calc.results</span> = {} <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">this resets it so it runs each time. Otherwise, we get cached results</span>
+</pre>
+</div>
+
+<p>
+1.46 ms ± 107 µs per loop (mean ± std. dev. of 7 runs, 1000 loops each)
+</p>
+
+<p>
+That seems like a surprisingly long time. If you neglect the calculator reset, it looks about 10 times faster because the cache lookup is fast!
+</p>
+
+<p>
+Let's compare that to an implementation of the Lennard-Jones potential similar to the last time. This implementation differs from <a href="http://kitchingroup.cheme.cmu.edu/blog/2017/11/14/Forces-by-automatic-differentiation-in-molecular-simulation/">the first one I blogged about</a>. This one is fully vectorized. It still does not support periodic boundary conditions though. This version may be up to 10 times faster than the previous version. I haven't tested this very well, I only assured it gives the same energy as ASE for the example in this post.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="org8cb613c"><span style="color: #0000FF;">import</span> autograd.numpy <span style="color: #0000FF;">as</span> np
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">energy</span>(positions):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #036A07;">"Compute the energy of a Lennard-Jones system."</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">sigma</span> = 1.0
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">epsilon</span> = 1.0
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">rc</span> = 3 * sigma
+
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">e0</span> = 4 * epsilon * ((sigma / rc)**12 - (sigma / rc)**6)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">natoms</span> = <span style="color: #006FE0;">len</span>(positions)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">These are the pairs of indices we need to compute distances for.</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">a</span>, <span style="color: #BA36A5;">b</span> = np.triu_indices(natoms, 1)
+
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">d</span> = positions[a] - positions[b]
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">r2</span> = np.<span style="color: #006FE0;">sum</span>(d**2, axis=1)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">c6</span> = np.where(r2 &lt;= rc**2, (sigma**2 / r2)**3, np.zeros_like(r2))
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">energy</span> = -e0 * (c6 != 0.0).<span style="color: #006FE0;">sum</span>()
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">c12</span> = c6**2
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">energy</span> += np.<span style="color: #006FE0;">sum</span>(4 * epsilon * (c12 - c6))
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> energy
+
+<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">Just to check we get the same answer</span>
+<span style="color: #0000FF;">print</span>(energy(atoms.positions))
+</pre>
+</div>
+
+<p>
+-1.25741774649
+</p>
+
+<p>
+The energy looks good. For timing, we store the positions in a variable, in case there is any lookup time, since this function only needs an array.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="org8a0cafe"><span style="color: #BA36A5;">pos</span> = atoms.positions
+</pre>
+</div>
+
+<p>
+
+</p>
+
+<p>
+There is no caching to worry about here, we can just get the timing.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="org95d918e">%%timeit
+energy(pos)
+</pre>
+</div>
+
+<p>
+82.2 µs ± 2.85 µs per loop (mean ± std. dev. of 7 runs, 10000 loops each)
+</p>
+
+<p>
+Wow, that is a lot faster than the ASE implementation. Score one for vectorization.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="org7c9da81"><span style="color: #0000FF;">print</span>(<span style="color: #008000;">'Vectorized is {0:1.1f} times faster than ASE at energy.'</span>.<span style="color: #006FE0;">format</span>(1.46e-3 / 82.5e-6))
+</pre>
+</div>
+
+<pre class="example">
+Vectorized is 17.7 times faster than ASE at energy.
+
+</pre>
+
+<p>
+Yep, a fully vectorized implementation is a lot faster than the ASE version which uses loops. So far the difference has nothing to do with autograd.
+</p>
+
+<div id="outline-container-orgf0a9401" class="outline-2">
+<h2 id="orgf0a9401"><span class="section-number-2">1</span> Timing on the forces</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+The forces are where derivatives are important, and it is a reasonable question of whether hand-coded derivatives are faster or slower than autograd derivatives. We first look at the forces from ASE. The analytical forces take about the same time as the energy, which is not surprising. The same work is done for both of them.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="org7b41514">np.set_printoptions(precision=3, suppress=<span style="color: #D0372D;">True</span>)
+<span style="color: #0000FF;">print</span>(atoms.get_forces())
+</pre>
+</div>
+
+<pre class="example">
+[[-0.    -0.    -0.   ]
+ [-0.296 -0.     0.183]
+ [-0.296 -0.    -0.183]
+ [ 0.296 -0.     0.183]
+ [ 0.296 -0.    -0.183]
+ [ 0.183 -0.296 -0.   ]
+ [-0.183 -0.296  0.   ]
+ [ 0.183  0.296 -0.   ]
+ [-0.183  0.296  0.   ]
+ [-0.     0.183 -0.296]
+ [ 0.    -0.183 -0.296]
+ [-0.     0.183  0.296]
+ [ 0.    -0.183  0.296]]
+
+</pre>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="orgd44d7ec">%%timeit
+atoms.get_forces()
+<span style="color: #BA36A5;">atoms.calc.results</span> = {}
+</pre>
+</div>
+
+<pre class="example">
+1.22 ms ± 38.7 µs per loop (mean ± std. dev. of 7 runs, 1000 loops each)
+
+</pre>
+
+<p>
+Here is our auto-differentiated force function.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="org5504ce8"><span style="color: #0000FF;">from</span> autograd <span style="color: #0000FF;">import</span> elementwise_grad
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">forces</span>(pos):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">dEdR</span> = elementwise_grad(energy)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> -dEdR(pos)
+</pre>
+</div>
+
+<p>
+Let's just check the forces for consistency.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="org8ddbd99"><span style="color: #0000FF;">print</span>(forces(atoms.positions))
+
+<span style="color: #0000FF;">print</span>(np.allclose(forces(atoms.positions), atoms.get_forces()))
+</pre>
+</div>
+
+<pre class="example">
+[[-0.    -0.    -0.   ]
+ [-0.296 -0.     0.183]
+ [-0.296 -0.    -0.183]
+ [ 0.296 -0.     0.183]
+ [ 0.296 -0.    -0.183]
+ [ 0.183 -0.296 -0.   ]
+ [-0.183 -0.296  0.   ]
+ [ 0.183  0.296 -0.   ]
+ [-0.183  0.296  0.   ]
+ [-0.     0.183 -0.296]
+ [ 0.    -0.183 -0.296]
+ [-0.     0.183  0.296]
+ [ 0.    -0.183  0.296]]
+True
+
+</pre>
+
+<p>
+Those all look the same, so now performance for that:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="org2f682df">%%timeit 
+
+forces(pos)
+</pre>
+</div>
+
+<pre class="example">
+727 µs ± 47.1 µs per loop (mean ± std. dev. of 7 runs, 1000 loops each)
+
+</pre>
+
+<p>
+This is faster than the ASE version. I suspect that it is largely because of the faster, vectorized algorithm overall. 
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="org0eebeb8"><span style="color: #0000FF;">print</span>(<span style="color: #008000;">'autograd is {0:1.1f} times faster than ASE on forces.'</span>.<span style="color: #006FE0;">format</span>(1.22e-3 / 727e-6))
+</pre>
+</div>
+
+<pre class="example">
+autograd is 1.7 times faster than ASE on forces.
+
+</pre>
+
+<p>
+autograd forces are consistently 2-6 times faster than the ASE implementation. It could be possible to hand-code a faster function for the forces, if it was fully vectorized. I spent a while seeing what would be required for that, and it is not obvious how to do that. Any solution that uses loops will be slower I think.
+</p>
+
+<p>
+This doesn't directly answer the question of whether this can work in production. Everything is still written in Python here, which might limit the size and length of calculations you can practically do. With the right implementation though, it looks promising.
+</p>
+</div>
+</div>
 <p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
 <p><a href="/org/2017/11/20/Timing-Lennard-Jones-implementations---ASE-vs-autograd.org">org-mode source</a></p>
 <p>Org-mode version = 9.1.2</p>
