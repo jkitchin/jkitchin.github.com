@@ -12,7 +12,7 @@
     <title>The Kitchin Research Group</title>
     <link>http://jkitchin.github.io/blog</link>
     <description>Chemical Engineering at Carnegie Mellon University</description>
-    <pubDate>Tue, 21 Nov 2017 05:29:12 GMT</pubDate>
+    <pubDate>Tue, 21 Nov 2017 15:14:37 GMT</pubDate>
     <generator>Blogofile</generator>
     <sy:updatePeriod>hourly</sy:updatePeriod>
     <sy:updateFrequency>1</sy:updateFrequency>
@@ -22,13 +22,287 @@
       <link>http://jkitchin.github.io/blog/2017/11/20/Timing-Lennard-Jones-implementations-ASE-vs-autograd</link>
       <pubDate>Mon, 20 Nov 2017 21:19:17 EST</pubDate>
       <category><![CDATA[lennardjones]]></category>
-      <category><![CDATA[autograd]]></category>
       <category><![CDATA[python]]></category>
+      <category><![CDATA[autograd]]></category>
       <guid isPermaLink="false">nSG47QhTDNSZivajfbKAXC-gvIU=</guid>
       <description>Timing Lennard-Jones implementations - ASE vs autograd</description>
       <content:encoded><![CDATA[
 
 
+&lt;div id="table-of-contents"&gt;
+&lt;h2&gt;Table of Contents&lt;/h2&gt;
+&lt;div id="text-table-of-contents"&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href="#orgf0a9401"&gt;1. Timing on the forces&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;p&gt;
+In a comment on this &lt;a href="http://kitchingroup.cheme.cmu.edu/blog/2017/11/14/Forces-by-automatic-differentiation-in-molecular-simulation/"&gt;post&lt;/a&gt; Konrad Hinsen asked if the autograd forces on a Lennard-Jones potential would be useable in production. I wasn't sure, and was suspicious that analytical force functions would be faster. It turns out to not be so simple. In this post, I attempt to do some timing experiments for comparison. These are tricky to do right, and in a meaningful way, so I will start by explaining what is tricky and why I think the results are meaningful. 
+&lt;/p&gt;
+
+&lt;p&gt;
+The ASE calculators cache their results, and return the cached results after the first run. We will do these on a 13-atom icosahedron cluster.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="orgf7e2cea"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; ase.calculators.lj &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; LennardJones
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; ase.cluster.icosahedron &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; Icosahedron
+
+&lt;span style="color: #BA36A5;"&gt;atoms&lt;/span&gt; = Icosahedron(&lt;span style="color: #008000;"&gt;'Ar'&lt;/span&gt;, noshells=2, latticeconstant=3)
+atoms.set_calculator(LennardJones())
+
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; time
+&lt;span style="color: #BA36A5;"&gt;t0&lt;/span&gt; = time.time()
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(atoms.get_potential_energy())
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(time.time() - t0)
+
+&lt;span style="color: #BA36A5;"&gt;t0&lt;/span&gt; = time.time()
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(atoms.get_potential_energy())
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(time.time() - t0)
+
+&lt;span style="color: #BA36A5;"&gt;atoms.calc.results&lt;/span&gt; = {}
+&lt;span style="color: #BA36A5;"&gt;t0&lt;/span&gt; = time.time()
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(atoms.get_potential_energy())
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(time.time() - t0)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+-1.25741774649
+0.004266262054443359
+-1.25741774649
+0.0007658004760742188
+-1.25741774649
+0.001810312271118164
+&lt;/p&gt;
+
+&lt;p&gt;
+Note the approximate order of magnitude reduction in elapsed time for the second call. After that, we reset the calculator results, and the time goes back up. So, we have to incorporate that into our timing. Also, in the ASE calculator, the forces are simultaneously calculated. There isn't a way to separate the calls. I am going to use the timeit feature in Ipython for the timing. I don't have a lot of control over what else is running on my machine, so I have observed some variability in the timing results. Finally, I am running these on a MacBook Air.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="orgc8de46c"&gt;%%timeit
+atoms.get_potential_energy()
+&lt;span style="color: #BA36A5;"&gt;atoms.calc.results&lt;/span&gt; = {} &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;this resets it so it runs each time. Otherwise, we get cached results&lt;/span&gt;
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+1.46 ms ± 107 µs per loop (mean ± std. dev. of 7 runs, 1000 loops each)
+&lt;/p&gt;
+
+&lt;p&gt;
+That seems like a surprisingly long time. If you neglect the calculator reset, it looks about 10 times faster because the cache lookup is fast!
+&lt;/p&gt;
+
+&lt;p&gt;
+Let's compare that to an implementation of the Lennard-Jones potential similar to the last time. This implementation differs from &lt;a href="http://kitchingroup.cheme.cmu.edu/blog/2017/11/14/Forces-by-automatic-differentiation-in-molecular-simulation/"&gt;the first one I blogged about&lt;/a&gt;. This one is fully vectorized. It still does not support periodic boundary conditions though. This version may be up to 10 times faster than the previous version. I haven't tested this very well, I only assured it gives the same energy as ASE for the example in this post.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org8cb613c"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; autograd.numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;energy&lt;/span&gt;(positions):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #036A07;"&gt;"Compute the energy of a Lennard-Jones system."&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;sigma&lt;/span&gt; = 1.0
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;epsilon&lt;/span&gt; = 1.0
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;rc&lt;/span&gt; = 3 * sigma
+
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;e0&lt;/span&gt; = 4 * epsilon * ((sigma / rc)**12 - (sigma / rc)**6)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;natoms&lt;/span&gt; = &lt;span style="color: #006FE0;"&gt;len&lt;/span&gt;(positions)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;These are the pairs of indices we need to compute distances for.&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;a&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;b&lt;/span&gt; = np.triu_indices(natoms, 1)
+
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;d&lt;/span&gt; = positions[a] - positions[b]
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;r2&lt;/span&gt; = np.&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;(d**2, axis=1)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;c6&lt;/span&gt; = np.where(r2 &amp;lt;= rc**2, (sigma**2 / r2)**3, np.zeros_like(r2))
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;energy&lt;/span&gt; = -e0 * (c6 != 0.0).&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;()
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;c12&lt;/span&gt; = c6**2
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;energy&lt;/span&gt; += np.&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;(4 * epsilon * (c12 - c6))
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; energy
+
+&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;Just to check we get the same answer&lt;/span&gt;
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(energy(atoms.positions))
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+-1.25741774649
+&lt;/p&gt;
+
+&lt;p&gt;
+The energy looks good. For timing, we store the positions in a variable, in case there is any lookup time, since this function only needs an array.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org8a0cafe"&gt;&lt;span style="color: #BA36A5;"&gt;pos&lt;/span&gt; = atoms.positions
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+
+&lt;/p&gt;
+
+&lt;p&gt;
+There is no caching to worry about here, we can just get the timing.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org95d918e"&gt;%%timeit
+energy(pos)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+82.2 µs ± 2.85 µs per loop (mean ± std. dev. of 7 runs, 10000 loops each)
+&lt;/p&gt;
+
+&lt;p&gt;
+Wow, that is a lot faster than the ASE implementation. Score one for vectorization.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org7c9da81"&gt;&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'Vectorized is {0:1.1f} times faster than ASE at energy.'&lt;/span&gt;.&lt;span style="color: #006FE0;"&gt;format&lt;/span&gt;(1.46e-3 / 82.5e-6))
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+Vectorized is 17.7 times faster than ASE at energy.
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+Yep, a fully vectorized implementation is a lot faster than the ASE version which uses loops. So far the difference has nothing to do with autograd.
+&lt;/p&gt;
+
+&lt;div id="outline-container-orgf0a9401" class="outline-2"&gt;
+&lt;h2 id="orgf0a9401"&gt;&lt;span class="section-number-2"&gt;1&lt;/span&gt; Timing on the forces&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-1"&gt;
+&lt;p&gt;
+The forces are where derivatives are important, and it is a reasonable question of whether hand-coded derivatives are faster or slower than autograd derivatives. We first look at the forces from ASE. The analytical forces take about the same time as the energy, which is not surprising. The same work is done for both of them.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org7b41514"&gt;np.set_printoptions(precision=3, suppress=&lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;)
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(atoms.get_forces())
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+[[-0.    -0.    -0.   ]
+ [-0.296 -0.     0.183]
+ [-0.296 -0.    -0.183]
+ [ 0.296 -0.     0.183]
+ [ 0.296 -0.    -0.183]
+ [ 0.183 -0.296 -0.   ]
+ [-0.183 -0.296  0.   ]
+ [ 0.183  0.296 -0.   ]
+ [-0.183  0.296  0.   ]
+ [-0.     0.183 -0.296]
+ [ 0.    -0.183 -0.296]
+ [-0.     0.183  0.296]
+ [ 0.    -0.183  0.296]]
+
+&lt;/pre&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="orgd44d7ec"&gt;%%timeit
+atoms.get_forces()
+&lt;span style="color: #BA36A5;"&gt;atoms.calc.results&lt;/span&gt; = {}
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+1.22 ms ± 38.7 µs per loop (mean ± std. dev. of 7 runs, 1000 loops each)
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+Here is our auto-differentiated force function.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org5504ce8"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; autograd &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; elementwise_grad
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;forces&lt;/span&gt;(pos):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;dEdR&lt;/span&gt; = elementwise_grad(energy)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; -dEdR(pos)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Let's just check the forces for consistency.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org8ddbd99"&gt;&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(forces(atoms.positions))
+
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(np.allclose(forces(atoms.positions), atoms.get_forces()))
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+[[-0.    -0.    -0.   ]
+ [-0.296 -0.     0.183]
+ [-0.296 -0.    -0.183]
+ [ 0.296 -0.     0.183]
+ [ 0.296 -0.    -0.183]
+ [ 0.183 -0.296 -0.   ]
+ [-0.183 -0.296  0.   ]
+ [ 0.183  0.296 -0.   ]
+ [-0.183  0.296  0.   ]
+ [-0.     0.183 -0.296]
+ [ 0.    -0.183 -0.296]
+ [-0.     0.183  0.296]
+ [ 0.    -0.183  0.296]]
+True
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+Those all look the same, so now performance for that:
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org2f682df"&gt;%%timeit 
+
+forces(pos)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+727 µs ± 47.1 µs per loop (mean ± std. dev. of 7 runs, 1000 loops each)
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+This is faster than the ASE version. I suspect that it is largely because of the faster, vectorized algorithm overall. 
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org0eebeb8"&gt;&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'autograd is {0:1.1f} times faster than ASE on forces.'&lt;/span&gt;.&lt;span style="color: #006FE0;"&gt;format&lt;/span&gt;(1.22e-3 / 727e-6))
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+autograd is 1.7 times faster than ASE on forces.
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+autograd forces are consistently 2-6 times faster than the ASE implementation. It could be possible to hand-code a faster function for the forces, if it was fully vectorized. I spent a while seeing what would be required for that, and it is not obvious how to do that. Any solution that uses loops will be slower I think.
+&lt;/p&gt;
+
+&lt;p&gt;
+This doesn't directly answer the question of whether this can work in production. Everything is still written in Python here, which might limit the size and length of calculations you can practically do. With the right implementation though, it looks promising.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
 &lt;p&gt;Copyright (C) 2017 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
 &lt;p&gt;&lt;a href="/org/2017/11/20/Timing-Lennard-Jones-implementations---ASE-vs-autograd.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
 &lt;p&gt;Org-mode version = 9.1.2&lt;/p&gt;]]></content:encoded>
@@ -37,8 +311,8 @@
       <title>Training the ASE Lennard-Jones potential to DFT calculations</title>
       <link>http://jkitchin.github.io/blog/2017/11/19/Training-the-ASE-Lennard-Jones-potential-to-DFT-calculations</link>
       <pubDate>Sun, 19 Nov 2017 19:58:47 EST</pubDate>
-      <category><![CDATA[autograd]]></category>
       <category><![CDATA[python]]></category>
+      <category><![CDATA[autograd]]></category>
       <guid isPermaLink="false">3F6r3ND1CA3_cN4MucvEGF7dYe8=</guid>
       <description>Training the ASE Lennard-Jones potential to DFT calculations</description>
       <content:encoded><![CDATA[
@@ -156,8 +430,8 @@ The results aren't fantastic, but you can see that we get the closer packed stru
       <title>Neural networks for regression with autograd</title>
       <link>http://jkitchin.github.io/blog/2017/11/18/Neural-networks-for-regression-with-autograd</link>
       <pubDate>Sat, 18 Nov 2017 14:20:17 EST</pubDate>
-      <category><![CDATA[autograd]]></category>
       <category><![CDATA[python]]></category>
+      <category><![CDATA[autograd]]></category>
       <guid isPermaLink="false">9uVdmxBbY4M7zM41Piv7uZNbqno=</guid>
       <description>Neural networks for regression with autograd</description>
       <content:encoded><![CDATA[
@@ -458,8 +732,8 @@ Now you know the secret of a neural network, it is just a nonlinear model. Witho
       <link>http://jkitchin.github.io/blog/2017/11/17/Using-autograd-in-nonlinear-regression</link>
       <pubDate>Fri, 17 Nov 2017 07:49:03 EST</pubDate>
       <category><![CDATA[regression]]></category>
-      <category><![CDATA[autograd]]></category>
       <category><![CDATA[python]]></category>
+      <category><![CDATA[autograd]]></category>
       <guid isPermaLink="false">oBFiryqCGuLeWr0JNXRFXtr3TQ8=</guid>
       <description>Using autograd in nonlinear regression</description>
       <content:encoded><![CDATA[
@@ -747,9 +1021,9 @@ The fit looks pretty good.
       <title>Sensitivity analysis using automatic differentiation in Python</title>
       <link>http://jkitchin.github.io/blog/2017/11/15/Sensitivity-analysis-using-automatic-differentiation-in-Python</link>
       <pubDate>Wed, 15 Nov 2017 08:34:29 EST</pubDate>
-      <category><![CDATA[autograd]]></category>
       <category><![CDATA[sensitivity]]></category>
       <category><![CDATA[python]]></category>
+      <category><![CDATA[autograd]]></category>
       <guid isPermaLink="false">9AFJlEwYc2VNT6Wwisg6LlYD3KY=</guid>
       <description>Sensitivity analysis using automatic differentiation in Python</description>
       <content:encoded><![CDATA[
@@ -988,8 +1262,8 @@ Wow. We got forces without deriving a derivative, or using numerical finite diff
       <title>New publication in J. Phys. Chem. Lett.</title>
       <link>http://jkitchin.github.io/blog/2017/09/25/New-publication-in-J-Phys-Chem-Lett</link>
       <pubDate>Mon, 25 Sep 2017 20:24:45 EDT</pubDate>
-      <category><![CDATA[publication]]></category>
       <category><![CDATA[news]]></category>
+      <category><![CDATA[publication]]></category>
       <guid isPermaLink="false">PveOA8dav7j4BpfpSMamDflKPgI=</guid>
       <description>New publication in J. Phys. Chem. Lett.</description>
       <content:encoded><![CDATA[
@@ -1032,8 +1306,8 @@ DFT calculations are extensively used to predict the chemical properties of meta
       <title>Finding similar bibtex entries</title>
       <link>http://jkitchin.github.io/blog/2017/09/16/Finding-similar-bibtex-entries</link>
       <pubDate>Sat, 16 Sep 2017 10:00:47 EDT</pubDate>
-      <category><![CDATA[bibtex]]></category>
       <category><![CDATA[similarity]]></category>
+      <category><![CDATA[bibtex]]></category>
       <guid isPermaLink="false">urp5XIGFmBc6uCiOb266MS_edbI=</guid>
       <description>Finding similar bibtex entries</description>
       <content:encoded><![CDATA[
@@ -1244,8 +1518,8 @@ This could have a number of other applications. Given some reference content, yo
       <title>New publication in Journal of Physics Condensed Matter</title>
       <link>http://jkitchin.github.io/blog/2017/08/06/New-publication-in-Journal-of-Physics-Condensed-Matter</link>
       <pubDate>Sun, 06 Aug 2017 11:04:51 EDT</pubDate>
-      <category><![CDATA[publication]]></category>
       <category><![CDATA[news]]></category>
+      <category><![CDATA[publication]]></category>
       <guid isPermaLink="false">A0HOTFqPJAw9ZM--08-s7Cs0oEM=</guid>
       <description>New publication in Journal of Physics Condensed Matter</description>
       <content:encoded><![CDATA[
@@ -1309,8 +1583,8 @@ The Atomic Simulation Environment is a powerful python library for setting up, r
       <title>New publication in Crystal Growth &amp; Design</title>
       <link>http://jkitchin.github.io/blog/2017/08/05/New-publication-in-Crystal-Growth-Design</link>
       <pubDate>Sat, 05 Aug 2017 13:11:22 EDT</pubDate>
-      <category><![CDATA[publication]]></category>
       <category><![CDATA[news]]></category>
+      <category><![CDATA[publication]]></category>
       <guid isPermaLink="false">-MA0RScwtXOluJHKfdmming76sM=</guid>
       <description>New publication in Crystal Growth &amp; Design</description>
       <content:encoded><![CDATA[
