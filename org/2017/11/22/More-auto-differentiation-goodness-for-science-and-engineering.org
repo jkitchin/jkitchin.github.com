@@ -1,0 +1,224 @@
+* More auto-differentiation goodness for science and engineering
+  :PROPERTIES:
+  :categories: python, autograd
+  :date:     2017/11/22 15:52:26
+  :updated:  2017/11/22 15:52:26
+  :org-url:  http://kitchingroup.cheme.cmu.edu/org/2017/11/22/More-auto-differentiation-goodness-for-science-and-engineering.org
+  :permalink: http://kitchingroup.cheme.cmu.edu/blog/2017/11/22/More-auto-differentiation-goodness-for-science-and-engineering/index.html
+  :END:
+  
+In this post I continue my investigations in the use of auto-differentiation via autograd in scientific and mathematical programming. The main focus of today is using autograd to get derivatives that either have mathematical value, eg. accelerating root finding, or demonstrating mathematical rules, or scientific value, e.g. the derivative is related to a property, or illustrates some constraint.
+
+All the code in this post relies on these imports:
+
+#+BEGIN_SRC ipython
+import autograd.numpy as np
+from autograd import grad, jacobian
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+
+:END:
+
+In the following sections I explore some applications in calculus, root-finding, materials and thermodynamics.
+
+** Showing mixed partial derivatives are equal
+   
+In calculus, we know that if we have a well-behaved function $f(x, y)$, then it should be true that $\frac{\partial^2f}{\partial x \partial y} = \frac{\partial^2f}{\partial y \partial y}$.
+
+Here we use autograd to compute the mixed partial derivatives and show for 10 random points that this statement is true. This doesnt' prove it for all points, of course, but it is easy to prove for any point of interest.
+
+#+NAME: lima-happy-echo-mars
+#+BEGIN_SRC ipython
+def f(x, y):
+    return x * y**2
+
+dfdx = grad(f)
+d2fdxdy = grad(dfdx, 1)
+
+dfdy = grad(f, 1)
+d2fdydx = grad(dfdy)
+
+x = np.random.rand(10)
+y = np.random.rand(10)
+
+T = [d2fdxdy(x1, y1) == d2fdydx(x1, y1) for x1, y1 in zip(x, y)]
+
+print(np.all(T))
+#+END_SRC
+
+#+RESULTS: lima-happy-echo-mars
+:RESULTS:
+True
+
+:END:
+
+** Root finding with jacobians
+   
+fsolve often works fine without access to derivatives. In this example from [[http://people.duke.edu/~ccc14/sta-663-2016/13_Optimization.html][here]], we solve a set of equations with two variables, and it takes 21 iterations to reach the solution.
+
+#+NAME: princess-pennsylvania-oranges-texas
+#+BEGIN_SRC ipython
+from scipy.optimize import fsolve
+
+def f(x):
+    return np.array([x[1] - 3*x[0]*(x[0]+1)*(x[0]-1),
+                     .25*x[0]**2 + x[1]**2 - 1])
+
+
+ans, info, flag, msg = fsolve(f, (0.5, 0.5), full_output=1)
+print(ans)
+print(info['nfev'])
+#+END_SRC
+
+#+RESULTS: princess-pennsylvania-oranges-texas
+:RESULTS:
+[ 1.117  0.83 ]
+21
+
+:END:
+
+If we add the jacobian, we get the same result with only 15 iterations, about 1/3 fewer iterations. If the iterations are expensive, this might save a lot of time. 
+
+#+NAME: jersey-four-salami-butter
+#+BEGIN_SRC ipython
+df = jacobian(f)
+x0 = np.array([0.5, 0.5])
+
+ans, info, flag, msg  = fsolve(f, x0, fprime=df, full_output=1)
+print(ans)
+print(info['nfev'])
+#+END_SRC
+
+#+RESULTS: jersey-four-salami-butter
+:RESULTS:
+[ 1.117  0.83 ]
+15
+
+:END:
+
+There is a similar [[https://github.com/HIPS/autograd/blob/master/examples/rosenbrock.py][example]] provided by autograd.
+
+** Getting the pressure from a solid equation of state
+
+In this [[http://kitchingroup.cheme.cmu.edu/blog/2013/02/18/Nonlinear-curve-fitting/][post]] we described how to fit a solid equation of state to describe the energy of a solid under isotropic strain. Now, we can readily compute the pressure at a particular volume from the equation:
+
+$P = -\frac{dE}{dV}$
+
+We just need the derivative of this equation:
+
+$E = E_0+\frac{B_0 V}{B'_0}\left[\frac{(V_0/V)^{B'_0}}{B'_0-1}+1\right]-\frac{V_0 B_0}{B'_0-1}$
+
+or we use autograd to get it for us.
+
+#+NAME: crazy-ink-robert-echo
+#+BEGIN_SRC ipython
+E0, B0, BP, V0 = -56.466,   0.49,    4.753,  16.573
+
+def Murnaghan(vol):
+    E = E0 + B0 * vol / BP * (((V0 / vol)**BP) / (BP - 1.0) + 1.0) - V0 * B0 / (BP - 1.)
+    return E
+
+def P(vol):
+    dEdV = grad(Murnaghan)
+    return -dEdV(vol) * 160.21773  # in Gpa
+
+print(P(V0)) # Pressure at the minimum
+print(P(0.99 * V0))  # Compressed
+#+END_SRC
+
+#+RESULTS: crazy-ink-robert-echo
+:RESULTS:
+#+BEGIN_EXAMPLE
+4.44693531998e-15
+0.808167684691
+
+#+END_EXAMPLE
+:END:
+
+So it takes positive pressure to compress the system, as expected, and at the minimum the pressure is equal to zero. Seems pretty clear autograd is better than deriving the required pressure derivative.
+
+** Deriving activity coefficients and demonstration of the Gibbs-Duhem relation
+   
+Thermodynamics tells us that in a binary mixture the following is true:
+
+$0 = x_1 \frac{d \ln \gamma_1}{dx_1} + (1 - x_1 \frac{d \ln \gamma_2}{dx_1}$
+
+In other words, the activity coefficients of the two species can't be independent. 
+
+Suppose we have the [[https://en.wikipedia.org/wiki/Margules_activity_model][Margules model]] for the excess free energy:
+
+$G^{ex}/RT = n x_1 (1 - x_1) (A21 x_1 + A_{12} (1 - x_1)$
+
+where $n = n_1 + n_2$, and $x_1 = n1 / n$, and $x_2 = n_2 / n$. 
+
+From this expression, we know:
+
+$\ln \gamma_1 = \frac{\partial G_{ex}/RT}{\partial n_1}$
+
+and
+
+$\ln \gamma_2 = \frac{\partial G_{ex}/RT}{\partial n_2}$
+
+It is also true that (the Gibbs-Duhem equation):
+
+$0 = x_1 \frac{d \ln \gamma_1}{d n_1} + x_2 \frac{d \ln \gamma_2}{d n_1}$
+
+Here we will use autograd to get these derivatives, and demonstrate the Gibbs-Duhem eqn holds for this excess Gibbs energy model.
+
+#+NAME: south-sixteen-oranges-florida
+#+BEGIN_SRC ipython
+A12, A21 = 2.04, 1.5461  # Acetone/water https://en.wikipedia.org/wiki/Margules_activity_model
+
+def GexRT(n1, n2):
+    n = n1 + n2
+    x1 = n1 / n
+    x2 = n2 / n
+    return n * x1 * x2 * (A21 * x1 + A12 * x2)
+
+lngamma1 = grad(GexRT)     # dGex/dn1
+lngamma2 = grad(GexRT, 1)  # dGex/dn2
+
+n1, n2 = 1.0, 2.0
+n = n1 + n2
+x1 = n1 / n
+x2 = n2 / n
+
+# Evaluate the activity coefficients
+print('AD:         ',lngamma1(n1, n2), lngamma2(n1, n2))
+
+# Compare that to these analytically derived activity coefficients
+print('Analytical: ', (A12 + 2 * (A21 - A12) * x1) * x2**2, (A21 + 2 * (A12 - A21) * x2) * x1**2)
+
+# Demonstration of the Gibbs-Duhem rule
+dg1 = grad(lngamma1)
+dg2 = grad(lngamma2)
+
+n = 1.0 # Choose a basis number of moles
+x1 = np.linspace(0, 1)
+x2 = 1 - x1
+n1 = n * x1
+n2 = n - n1
+
+GD = [_x1 * dg1(_n1, _n2) + _x2 * dg2(_n1, _n2)
+      for _x1, _x2, _n1, _n2 in zip(x1, x2, n1, n2)]
+
+print(np.allclose(GD, np.zeros(len(GD))))
+#+END_SRC
+
+#+RESULTS: south-sixteen-oranges-florida
+:RESULTS:
+#+BEGIN_EXAMPLE
+('AD:         ', 0.76032592592592585, 0.24495925925925932)
+('Analytical: ', 0.760325925925926, 0.24495925925925924)
+True
+
+#+END_EXAMPLE
+:END:
+
+That is pretty compelling. The autograd derivatives are much easier to code than the analytical solutions (which also had to be derived). You can also see that the Gibbs-Duhem equation is satisfied for this model, at least with a reasonable tolerance for the points we evaluated it at. 
+
+** Summary
+   
+Today we examined four ways to use autograd in scientific or mathematical programs to replace the need to derive derivatives by hand. The main requirements for this to work are that you use the autograd.numpy module, and only the functions in it that are supported. It is possible to add your own functions (described in the [[https://github.com/HIPS/autograd/blob/master/docs/tutorial.md#extend-autograd-by-defining-your-own-primitives][tutorial]]) if needed. It seems like there are a lot of opportunities for scientific programming for autograd.
