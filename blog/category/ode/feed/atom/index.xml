@@ -8,7 +8,7 @@
   <title type="text">The Kitchin Research Group</title>
   <subtitle type="text">Chemical Engineering at Carnegie Mellon University</subtitle>
 
-  <updated>2017-11-28T04:01:03Z</updated>
+  <updated>2017-11-28T15:24:09Z</updated>
   <generator uri="http://blogofile.com/">Blogofile</generator>
 
   <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog" />
@@ -19,13 +19,136 @@
       <name></name>
       <uri>http://jkitchin.github.io/blog</uri>
     </author>
+    <title type="html"><![CDATA[Solving ODEs with a neural network and autograd]]></title>
+    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2017/11/28/Solving-ODEs-with-a-neural-network-and-autograd" />
+    <id>http://jkitchin.github.io/blog/2017/11/28/Solving-ODEs-with-a-neural-network-and-autograd</id>
+    <updated>2017-11-28T07:23:59Z</updated>
+    <published>2017-11-28T07:23:03Z</published>
+    <category scheme="http://jkitchin.github.io/blog" term="autograd" />
+    <category scheme="http://jkitchin.github.io/blog" term="ode" />
+    <summary type="html"><![CDATA[Solving ODEs with a neural network and autograd]]></summary>
+    <content type="html" xml:base="http://jkitchin.github.io/blog/2017/11/28/Solving-ODEs-with-a-neural-network-and-autograd"><![CDATA[
+
+
+&lt;p&gt;
+In the last &lt;a href="http://kitchingroup.cheme.cmu.edu/blog/2017/11/27/Solving-BVPs-with-a-neural-network-and-autograd/"&gt;post&lt;/a&gt; I explored using a neural network to solve a BVP. Here, I expand the idea to solving an initial value ordinary differential equation. The idea is basically the same, we just have a slightly different objective function.
+&lt;/p&gt;
+
+&lt;p&gt;
+\(dCa/dt = -k Ca(t)\) where \(Ca(t=0) = 2.0\).
+&lt;/p&gt;
+
+&lt;p&gt;
+Here is the code that solves this equation, along with a comparison to the analytical solution: \(Ca(t) = Ca0 \exp -kt\).
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-python"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; autograd.numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; autograd &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; grad, elementwise_grad
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; autograd.numpy.random &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; npr
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; autograd.misc.optimizers &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; adam
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;init_random_params&lt;/span&gt;(scale, layer_sizes, rs=npr.RandomState(0)):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #036A07;"&gt;"""Build a list of (weights, biases) tuples, one for each layer."""&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; [(rs.randn(insize, outsize) * scale,   &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;weight matrix&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;rs.randn(outsize) * scale)           &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;bias vector&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; insize, outsize &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; &lt;span style="color: #006FE0;"&gt;zip&lt;/span&gt;(layer_sizes[:-1], layer_sizes[1:])]
+
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;swish&lt;/span&gt;(x):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #036A07;"&gt;"see https://arxiv.org/pdf/1710.05941.pdf"&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x / (1.0 + np.exp(-x))
+
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;Ca&lt;/span&gt;(params, inputs):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #036A07;"&gt;"Neural network functions"&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; W, b &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; params:
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;outputs&lt;/span&gt; = np.dot(inputs, W) + b
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;inputs&lt;/span&gt; = swish(outputs)    
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; outputs
+
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   
+&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;Here is our initial guess of params:&lt;/span&gt;
+&lt;span style="color: #BA36A5;"&gt;params&lt;/span&gt; = init_random_params(0.1, layer_sizes=[1, 8, 1])
+
+&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;Derivatives&lt;/span&gt;
+&lt;span style="color: #BA36A5;"&gt;dCadt&lt;/span&gt; = elementwise_grad(Ca, 1)
+
+&lt;span style="color: #BA36A5;"&gt;k&lt;/span&gt; = 0.23
+&lt;span style="color: #BA36A5;"&gt;Ca0&lt;/span&gt; = 2.0
+&lt;span style="color: #BA36A5;"&gt;t&lt;/span&gt; = np.linspace(0, 10).reshape((-1, 1))
+
+&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;This is the function we seek to minimize&lt;/span&gt;
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;objective&lt;/span&gt;(params, step):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;These should all be zero at the solution&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;dCadt = -k * Ca(t)&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;zeq&lt;/span&gt; = dCadt(params, t) - (-k * Ca(params, t))
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;ic&lt;/span&gt; = Ca(params, 0) - Ca0
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; np.mean(zeq**2) + ic**2
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;callback&lt;/span&gt;(params, step, g):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; step % 1000 == 0:
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;"Iteration {0:3d} objective {1}"&lt;/span&gt;.&lt;span style="color: #006FE0;"&gt;format&lt;/span&gt;(step,
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt; objective(params, step)))
+
+&lt;span style="color: #BA36A5;"&gt;params&lt;/span&gt; = adam(grad(objective), params,
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt; step_size=0.001, num_iters=5001, callback=callback) 
+
+
+&lt;span style="color: #BA36A5;"&gt;tfit&lt;/span&gt; = np.linspace(0, 20).reshape(-1, 1)
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; matplotlib.pyplot &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; plt
+plt.plot(tfit, Ca(params, tfit), label=&lt;span style="color: #008000;"&gt;'soln'&lt;/span&gt;)
+plt.plot(tfit, Ca0 * np.exp(-k * tfit), &lt;span style="color: #008000;"&gt;'r--'&lt;/span&gt;, label=&lt;span style="color: #008000;"&gt;'analytical soln'&lt;/span&gt;)
+plt.legend()
+plt.xlabel(&lt;span style="color: #008000;"&gt;'time'&lt;/span&gt;)
+plt.ylabel(&lt;span style="color: #008000;"&gt;'$C_A$'&lt;/span&gt;)
+plt.xlim([0, 20])
+plt.savefig(&lt;span style="color: #008000;"&gt;'nn-ode.png'&lt;/span&gt;)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+Iteration   0 objective [[ 3.20374053]]
+Iteration 1000 objective [[  3.13906829e-05]]
+Iteration 2000 objective [[  1.95894699e-05]]
+Iteration 3000 objective [[  1.60381564e-05]]
+Iteration 4000 objective [[  1.39930673e-05]]
+Iteration 5000 objective [[  1.03554970e-05]]
+
+&lt;/pre&gt;
+
+
+&lt;p&gt;
+&lt;img src="/media/nn-ode.png"&gt; 
+&lt;/p&gt;
+
+&lt;p&gt;
+Huh. Those two solutions are nearly indistinguishable. Since we used a neural network, let's hype it up and say we learned the solution to a differential equation! But seriously, note that although we got an "analytical" solution, we should only rely on it in the region we trained the solution on. You can see the solution above is not that good past t=10, even perhaps going negative (which is not even physically correct). That is a reminder that the function we have for the solution &lt;i&gt;is not the same as the analytical solution&lt;/i&gt;, it just approximates it really well over the region we solved over. Of course, you can expand that region to the region you care about, but the main point is don't rely on the solution outside where you know it is good.
+&lt;/p&gt;
+
+&lt;p&gt;
+This idea isn't new. There are several papers in the literature on using neural networks to solve differential equations, e.g. &lt;a href="http://www.sciencedirect.com/science/article/pii/S0255270102002076"&gt;http://www.sciencedirect.com/science/article/pii/S0255270102002076&lt;/a&gt; and &lt;a href="https://arxiv.org/pdf/physics/9705023.pdf"&gt;https://arxiv.org/pdf/physics/9705023.pdf&lt;/a&gt;, and other blog posts that are similar (&lt;a href="https://becominghuman.ai/neural-networks-for-solving-differential-equations-fa230ac5e04c"&gt;https://becominghuman.ai/neural-networks-for-solving-differential-equations-fa230ac5e04c&lt;/a&gt;, even using autograd). That means to me that there is some merit to continuing to investigate this approach to solving differential equations.
+&lt;/p&gt;
+
+&lt;p&gt;
+There are some interesting challenges for engineers to consider with this approach though. When is the solution accurate enough? How reliable are derivatives of the solution? What network architecture is appropriate or best? How do you know how good the solution is? Is it possible to build in solution features, e.g. asymptotes, or constraints on derivatives, or that the solution should be monotonic, etc. These would help us trust the solutions not to do weird things, and to extrapolate more reliably.
+&lt;/p&gt;
+&lt;p&gt;Copyright (C) 2017 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
+&lt;p&gt;&lt;a href="/org/2017/11/28/Solving-ODEs-with-a-neural-network-and-autograd.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Org-mode version = 9.1.2&lt;/p&gt;]]></content>
+  </entry>
+  <entry>
+    <author>
+      <name></name>
+      <uri>http://jkitchin.github.io/blog</uri>
+    </author>
     <title type="html"><![CDATA[Uncertainty in the solution of an ODE]]></title>
     <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2013/07/14/Uncertainty-in-the-solution-of-an-ODE" />
     <id>http://jkitchin.github.io/blog/2013/07/14/Uncertainty-in-the-solution-of-an-ODE</id>
     <updated>2013-10-18T15:55:01Z</updated>
     <published>2013-07-14T13:36:36Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="uncertainty" />
     <category scheme="http://jkitchin.github.io/blog" term="ode" />
+    <category scheme="http://jkitchin.github.io/blog" term="uncertainty" />
     <summary type="html"><![CDATA[Uncertainty in the solution of an ODE]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2013/07/14/Uncertainty-in-the-solution-of-an-ODE"><![CDATA[
 
@@ -815,83 +938,5 @@ ip = interp1d(ysol[:,0], tspan) &lt;span style="color: #ff0000; font-weight: bol
 y = 3 at x = 1.09854780564
 &lt;/pre&gt;
 &lt;p&gt;Copyright (C) 2013 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;&lt;p&gt;&lt;a href="/org/2013/02/26/Numerical-solution-to-a-simple-ode.org"&gt;org-mode source&lt;/a&gt;&lt;p&gt;]]></content>
-  </entry>
-  <entry>
-    <author>
-      <name></name>
-      <uri>http://jkitchin.github.io/blog</uri>
-    </author>
-    <title type="html"><![CDATA[ODEs with discontinuous forcing functions]]></title>
-    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2013/02/21/ODEs-with-discontinuous-forcing-functions" />
-    <id>http://jkitchin.github.io/blog/2013/02/21/ODEs-with-discontinuous-forcing-functions</id>
-    <updated>2013-02-27T14:28:38Z</updated>
-    <published>2013-02-21T09:00:00Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="ode" />
-    <summary type="html"><![CDATA[ODEs with discontinuous forcing functions]]></summary>
-    <content type="html" xml:base="http://jkitchin.github.io/blog/2013/02/21/ODEs-with-discontinuous-forcing-functions"><![CDATA[
-
-
-&lt;p&gt;
-&lt;a href="http://matlab.cheme.cmu.edu/2011/09/01/odes-with-discontinuous-forcing-functions/" &gt;Matlab post&lt;/a&gt;
-&lt;/p&gt;
-
-&lt;p&gt;
-Adapted from &lt;a href="http://archives.math.utk.edu/ICTCM/VOL18/S046/paper.pdf" &gt;http://archives.math.utk.edu/ICTCM/VOL18/S046/paper.pdf&lt;/a&gt;
-&lt;/p&gt;
-
-&lt;p&gt;
-A mixing tank initially contains 300 g of salt mixed into 1000 L of water. At t=0 min, a solution of 4 g/L salt enters the tank at 6 L/min. At t=10 min, the solution is changed to 2 g/L salt, still entering at 6 L/min. The tank is well stirred, and the tank solution leaves at a rate of 6 L/min. Plot the concentration of salt (g/L) in the tank as a function of time.
-&lt;/p&gt;
-
-&lt;p&gt;
-A mass balance on the salt in the tank leads to this differential equation: \(\frac{dM_S}{dt} = \nu C_{S,in}(t) - \nu M_S/V\) with the initial condition that \(M_S(t=0)=300\). The wrinkle is that the inlet conditions are not constant.
-&lt;/p&gt;
-
-&lt;p&gt;
-$$C_{S,in}(t) = \begin{array}{ll} 0 &amp; t \le 0, \\ 4 &amp; 0 &lt; t \le 10, \\ 2 &amp; t &gt; 10. \end{array}$$
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; np
-&lt;span style="color: #8b0000;"&gt;from&lt;/span&gt; scipy.integrate &lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; odeint
-&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; matplotlib.pyplot &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; plt
-
-V = 1000.0 &lt;span style="color: #ff0000; font-weight: bold;"&gt;# &lt;/span&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;L&lt;/span&gt;
-nu = 6.0  &lt;span style="color: #ff0000; font-weight: bold;"&gt;# &lt;/span&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;L/min&lt;/span&gt;
-    
-&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;Cs_in&lt;/span&gt;(t):
-    &lt;span style="color: #228b22;"&gt;'inlet concentration'&lt;/span&gt;
-    &lt;span style="color: #8b0000;"&gt;if&lt;/span&gt; t &amp;lt; 0:
-        Cs = 0.0 &lt;span style="color: #ff0000; font-weight: bold;"&gt;# &lt;/span&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;g/L&lt;/span&gt;
-    &lt;span style="color: #8b0000;"&gt;elif&lt;/span&gt; (t &amp;gt; 0) &lt;span style="color: #8b0000;"&gt;and&lt;/span&gt; (t &amp;lt;= 10):
-        Cs = 4.0
-    &lt;span style="color: #8b0000;"&gt;else:&lt;/span&gt;
-        Cs = 2.0
-    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; Cs
-
-&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;mass_balance&lt;/span&gt;(Ms, t):
-    &lt;span style="color: #228b22;"&gt;'$\frac{dM_S}{dt} = \nu C_{S,in}(t) - \nu M_S/V$'&lt;/span&gt;
-    dMsdt = nu * Cs_in(t) - nu * Ms / V
-    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; dMsdt
-
-tspan = np.linspace(0.0, 15.0, 50)
-
-M0 = 300.0 &lt;span style="color: #ff0000; font-weight: bold;"&gt;# &lt;/span&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;gm salt&lt;/span&gt;
-Ms = odeint(mass_balance, M0, tspan)
-
-plt.plot(tspan, Ms/V, &lt;span style="color: #228b22;"&gt;'b.-'&lt;/span&gt;)
-plt.xlabel(&lt;span style="color: #228b22;"&gt;'Time (min)'&lt;/span&gt;)
-plt.ylabel(&lt;span style="color: #228b22;"&gt;'Salt concentration (g/L)'&lt;/span&gt;)
-plt.savefig(&lt;span style="color: #228b22;"&gt;'images/ode-discont.png'&lt;/span&gt;)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;&lt;img src="/img/./images/ode-discont.png"&gt;&lt;p&gt;
-
-&lt;p&gt;
-You can see the discontinuity in the salt concentration at 10 minutes due to the discontinous change in the entering salt concentration.
-&lt;/p&gt;
-&lt;p&gt;Copyright (C) 2013 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;&lt;p&gt;&lt;a href="/org/2013/02/21/ODEs-with-discontinuous-forcing-functions.org"&gt;org-mode source&lt;/a&gt;&lt;p&gt;]]></content>
   </entry>
 </feed>
