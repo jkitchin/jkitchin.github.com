@@ -8,12 +8,148 @@
   <title type="text">The Kitchin Research Group</title>
   <subtitle type="text">Chemical Engineering at Carnegie Mellon University</subtitle>
 
-  <updated>2017-11-28T03:33:00Z</updated>
+  <updated>2017-11-28T04:01:03Z</updated>
   <generator uri="http://blogofile.com/">Blogofile</generator>
 
   <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog" />
   <id>http://jkitchin.github.io/blog/feed/atom/</id>
   <link rel="self" type="application/atom+xml" href="http://jkitchin.github.io/blog/feed/atom/" />
+  <entry>
+    <author>
+      <name></name>
+      <uri>http://jkitchin.github.io/blog</uri>
+    </author>
+    <title type="html"><![CDATA[Solving BVPs with a neural network and autograd]]></title>
+    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2017/11/27/Solving-BVPs-with-a-neural-network-and-autograd" />
+    <id>http://jkitchin.github.io/blog/2017/11/27/Solving-BVPs-with-a-neural-network-and-autograd</id>
+    <updated>2017-11-27T20:00:53Z</updated>
+    <published>2017-11-27T19:59:52Z</published>
+    <category scheme="http://jkitchin.github.io/blog" term="autograd" />
+    <category scheme="http://jkitchin.github.io/blog" term="bvp" />
+    <summary type="html"><![CDATA[Solving BVPs with a neural network and autograd]]></summary>
+    <content type="html" xml:base="http://jkitchin.github.io/blog/2017/11/27/Solving-BVPs-with-a-neural-network-and-autograd"><![CDATA[
+
+
+&lt;p&gt;
+In this &lt;a href="http://kitchingroup.cheme.cmu.edu/blog/2013/03/11/Solving-the-Blasius-equation/"&gt;post&lt;/a&gt; we solved a boundary value problem by discretizing it, and approximating the derivatives by finite differences. Here I explore using a neural network to approximate the unknown function, autograd to get the required derivatives, and using autograd to train the neural network to satisfy the differential equations. We will look at the Blasius equation again.
+&lt;/p&gt;
+
+\begin{eqnarray}
+f''' + \frac{1}{2} f f'' &amp;=&amp; 0 \\
+f(0) &amp;=&amp; 0 \\
+f'(0) &amp;=&amp; 0 \\
+f'(\infty) &amp;=&amp; 1
+\end{eqnarray}
+
+&lt;p&gt;
+Here I setup a simple neural network
+&lt;/p&gt;
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-python"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; autograd.numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; autograd &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; grad, elementwise_grad
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; autograd.numpy.random &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; npr
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; autograd.misc.optimizers &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; adam
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;init_random_params&lt;/span&gt;(scale, layer_sizes, rs=npr.RandomState(0)):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #036A07;"&gt;"""Build a list of (weights, biases) tuples, one for each layer."""&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; [(rs.randn(insize, outsize) * scale,   &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;weight matrix&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;rs.randn(outsize) * scale)           &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;bias vector&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; insize, outsize &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; &lt;span style="color: #006FE0;"&gt;zip&lt;/span&gt;(layer_sizes[:-1], layer_sizes[1:])]
+
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;swish&lt;/span&gt;(x):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #036A07;"&gt;"see https://arxiv.org/pdf/1710.05941.pdf"&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x / (1.0 + np.exp(-x))
+
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f&lt;/span&gt;(params, inputs):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #036A07;"&gt;"Neural network functions"&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; W, b &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; params:
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;outputs&lt;/span&gt; = np.dot(inputs, W) + b
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;inputs&lt;/span&gt; = swish(outputs)    
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; outputs
+
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   
+&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;Here is our initial guess of params:&lt;/span&gt;
+&lt;span style="color: #BA36A5;"&gt;params&lt;/span&gt; = init_random_params(0.1, layer_sizes=[1, 8, 1])
+
+&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;Derivatives&lt;/span&gt;
+&lt;span style="color: #BA36A5;"&gt;fp&lt;/span&gt; = elementwise_grad(f, 1)
+&lt;span style="color: #BA36A5;"&gt;fpp&lt;/span&gt; = elementwise_grad(fp, 1)
+&lt;span style="color: #BA36A5;"&gt;fppp&lt;/span&gt; = elementwise_grad(fpp, 1)
+
+&lt;span style="color: #BA36A5;"&gt;eta&lt;/span&gt; = np.linspace(0, 6).reshape((-1, 1))
+
+&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;This is the function we seek to minimize&lt;/span&gt;
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;objective&lt;/span&gt;(params, step):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;These should all be zero at the solution&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;f''' + 0.5 f'' f = 0&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;zeq&lt;/span&gt; = fppp(params, eta) + 0.5 * f(params, eta) * fpp(params, eta) 
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;bc0&lt;/span&gt; = f(params, 0.0)  &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;equal to zero at solution&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;bc1&lt;/span&gt; = fp(params, 0.0)  &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;equal to zero at solution&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;bc2&lt;/span&gt; = fp(params, 6.0) - 1.0 &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;this is the one at "infinity"&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; np.mean(zeq**2) + bc0**2 + bc1**2 + bc2**2
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;callback&lt;/span&gt;(params, step, g):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; step % 1000 == 0:
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;"Iteration {0:3d} objective {1}"&lt;/span&gt;.&lt;span style="color: #006FE0;"&gt;format&lt;/span&gt;(step,
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt; objective(params, step)))
+
+&lt;span style="color: #BA36A5;"&gt;params&lt;/span&gt; = adam(grad(objective), params,
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt; step_size=0.001, num_iters=10000, callback=callback) 
+
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'f(0) = {}'&lt;/span&gt;.&lt;span style="color: #006FE0;"&gt;format&lt;/span&gt;(f(params, 0.0)))
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'fp(0) = {}'&lt;/span&gt;.&lt;span style="color: #006FE0;"&gt;format&lt;/span&gt;(fp(params, 0.0)))
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'fp(6) = {}'&lt;/span&gt;.&lt;span style="color: #006FE0;"&gt;format&lt;/span&gt;(fp(params, 6.0)))
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'fpp(0) = {}'&lt;/span&gt;.&lt;span style="color: #006FE0;"&gt;format&lt;/span&gt;(fpp(params, 0.0)))
+
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; matplotlib.pyplot &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; plt
+plt.plot(eta, f(params, eta))
+plt.xlabel(&lt;span style="color: #008000;"&gt;'$\eta$'&lt;/span&gt;)
+plt.ylabel(&lt;span style="color: #008000;"&gt;'$f(\eta)$'&lt;/span&gt;)
+plt.xlim([0, 6])
+plt.ylim([0, 4.5])
+plt.savefig(&lt;span style="color: #008000;"&gt;'nn-blasius.png'&lt;/span&gt;)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Iteration   0 objective 1.11472535
+Iteration 1000 objective 0.00049768
+Iteration 2000 objective 0.0004579
+Iteration 3000 objective 0.00041697
+Iteration 4000 objective 0.00037408
+Iteration 5000 objective 0.00033705
+Iteration 6000 objective 0.00031016
+Iteration 7000 objective 0.00029197
+Iteration 8000 objective 0.00027585
+Iteration 9000 objective 0.00024616
+f(0) = -0.00014613
+fp(0) = 0.0003518041251639459
+fp(6) = 0.999518061473252
+fpp(0) = 0.3263370503702663
+&lt;/p&gt;
+
+&lt;p&gt;
+&lt;img src="/media/nn-blasius.png"&gt; 
+I think it is worth discussing what we accomplished here. You can see we have arrived at an approximate solution to our differential equation and the boundary conditions. The boundary conditions seem pretty closely met, and the figure is approximately the same as the previous post. Even better, our solution is &lt;i&gt;an actual function&lt;/i&gt; and not a numeric solution that has to be interpolated. We can evaluate it any where we want, including its derivatives!
+&lt;/p&gt;
+
+&lt;p&gt;
+We did not, however, have to convert the ODE into a system of first-order differential equations, and we did &lt;i&gt;not&lt;/i&gt; have to approximate the derivatives with finite differences.
+&lt;/p&gt;
+
+&lt;p&gt;
+Note, however, that with finite differences we got &lt;code&gt;f''(0)=0.3325&lt;/code&gt;. This &lt;a href="https://www.calpoly.edu/~kshollen/ME347/Handouts/Blasius.pdf"&gt;site&lt;/a&gt; reports &lt;code&gt;f''(0)=0.3321&lt;/code&gt;. We get close to that here with &lt;code&gt;f''(0) = 0.3263&lt;/code&gt;. We could probably get closer to this with more training to reduce the objective function further, or with a finer grid. It is evident that even after 9000 steps, it is still decreasing. Getting accurate derivatives is a stringent test for this, as they are measures of the function curvature.
+&lt;/p&gt;
+
+&lt;p&gt;
+It is hard to tell how broadly useful this is; I have not tried it beyond this example. In the past, I have found solving BVPs to be pretty sensitive to the initial guesses of the solution. Here we made almost no guess at all, and still got a solution. I find that pretty remarkable.
+&lt;/p&gt;
+&lt;p&gt;Copyright (C) 2017 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
+&lt;p&gt;&lt;a href="/org/2017/11/27/Solving-BVPs-with-a-neural-network-and-autograd.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Org-mode version = 9.1.2&lt;/p&gt;]]></content>
+  </entry>
   <entry>
     <author>
       <name></name>
@@ -1065,8 +1201,8 @@ Now you know the secret of a neural network, it is just a nonlinear model. Witho
     <id>http://jkitchin.github.io/blog/2017/11/17/Using-autograd-in-nonlinear-regression</id>
     <updated>2017-11-17T07:49:03Z</updated>
     <published>2017-11-17T07:49:03Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="autograd" />
     <category scheme="http://jkitchin.github.io/blog" term="regression" />
+    <category scheme="http://jkitchin.github.io/blog" term="autograd" />
     <category scheme="http://jkitchin.github.io/blog" term="python" />
     <summary type="html"><![CDATA[Using autograd in nonlinear regression]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2017/11/17/Using-autograd-in-nonlinear-regression"><![CDATA[
@@ -1360,8 +1496,8 @@ The fit looks pretty good.
     <id>http://jkitchin.github.io/blog/2017/11/15/Sensitivity-analysis-using-automatic-differentiation-in-Python</id>
     <updated>2017-11-15T08:41:05Z</updated>
     <published>2017-11-15T08:34:29Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="autograd" />
     <category scheme="http://jkitchin.github.io/blog" term="sensitivity" />
+    <category scheme="http://jkitchin.github.io/blog" term="autograd" />
     <category scheme="http://jkitchin.github.io/blog" term="python" />
     <summary type="html"><![CDATA[Sensitivity analysis using automatic differentiation in Python]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2017/11/15/Sensitivity-analysis-using-automatic-differentiation-in-Python"><![CDATA[
@@ -1446,8 +1582,8 @@ That looks like the figure in the paper. To summarize the main takeaway, autogra
     <id>http://jkitchin.github.io/blog/2017/11/14/Forces-by-automatic-differentiation-in-molecular-simulation</id>
     <updated>2017-11-14T21:06:22Z</updated>
     <published>2017-11-14T21:06:22Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="autograd" />
     <category scheme="http://jkitchin.github.io/blog" term="simulation" />
+    <category scheme="http://jkitchin.github.io/blog" term="autograd" />
     <summary type="html"><![CDATA[Forces by automatic differentiation in molecular simulation]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2017/11/14/Forces-by-automatic-differentiation-in-molecular-simulation"><![CDATA[
 
@@ -1611,8 +1747,8 @@ Wow. We got forces without deriving a derivative, or using numerical finite diff
     <id>http://jkitchin.github.io/blog/2017/09/25/New-publication-in-J-Phys-Chem-Lett</id>
     <updated>2017-09-26T07:16:16Z</updated>
     <published>2017-09-25T20:24:45Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="publication" />
     <category scheme="http://jkitchin.github.io/blog" term="news" />
+    <category scheme="http://jkitchin.github.io/blog" term="publication" />
     <summary type="html"><![CDATA[New publication in J. Phys. Chem. Lett.]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2017/09/25/New-publication-in-J-Phys-Chem-Lett"><![CDATA[
 
@@ -1865,76 +2001,6 @@ This could have a number of other applications. Given some reference content, yo
 &lt;/p&gt;
 &lt;p&gt;Copyright (C) 2017 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
 &lt;p&gt;&lt;a href="/org/2017/09/16/Finding-similar-bibtex-entries.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
-&lt;p&gt;Org-mode version = 9.0.7&lt;/p&gt;]]></content>
-  </entry>
-  <entry>
-    <author>
-      <name></name>
-      <uri>http://jkitchin.github.io/blog</uri>
-    </author>
-    <title type="html"><![CDATA[New publication in Journal of Physics Condensed Matter]]></title>
-    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2017/08/06/New-publication-in-Journal-of-Physics-Condensed-Matter" />
-    <id>http://jkitchin.github.io/blog/2017/08/06/New-publication-in-Journal-of-Physics-Condensed-Matter</id>
-    <updated>2017-08-06T11:05:31Z</updated>
-    <published>2017-08-06T11:04:51Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="publication" />
-    <category scheme="http://jkitchin.github.io/blog" term="news" />
-    <summary type="html"><![CDATA[New publication in Journal of Physics Condensed Matter]]></summary>
-    <content type="html" xml:base="http://jkitchin.github.io/blog/2017/08/06/New-publication-in-Journal-of-Physics-Condensed-Matter"><![CDATA[
-
-
-&lt;p&gt;
-The Atomic Simulation Environment is a powerful python library for setting up, running and analyzing molecular simulations. I have been using it and contributing to it since around 2002 when I used the ASE-2 version in Python 1.5! The new ase-3 version is much simpler to use, and much more powerful. This paper describes some of its design principles and capabilities. If you use ASE, please cite this paper! 
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-bibtex"&gt;&lt;span style="color: #006699;"&gt;@article&lt;/span&gt;{&lt;span style="color: #D0372D;"&gt;larsen-2017-atomic-simul&lt;/span&gt;,
-  &lt;span style="color: #BA36A5;"&gt;author&lt;/span&gt; =       {Ask Hjorth Larsen and Jens J{\o}rgen Mortensen and Jakob
-                  Blomqvist and Ivano E Castelli and Rune Christensen and
-                  Marcin Du&amp;#322;ak and Jesper Friis and Michael N Groves and
-                  Bj{\o}rk Hammer and Cory Hargus and Eric D Hermes and Paul C
-                  Jennings and Peter Bjerre Jensen and James Kermode and John
-                  R Kitchin and Esben Leonhard Kolsbjerg and Joseph Kubal and
-                  Kristen Kaasbjerg and Steen Lysgaard and J{\'o}n Bergmann
-                  Maronsson and Tristan Maxson and Thomas Olsen and Lars
-                  Pastewka and Andrew Peterson and Carsten Rostgaard and Jakob
-                  Schi{\o}tz and Ole Sch{\"u}tt and Mikkel Strange and Kristian
-                  S Thygesen and Tejs Vegge and Lasse Vilhelmsen and Michael
-                  Walter and Zhenhua Zeng and Karsten W Jacobsen},
-  &lt;span style="color: #BA36A5;"&gt;title&lt;/span&gt; =        {The Atomic Simulation Environment-A Python Library for Working
-                  With Atoms},
-  &lt;span style="color: #BA36A5;"&gt;journal&lt;/span&gt; =      {Journal of Physics: Condensed Matter},
-  &lt;span style="color: #BA36A5;"&gt;volume&lt;/span&gt; =       29,
-  &lt;span style="color: #BA36A5;"&gt;number&lt;/span&gt; =       27,
-  &lt;span style="color: #BA36A5;"&gt;pages&lt;/span&gt; =        273002,
-  &lt;span style="color: #BA36A5;"&gt;year&lt;/span&gt; =         2017,
-  &lt;span style="color: #BA36A5;"&gt;url&lt;/span&gt; =          {&lt;span style="color: #006DAF; text-decoration: underline;"&gt;http://stacks.iop.org/0953-8984/29/i=27/a=273002&lt;/span&gt;},
-  &lt;span style="color: #BA36A5;"&gt;abstract&lt;/span&gt; =     {The atomic simulation environment (ASE) is a software package
-                  written in the Python programming language with the aim of
-                  setting up, steering, and analyzing atomistic simulations. In
-                  ASE, tasks are fully scripted in Python. The powerful syntax
-                  of Python combined with the NumPy array library make it
-                  possible to perform very complex simulation tasks. For
-                  example, a sequence of calculations may be performed with the
-                  use of a simple 'for-loop' construction. Calculations of
-                  energy, forces, stresses and other quantities are performed
-                  through interfaces to many external electronic structure codes
-                  or force fields using a uniform interface. On top of this
-                  calculator interface, ASE provides modules for performing many
-                  standard simulation tasks such as structure optimization,
-                  molecular dynamics, handling of constraints and performing
-                  nudged elastic band calculations.},
-}
-
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-&lt;script type='text/javascript' src='https://d1bxh8uas1mnw7.cloudfront.net/assets/embed.js'&gt;&lt;/script&gt;
-&lt;div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1088/1361-648X/aa680e'&gt;&lt;/div&gt; 
-&lt;/p&gt;
-&lt;p&gt;Copyright (C) 2017 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
-&lt;p&gt;&lt;a href="/org/2017/08/06/New-publication-in-Journal-of-Physics-Condensed-Matter.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
 &lt;p&gt;Org-mode version = 9.0.7&lt;/p&gt;]]></content>
   </entry>
 </feed>
