@@ -8,7 +8,7 @@
   <title type="text">The Kitchin Research Group</title>
   <subtitle type="text">Chemical Engineering at Carnegie Mellon University</subtitle>
 
-  <updated>2017-11-28T15:24:10Z</updated>
+  <updated>2017-11-30T05:17:12Z</updated>
   <generator uri="http://blogofile.com/">Blogofile</generator>
 
   <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog" />
@@ -19,13 +19,381 @@
       <name></name>
       <uri>http://jkitchin.github.io/blog</uri>
     </author>
+    <title type="html"><![CDATA[Solving an eigenvalue differential equation with a neural network]]></title>
+    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2017/11/29/Solving-an-eigenvalue-differential-equation-with-a-neural-network" />
+    <id>http://jkitchin.github.io/blog/2017/11/29/Solving-an-eigenvalue-differential-equation-with-a-neural-network</id>
+    <updated>2017-11-29T21:17:03Z</updated>
+    <published>2017-11-29T21:17:03Z</published>
+    <category scheme="http://jkitchin.github.io/blog" term="bvp" />
+    <category scheme="http://jkitchin.github.io/blog" term="eigenvalue" />
+    <category scheme="http://jkitchin.github.io/blog" term="autograd" />
+    <summary type="html"><![CDATA[Solving an eigenvalue differential equation with a neural network]]></summary>
+    <content type="html" xml:base="http://jkitchin.github.io/blog/2017/11/29/Solving-an-eigenvalue-differential-equation-with-a-neural-network"><![CDATA[
+
+
+&lt;div id="table-of-contents"&gt;
+&lt;h2&gt;Table of Contents&lt;/h2&gt;
+&lt;div id="text-table-of-contents"&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href="#org0379aef"&gt;1. The neural network setup&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#org8b7927f"&gt;2. The objective function&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#orgb7c75e5"&gt;3. The minimization&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#org9a1e5f9"&gt;4. The first excited state&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#org7478d5a"&gt;5. Summary&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;p&gt;
+The 1D harmonic oscillator is described &lt;a href="https://quantummechanics.ucsd.edu/ph130a/130_notes/node153.html"&gt;here&lt;/a&gt;. It is a boundary value differential equation with eigenvalues. If we let let &amp;omega;=1, m=1, and units where &amp;hbar;=1. then, the governing differential equation becomes:
+&lt;/p&gt;
+
+&lt;p&gt;
+\(-0.5 \frac{d^2\psi(x)}{dx^2} + (0.5 x^2 - E) \psi(x) = 0\)
+&lt;/p&gt;
+
+&lt;p&gt;
+with boundary conditions: \(\psi(-\infty) = \psi(\infty) = 0\)
+&lt;/p&gt;
+
+&lt;p&gt;
+We can further stipulate that the probability of finding the particle over this domain is equal to one: \(\int_{-\infty}{\infty} \psi^2(x) dx = 1\). In this set of equations, \(E\) is an eigenvalue, which means there are only non-trivial solutions for certain values of \(E\).
+&lt;/p&gt;
+
+&lt;p&gt;
+Our goal is to solve this equation using a neural network to represent the wave function. This is a different problem than the one &lt;a href="http://kitchingroup.cheme.cmu.edu/blog/2017/11/28/Solving-ODEs-with-a-neural-network-and-autograd/"&gt;here&lt;/a&gt; or &lt;a href="http://kitchingroup.cheme.cmu.edu/blog/2017/11/27/Solving-BVPs-with-a-neural-network-and-autograd/"&gt;here&lt;/a&gt; because of the eigenvalue. This is an additional adjustable parameter we have to find. Also, we have the normalization constraint to consider, which we did not consider before.
+&lt;/p&gt;
+
+&lt;div id="outline-container-org0379aef" class="outline-2"&gt;
+&lt;h2 id="org0379aef"&gt;&lt;span class="section-number-2"&gt;1&lt;/span&gt; The neural network setup&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-1"&gt;
+&lt;p&gt;
+Here we setup the neural network and its derivatives. This is the same as we did before.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="orgd64417e"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; autograd.numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; autograd &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; grad, elementwise_grad
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; autograd.numpy.random &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; npr
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; autograd.misc.optimizers &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; adam
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;init_random_params&lt;/span&gt;(scale, layer_sizes, rs=npr.RandomState(42)):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #036A07;"&gt;"""Build a list of (weights, biases) tuples, one for each layer."""&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; [(rs.randn(insize, outsize) * scale,   &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;weight matrix&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;rs.randn(outsize) * scale)           &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;bias vector&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; insize, outsize &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; &lt;span style="color: #006FE0;"&gt;zip&lt;/span&gt;(layer_sizes[:-1], layer_sizes[1:])]
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;swish&lt;/span&gt;(x):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #036A07;"&gt;"see https://arxiv.org/pdf/1710.05941.pdf"&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x / (1.0 + np.exp(-x))
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;psi&lt;/span&gt;(nnparams, inputs):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #036A07;"&gt;"Neural network wavefunction"&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; W, b &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; nnparams:
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;outputs&lt;/span&gt; = np.dot(inputs, W) + b
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;inputs&lt;/span&gt; = swish(outputs)    
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; outputs
+
+&lt;span style="color: #BA36A5;"&gt;psip&lt;/span&gt; = elementwise_grad(psi, 1) &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;dpsi/dx &lt;/span&gt;
+&lt;span style="color: #BA36A5;"&gt;psipp&lt;/span&gt; = elementwise_grad(psip, 1) &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;d^2psi/dx^2&lt;/span&gt;
+&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-org8b7927f" class="outline-2"&gt;
+&lt;h2 id="org8b7927f"&gt;&lt;span class="section-number-2"&gt;2&lt;/span&gt; The objective function&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-2"&gt;
+&lt;p&gt;
+The important function we need is the objective function. This function codes the Schrödinger equation, the boundary conditions, and the normalization as a cost function that we will later seek to minimize. Ideally, at the solution the objective function will be zero. We can't put infinity into our objective function, but it turns out that x = &amp;plusmn; 6 is practically infinity in this case, so we approximate the boundary conditions there. 
+&lt;/p&gt;
+
+&lt;p&gt;
+Another note is the numerical integration by the trapezoid rule. I use a vectorized version of this because autograd doesn't have a trapz derivative and I didn't feel like figuring one out.
+&lt;/p&gt;
+
+&lt;p&gt;
+We define the params to vary here as a dictionary containing neural network weights and biases, and the value of the eigenvalue.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="orgfcad9ba"&gt;&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;Here is our initial guess of params:&lt;/span&gt;
+&lt;span style="color: #BA36A5;"&gt;nnparams&lt;/span&gt; = init_random_params(0.1, layer_sizes=[1, 8, 1])
+
+&lt;span style="color: #BA36A5;"&gt;params&lt;/span&gt; = {&lt;span style="color: #008000;"&gt;'nn'&lt;/span&gt;: nnparams, &lt;span style="color: #008000;"&gt;'E'&lt;/span&gt;: 0.4}
+
+&lt;span style="color: #BA36A5;"&gt;x&lt;/span&gt; = np.linspace(-6, 6, 200)[:, &lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;]
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;objective&lt;/span&gt;(params, step):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;nnparams&lt;/span&gt; = params[&lt;span style="color: #008000;"&gt;'nn'&lt;/span&gt;]
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;E&lt;/span&gt; = params[&lt;span style="color: #008000;"&gt;'E'&lt;/span&gt;]        
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;This is Schrodinger's eqn&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;zeq&lt;/span&gt; = -0.5 * psipp(nnparams, x) + (0.5 * x**2 - E) * psi(nnparams, x) 
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;bc0&lt;/span&gt; = psi(nnparams, -6.0) &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;This approximates -infinity&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;bc1&lt;/span&gt; = psi(nnparams, 6.0)  &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;This approximates +infinity&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;y2&lt;/span&gt; = psi(nnparams, x)**2
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;This is a numerical trapezoid integration&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;prob&lt;/span&gt; = np.&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;((y2[1:] + y2[0:-1]) / 2 * (x[1:] - x[0:-1]))
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; np.mean(zeq**2) + bc0**2 + bc1**2 + (1.0 - prob)**2
+
+&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;This gives us feedback from the optimizer&lt;/span&gt;
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;callback&lt;/span&gt;(params, step, g):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; step % 1000 == 0:
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;"Iteration {0:3d} objective {1}"&lt;/span&gt;.&lt;span style="color: #006FE0;"&gt;format&lt;/span&gt;(step,
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt; objective(params, step)))
+&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-orgb7c75e5" class="outline-2"&gt;
+&lt;h2 id="orgb7c75e5"&gt;&lt;span class="section-number-2"&gt;3&lt;/span&gt; The minimization&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-3"&gt;
+&lt;p&gt;
+Now, we just let an optimizer minimize the objective function for us. Note, I ran this next block more than once, as the objective continued to decrease. I ran this one at least two times, and the loss was still decreasing slowly.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org46586c1"&gt;&lt;span style="color: #BA36A5;"&gt;params&lt;/span&gt; = adam(grad(objective), params,
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt; step_size=0.001, num_iters=5001, callback=callback) 
+
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(params[&lt;span style="color: #008000;"&gt;'E'&lt;/span&gt;])
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+Iteration   0 objective [[ 0.00330204]]
+Iteration 1000 objective [[ 0.00246459]]
+Iteration 2000 objective [[ 0.00169862]]
+Iteration 3000 objective [[ 0.00131453]]
+Iteration 4000 objective [[ 0.00113132]]
+Iteration 5000 objective [[ 0.00104405]]
+0.5029457355415167
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+Good news, the lowest energy eigenvalue is known to be 0.5 for our choice of parameters, and that is approximately what we got. Now let's see our solution and compare it to the known solution. Interestingly we got the negative of the solution, which is still a solution. The NN solution is not indistinguishable from the analytical solution, and has some spurious curvature in the tails, but it is approximately correct, and more training might get it closer. A different activation function might also work better.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org25c3eec"&gt;%matplotlib inline
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; matplotlib.pyplot &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; plt
+
+&lt;span style="color: #BA36A5;"&gt;x&lt;/span&gt; = np.linspace(-6, 6)[:, &lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;]
+&lt;span style="color: #BA36A5;"&gt;y&lt;/span&gt; = psi(params[&lt;span style="color: #008000;"&gt;'nn'&lt;/span&gt;], x)
+
+plt.plot(x, -y, label=&lt;span style="color: #008000;"&gt;'NN'&lt;/span&gt;)
+plt.plot(x, (1/np.pi)**0.25 * np.exp(-x**2 / 2), &lt;span style="color: #008000;"&gt;'r--'&lt;/span&gt;, label=&lt;span style="color: #008000;"&gt;'analytical'&lt;/span&gt;)
+plt.legend()
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+&lt;img src="/media/ob-ipython-a0315846d401b5468d391df4b1ee6e84.png"&gt; 
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-org9a1e5f9" class="outline-2"&gt;
+&lt;h2 id="org9a1e5f9"&gt;&lt;span class="section-number-2"&gt;4&lt;/span&gt; The first excited state&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-4"&gt;
+&lt;p&gt;
+Now, what about the first excited state? This has an eigenvalue of 1.5, and the solution has odd parity. We can naively change the eigenvalue, and hope that the optimizer will find the right new solution. We do that here, and use the old NN params.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="orgfa56bb1"&gt;&lt;span style="color: #BA36A5;"&gt;params&lt;/span&gt;[&lt;span style="color: #008000;"&gt;'E'&lt;/span&gt;] = 1.6
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Now, we run a round of optimization:
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org5098ce4"&gt;&lt;span style="color: #BA36A5;"&gt;params&lt;/span&gt; = adam(grad(objective), params,
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt; step_size=0.003, num_iters=5001, callback=callback) 
+
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(params[&lt;span style="color: #008000;"&gt;'E'&lt;/span&gt;])
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+Iteration   0 objective [[ 0.09918192]]
+Iteration 1000 objective [[ 0.00102333]]
+Iteration 2000 objective [[ 0.00100269]]
+Iteration 3000 objective [[ 0.00098684]]
+Iteration 4000 objective [[ 0.00097425]]
+Iteration 5000 objective [[ 0.00096347]]
+0.502326347406645
+
+&lt;/pre&gt;
+
+
+&lt;p&gt;
+That doesn't work though. The optimizer just pushes the solution back to the known one. Next, we try starting from scratch with the eigenvalue guess.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org872c3a1"&gt;&lt;span style="color: #BA36A5;"&gt;nnparams&lt;/span&gt; = init_random_params(0.1, layer_sizes=[1, 8, 1])
+
+&lt;span style="color: #BA36A5;"&gt;params&lt;/span&gt; = {&lt;span style="color: #008000;"&gt;'nn'&lt;/span&gt;: nnparams, &lt;span style="color: #008000;"&gt;'E'&lt;/span&gt;: 1.6}
+
+&lt;span style="color: #BA36A5;"&gt;params&lt;/span&gt; = adam(grad(objective), params,
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt; step_size=0.003, num_iters=5001, callback=callback) 
+
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(params[&lt;span style="color: #008000;"&gt;'E'&lt;/span&gt;])
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+Iteration   0 objective [[ 2.08318762]]
+Iteration 1000 objective [[ 0.02358685]]
+Iteration 2000 objective [[ 0.00726497]]
+Iteration 3000 objective [[ 0.00336433]]
+Iteration 4000 objective [[ 0.00229851]]
+Iteration 5000 objective [[ 0.00190942]]
+0.5066213334684926
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+That also doesn't work. We are going to have to steer this. The idea is pre-train the neural network to have the basic shape and symmetry we want, and then use that as the input for the objective function. The first excited state has odd parity, and here is a guess of that shape. This is a pretty ugly hacked up version that only roughly has the right shape. I am counting on the NN smoothing out the discontinuities.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org0b8e2e5"&gt;&lt;span style="color: #BA36A5;"&gt;xm&lt;/span&gt; = np.linspace(-6, 6)[:, &lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;]
+&lt;span style="color: #BA36A5;"&gt;ym&lt;/span&gt; = -0.5 * ((-1 * (xm + 1.5)**2) + 1.5) * (xm &amp;lt; 0) * (xm &amp;gt; -3)
+&lt;span style="color: #BA36A5;"&gt;yp&lt;/span&gt; = -0.5 * ((1 * (xm - 1.5)**2 ) - 1.5) * (xm &amp;gt; 0) * (xm &amp;lt; 3)
+
+plt.plot(xm, (ym + yp))
+plt.plot(x, (1/np.pi)**0.25 * np.sqrt(2) * x * np.exp(-x**2 / 2), &lt;span style="color: #008000;"&gt;'r--'&lt;/span&gt;, label=&lt;span style="color: #008000;"&gt;'analytical'&lt;/span&gt;)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+&lt;img src="/media/ob-ipython-7306bb4c2a75d356dd2246681bec193e.png"&gt; 
+&lt;/p&gt;
+
+&lt;p&gt;
+Now we pretrain a bit.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org2686c3a"&gt;&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;pretrain&lt;/span&gt;(params, step):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;nnparams&lt;/span&gt; = params[&lt;span style="color: #008000;"&gt;'nn'&lt;/span&gt;]
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;errs&lt;/span&gt; = psi(nnparams, xm) - (ym + yp)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; np.mean(errs**2)
+
+&lt;span style="color: #BA36A5;"&gt;params&lt;/span&gt; = adam(grad(pretrain), params,
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt; step_size=0.003, num_iters=501, callback=callback) 
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+Iteration   0 objective [[ 1.09283695]]
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+Here is the new initial guess we are going to use. You can see that indeed a lot of smoothing has occurred.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org2eea46f"&gt;plt.plot(xm, ym + yp, xm, psi(params[&lt;span style="color: #008000;"&gt;'nn'&lt;/span&gt;], xm))
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+&lt;img src="/media/ob-ipython-861dc15ae81c1a9d2bcab2aeca1c7b64.png"&gt; 
+&lt;/p&gt;
+
+&lt;p&gt;
+That has the right shape now. So we go back to the original objective function. 
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="orgaf754e9"&gt;&lt;span style="color: #BA36A5;"&gt;params&lt;/span&gt; = adam(grad(objective), params,
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt; step_size=0.001, num_iters=5001, callback=callback) 
+
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(params[&lt;span style="color: #008000;"&gt;'E'&lt;/span&gt;])
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+Iteration   0 objective [[ 0.00370029]]
+Iteration 1000 objective [[ 0.00358193]]
+Iteration 2000 objective [[ 0.00345137]]
+Iteration 3000 objective [[ 0.00333]]
+Iteration 4000 objective [[ 0.0032198]]
+Iteration 5000 objective [[ 0.00311844]]
+1.5065724128094344
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+I ran that optimization block many times. The loss is still decreasing, but slowly. More importantly, the eigenvalue is converging to 1.5, which is the known analytical value, and the solution is converging to the known solution. 
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org95e9840"&gt;&lt;span style="color: #BA36A5;"&gt;x&lt;/span&gt; = np.linspace(-6, 6)[:, &lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;]
+&lt;span style="color: #BA36A5;"&gt;y&lt;/span&gt; = psi(params[&lt;span style="color: #008000;"&gt;'nn'&lt;/span&gt;], x)
+
+plt.plot(x, y, label=&lt;span style="color: #008000;"&gt;'NN'&lt;/span&gt;)
+plt.plot(x, (1/np.pi)**0.25 * np.sqrt(2) * x * np.exp(-x**2 / 2), &lt;span style="color: #008000;"&gt;'r--'&lt;/span&gt;, label=&lt;span style="color: #008000;"&gt;'analytical'&lt;/span&gt;)
+plt.legend()
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+&lt;img src="/media/ob-ipython-e63e275d2112849010d3e28381ccf41b.png"&gt; 
+&lt;/p&gt;
+
+&lt;p&gt;
+We can confirm the normalization is reasonable:
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org0209abc"&gt;&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;check the normalization&lt;/span&gt;
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(np.trapz(y.T * y.T, x.T))
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+[ 0.99781886]
+
+&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-org7478d5a" class="outline-2"&gt;
+&lt;h2 id="org7478d5a"&gt;&lt;span class="section-number-2"&gt;5&lt;/span&gt; Summary&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-5"&gt;
+&lt;p&gt;
+This is another example of using autograd to solve an eigenvalue differential equation. Some of these solutions required tens of thousands of iterations of training. The groundstate wavefunction was very easy to get. The first excited state, on the other hand, took some active steering. This is very much like how an initial guess can change which solution a nonlinear optimization (which this is) finds.
+&lt;/p&gt;
+
+&lt;p&gt;
+There are other ways to solve this particular problem. What I think is interesting about this is the possibility to solve harder problems, e.g. not just a harmonic potential, but a more complex one. You could pretrain a network on the harmonic solution, and then use it as the initial guess for the harder problem (which has no analytical solution). 
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;p&gt;Copyright (C) 2017 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
+&lt;p&gt;&lt;a href="/org/2017/11/29/Solving-an-eigenvalue-differential-equation-with-a-neural-network.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Org-mode version = 9.1.2&lt;/p&gt;]]></content>
+  </entry>
+  <entry>
+    <author>
+      <name></name>
+      <uri>http://jkitchin.github.io/blog</uri>
+    </author>
     <title type="html"><![CDATA[Solving ODEs with a neural network and autograd]]></title>
     <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2017/11/28/Solving-ODEs-with-a-neural-network-and-autograd" />
     <id>http://jkitchin.github.io/blog/2017/11/28/Solving-ODEs-with-a-neural-network-and-autograd</id>
     <updated>2017-11-28T07:23:59Z</updated>
     <published>2017-11-28T07:23:03Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="autograd" />
     <category scheme="http://jkitchin.github.io/blog" term="ode" />
+    <category scheme="http://jkitchin.github.io/blog" term="autograd" />
     <summary type="html"><![CDATA[Solving ODEs with a neural network and autograd]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2017/11/28/Solving-ODEs-with-a-neural-network-and-autograd"><![CDATA[
 
@@ -283,8 +651,8 @@ It is hard to tell how broadly useful this is; I have not tried it beyond this e
     <id>http://jkitchin.github.io/blog/2017/11/22/More-auto-differentiation-goodness-for-science-and-engineering</id>
     <updated>2017-11-22T15:55:45Z</updated>
     <published>2017-11-22T15:52:26Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="autograd" />
     <category scheme="http://jkitchin.github.io/blog" term="python" />
+    <category scheme="http://jkitchin.github.io/blog" term="autograd" />
     <summary type="html"><![CDATA[More auto-differentiation goodness for science and engineering]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2017/11/22/More-auto-differentiation-goodness-for-science-and-engineering"><![CDATA[
 
@@ -592,8 +960,8 @@ Today we examined four ways to use autograd in scientific or mathematical progra
     <updated>2017-11-21T07:42:07Z</updated>
     <published>2017-11-20T21:19:17Z</published>
     <category scheme="http://jkitchin.github.io/blog" term="lennardjones" />
-    <category scheme="http://jkitchin.github.io/blog" term="autograd" />
     <category scheme="http://jkitchin.github.io/blog" term="python" />
+    <category scheme="http://jkitchin.github.io/blog" term="autograd" />
     <summary type="html"><![CDATA[Timing Lennard-Jones implementations - ASE vs autograd]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2017/11/20/Timing-Lennard-Jones-implementations-ASE-vs-autograd"><![CDATA[
 
@@ -891,8 +1259,8 @@ This doesn't directly answer the question of whether this can work in production
     <id>http://jkitchin.github.io/blog/2017/11/19/Training-the-ASE-Lennard-Jones-potential-to-DFT-calculations</id>
     <updated>2017-11-21T18:27:29Z</updated>
     <published>2017-11-19T19:58:47Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="autograd" />
     <category scheme="http://jkitchin.github.io/blog" term="python" />
+    <category scheme="http://jkitchin.github.io/blog" term="autograd" />
     <summary type="html"><![CDATA[Training the ASE Lennard-Jones potential to DFT calculations]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2017/11/19/Training-the-ASE-Lennard-Jones-potential-to-DFT-calculations"><![CDATA[
 
@@ -1018,8 +1386,8 @@ The results aren't fantastic, but you can see that we get the closer packed stru
     <id>http://jkitchin.github.io/blog/2017/11/18/Neural-networks-for-regression-with-autograd</id>
     <updated>2017-11-18T14:20:17Z</updated>
     <published>2017-11-18T14:20:17Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="autograd" />
     <category scheme="http://jkitchin.github.io/blog" term="python" />
+    <category scheme="http://jkitchin.github.io/blog" term="autograd" />
     <summary type="html"><![CDATA[Neural networks for regression with autograd]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2017/11/18/Neural-networks-for-regression-with-autograd"><![CDATA[
 
@@ -1324,9 +1692,9 @@ Now you know the secret of a neural network, it is just a nonlinear model. Witho
     <id>http://jkitchin.github.io/blog/2017/11/17/Using-autograd-in-nonlinear-regression</id>
     <updated>2017-11-17T07:49:03Z</updated>
     <published>2017-11-17T07:49:03Z</published>
+    <category scheme="http://jkitchin.github.io/blog" term="python" />
     <category scheme="http://jkitchin.github.io/blog" term="regression" />
     <category scheme="http://jkitchin.github.io/blog" term="autograd" />
-    <category scheme="http://jkitchin.github.io/blog" term="python" />
     <summary type="html"><![CDATA[Using autograd in nonlinear regression]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2017/11/17/Using-autograd-in-nonlinear-regression"><![CDATA[
 
@@ -1619,9 +1987,9 @@ The fit looks pretty good.
     <id>http://jkitchin.github.io/blog/2017/11/15/Sensitivity-analysis-using-automatic-differentiation-in-Python</id>
     <updated>2017-11-15T08:41:05Z</updated>
     <published>2017-11-15T08:34:29Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="autograd" />
     <category scheme="http://jkitchin.github.io/blog" term="python" />
     <category scheme="http://jkitchin.github.io/blog" term="sensitivity" />
+    <category scheme="http://jkitchin.github.io/blog" term="autograd" />
     <summary type="html"><![CDATA[Sensitivity analysis using automatic differentiation in Python]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2017/11/15/Sensitivity-analysis-using-automatic-differentiation-in-Python"><![CDATA[
 
@@ -1705,8 +2073,8 @@ That looks like the figure in the paper. To summarize the main takeaway, autogra
     <id>http://jkitchin.github.io/blog/2017/11/14/Forces-by-automatic-differentiation-in-molecular-simulation</id>
     <updated>2017-11-14T21:06:22Z</updated>
     <published>2017-11-14T21:06:22Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="autograd" />
     <category scheme="http://jkitchin.github.io/blog" term="simulation" />
+    <category scheme="http://jkitchin.github.io/blog" term="autograd" />
     <summary type="html"><![CDATA[Forces by automatic differentiation in molecular simulation]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2017/11/14/Forces-by-automatic-differentiation-in-molecular-simulation"><![CDATA[
 
@@ -1859,54 +2227,5 @@ Wow. We got forces without deriving a derivative, or using numerical finite diff
 &lt;p&gt;Copyright (C) 2017 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
 &lt;p&gt;&lt;a href="/org/2017/11/14/Forces-by-automatic-differentiation-in-molecular-simulation.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
 &lt;p&gt;Org-mode version = 9.1.2&lt;/p&gt;]]></content>
-  </entry>
-  <entry>
-    <author>
-      <name></name>
-      <uri>http://jkitchin.github.io/blog</uri>
-    </author>
-    <title type="html"><![CDATA[New publication in J. Phys. Chem. Lett.]]></title>
-    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2017/09/25/New-publication-in-J-Phys-Chem-Lett" />
-    <id>http://jkitchin.github.io/blog/2017/09/25/New-publication-in-J-Phys-Chem-Lett</id>
-    <updated>2017-09-26T07:16:16Z</updated>
-    <published>2017-09-25T20:24:45Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="publication" />
-    <category scheme="http://jkitchin.github.io/blog" term="news" />
-    <summary type="html"><![CDATA[New publication in J. Phys. Chem. Lett.]]></summary>
-    <content type="html" xml:base="http://jkitchin.github.io/blog/2017/09/25/New-publication-in-J-Phys-Chem-Lett"><![CDATA[
-
-
-&lt;p&gt;
-DFT calculations are extensively used to predict the chemical properties of metal alloy surfaces, but they are expensive which limits the number of calculations that can be practically be calculated. In this paper, we explore a perturbation approach known as alchemy to take previously calculated results and extend them to new compositions. We use oxygen reduction as a prototype reaction, and show that alchemy is often much faster than DFT, with an accuracy within 0.1 eV of the DFT. There are cases where the accuracy is not as good suggesting that further improvements to the perturbation model could be beneficial. Overall, alchemy appears to be a useful tool in high-throughput screening research.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-bibtex"&gt;&lt;span style="color: #006699;"&gt;@article&lt;/span&gt;{&lt;span style="color: #D0372D;"&gt;saravanan-2017-alchem-predic&lt;/span&gt;,
-  &lt;span style="color: #BA36A5;"&gt;title&lt;/span&gt; =        {Alchemical Predictions for Computational Catalysis: Potential
-                  and Limitations},
-  &lt;span style="color: #BA36A5;"&gt;year&lt;/span&gt; =         2017,
-  &lt;span style="color: #BA36A5;"&gt;Author&lt;/span&gt; =       {Saravanan, Karthikeyan and Kitchin, John R. and von
-                  Lilienfeld, O. Anatole and Keith, John A.},
-  &lt;span style="color: #BA36A5;"&gt;Bdsk-Url-1&lt;/span&gt; =   {http://dx.doi.org/10.1021/acs.jpclett.7b01974},
-  &lt;span style="color: #BA36A5;"&gt;Doi&lt;/span&gt; =          {&lt;span style="color: #006DAF; text-decoration: underline;"&gt;10.1021/acs.jpclett.7b01974&lt;/span&gt;},
-  &lt;span style="color: #BA36A5;"&gt;Eprint&lt;/span&gt; =       {http://dx.doi.org/10.1021/acs.jpclett.7b01974},
-  &lt;span style="color: #BA36A5;"&gt;Journal&lt;/span&gt; =      {The Journal of Physical Chemistry Letters},
-  &lt;span style="color: #BA36A5;"&gt;Note&lt;/span&gt; =         {PMID: 28938798},
-  &lt;span style="color: #BA36A5;"&gt;Number&lt;/span&gt; =       {ja},
-  &lt;span style="color: #BA36A5;"&gt;Pages&lt;/span&gt; =        {null},
-  &lt;span style="color: #BA36A5;"&gt;Url&lt;/span&gt; =          {&lt;span style="color: #006DAF; text-decoration: underline;"&gt;http://dx.doi.org/10.1021/acs.jpclett.7b01974&lt;/span&gt;},
-  &lt;span style="color: #BA36A5;"&gt;Volume&lt;/span&gt; =       0,
-}
-
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-&lt;script type='text/javascript' src='https://d1bxh8uas1mnw7.cloudfront.net/assets/embed.js'&gt;&lt;/script&gt;
-&lt;div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/acs.jpclett.7b01974'&gt;&lt;/div&gt;
-&lt;/p&gt;
-&lt;p&gt;Copyright (C) 2017 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
-&lt;p&gt;&lt;a href="/org/2017/09/25/New-publication-in-J.-Phys.-Chem.-Lett..org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
-&lt;p&gt;Org-mode version = 9.0.7&lt;/p&gt;]]></content>
   </entry>
 </feed>

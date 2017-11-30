@@ -84,10 +84,392 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Solving-an-eigenvalue-differential-equation-with-a-neural-network"></div>
+      <h2 class="blog_post_title"><a href="/blog/2017/11/29/Solving-an-eigenvalue-differential-equation-with-a-neural-network/" rel="bookmark" title="Permanent Link to Solving an eigenvalue differential equation with a neural network">Solving an eigenvalue differential equation with a neural network</a></h2>
+      <p><small><span class="blog_post_date">Posted November 29, 2017 at 09:17 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/bvp/'>bvp</a>, <a href='/blog/category/eigenvalue/'>eigenvalue</a>, <a href='/blog/category/autograd/'>autograd</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2017/11/29/Solving-an-eigenvalue-differential-equation-with-a-neural-network#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org0379aef">1. The neural network setup</a></li>
+<li><a href="#org8b7927f">2. The objective function</a></li>
+<li><a href="#orgb7c75e5">3. The minimization</a></li>
+<li><a href="#org9a1e5f9">4. The first excited state</a></li>
+<li><a href="#org7478d5a">5. Summary</a></li>
+</ul>
+</div>
+</div>
+<p>
+The 1D harmonic oscillator is described <a href="https://quantummechanics.ucsd.edu/ph130a/130_notes/node153.html">here</a>. It is a boundary value differential equation with eigenvalues. If we let let &omega;=1, m=1, and units where &hbar;=1. then, the governing differential equation becomes:
+</p>
+
+<p>
+\(-0.5 \frac{d^2\psi(x)}{dx^2} + (0.5 x^2 - E) \psi(x) = 0\)
+</p>
+
+<p>
+with boundary conditions: \(\psi(-\infty) = \psi(\infty) = 0\)
+</p>
+
+<p>
+We can further stipulate that the probability of finding the particle over this domain is equal to one: \(\int_{-\infty}{\infty} \psi^2(x) dx = 1\). In this set of equations, \(E\) is an eigenvalue, which means there are only non-trivial solutions for certain values of \(E\).
+</p>
+
+<p>
+Our goal is to solve this equation using a neural network to represent the wave function. This is a different problem than the one <a href="http://kitchingroup.cheme.cmu.edu/blog/2017/11/28/Solving-ODEs-with-a-neural-network-and-autograd/">here</a> or <a href="http://kitchingroup.cheme.cmu.edu/blog/2017/11/27/Solving-BVPs-with-a-neural-network-and-autograd/">here</a> because of the eigenvalue. This is an additional adjustable parameter we have to find. Also, we have the normalization constraint to consider, which we did not consider before.
+</p>
+
+<div id="outline-container-org0379aef" class="outline-2">
+<h2 id="org0379aef"><span class="section-number-2">1</span> The neural network setup</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+Here we setup the neural network and its derivatives. This is the same as we did before.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="orgd64417e"><span style="color: #0000FF;">import</span> autograd.numpy <span style="color: #0000FF;">as</span> np
+<span style="color: #0000FF;">from</span> autograd <span style="color: #0000FF;">import</span> grad, elementwise_grad
+<span style="color: #0000FF;">import</span> autograd.numpy.random <span style="color: #0000FF;">as</span> npr
+<span style="color: #0000FF;">from</span> autograd.misc.optimizers <span style="color: #0000FF;">import</span> adam
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">init_random_params</span>(scale, layer_sizes, rs=npr.RandomState(42)):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #036A07;">"""Build a list of (weights, biases) tuples, one for each layer."""</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> [(rs.randn(insize, outsize) * scale,   <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">weight matrix</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>rs.randn(outsize) * scale)           <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">bias vector</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">for</span> insize, outsize <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">zip</span>(layer_sizes[:-1], layer_sizes[1:])]
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">swish</span>(x):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #036A07;">"see https://arxiv.org/pdf/1710.05941.pdf"</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> x / (1.0 + np.exp(-x))
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">psi</span>(nnparams, inputs):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #036A07;">"Neural network wavefunction"</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">for</span> W, b <span style="color: #0000FF;">in</span> nnparams:
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">outputs</span> = np.dot(inputs, W) + b
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">inputs</span> = swish(outputs)    
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> outputs
+
+<span style="color: #BA36A5;">psip</span> = elementwise_grad(psi, 1) <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">dpsi/dx </span>
+<span style="color: #BA36A5;">psipp</span> = elementwise_grad(psip, 1) <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">d^2psi/dx^2</span>
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org8b7927f" class="outline-2">
+<h2 id="org8b7927f"><span class="section-number-2">2</span> The objective function</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+The important function we need is the objective function. This function codes the Schrödinger equation, the boundary conditions, and the normalization as a cost function that we will later seek to minimize. Ideally, at the solution the objective function will be zero. We can't put infinity into our objective function, but it turns out that x = &plusmn; 6 is practically infinity in this case, so we approximate the boundary conditions there. 
+</p>
+
+<p>
+Another note is the numerical integration by the trapezoid rule. I use a vectorized version of this because autograd doesn't have a trapz derivative and I didn't feel like figuring one out.
+</p>
+
+<p>
+We define the params to vary here as a dictionary containing neural network weights and biases, and the value of the eigenvalue.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="orgfcad9ba"><span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">Here is our initial guess of params:</span>
+<span style="color: #BA36A5;">nnparams</span> = init_random_params(0.1, layer_sizes=[1, 8, 1])
+
+<span style="color: #BA36A5;">params</span> = {<span style="color: #008000;">'nn'</span>: nnparams, <span style="color: #008000;">'E'</span>: 0.4}
+
+<span style="color: #BA36A5;">x</span> = np.linspace(-6, 6, 200)[:, <span style="color: #D0372D;">None</span>]
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">objective</span>(params, step):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">nnparams</span> = params[<span style="color: #008000;">'nn'</span>]
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">E</span> = params[<span style="color: #008000;">'E'</span>]        
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">This is Schrodinger's eqn</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">zeq</span> = -0.5 * psipp(nnparams, x) + (0.5 * x**2 - E) * psi(nnparams, x) 
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">bc0</span> = psi(nnparams, -6.0) <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">This approximates -infinity</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">bc1</span> = psi(nnparams, 6.0)  <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">This approximates +infinity</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">y2</span> = psi(nnparams, x)**2
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">This is a numerical trapezoid integration</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">prob</span> = np.<span style="color: #006FE0;">sum</span>((y2[1:] + y2[0:-1]) / 2 * (x[1:] - x[0:-1]))
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> np.mean(zeq**2) + bc0**2 + bc1**2 + (1.0 - prob)**2
+
+<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">This gives us feedback from the optimizer</span>
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">callback</span>(params, step, g):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">if</span> step % 1000 == 0:
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">print</span>(<span style="color: #008000;">"Iteration {0:3d} objective {1}"</span>.<span style="color: #006FE0;">format</span>(step,
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> objective(params, step)))
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgb7c75e5" class="outline-2">
+<h2 id="orgb7c75e5"><span class="section-number-2">3</span> The minimization</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+Now, we just let an optimizer minimize the objective function for us. Note, I ran this next block more than once, as the objective continued to decrease. I ran this one at least two times, and the loss was still decreasing slowly.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="org46586c1"><span style="color: #BA36A5;">params</span> = adam(grad(objective), params,
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> step_size=0.001, num_iters=5001, callback=callback) 
+
+<span style="color: #0000FF;">print</span>(params[<span style="color: #008000;">'E'</span>])
+</pre>
+</div>
+
+<pre class="example">
+Iteration   0 objective [[ 0.00330204]]
+Iteration 1000 objective [[ 0.00246459]]
+Iteration 2000 objective [[ 0.00169862]]
+Iteration 3000 objective [[ 0.00131453]]
+Iteration 4000 objective [[ 0.00113132]]
+Iteration 5000 objective [[ 0.00104405]]
+0.5029457355415167
+
+</pre>
+
+<p>
+Good news, the lowest energy eigenvalue is known to be 0.5 for our choice of parameters, and that is approximately what we got. Now let's see our solution and compare it to the known solution. Interestingly we got the negative of the solution, which is still a solution. The NN solution is not indistinguishable from the analytical solution, and has some spurious curvature in the tails, but it is approximately correct, and more training might get it closer. A different activation function might also work better.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="org25c3eec">%matplotlib inline
+<span style="color: #0000FF;">import</span> matplotlib.pyplot <span style="color: #0000FF;">as</span> plt
+
+<span style="color: #BA36A5;">x</span> = np.linspace(-6, 6)[:, <span style="color: #D0372D;">None</span>]
+<span style="color: #BA36A5;">y</span> = psi(params[<span style="color: #008000;">'nn'</span>], x)
+
+plt.plot(x, -y, label=<span style="color: #008000;">'NN'</span>)
+plt.plot(x, (1/np.pi)**0.25 * np.exp(-x**2 / 2), <span style="color: #008000;">'r--'</span>, label=<span style="color: #008000;">'analytical'</span>)
+plt.legend()
+</pre>
+</div>
+
+<p>
+<img src="/media/ob-ipython-a0315846d401b5468d391df4b1ee6e84.png"> 
+</p>
+</div>
+</div>
+
+<div id="outline-container-org9a1e5f9" class="outline-2">
+<h2 id="org9a1e5f9"><span class="section-number-2">4</span> The first excited state</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+Now, what about the first excited state? This has an eigenvalue of 1.5, and the solution has odd parity. We can naively change the eigenvalue, and hope that the optimizer will find the right new solution. We do that here, and use the old NN params.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="orgfa56bb1"><span style="color: #BA36A5;">params</span>[<span style="color: #008000;">'E'</span>] = 1.6
+</pre>
+</div>
+
+<p>
+Now, we run a round of optimization:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="org5098ce4"><span style="color: #BA36A5;">params</span> = adam(grad(objective), params,
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> step_size=0.003, num_iters=5001, callback=callback) 
+
+<span style="color: #0000FF;">print</span>(params[<span style="color: #008000;">'E'</span>])
+</pre>
+</div>
+
+<pre class="example">
+Iteration   0 objective [[ 0.09918192]]
+Iteration 1000 objective [[ 0.00102333]]
+Iteration 2000 objective [[ 0.00100269]]
+Iteration 3000 objective [[ 0.00098684]]
+Iteration 4000 objective [[ 0.00097425]]
+Iteration 5000 objective [[ 0.00096347]]
+0.502326347406645
+
+</pre>
+
+
+<p>
+That doesn't work though. The optimizer just pushes the solution back to the known one. Next, we try starting from scratch with the eigenvalue guess.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="org872c3a1"><span style="color: #BA36A5;">nnparams</span> = init_random_params(0.1, layer_sizes=[1, 8, 1])
+
+<span style="color: #BA36A5;">params</span> = {<span style="color: #008000;">'nn'</span>: nnparams, <span style="color: #008000;">'E'</span>: 1.6}
+
+<span style="color: #BA36A5;">params</span> = adam(grad(objective), params,
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> step_size=0.003, num_iters=5001, callback=callback) 
+
+<span style="color: #0000FF;">print</span>(params[<span style="color: #008000;">'E'</span>])
+</pre>
+</div>
+
+<pre class="example">
+Iteration   0 objective [[ 2.08318762]]
+Iteration 1000 objective [[ 0.02358685]]
+Iteration 2000 objective [[ 0.00726497]]
+Iteration 3000 objective [[ 0.00336433]]
+Iteration 4000 objective [[ 0.00229851]]
+Iteration 5000 objective [[ 0.00190942]]
+0.5066213334684926
+
+</pre>
+
+<p>
+That also doesn't work. We are going to have to steer this. The idea is pre-train the neural network to have the basic shape and symmetry we want, and then use that as the input for the objective function. The first excited state has odd parity, and here is a guess of that shape. This is a pretty ugly hacked up version that only roughly has the right shape. I am counting on the NN smoothing out the discontinuities.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="org0b8e2e5"><span style="color: #BA36A5;">xm</span> = np.linspace(-6, 6)[:, <span style="color: #D0372D;">None</span>]
+<span style="color: #BA36A5;">ym</span> = -0.5 * ((-1 * (xm + 1.5)**2) + 1.5) * (xm &lt; 0) * (xm &gt; -3)
+<span style="color: #BA36A5;">yp</span> = -0.5 * ((1 * (xm - 1.5)**2 ) - 1.5) * (xm &gt; 0) * (xm &lt; 3)
+
+plt.plot(xm, (ym + yp))
+plt.plot(x, (1/np.pi)**0.25 * np.sqrt(2) * x * np.exp(-x**2 / 2), <span style="color: #008000;">'r--'</span>, label=<span style="color: #008000;">'analytical'</span>)
+</pre>
+</div>
+
+<p>
+<img src="/media/ob-ipython-7306bb4c2a75d356dd2246681bec193e.png"> 
+</p>
+
+<p>
+Now we pretrain a bit.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="org2686c3a"><span style="color: #0000FF;">def</span> <span style="color: #006699;">pretrain</span>(params, step):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">nnparams</span> = params[<span style="color: #008000;">'nn'</span>]
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">errs</span> = psi(nnparams, xm) - (ym + yp)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> np.mean(errs**2)
+
+<span style="color: #BA36A5;">params</span> = adam(grad(pretrain), params,
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> step_size=0.003, num_iters=501, callback=callback) 
+</pre>
+</div>
+
+<pre class="example">
+Iteration   0 objective [[ 1.09283695]]
+
+</pre>
+
+<p>
+Here is the new initial guess we are going to use. You can see that indeed a lot of smoothing has occurred.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="org2eea46f">plt.plot(xm, ym + yp, xm, psi(params[<span style="color: #008000;">'nn'</span>], xm))
+</pre>
+</div>
+
+<p>
+<img src="/media/ob-ipython-861dc15ae81c1a9d2bcab2aeca1c7b64.png"> 
+</p>
+
+<p>
+That has the right shape now. So we go back to the original objective function. 
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="orgaf754e9"><span style="color: #BA36A5;">params</span> = adam(grad(objective), params,
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> step_size=0.001, num_iters=5001, callback=callback) 
+
+<span style="color: #0000FF;">print</span>(params[<span style="color: #008000;">'E'</span>])
+</pre>
+</div>
+
+<pre class="example">
+Iteration   0 objective [[ 0.00370029]]
+Iteration 1000 objective [[ 0.00358193]]
+Iteration 2000 objective [[ 0.00345137]]
+Iteration 3000 objective [[ 0.00333]]
+Iteration 4000 objective [[ 0.0032198]]
+Iteration 5000 objective [[ 0.00311844]]
+1.5065724128094344
+
+</pre>
+
+<p>
+I ran that optimization block many times. The loss is still decreasing, but slowly. More importantly, the eigenvalue is converging to 1.5, which is the known analytical value, and the solution is converging to the known solution. 
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="org95e9840"><span style="color: #BA36A5;">x</span> = np.linspace(-6, 6)[:, <span style="color: #D0372D;">None</span>]
+<span style="color: #BA36A5;">y</span> = psi(params[<span style="color: #008000;">'nn'</span>], x)
+
+plt.plot(x, y, label=<span style="color: #008000;">'NN'</span>)
+plt.plot(x, (1/np.pi)**0.25 * np.sqrt(2) * x * np.exp(-x**2 / 2), <span style="color: #008000;">'r--'</span>, label=<span style="color: #008000;">'analytical'</span>)
+plt.legend()
+</pre>
+</div>
+
+<p>
+<img src="/media/ob-ipython-e63e275d2112849010d3e28381ccf41b.png"> 
+</p>
+
+<p>
+We can confirm the normalization is reasonable:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="org0209abc"><span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">check the normalization</span>
+<span style="color: #0000FF;">print</span>(np.trapz(y.T * y.T, x.T))
+</pre>
+</div>
+
+<pre class="example">
+[ 0.99781886]
+
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org7478d5a" class="outline-2">
+<h2 id="org7478d5a"><span class="section-number-2">5</span> Summary</h2>
+<div class="outline-text-2" id="text-5">
+<p>
+This is another example of using autograd to solve an eigenvalue differential equation. Some of these solutions required tens of thousands of iterations of training. The groundstate wavefunction was very easy to get. The first excited state, on the other hand, took some active steering. This is very much like how an initial guess can change which solution a nonlinear optimization (which this is) finds.
+</p>
+
+<p>
+There are other ways to solve this particular problem. What I think is interesting about this is the possibility to solve harder problems, e.g. not just a harmonic potential, but a more complex one. You could pretrain a network on the harmonic solution, and then use it as the initial guess for the harder problem (which has no analytical solution). 
+</p>
+</div>
+</div>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/11/29/Solving-an-eigenvalue-differential-equation-with-a-neural-network.org">org-mode source</a></p>
+<p>Org-mode version = 9.1.2</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/11/29/Solving-an-eigenvalue-differential-equation-with-a-neural-network#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Solving-ODEs-with-a-neural-network-and-autograd"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/11/28/Solving-ODEs-with-a-neural-network-and-autograd/" rel="bookmark" title="Permanent Link to Solving ODEs with a neural network and autograd">Solving ODEs with a neural network and autograd</a></h2>
       <p><small><span class="blog_post_date">Posted November 28, 2017 at 07:23 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/ode/'>ode</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/ode/'>ode</a>, <a href='/blog/category/autograd/'>autograd</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/11/28/Solving-ODEs-with-a-neural-network-and-autograd#disqus_thread">View Comments</a>
       <p><small><span class="blog_post_date">Updated November 28, 2017 at 07:23 AM</span>
       </small></p>
@@ -378,7 +760,7 @@ It is hard to tell how broadly useful this is; I have not tried it beyond this e
       <div id="More-auto-differentiation-goodness-for-science-and-engineering"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/11/22/More-auto-differentiation-goodness-for-science-and-engineering/" rel="bookmark" title="Permanent Link to More auto-differentiation goodness for science and engineering">More auto-differentiation goodness for science and engineering</a></h2>
       <p><small><span class="blog_post_date">Posted November 22, 2017 at 03:52 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/python/'>python</a>, <a href='/blog/category/autograd/'>autograd</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/11/22/More-auto-differentiation-goodness-for-science-and-engineering#disqus_thread">View Comments</a>
       <p><small><span class="blog_post_date">Updated November 22, 2017 at 03:55 PM</span>
       </small></p>
@@ -702,7 +1084,7 @@ Today we examined four ways to use autograd in scientific or mathematical progra
       <div id="Timing-Lennard-Jones-implementations-ASE-vs-autograd"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/11/20/Timing-Lennard-Jones-implementations-ASE-vs-autograd/" rel="bookmark" title="Permanent Link to Timing Lennard-Jones implementations - ASE vs autograd">Timing Lennard-Jones implementations - ASE vs autograd</a></h2>
       <p><small><span class="blog_post_date">Posted November 20, 2017 at 09:19 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/lennardjones/'>lennardjones</a>, <a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/lennardjones/'>lennardjones</a>, <a href='/blog/category/python/'>python</a>, <a href='/blog/category/autograd/'>autograd</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/11/20/Timing-Lennard-Jones-implementations-ASE-vs-autograd#disqus_thread">View Comments</a>
       <p><small><span class="blog_post_date">Updated November 21, 2017 at 07:42 AM</span>
       </small></p>
@@ -1005,149 +1387,6 @@ This doesn't directly answer the question of whether this can work in production
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/11/20/Timing-Lennard-Jones-implementations-ASE-vs-autograd#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Training-the-ASE-Lennard-Jones-potential-to-DFT-calculations"></div>
-      <h2 class="blog_post_title"><a href="/blog/2017/11/19/Training-the-ASE-Lennard-Jones-potential-to-DFT-calculations/" rel="bookmark" title="Permanent Link to Training the ASE Lennard-Jones potential to DFT calculations">Training the ASE Lennard-Jones potential to DFT calculations</a></h2>
-      <p><small><span class="blog_post_date">Posted November 19, 2017 at 07:58 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2017/11/19/Training-the-ASE-Lennard-Jones-potential-to-DFT-calculations#disqus_thread">View Comments</a>
-      <p><small><span class="blog_post_date">Updated November 21, 2017 at 06:27 PM</span>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-The Atomic Simulation Environment provides several useful calculators with configurable parameters. For example, the Lennard-Jones potential has two adjustable parameters, &sigma; and &epsilon;. I have always thought it would be useful to be able to fit one of these potentials to a reference database, e.g. a DFT database.
-</p>
-
-<p>
-I ran a series of DFT calculations of bulk Ar in different crystal structures, at different volumes and saved them in an ase database (<a href="/media/argon.db">argon.db</a> ). We have five crystal structures at three different volumes. Within each of those sets, I rattled the atoms a bunch of times and calculated the energies. Here is the histogram of energies we have to work with:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython" id="org2f0b5c2">%matplotlib inline
-<span style="color: #0000FF;">import</span> matplotlib.pyplot <span style="color: #0000FF;">as</span> plt
-
-<span style="color: #0000FF;">import</span> ase.db
-<span style="color: #BA36A5;">db</span> = ase.db.connect(<span style="color: #008000;">'argon.db'</span>)
-
-<span style="color: #BA36A5;">known_energies</span> = [row.energy <span style="color: #0000FF;">for</span> row <span style="color: #0000FF;">in</span> db.select()]
-plt.hist(known_energies, 20)
-plt.xlabel(<span style="color: #008000;">'Energy'</span>)
-</pre>
-</div>
-
-<p>
-<img src="/media/ob-ipython-d6113dc5f4e887554825f1c669ff3c0d.png"> 
-</p>
-
-<p>
-What I would really like is a set of Lennard-Jones parameters that describe this data. It only recently occurred to me that we just need to define a function that takes the LJ parameters and computes energies for a set of configurations. Then we create a second objective function we can use in a minimization. Here is how we can implement that idea:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython" id="orga0d8c08"><span style="color: #0000FF;">import</span> numpy <span style="color: #0000FF;">as</span> np
-<span style="color: #0000FF;">from</span> scipy.optimize <span style="color: #0000FF;">import</span> fmin
-<span style="color: #0000FF;">from</span> ase.calculators.lj <span style="color: #0000FF;">import</span> LennardJones
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">my_lj</span>(pars):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">epsilon</span>, <span style="color: #BA36A5;">sigma</span> = pars
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">calc</span> = LennardJones(sigma=sigma, epsilon=epsilon)
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">all_atoms</span> = [row.toatoms() <span style="color: #0000FF;">for</span> row <span style="color: #0000FF;">in</span> db.select()]
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   [atoms.set_calculator(calc) <span style="color: #0000FF;">for</span> atoms <span style="color: #0000FF;">in</span> all_atoms]
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">predicted_energies</span> = np.array([atoms.get_potential_energy() <span style="color: #0000FF;">for</span> atoms <span style="color: #0000FF;">in</span> all_atoms])
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> predicted_energies
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">objective</span>(pars):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">known_energies</span> = np.array([row.energy <span style="color: #0000FF;">for</span> row <span style="color: #0000FF;">in</span> db.select()])
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">err</span> = known_energies - my_lj(pars)
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> np.mean(err**2)
-
-<span style="color: #BA36A5;">LJ_pars</span> = fmin(objective, [0.005, 3.5])        
-<span style="color: #0000FF;">print</span>(LJ_pars)
-</pre>
-</div>
-
-<pre class="example">
-Optimization terminated successfully.
-         Current function value: 0.000141
-         Iterations: 28
-         Function evaluations: 53
-[ 0.00593014  3.73314611]
-
-</pre>
-
-<p>
-Now, let's see how well we do with that fit.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython" id="org0606368">plt.subplot(121)
-
-<span style="color: #BA36A5;">calc</span> = LennardJones(epsilon=LJ_pars[0], sigma=LJ_pars[1])
-
-<span style="color: #0000FF;">for</span> structure, spec <span style="color: #0000FF;">in</span> [(<span style="color: #008000;">'fcc'</span>, <span style="color: #008000;">'b.'</span>),
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   (<span style="color: #008000;">'hcp'</span>, <span style="color: #008000;">'r.'</span>),
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   (<span style="color: #008000;">'bcc'</span>, <span style="color: #008000;">'g.'</span>),
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   (<span style="color: #008000;">'diamond'</span>, <span style="color: #008000;">'gd'</span>),
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   (<span style="color: #008000;">'sc'</span>, <span style="color: #008000;">'bs'</span>)]:
-
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">ke</span>, <span style="color: #BA36A5;">pe</span> = [], []
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">for</span> row <span style="color: #0000FF;">in</span> db.select(structure=structure):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">ke</span> += [row.energy]
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">atoms</span> = row.toatoms()
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   atoms.set_calculator(calc)
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">pe</span> += [atoms.get_potential_energy()]    
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   plt.plot(ke, pe, spec, label=structure)
-
-plt.plot([-0.1, 0], [-0.1, 0], <span style="color: #008000;">'k-'</span>, label=<span style="color: #008000;">'parity'</span>)
-plt.legend()
-plt.xlabel(<span style="color: #008000;">'DFT'</span>)
-plt.ylabel(<span style="color: #008000;">'LJ'</span>)
-
-<span style="color: #BA36A5;">pred_e</span> = my_lj(LJ_pars)
-<span style="color: #BA36A5;">known_energies</span> = np.array([row.energy <span style="color: #0000FF;">for</span> row <span style="color: #0000FF;">in</span> db.select()])
-<span style="color: #BA36A5;">err</span> = known_energies - pred_e
-
-plt.subplot(122)
-plt.hist(err)
-plt.xlabel(<span style="color: #008000;">'error'</span>)
-plt.tight_layout()
-</pre>
-</div>
-
-<p>
-<img src="/media/ob-ipython-3fd078c892ba2e5ee29397f43805d2b2.png"> 
-</p>
-
-<p>
-The results aren't fantastic, but you can see that we get the closer packed structures (fcc, hcp, bcc) more accurately than the loosely packed structures (diamond, sc). Those more open structures tend to have more directional bonding, and the Lennard-Jones potential isn't expected to do too well on those. You could consider a more sophisticated model if those structures were important for your simulation.
-</p>
-<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2017/11/19/Training-the-ASE-Lennard-Jones-potential-to-DFT-calculations.org">org-mode source</a></p>
-<p>Org-mode version = 9.1.2</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/11/19/Training-the-ASE-Lennard-Jones-potential-to-DFT-calculations#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="/blog/page/2">Next Page »</a>
 
           </div>
@@ -1187,11 +1426,11 @@ The results aren't fantastic, but you can see that we get the closer packed stru
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2017/11/29/Solving-an-eigenvalue-differential-equation-with-a-neural-network/">Solving an eigenvalue differential equation with a neural network</a></li>
       <li><a href="/blog/2017/11/28/Solving-ODEs-with-a-neural-network-and-autograd/">Solving ODEs with a neural network and autograd</a></li>
       <li><a href="/blog/2017/11/27/Solving-BVPs-with-a-neural-network-and-autograd/">Solving BVPs with a neural network and autograd</a></li>
       <li><a href="/blog/2017/11/22/More-auto-differentiation-goodness-for-science-and-engineering/">More auto-differentiation goodness for science and engineering</a></li>
       <li><a href="/blog/2017/11/20/Timing-Lennard-Jones-implementations-ASE-vs-autograd/">Timing Lennard-Jones implementations - ASE vs autograd</a></li>
-      <li><a href="/blog/2017/11/19/Training-the-ASE-Lennard-Jones-potential-to-DFT-calculations/">Training the ASE Lennard-Jones potential to DFT calculations</a></li>
     </ul>
   </section>
 

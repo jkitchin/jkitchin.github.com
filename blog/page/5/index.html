@@ -84,6 +84,277 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Adding-a-GSL-integration-function-to-Emacs-with-a-dynamic-module"></div>
+      <h2 class="blog_post_title"><a href="/blog/2017/07/09/Adding-a-GSL-integration-function-to-Emacs-with-a-dynamic-module/" rel="bookmark" title="Permanent Link to Adding a GSL integration function to Emacs with a dynamic module">Adding a GSL integration function to Emacs with a dynamic module</a></h2>
+      <p><small><span class="blog_post_date">Posted July 09, 2017 at 07:22 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/integration/'>integration</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/dynamic-module/'>dynamic-module</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2017/07/09/Adding-a-GSL-integration-function-to-Emacs-with-a-dynamic-module#disqus_thread">View Comments</a>
+      <p><small><span class="blog_post_date">Updated July 11, 2017 at 07:37 AM</span>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+Here we work out how to run this program: <a href="https://www.gnu.org/software/gsl/doc/html/integration.html#adaptive-integration-example">https://www.gnu.org/software/gsl/doc/html/integration.html#adaptive-integration-example</a> in a dynamic module in emacs. The goal is to be able to evaluate \(\int_0^1 x^{-1/2} \log(x) dx\). According to the example page the answer is -4. We will define an integration function that takes at least a function and integration bounds as arguments, and several optional arguments to specify tolerances and limits. In other words we want to evaluate integrals of the form:
+</p>
+
+<p>
+\(\int_a^b f(x; params) dx\)
+</p>
+
+<p>
+I want that to happen in an elisp function with a signature like:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(gsl-integration-qags (<span style="color: #0000FF;">lambda</span> (x params) body) a b <span style="color: #6434A3;">&amp;optional</span> params epsabs epsrel limit)
+</pre>
+</div>
+
+<p>
+And that function will return a list containing (result error-estimate). Here is the C-code that makes this happen. It is more complex that the <a href="http://kitchingroup.cheme.cmu.edu/blog/2017/07/08/Adding-numerical-methods-to-emacs-with-dynamic-modules/">last example</a>, and only compiles with gcc that allows nested functions. I don't know how to write this without that feature. This is more complex also because you have to create a workspace to do the integration inside the function that does the integration. The C-module also has extra code in it to allow for optional arguments.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-c"><span style="color: #808080;">#include</span> <span style="color: #008000;">&lt;gsl/gsl_integration.h&gt;</span>
+<span style="color: #808080;">#include</span> <span style="color: #008000;">"emacs-module.h"</span>
+
+<span style="color: #6434A3;">int</span> <span style="color: #BA36A5;">plugin_is_GPL_compatible</span>;
+
+<span style="color: #0000FF;">static</span> <span style="color: #6434A3;">emacs_value</span> <span style="color: #006699;">F_gsl_integrate</span> (<span style="color: #6434A3;">emacs_env</span> *<span style="color: #BA36A5;">env</span>, <span style="color: #6434A3;">ptrdiff_t</span> <span style="color: #BA36A5;">nargs</span>, <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">args</span>[], <span style="color: #6434A3;">void</span> *<span style="color: #BA36A5;">data</span>)
+{
+  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">nested function - only supported as an extension in gcc</span>
+  <span style="color: #6434A3;">double</span> <span style="color: #006699;">f</span> (<span style="color: #6434A3;">double</span> <span style="color: #BA36A5;">x</span>, <span style="color: #6434A3;">void</span> *<span style="color: #BA36A5;">params</span>) 
+  {
+    <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">fn</span> = args[0];  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">function we will integrate</span>
+    <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">x2</span>[] = { env-&gt;make_float(env, x), params };
+    <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">y</span> = env-&gt;funcall(env, fn, 2, &amp;x2);   
+    
+    <span style="color: #0000FF;">return</span> env-&gt;extract_float (env, y);
+  }
+
+  <span style="color: #6434A3;">double</span> <span style="color: #BA36A5;">a</span> = env-&gt;extract_float (env, args[1]);
+  <span style="color: #6434A3;">double</span> <span style="color: #BA36A5;">b</span> = env-&gt;extract_float (env, args[2]);
+
+  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">default values for optional arguments</span>
+  <span style="color: #6434A3;">double</span> <span style="color: #BA36A5;">epsabs</span> = 0.0;
+  <span style="color: #6434A3;">double</span> <span style="color: #BA36A5;">epsrel</span> = 1e-7;
+  <span style="color: #6434A3;">size_t</span> <span style="color: #BA36A5;">limit</span> = 1000;
+  <span style="color: #6434A3;">double</span> <span style="color: #BA36A5;">result</span>, <span style="color: #BA36A5;">error</span>; 
+
+  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">Here is how I handle the optional arguments</span>
+  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">(gsl-integrate func a b params epsabs epsrel limit)</span>
+  <span style="color: #6434A3;">gsl_function</span> <span style="color: #BA36A5;">F</span>;
+  F.function = &amp;f;
+  <span style="color: #0000FF;">if</span> (nargs &gt;= 4) {F.params = args[3];}
+  <span style="color: #0000FF;">if</span> (nargs &gt;= 5 &amp;&amp; env-&gt;is_not_nil(env, args[4])) {epsabs = env-&gt;extract_float(env, args[4]);}
+  <span style="color: #0000FF;">if</span> (nargs &gt;= 6 &amp;&amp; env-&gt;is_not_nil(env, args[5])) {epsrel = env-&gt;extract_float(env, args[5]);}
+  <span style="color: #0000FF;">if</span> (nargs &gt;= 7 &amp;&amp; env-&gt;is_not_nil(env, args[6])) {limit = env-&gt;extract_integer(env, args[6]);}
+
+  <span style="color: #6434A3;">gsl_integration_workspace</span> * <span style="color: #BA36A5;">w</span> = gsl_integration_workspace_alloc (limit);
+
+  gsl_integration_qags (&amp;F, <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">gsl_function pointer</span>
+                        a, <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">lower integration bound</span>
+                        b, <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">upper integration bound</span>
+                        epsabs, <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">absolute error tolerance</span>
+                        epsrel, <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">relative error tolerance</span>
+                        limit, <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">max number of subintervals for integration</span>
+                        w, <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">the workspace</span>
+                        <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">pointers to put results and error in</span>
+                        &amp;result, &amp;error);
+
+  gsl_integration_workspace_free (w);
+    
+  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">make a list of (result error) to return</span>
+  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">Qlist</span> = env-&gt;intern(env, <span style="color: #008000;">"list"</span>);
+  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">Qresult</span> = env-&gt;make_float (env, result);
+  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">Qerror</span> = env-&gt;make_float (env, error);
+  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">list_args</span>[] = { Qresult, Qerror };
+  <span style="color: #0000FF;">return</span> env-&gt;funcall(env, Qlist, 2, list_args);
+}
+
+<span style="color: #6434A3;">int</span> <span style="color: #006699;">emacs_module_init</span>(<span style="color: #0000FF;">struct</span> <span style="color: #6434A3;">emacs_runtime</span> *<span style="color: #BA36A5;">ert</span>)
+{
+  <span style="color: #6434A3;">emacs_env</span> *<span style="color: #BA36A5;">env</span> = ert-&gt;get_environment(ert);
+  
+  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">Here we create the function.</span>
+  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">fset</span> = env-&gt;intern(env, <span style="color: #008000;">"fset"</span>);
+  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">args</span>[2];
+  args[0] = env-&gt;intern(env, <span style="color: #008000;">"gsl-integration-qags"</span>); <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">symbol to create for function</span>
+  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">The function we set that symbol to.</span>
+  args[1] = env-&gt;make_function(env,
+                               3, <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">min nargs</span>
+                               7, <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">max nargs</span>
+                               F_gsl_integrate,
+                               <span style="color: #008000;">"(gsl-integration-qags F A B &amp;optional PARAMS EPSABS EPSREL LIMIT)\n"</span> \
+                               <span style="color: #008000;">"Integrate F(x; params) from A to B.\n"</span> \
+                               <span style="color: #008000;">"F is a function of a single variable and parameters.\n"</span> \
+                               <span style="color: #008000;">"A is the lower bound of integration\n"</span>  \
+                               <span style="color: #008000;">"B is the upper bound of integration.\n"</span> \
+                               <span style="color: #008000;">"Optional parameters:\n"</span>\
+                               <span style="color: #008000;">"PARAMS is a list of params to pass to F.\n"</span> \
+                               <span style="color: #008000;">"EPSABS is a float (default 0.0) and is the absolute error tolerance.\n"</span> \
+                               <span style="color: #008000;">"EPSREL is a float (default 1e-7) and is the relative error tolerance.\n"</span> \
+                               <span style="color: #008000;">"LIMIT is the maximum number of subintervals for the integration (default 1000).\n"</span> \
+                               <span style="color: #008000;">"Returns (list result error-estimate).\n"</span> \
+                               <span style="color: #008000;">"See https://www.gnu.org/software/gsl/manual/html_node/QAGS-adaptive-integration-with-singularities.html."</span>,
+                               0);
+  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">This is basically (fset 'gsl-integration-qags (lambda func))</span>
+  env-&gt;funcall(env, fset, 2, args);
+  
+  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">This is what allows the shared library to provide a feature </span>
+  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">provide</span> = env-&gt;intern(env, <span style="color: #008000;">"provide"</span>);
+  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">provide_args</span>[] = { env-&gt;intern(env, <span style="color: #008000;">"gsl-integration"</span>) };
+  env-&gt;funcall(env, provide, 1, provide_args);
+  
+  <span style="color: #0000FF;">return</span> 0;
+}
+</pre>
+</div>
+
+<p>
+Building this was moderately tricky. It appears the first gcc on my path uses clang which does not support nested functions in C. I don't know enough C to figure out how to do this without a nested function though, since the function has to be defined at run-time based on the emacs env and args. gcc does support inline functions, so the code below uses a gcc that does compile it.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh">rm -f gsl-integration.so gsl-integration.o
+/usr/local/Cellar/gcc/6.1.0/bin/gcc-6 -Wall -I/usr/local/include -fPIC -c gsl-integration.c
+/usr/local/Cellar/gcc/6.1.0/bin/gcc-6  -shared -L/usr/local/include -lgsl -o gsl-integration.so gsl-integration.o
+</pre>
+</div>
+
+<p>
+Now we add this directory to our path since it is not on it and require our new module.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(add-to-list 'load-path <span style="color: #008000;">"/Users/jkitchin/vc/blogofile-jkitchin.github.com/_blog/dynamic-module/"</span>)
+(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">gsl-integration</span>)
+</pre>
+</div>
+
+<pre class="example">
+gsl-integration
+
+</pre>
+
+<p>
+Let us see our new function in action. We evaluate \(\int_0^1 x^{-1/2} \log(x) dx\). According to the example page the answer is -4. Here is an example where we ignore the parameters. You have to be careful; Emacs sometimes segfaults and crashes if you use an integer or float argument when it expects the other type.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(gsl-integration-qags (<span style="color: #0000FF;">lambda</span> (x params) (/ (log x) (sqrt x))) 0.0 1.0)
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-right">-4.000000000000085</td>
+<td class="org-right">1.354472090042691e-13</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Here are some optional arguments. 
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(gsl-integration-qags (<span style="color: #0000FF;">lambda</span> (x params) (/ (log x) (sqrt x))) 0.0 1.0 nil nil 0.01)
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-right">-4.000000000000075</td>
+<td class="org-right">0.019526557540360034</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Nice, with a larger epsrel argument we get a larger error. Note the arguments are positional, so we have to include them all just to set the epsrel argument. How about an easier example with parameters that we actually use. Here we integrate a constant, and set the value of the constant from the params arg. The integral should be the area of a rectangle of length 1 and width of the param we use.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(list
+ (gsl-integration-qags (<span style="color: #0000FF;">lambda</span> (x params) (first params)) 0.0 1.0 '(1.0))
+ (gsl-integration-qags (<span style="color: #0000FF;">lambda</span> (x params) (first params)) 0.0 1.0 '(0.5)))
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-right">1.0</td>
+<td class="org-right">1.1102230246251565e-14</td>
+</tr>
+
+<tr>
+<td class="org-right">0.5</td>
+<td class="org-right">5.551115123125783e-15</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Wow! It actually works!!! That was harder won success than usual for me. I am claiming victory for now and leaving the following notes to future me:
+</p>
+
+<ol class="org-ol">
+<li>It would be nice to have optional keyword arguments. This would take some handling of the arguments beyond what I know how to do for now, unless it is possible to pull in something like plist-get the way we pull in fset, provide and list in this example.</li>
+<li>Error checking on types would be helpful. It is not good for Emacs to crash because 0 is not 0.0!</li>
+<li>In numpy there is often a feature to get full_output. Here, the workspace created in the function has more information available in a struct that might be helpful to have access to at times. It seems like it might be possible to get that here too.</li>
+</ol>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/07/09/Adding-a-GSL-integration-function-to-Emacs-with-a-dynamic-module.org">org-mode source</a></p>
+<p>Org-mode version = 9.0.7</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/07/09/Adding-a-GSL-integration-function-to-Emacs-with-a-dynamic-module#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Adding-numerical-methods-to-emacs-with-dynamic-modules"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/07/08/Adding-numerical-methods-to-emacs-with-dynamic-modules/" rel="bookmark" title="Permanent Link to Adding numerical methods to emacs with dynamic modules">Adding numerical methods to emacs with dynamic modules</a></h2>
       <p><small><span class="blog_post_date">Posted July 08, 2017 at 10:12 AM</span> | categories:
@@ -559,7 +830,7 @@ Thanks to those brave people alpha-testing this and helping refine the idea!
       <div id="Org-mode-and-ipython-enhancements-in-scimax"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/05/26/Org-mode-and-ipython-enhancements-in-scimax/" rel="bookmark" title="Permanent Link to Org-mode and ipython enhancements in scimax">Org-mode and ipython enhancements in scimax</a></h2>
       <p><small><span class="blog_post_date">Posted May 26, 2017 at 04:54 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/ipython/'>ipython</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/ipython/'>ipython</a>, <a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/05/26/Org-mode-and-ipython-enhancements-in-scimax#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -1245,301 +1516,6 @@ This is an emacs-lisp implementation of Newton's method. It is a simple implemen
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/05/21/A-partial-symbolic-numeric-solver-in-emacs-lisp#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="A-new-and-improved-Emacs-gnuplot-DSL"></div>
-      <h2 class="blog_post_title"><a href="/blog/2017/05/05/A-new-and-improved-Emacs-gnuplot-DSL/" rel="bookmark" title="Permanent Link to A new and improved Emacs gnuplot DSL">A new and improved Emacs gnuplot DSL</a></h2>
-      <p><small><span class="blog_post_date">Posted May 05, 2017 at 10:26 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/lisp/'>lisp</a>, <a href='/blog/category/plotting/'>plotting</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2017/05/05/A-new-and-improved-Emacs-gnuplot-DSL#disqus_thread">View Comments</a>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-A significant limitation of the	<a href="http://kitchingroup.cheme.cmu.edu/blog/2017/05/04/An-emacs-lisp-dsl-for-gnuplot/">previous</a> DSL I wrote is that all the plotting commands have to go in one macro. It would be nice to accumulate them in different forms, and when you want to run them all. A classic way to do that in Emacs lisp is to make a global variable, e.g. <code>*gnuplot-cmds*</code> and append commands to it. Then when you want to, run the commands.
-</p>
-
-<p>
-A more modern approach is to use a closure to encapsulate the commands. Here is a <a href="http://letoverlambda.com">"let over lambda"</a> that defines a few functions that encapsulate an enclosed variable gnuplot-commands. We define one function to add commands to the list of commands, one to clear the commands, one to generate the gnuplot script as a string, and one to run the program. The enclosed variable <code>gnuplot-commands</code> is basically only accessible by these functions. It is encapsulated, similar to if we defined a class in Python then made an instance of it with an attribute that was accessible only be instance methods. On one hand, this "protects" the variable, and keeps it out of the global namespace. On the other hand, we lose the documentation that would have come with a defvar, and we have to define a function to access the contents of that variable.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((gnuplot-commands '(<span style="color: #008000;">"set terminal qt"</span>)))
-
-  (<span style="color: #0000FF;">defun</span> <span style="color: #006699;">gnuplot-add-cmd</span> (s)
-    <span style="color: #036A07;">"Append the command S to gnuplot-cmds."</span>
-    (<span style="color: #0000FF;">setq</span> gnuplot-commands (append gnuplot-commands (list s))))
-
-  (<span style="color: #0000FF;">defun</span> <span style="color: #006699;">gnuplot-clear</span> ()
-    (<span style="color: #0000FF;">setq</span> gnuplot-commands '(<span style="color: #008000;">"set terminal qt"</span>)))
-
-  (<span style="color: #0000FF;">defun</span> <span style="color: #006699;">gnuplot-script</span> ()
-    (s-join <span style="color: #008000;">"\n"</span> gnuplot-commands)))
-</pre>
-</div>
-
-<p>
-To run the commands, we define this function. It does not need to be in the closure because it only accesses the commands through functions we defined in the closure.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">gnuplot-show</span> ()
-    (<span style="color: #0000FF;">let*</span> ((temporary-file-directory <span style="color: #008000;">"."</span>)
-           (cmdfile (make-temp-file <span style="color: #008000;">"gnuplot-cmds-"</span> nil <span style="color: #008000;">".gpl"</span>))
-           (shellcmd (format <span style="color: #008000;">"gnuplot --persist -c \"%s\""</span> cmdfile))
-           (cmds (gnuplot-script)))
-      (<span style="color: #0000FF;">with-temp-file</span> cmdfile
-        (insert cmds))
-      (shell-command shellcmd)
-      (delete-file cmdfile)
-      cmds))
-</pre>
-</div>
-
-<p>
-Last time I noted I had a new idea for the DSL syntax that would give us more flexibility to inject variables and code into the DSL. The idea is to use keywords, symbols that start with :, to indicate they should be replaced by the value of the non-keyword symbol in the environment, and for any form that starts with : to evaluate that form. So, (: - 5 4) would get replaced by 1. Here is the new macro for that.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defmacro</span> <span style="color: #006699;">kargs</span> (<span style="color: #6434A3;">&amp;rest</span> args)
-  <span style="color: #036A07;">"Convert symbols to strings, quote strings, and (expr) to what they evaluate to."</span>
-  `(s-join <span style="color: #008000;">" "</span> (list ,@(cl-mapcan
-                        (<span style="color: #0000FF;">lambda</span> (s)
-                          (list
-                           (<span style="color: #0000FF;">cond</span>
-                            ((keywordp s)
-                             (format <span style="color: #008000;">"%s"</span>
-                                     (symbol-value (intern (substring (symbol-name s) 1)))))
-                            ((symbolp s)
-                             (symbol-name s))
-                            ((stringp s)
-                             (format <span style="color: #008000;">"\"%s\""</span> s))
-                            ((<span style="color: #0000FF;">and</span> (listp s) (eq : (car s)))
-                             `(<span style="color: #0000FF;">with-output-to-string</span>
-                                (princ ,(cdr s))))
-                            (t
-                             (format <span style="color: #008000;">"%s"</span> s)))))
-                        args))))
-</pre>
-</div>
-
-<p>
-Now, our gnuplot macro is simpler, since all it does is add commands to the list. If the form is a string, we add it as is, if the form starts with (: stuff) we evaluate the cdr of the form, and otherwise, we pass the form contents to the kargs macro for processing.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defmacro</span> <span style="color: #006699;">gnuplot</span> (<span style="color: #6434A3;">&amp;rest</span> forms)
-  `(<span style="color: #0000FF;">loop</span> for s in (list ,@(mapcar (<span style="color: #0000FF;">lambda</span> (x)
-                                    (<span style="color: #0000FF;">cond</span>
-                                     ((stringp x)
-                                      x)
-                                     ((<span style="color: #0000FF;">and</span> (listp x) (eq : (car x)))
-                                      `,(cdr x))
-                                     (t
-                                      `(<span style="color: #0000FF;">kargs</span> ,@x))))
-                                  forms))
-         do (gnuplot-add-cmd s)))
-</pre>
-</div>
-
-<p>
-What did that gain us? First, we can break up a script so we can talk about it, maybe do some calculations, etc&#x2026; Let's look at the exmaple at <a href="http://gnuplot.sourceforge.net/demo/linkedaxes.html">http://gnuplot.sourceforge.net/demo/linkedaxes.html</a>.
-</p>
-
-<p>
-We can start with the basic settings.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(gnuplot-clear)
-
-(<span style="color: #0000FF;">gnuplot</span>
- (set terminal png)
- (set output <span style="color: #008000;">"linkedaxes.png"</span>)
- (set encoding utf8)
- (set key outside Left)
- (set bmargin 5)
- (set tmargin 6)
- (set style data lines)
- (set tics in)
- (set ticslevel 0.5)
- (set xlabel  <span style="color: #008000;">"X-ray energy in eV"</span>)
-
- (set format y  \'%5.1fe\')
- (set title <span style="color: #008000;">" Anomalous scattering factors "</span>)
- (set xrange  [9000:14400])
- (set offset 0\,0\,1.0\,0)
- (set xtics nomirror)
- (set link x via 12398./x inverse 12398./x)
-
- (set x2label  <span style="color: #008000;">"X-ray wavelength in &#197;"</span>)
- (set x2tics 0.1  format <span style="color: #008000;">"%.1f &#197;"</span> nomirror))
-</pre>
-</div>
-
-<p>
-We need to download some data files. We can do that, and add another line to the gnuplot script. The escaping on the quotes and commas is especially tedious in this one ;) but, we don't need those pesky line-continuations here.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(shell-command <span style="color: #008000;">"wget http://www.bmsc.washington.edu/scatter/data/Br.dat"</span>)
-(shell-command <span style="color: #008000;">"wget http://www.bmsc.washington.edu/scatter/data/Ta.dat"</span>)
-
-
-(<span style="color: #0000FF;">gnuplot</span>
- (<span style="color: #0000FF;">plot</span> <span style="color: #008000;">"Br.dat"</span> volatile using 1:3 title \'Br f\"\'  lt 1 lw 3\, \'\' volatile using 1:2 title <span style="color: #008000;">"Br f'"</span>  lt 1 lw 1\,
-       <span style="color: #008000;">"Ta.dat"</span> volatile using 1:3 title \'Ta f\"\' lt 2 lw 3\, \'\' volatile using 1:2 title \"Ta f\'\"  lt 2 lw 1))
-
-(gnuplot-script)
-</pre>
-</div>
-
-<p>
-Finally, we can set the output to png, and run our program.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(gnuplot-show)
-</pre>
-</div>
-
-<p>
-Looks good.
-</p>
-
-
-
-<p>
-<img src="/media/linkedaxes.png"> 
-</p>
-
-<p>
-What about the fancy keyword formatting? Here is an example of that in action. :term gets replaced by the term variable, :png gets replaced by the filename, and :x is replaced by 4.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(gnuplot-clear)
-(<span style="color: #0000FF;">let</span> ((x 4)
-      (term <span style="color: #008000;">"png"</span>)
-      (png <span style="color: #008000;">"\"polar.png\""</span>))
-  (<span style="color: #0000FF;">gnuplot</span>
-   (set terminal <span style="color: #006FE0;">:term</span>)
-   (set output <span style="color: #006FE0;">:png</span>)
-   (set polar)
-   (set dummy t)
-   (<span style="color: #0000FF;">plot</span> sin\( <span style="color: #006FE0;">:x</span> *t\) \,cos\( <span style="color: #006FE0;">:x</span> *t\))
-   (set offset 0\,0\,0\,0)))
-
-(gnuplot-show)
-</pre>
-</div>
-
-<p>
-<img src="/media/polar.png"> 
-</p>
-
-<p>
-There are a few nuances I didn't expect. First, you have to escape the parentheses in this case because otherwise it looks like a form that will be ignored. Second, you have to quote the string to get quotes into the gnuplot script. Third, there has to be a space before and after the keywords for emacs to parse it correctly and do the substitution.
-</p>
-
-<p>
-Let's look at one last example that uses the (: form). We reproduce a figure from <a href="http://gnuplot.sourceforge.net/demo/transparent_solids.html">http://gnuplot.sourceforge.net/demo/transparent_solids.html</a> here.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(gnuplot-clear)
-(<span style="color: #0000FF;">gnuplot</span>
- (set terminal pngcairo  background <span style="color: #008000;">"#ffffff"</span> enhanced font <span style="color: #008000;">"arial,9"</span> fontscale 1.0 size 512\, 384 )
- (set output <span style="color: #008000;">"transparent-solids.png"</span>)
- <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">construct the title</span>
- (set title (<span style="color: #0000FF;">:</span> format <span style="color: #008000;">"\"%s\""</span> (concat <span style="color: #008000;">"Interlocking Tori - PM3D surface"</span> <span style="color: #008000;">"with depth sorting and transparency"</span>)))
-
- <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">use lisp code to create a gnuplot command</span>
- (<span style="color: #0000FF;">:</span> concat <span style="color: #008000;">"unset"</span> <span style="color: #008000;">" "</span> <span style="color: #008000;">"border"</span>)
-
- (unset key)
- (set object 1 rect from screen 0\, 0\, 0 to screen 1\, 1\, 0 behind)
- (set object 1 rect fc  rgb \"gray\"  fillstyle solid 1.0  border -1)
- (set view 64\, 345\, 1.24375\, 0.995902)
- (set isosamples 50\, 20)
- (unset xtics)
- (unset ytics)
- (unset ztics)
- (set dummy u\,v)
- (set parametric)
- (set urange [ -pi : pi ])
- (set vrange [ -pi : pi ])
-
- (set style fill  transparent solid 0.30 border)
- (set pm3d depthorder)
- (set palette rgbformulae 8\, 9\, 7)
- (set pm3d interpolate 1\,1 flush begin noftriangles border lt black linewidth 0.500 dashtype solid corners2color mean)
- (set colorbox vertical origin screen 0.9\, 0.2\, 0 size screen 0.05\, 0.6\, 0 front  noinvert bdefault)
-
- (splot (<span style="color: #0000FF;">:</span> concat <span style="color: #008000;">"cos(u)+.5*cos(u)*cos(v),sin(u)+.5*sin(u)*cos(v),.5*sin(v) with pm3d,"</span>
-           <span style="color: #008000;">"1+cos(u)+.5*cos(u)*cos(v),.5*sin(v),sin(u)+.5*sin(u)*cos(v) with pm3d"</span>)))
-(gnuplot-show)
-</pre>
-</div>
-
-
-<p>
-<img src="/media/transparent-solids.png"> 
-</p>
-
-<p>
-Overall this seems like an improvement to the DSL. I didn't invent the idea of reusing keywords this way out of the blue. In On Lisp, Paul graham uses "special" variable names in Chapter 18, where he shows how to use gensyms for special purposes, and also variables with special names like ?x. Even Emacs is using a variation of this idea. Check out this <a href="http://endlessparentheses.com/new-on-elpa-and-in-emacs-25-1-let-alist.html">new let-alist</a> macro:
-</p>
-
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let-alist</span> '((x . 5))
-  (+ 1 .x))
-</pre>
-</div>
-
-<p>
-There is a special variable inside the body that is a dot-name. The macro expands to provide a value for that symbol. I wonder if I should have tried to use an approach like this instead. Maybe another day. After I read and study the four defuns and single defmacro that make this possible!
-</p>
-
-<p>
-You can see here what happens:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(macroexpand '(let-alist '((x . 5))
-  (+ 1 .x)))
-</pre>
-</div>
-
-<p>
-The macro builds up an internal alist for the dot-names.
-</p>
-<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2017/05/05/A-new-and-improved-Emacs-gnuplot-DSL.org">org-mode source</a></p>
-<p>Org-mode version = 9.0.5</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/05/05/A-new-and-improved-Emacs-gnuplot-DSL#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="../4">« Previous Page</a>
   --  
  <a href="../6">Next Page »</a>
@@ -1581,11 +1557,11 @@ The macro builds up an internal alist for the dot-names.
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2017/11/29/Solving-an-eigenvalue-differential-equation-with-a-neural-network/">Solving an eigenvalue differential equation with a neural network</a></li>
       <li><a href="/blog/2017/11/28/Solving-ODEs-with-a-neural-network-and-autograd/">Solving ODEs with a neural network and autograd</a></li>
       <li><a href="/blog/2017/11/27/Solving-BVPs-with-a-neural-network-and-autograd/">Solving BVPs with a neural network and autograd</a></li>
       <li><a href="/blog/2017/11/22/More-auto-differentiation-goodness-for-science-and-engineering/">More auto-differentiation goodness for science and engineering</a></li>
       <li><a href="/blog/2017/11/20/Timing-Lennard-Jones-implementations-ASE-vs-autograd/">Timing Lennard-Jones implementations - ASE vs autograd</a></li>
-      <li><a href="/blog/2017/11/19/Training-the-ASE-Lennard-Jones-potential-to-DFT-calculations/">Training the ASE Lennard-Jones potential to DFT calculations</a></li>
     </ul>
   </section>
 
