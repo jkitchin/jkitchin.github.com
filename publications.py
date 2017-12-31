@@ -1,4 +1,4 @@
-# These seem to be my publications.
+# These seem to be my publications. It looks like I use a make file to run this, and it generates the publications.html.mako template that gets built when I publish. Things seem to get pulled from scopus.
 
 from scopus.scopus_xml import *
 
@@ -45,14 +45,14 @@ Pick your favorite:
 <script src="http://syndic8.scopus.com/getMessage?registrationId=EGADEHAELIAMGGAIGGBIEKDDGGCGGLFJMPEJKKGDHL"></script>
 
 <h1>Publications</h1>
-The authors are linked to their Scopus page, the title linked to the Scopus abstract, the journal linked to the Scopus journal page, and the DOI is linked to http://dx.doi.org which normally redirects you to the journal page.
+    The authors are linked to their Scopus page, the title linked to the Scopus abstract, the journal linked to the Scopus journal page, and the DOI is linked to http://dx.doi.org which normally redirects you to the journal page. This page is automatically generated, so there may be mistakes in it.
 
 <ol reversed="reversed">
 ''')
 
     for eid in data:
         try:
-            f.write('<li>{}</li>'.format(get_html_citation(eid)))
+            f.write('<li>{}</li>'.format(get_html_citation(eid)).replace("b'", ""))
         except:
             print('Error in {}: {}'.format(eid, sys.exc_info()))
     f.write('''</ol>
