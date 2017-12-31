@@ -23,7 +23,12 @@ Pick your favorite:
 <script src="http://syndic8.scopus.com/getMessage?registrationId=EGADEHAELIAMGGAIGGBIEKDDGGCGGLFJMPEJKKGDHL"></script>
 
 <h1>Publications</h1>
-    The authors are linked to their Scopus page, the title linked to the Scopus abstract, the journal linked to the Scopus journal page, and the DOI is linked to http://dx.doi.org which normally redirects you to the journal page. This page is automatically generated, so there may be mistakes in it.
+
+    The authors are linked to their Scopus page, the title linked to the Scopus
+ abstract, the journal linked to the Scopus journal page, and the DOI is linked 
+to http://dx.doi.org which normally redirects you to the journal page. This page is
+ automatically generated, so it may be incomplete, and the data reflects what is in 
+the Scopus database.
 
 <ol reversed="reversed">
 <li><a href="http://www.scopus.com/authid/detail.url?origin=AuthorProfile&authorId=57191037347">Saravanan K.</a>, <a href="http://www.scopus.com/authid/detail.url?origin=AuthorProfile&authorId=7004212771">Kitchin J.R.</a>, <a href="http://www.scopus.com/authid/detail.url?origin=AuthorProfile&authorId=8685459200">Von Lilienfeld O.A.</a>, <a href="http://www.scopus.com/authid/detail.url?origin=AuthorProfile&authorId=12780943400">Keith J.A.</a>, <i><a href="https://www.scopus.com/inward/record.uri?partnerID=HzOxMe3b&scp=85031781417&origin=inward'">Alchemical Predictions for Computational Catalysis: Potential and Limitations'</a></i>, <a href="http://www.scopus.com/source/sourceInfo.url?sourceId=19600166212">Journal of Physical Chemistry Letters'</a>, <b>8(20)</b>, p. 5002-5007, (2017-10-19), <a href="http://dx.doi.org/10.1021/acs.jpclett.7b01974">doi:10.1021/acs.jpclett.7b01974</a>, <img src="http://api.elsevier.com/content/abstract/citation-count?doi=10.1021/acs.jpclett.7b01974&httpAccept=image/jpeg&apiKey=5cd06d8a7df3de986bf3d0cd9971a47c"></img>. 
