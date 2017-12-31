@@ -24,10 +24,11 @@ Pick your favorite:
 
 <h1>Publications</h1>
 
-    The authors are linked to their Scopus page, the title linked to the Scopus
- abstract, the journal linked to the Scopus journal page, and the DOI is linked 
+
+The authors are linked to their Scopus page, the title linked to the Scopus
+abstract, the journal linked to the Scopus journal page, and the DOI is linked 
 to http://dx.doi.org which normally redirects you to the journal page. This page is
- automatically generated, so it may be incomplete, and the data reflects what is in 
+automatically generated, so it may be incomplete, and the data reflects what is in 
 the Scopus database.
 
 <ol reversed="reversed">

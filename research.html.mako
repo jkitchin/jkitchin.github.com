@@ -2,26 +2,21 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents">
 <ul>
-<li><a href="#org047a105">1. Machine learned atomistic potentials</a></li>
-<li><a href="#org75a6b3b">2. Data sharing and functional scientific documents</a></li>
-<li><a href="#org8831375">3. Alloy catalysis</a></li>
-<li><a href="#org995c84b">4. Metal oxide reactivity</a></li>
-<li><a href="#orgc88e03a">5. Past research topics</a>
+<li><a href="#orgd665c9c">1. Machine learned atomistic potentials</a></li>
+<li><a href="#org4c607ae">2. Data sharing and functional scientific documents</a></li>
+<li><a href="#org62462e1">3. Alloy catalysis</a></li>
+<li><a href="#org4dca3cb">4. Metal oxide reactivity</a></li>
+<li><a href="#org6cb83c7">5. Past research topics</a>
 <ul>
-<li><a href="#orge3a6f6c">5.1. CO<sub>2</sub> Capture</a></li>
-<li><a href="#org89fc7c7">5.2. Oxygen evolution electrocatalysis</a></li>
-<li><a href="#org22963a8">5.3. Coverage dependent adsorption</a></li>
+<li><a href="#org0ed04f0">5.1. CO<sub>2</sub> Capture</a></li>
+<li><a href="#org078e0cf">5.2. Oxygen evolution electrocatalysis</a></li>
+<li><a href="#org80a558b">5.3. Coverage dependent adsorption</a></li>
 </ul>
 </li>
 </ul>
 </div>
 </div>
-<div class="HTML">
-<p>
-&lt;%inherit file="_templates/site.mako" /&gt;
-</p>
-
-</div>
+<%inherit file="_templates/site.mako" />
 
 <p>
 We describe here the main research areas the Kitchin Group has been active in. For each area we briefly describe what we have done, with reference to most of the publications that resulted from the work.
@@ -32,8 +27,8 @@ For a complete listing of our publications see <a href="./publications.html">./p
 </p>
 
 
-<div id="outline-container-org047a105" class="outline-2">
-<h2 id="org047a105"><span class="section-number-2">1</span> Machine learned atomistic potentials</h2>
+<div id="outline-container-orgd665c9c" class="outline-2">
+<h2 id="orgd665c9c"><span class="section-number-2">1</span> Machine learned atomistic potentials</h2>
 <div class="outline-text-2" id="text-1">
 <p>
 Molecular simulation continues to drive scientific progress. In all simulations, one of the main challenges is how to get good computational models to describe the chemistry and physics of the system. For decades we have relied on physical insight to build these models, but even these often have computationally practical approximations. A new approach using models derived by machine learning has developed in the past decade. In this approach, we use large databases of calculations from density functional theory to build neural network models of atomistic systems.
@@ -56,8 +51,8 @@ This is an exciting new area we will be publishing in for the next few years!
 </div>
 
 
-<div id="outline-container-org75a6b3b" class="outline-2">
-<h2 id="org75a6b3b"><span class="section-number-2">2</span> Data sharing and functional scientific documents</h2>
+<div id="outline-container-org4c607ae" class="outline-2">
+<h2 id="org4c607ae"><span class="section-number-2">2</span> Data sharing and functional scientific documents</h2>
 <div class="outline-text-2" id="text-2">
 <p>
 We are huge proponents of using org-mode to write scientific documents. This has enabled our group to develop novel data sharing strategies <a class='org-ref-reference' href="#kitchin-2015-examp">kitchin-2015-examp</a>,<a class='org-ref-reference' href="#kitchin-2015-data-surfac-scien">kitchin-2015-data-surfac-scien</a> and increase our productivity significantly. 
@@ -69,8 +64,8 @@ We recently published this work on automated data sharing <a class='org-ref-refe
 </div>
 </div>
 
-<div id="outline-container-org8831375" class="outline-2">
-<h2 id="org8831375"><span class="section-number-2">3</span> Alloy catalysis</h2>
+<div id="outline-container-org62462e1" class="outline-2">
+<h2 id="org62462e1"><span class="section-number-2">3</span> Alloy catalysis</h2>
 <div class="outline-text-2" id="text-3">
 <p>
 Alloy catalysts frequently do not have the same reactivity as the parent metals. We use density functional theory calculations to understand how the electronic structure of the alloy differs from the parent metals, and how those differences lead to different reactivities. We are especially interested in modeling heterogeneous site distributions <a class='org-ref-reference' href="#boes-2015-estim-bulk">boes-2015-estim-bulk</a>, modeling XPS spectra of alloys <a class='org-ref-reference' href="#boes-2015-core-cu">boes-2015-core-cu</a>, and the limit of single atom alloys <a class='org-ref-reference' href="#tierney-2009-hydrog-dissoc">tierney-2009-hydrog-dissoc</a>. 
@@ -86,8 +81,8 @@ PhD Jacob Boes: <a class='org-ref-reference' href="#boes-2017-multis-model">boes
 </div>
 </div>
 
-<div id="outline-container-org995c84b" class="outline-2">
-<h2 id="org995c84b"><span class="section-number-2">4</span> Metal oxide reactivity</h2>
+<div id="outline-container-org4dca3cb" class="outline-2">
+<h2 id="org4dca3cb"><span class="section-number-2">4</span> Metal oxide reactivity</h2>
 <div class="outline-text-2" id="text-4">
 <p>
 We are generally interested in understanding the reactivity of metal oxides towards oxygen and fuels. We use computational tools to model the electronic structure and reactivity of metal oxides for applications in water splitting and chemical looping.
@@ -120,16 +115,16 @@ PhD Robin Chao: <a class='org-ref-reference' href="#chao-2012-improv-solid">chao
 
 
 
-<div id="outline-container-orgc88e03a" class="outline-2">
-<h2 id="orgc88e03a"><span class="section-number-2">5</span> Past research topics</h2>
+<div id="outline-container-org6cb83c7" class="outline-2">
+<h2 id="org6cb83c7"><span class="section-number-2">5</span> Past research topics</h2>
 <div class="outline-text-2" id="text-5">
 <p>
 We have worked in these research areas in the past, but are not currently actively working on them.
 </p>
 </div>
 
-<div id="outline-container-orge3a6f6c" class="outline-3">
-<h3 id="orge3a6f6c"><span class="section-number-3">5.1</span> CO<sub>2</sub> Capture</h3>
+<div id="outline-container-org0ed04f0" class="outline-3">
+<h3 id="org0ed04f0"><span class="section-number-3">5.1</span> CO<sub>2</sub> Capture</h3>
 <div class="outline-text-3" id="text-5-1">
 <p>
 CO<sub>2</sub> capture remains an important tool in considering how to mitigate the role of fossil energy on climate change <a class='org-ref-reference' href="#rubin-2012">rubin-2012</a>. We have investigated the use of supported amines <a class='org-ref-reference' href="#alesi-2010-co2-adsor">alesi-2010-co2-adsor</a>, and a commercially available ion exchange resin as a CO<sub>2</sub> capture sorbent <a class='org-ref-reference' href="#alesi-2012-evaluat-primar">alesi-2012-evaluat-primar</a>. We have shown that supported amines are poisoned by SO<sub>2</sub>, but may they may be partially regenerated in some cases <a class='org-ref-reference' href="#hallenbeck-2013-effec-o2">hallenbeck-2013-effec-o2</a>. 
@@ -159,8 +154,8 @@ PhD Rich Alesi: <a class='org-ref-reference' href="#walesi-2012-amine-based-sorb
 </div>
 </div>
 
-<div id="outline-container-org89fc7c7" class="outline-3">
-<h3 id="org89fc7c7"><span class="section-number-3">5.2</span> Oxygen evolution electrocatalysis</h3>
+<div id="outline-container-org078e0cf" class="outline-3">
+<h3 id="org078e0cf"><span class="section-number-3">5.2</span> Oxygen evolution electrocatalysis</h3>
 <div class="outline-text-3" id="text-5-2">
 <p>
 We are using Raman spectroscopy to probe the oxide/electrolyte interface under oxygen evolution conditions. We have focused most of our work on Ni-oxide containing materials, which are highly active when promoted by Fe impurities <a class='org-ref-reference' href="#landon-2012-spect-charac">landon-2012-spect-charac</a>,<a class='org-ref-reference' href="#michael-2015-alkal-elect">michael-2015-alkal-elect</a>. We have also examined Fe-containing molecular electrocatalysts
@@ -181,8 +176,8 @@ PhD Ethan Demeter: <a class='org-ref-reference' href="#demeter-2013-promot-base"
 </div>
 </div>
 
-<div id="outline-container-org22963a8" class="outline-3">
-<h3 id="org22963a8"><span class="section-number-3">5.3</span> Coverage dependent adsorption</h3>
+<div id="outline-container-org80a558b" class="outline-3">
+<h3 id="org80a558b"><span class="section-number-3">5.3</span> Coverage dependent adsorption</h3>
 <div class="outline-text-3" id="text-5-3">
 <p>
 Our earliest work was in modeling the coverage dependent adsorption energies of atomic adsorbates on late transition metal surfaces. We showed that there exist strong configurational correlations for many adsorbates on Pd(111) <a class='org-ref-reference' href="#kitchin-2009-correl-pd">kitchin-2009-correl-pd</a>, and for oxygen on late transition metal surfaces <a class='org-ref-reference' href="#miller-2009-relat-au">miller-2009-relat-au</a>,<a class='org-ref-reference' href="#miller-2011-config">miller-2011-config</a>. These principles were generalized in a simple physical model <a class='org-ref-reference' href="#inoglu-2010-simpl">inoglu-2010-simpl</a> that showed the origin of the coverage dependence was an adsorbate-induced modification of the surface electronic structure. We wrote a review book chapter on this topic <a class='org-ref-reference' href="#miller-2012-cover">miller-2012-cover</a>. We demonstrated that DFT can be used to interpret the coverage dependent desorption behavior of oxygen on Pt(111) <a class='org-ref-reference' href="#miller-2014-simul-temper">miller-2014-simul-temper</a>.  Finally, we showed the generality of configurational correlations across many surfaces and for many adsorbates, demonstrating that geometric similarity is a requirement for correlation <a class='org-ref-reference' href="#xu-2014-probin-cover">xu-2014-probin-cover</a>.
