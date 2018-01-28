@@ -1,4 +1,3 @@
-
 ;;; two-mode-mode.el -- switches between tcl and sgml(html) modes
 ;; $Id: two-mode-mode.el,v 1.2 1999/10/18 14:29:02 davidw Exp $
 ;; two-mode-mode.el is Copyright David Welton <davidw@efn.org> 1999

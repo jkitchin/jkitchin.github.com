@@ -1,4 +1,3 @@
-
 import sys
 
 print >>sys.stdout, "on stdout"
