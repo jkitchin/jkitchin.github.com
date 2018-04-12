@@ -8,12 +8,236 @@
   <title type="text">The Kitchin Research Group</title>
   <subtitle type="text">Chemical Engineering at Carnegie Mellon University</subtitle>
 
-  <updated>2018-04-10T01:18:50Z</updated>
+  <updated>2018-04-12T03:47:04Z</updated>
   <generator uri="http://blogofile.com/">Blogofile</generator>
 
   <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog" />
   <id>http://jkitchin.github.io/blog/feed/atom/</id>
   <link rel="self" type="application/atom+xml" href="http://jkitchin.github.io/blog/feed/atom/" />
+  <entry>
+    <author>
+      <name></name>
+      <uri>http://jkitchin.github.io/blog</uri>
+    </author>
+    <title type="html"><![CDATA[Caching searches using biblio and only seeing new results]]></title>
+    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2018/04/11/Caching-searches-using-biblio-and-only-seeing-new-results" />
+    <id>http://jkitchin.github.io/blog/2018/04/11/Caching-searches-using-biblio-and-only-seeing-new-results</id>
+    <updated>2018-04-11T20:46:56Z</updated>
+    <published>2018-04-11T20:46:56Z</published>
+    <category scheme="http://jkitchin.github.io/blog" term="elisp" />
+    <category scheme="http://jkitchin.github.io/blog" term="arxiv" />
+    <category scheme="http://jkitchin.github.io/blog" term="biblio" />
+    <summary type="html"><![CDATA[Caching searches using biblio and only seeing new results]]></summary>
+    <content type="html" xml:base="http://jkitchin.github.io/blog/2018/04/11/Caching-searches-using-biblio-and-only-seeing-new-results"><![CDATA[
+
+
+&lt;p&gt;
+In this &lt;a href="https://github.com/jkitchin/scimax/issues/196"&gt;issue&lt;/a&gt; in scimax, Robert asked if it was possible to save searches, and then to repeat them every so often and only see the new results. This needs some persistent caching of the records, and a comparison of the current search results with the previous search results.
+&lt;/p&gt;
+
+&lt;p&gt;
+&lt;a href="https://github.com/cpitclaudel/biblio.el"&gt;biblio&lt;/a&gt; provides a nice interface to searching a range of resources for bibliographic references. In this post, I will focus on arxiv. Out of the box, biblio does not seem to support this use case, but as you will see, it has many of the pieces required to achieve it. Let's start picking those pieces apart.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-emacs-lisp"&gt;(&lt;span style="color: #0000FF;"&gt;require&lt;/span&gt; '&lt;span style="color: #D0372D;"&gt;biblio&lt;/span&gt;)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+biblio
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+Here is the first piece we need: a way to run a query, and get results back as a data structure. Here we just look at the first result.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-emacs-lisp"&gt;(&lt;span style="color: #0000FF;"&gt;let*&lt;/span&gt; ((query &lt;span style="color: #008000;"&gt;"alloy segregration"&lt;/span&gt;)
+       (backend 'biblio-arxiv-backend)
+       (cb (url-retrieve-synchronously (funcall backend 'url query)))
+       (results (&lt;span style="color: #0000FF;"&gt;with-current-buffer&lt;/span&gt; cb
+                  (funcall backend 'parse-buffer))))
+  (car results))
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-emacs-lisp"&gt;((doi . &lt;span style="color: #008000;"&gt;"10.1103/PhysRevB.76.014112"&lt;/span&gt;)
+ (identifier . &lt;span style="color: #008000;"&gt;"0704.2752v2"&lt;/span&gt;)
+ (year . &lt;span style="color: #008000;"&gt;"2007"&lt;/span&gt;)
+ (title . &lt;span style="color: #008000;"&gt;"Modelling Thickness-Dependence of Ferroelectric Thin Film Properties"&lt;/span&gt;)
+ (authors nil nil nil nil nil nil nil nil nil nil nil nil nil &lt;span style="color: #008000;"&gt;"L. Palova"&lt;/span&gt; nil &lt;span style="color: #008000;"&gt;"P. Chandra"&lt;/span&gt; nil &lt;span style="color: #008000;"&gt;"K. M. Rabe"&lt;/span&gt; nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil)
+ (container . &lt;span style="color: #008000;"&gt;"PRB 76, 014112 (2007)"&lt;/span&gt;)
+ (category . &lt;span style="color: #008000;"&gt;"cond-mat.mtrl-sci"&lt;/span&gt;)
+ (references &lt;span style="color: #008000;"&gt;"10.1103/PhysRevB.76.014112"&lt;/span&gt; &lt;span style="color: #008000;"&gt;"0704.2752v2"&lt;/span&gt;)
+ (type . &lt;span style="color: #008000;"&gt;"eprint"&lt;/span&gt;)
+ (url . &lt;span style="color: #008000;"&gt;"http://dx.doi.org/10.1103/PhysRevB.76.014112"&lt;/span&gt;)
+ (direct-url . &lt;span style="color: #008000;"&gt;"http://arxiv.org/pdf/0704.2752v2"&lt;/span&gt;))
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Next, we need a database to store the results in. I will just use a flat file database with a file for each record. The filename will be the md5 hash of the doi or the record itself. Why is that a good idea? Well, the doi is a constant, so if it exists the md5 will also be a constant. The doi itself is not a good filename in general, but the md5 is. The md5 of the record itself will be fragile to any changes, so if it has a doi, we should use it. If it doesn't and later gets one, we should see it again since that could mean it has been published. Also, if it changes because of some new version we might want to see it again. In any case, the existence of that file will be evidence we have seen that record before, and will indicate we need to remove it from the current view.
+&lt;/p&gt;
+
+&lt;p&gt;
+The flat file database is not super inspired. It is modeled a little after elfeed, but other solutions might work better for large sets of records, but this approach will work fine for this post.
+&lt;/p&gt;
+
+&lt;p&gt;
+Here is a function that returns nil if the record has been seen, and if not, saves the record and returns it.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-emacs-lisp"&gt;(&lt;span style="color: #0000FF;"&gt;defvar&lt;/span&gt; &lt;span style="color: #BA36A5;"&gt;db-dir&lt;/span&gt; &lt;span style="color: #008000;"&gt;"~/.arxiv-db/"&lt;/span&gt;)
+
+(&lt;span style="color: #0000FF;"&gt;unless&lt;/span&gt; (f-dir? db-dir) (make-directory db-dir t))
+
+(&lt;span style="color: #0000FF;"&gt;defun&lt;/span&gt; &lt;span style="color: #006699;"&gt;unseen-record-p&lt;/span&gt; (record)
+  &lt;span style="color: #036A07;"&gt;"Given a RECORD return it if it is unseen.&lt;/span&gt;
+&lt;span style="color: #036A07;"&gt;Also, save the record so next time it will be marked seen. A&lt;/span&gt;
+&lt;span style="color: #036A07;"&gt;record is seen if we have seen the DOI or the record as a string&lt;/span&gt;
+&lt;span style="color: #036A07;"&gt;before."&lt;/span&gt;
+  (&lt;span style="color: #0000FF;"&gt;let*&lt;/span&gt; ((doi (cdr (assoc 'doi record)))
+         (contents (&lt;span style="color: #0000FF;"&gt;with-temp-buffer&lt;/span&gt;
+                     (prin1 record (current-buffer))
+                     (buffer-string)))
+         (hash (md5 (&lt;span style="color: #0000FF;"&gt;or&lt;/span&gt; doi contents)))
+         (fname (expand-file-name hash db-dir)))
+
+    (&lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; (f-exists? fname)
+        nil
+      (&lt;span style="color: #0000FF;"&gt;with-temp-file&lt;/span&gt; fname
+        (insert contents))
+      record)))
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+unseen-record-p
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+Now we can use that as a filter that saves records by side effect.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-emacs-lisp"&gt;(&lt;span style="color: #0000FF;"&gt;defun&lt;/span&gt; &lt;span style="color: #006699;"&gt;scimax-arxiv&lt;/span&gt; (query)
+  (&lt;span style="color: #0000FF;"&gt;interactive&lt;/span&gt; &lt;span style="color: #008000;"&gt;"Query: "&lt;/span&gt;)
+
+  (&lt;span style="color: #0000FF;"&gt;let*&lt;/span&gt; ((backend 'biblio-arxiv-backend)
+         (cb (url-retrieve-synchronously (funcall backend 'url query)))
+         (results (-filter 'unseen-record-p (&lt;span style="color: #0000FF;"&gt;with-current-buffer&lt;/span&gt; cb
+                                              (funcall backend 'parse-buffer))))
+         (results-buffer (biblio--make-results-buffer (current-buffer) query backend)))
+    (&lt;span style="color: #0000FF;"&gt;with-current-buffer&lt;/span&gt; results-buffer
+      (biblio-insert-results results &lt;span style="color: #008000;"&gt;""&lt;/span&gt;))
+    (pop-to-buffer results-buffer)))
+
+(scimax-arxiv &lt;span style="color: #008000;"&gt;"alloy segregation"&lt;/span&gt;)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+#&amp;lt;buffer *arXiv search*&amp;gt;
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+Now, when I run that once I see something like this:
+&lt;/p&gt;
+
+&lt;p&gt;
+&lt;img src="/media/date-11-04-2018-time-20-19-52.png"&gt; 
+&lt;/p&gt;
+
+
+&lt;p&gt;
+and if I run it again:
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-emacs-lisp"&gt;(scimax-arxiv &lt;span style="color: #008000;"&gt;"alloy segregation"&lt;/span&gt;)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+#&amp;lt;buffer *arXiv search*&amp;gt;
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+Then the buffer is empty, since we have seen all the entries before.
+&lt;/p&gt;
+
+
+&lt;p&gt;
+&lt;img src="/media/date-11-04-2018-time-20-20-37.png"&gt; 
+&lt;/p&gt;
+
+&lt;p&gt;
+Here are the files in our database:
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-sh"&gt;ls ~/.arxiv-db/
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Here are the contents of one of those files:
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-emacs-lisp"&gt;(&lt;span style="color: #0000FF;"&gt;with-temp-buffer&lt;/span&gt;
+ (insert-file-contents &lt;span style="color: #008000;"&gt;"~/.arxiv-db/18085fe2512e15d66addc7dfb71f7cd2"&lt;/span&gt;)
+ (read (buffer-string)))
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+((doi) (identifier . 1101.3464v3) (year . 2011) (title . Characterizing Solute Segregation and Grain Boundary Energy in a Binary
+  Alloy Phase Field Crystal Model) (authors nil nil nil nil nil nil nil nil nil nil nil nil nil Jonathan Stolle nil Nikolas Provatas nil nil nil nil nil nil nil nil nil nil nil) (container) (category . cond-mat.mtrl-sci) (references nil 1101.3464v3) (type . eprint) (url . http://arxiv.org/abs/1101.3464v3) (direct-url . http://arxiv.org/pdf/1101.3464v3))
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+So, if you need to read this in again later, no problem.
+&lt;/p&gt;
+
+&lt;p&gt;
+Now, what could go wrong? I don't know much about how the search results from arxiv are returned. For example, this query returns 10 hits.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-emacs-lisp"&gt;(&lt;span style="color: #0000FF;"&gt;let*&lt;/span&gt; ((query &lt;span style="color: #008000;"&gt;"alloy segregration"&lt;/span&gt;)
+       (backend 'biblio-arxiv-backend)
+       (cb (url-retrieve-synchronously (funcall backend 'url query)))
+       (results (&lt;span style="color: #0000FF;"&gt;with-current-buffer&lt;/span&gt; cb
+                  (funcall backend 'parse-buffer))))
+  (length results))
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+10
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+There is just no way there are only 10 hits for this query. So, there must be a bunch more that you get by either changing the requested number in some argument, or by using subsequent queries to get the rest of them. I don't know if there are more advanced query options with biblio, e.g. to find entries newer than the last time it was run. On the advanced search &lt;a href="https://arxiv.org/find"&gt;page&lt;/a&gt; for arxiv, it looks like there is only a by year option.
+&lt;/p&gt;
+
+&lt;p&gt;
+This is still a good idea, and a lot of the pieces are here,
+&lt;/p&gt;
+&lt;p&gt;Copyright (C) 2018 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
+&lt;p&gt;&lt;a href="/org/2018/04/11/Caching-searches-using-biblio-and-only-seeing-new-results.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Org-mode version = 9.1.6&lt;/p&gt;]]></content>
+  </entry>
   <entry>
     <author>
       <name></name>
@@ -463,9 +687,9 @@ I have not made too many new videos this year. Hopefully there will be some new 
     <id>http://jkitchin.github.io/blog/2017/11/29/Solving-an-eigenvalue-differential-equation-with-a-neural-network</id>
     <updated>2017-11-29T21:20:07Z</updated>
     <published>2017-11-29T21:17:03Z</published>
+    <category scheme="http://jkitchin.github.io/blog" term="eigenvalue" />
     <category scheme="http://jkitchin.github.io/blog" term="bvp" />
     <category scheme="http://jkitchin.github.io/blog" term="autograd" />
-    <category scheme="http://jkitchin.github.io/blog" term="eigenvalue" />
     <summary type="html"><![CDATA[Solving an eigenvalue differential equation with a neural network]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2017/11/29/Solving-an-eigenvalue-differential-equation-with-a-neural-network"><![CDATA[
 
@@ -831,8 +1055,8 @@ There are other ways to solve this particular problem. What I think is interesti
     <id>http://jkitchin.github.io/blog/2017/11/28/Solving-ODEs-with-a-neural-network-and-autograd</id>
     <updated>2017-11-28T07:23:59Z</updated>
     <published>2017-11-28T07:23:03Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="autograd" />
     <category scheme="http://jkitchin.github.io/blog" term="ode" />
+    <category scheme="http://jkitchin.github.io/blog" term="autograd" />
     <summary type="html"><![CDATA[Solving ODEs with a neural network and autograd]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2017/11/28/Solving-ODEs-with-a-neural-network-and-autograd"><![CDATA[
 
@@ -1386,306 +1610,6 @@ Today we examined four ways to use autograd in scientific or mathematical progra
 &lt;/div&gt;
 &lt;p&gt;Copyright (C) 2017 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
 &lt;p&gt;&lt;a href="/org/2017/11/22/More-auto-differentiation-goodness-for-science-and-engineering.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
-&lt;p&gt;Org-mode version = 9.1.2&lt;/p&gt;]]></content>
-  </entry>
-  <entry>
-    <author>
-      <name></name>
-      <uri>http://jkitchin.github.io/blog</uri>
-    </author>
-    <title type="html"><![CDATA[Timing Lennard-Jones implementations - ASE vs autograd]]></title>
-    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2017/11/20/Timing-Lennard-Jones-implementations-ASE-vs-autograd" />
-    <id>http://jkitchin.github.io/blog/2017/11/20/Timing-Lennard-Jones-implementations-ASE-vs-autograd</id>
-    <updated>2017-11-21T07:42:07Z</updated>
-    <published>2017-11-20T21:19:17Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="lennardjones" />
-    <category scheme="http://jkitchin.github.io/blog" term="autograd" />
-    <category scheme="http://jkitchin.github.io/blog" term="python" />
-    <summary type="html"><![CDATA[Timing Lennard-Jones implementations - ASE vs autograd]]></summary>
-    <content type="html" xml:base="http://jkitchin.github.io/blog/2017/11/20/Timing-Lennard-Jones-implementations-ASE-vs-autograd"><![CDATA[
-
-
-&lt;div id="table-of-contents"&gt;
-&lt;h2&gt;Table of Contents&lt;/h2&gt;
-&lt;div id="text-table-of-contents"&gt;
-&lt;ul&gt;
-&lt;li&gt;&lt;a href="#orgb9c2faf"&gt;1. Timing on the forces&lt;/a&gt;&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;p&gt;
-In a comment on this &lt;a href="http://kitchingroup.cheme.cmu.edu/blog/2017/11/14/Forces-by-automatic-differentiation-in-molecular-simulation/"&gt;post&lt;/a&gt; Konrad Hinsen asked if the autograd forces on a Lennard-Jones potential would be useable in production. I wasn't sure, and was suspicious that analytical force functions would be faster. It turns out to not be so simple. In this post, I attempt to do some timing experiments for comparison. These are tricky to do right, and in a meaningful way, so I will start by explaining what is tricky and why I think the results are meaningful. 
-&lt;/p&gt;
-
-&lt;p&gt;
-The ASE calculators cache their results, and return the cached results after the first run. We will do these on a 13-atom icosahedron cluster.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython" id="orgb9b1952"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; ase.calculators.lj &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; LennardJones
-&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; ase.cluster.icosahedron &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; Icosahedron
-
-&lt;span style="color: #BA36A5;"&gt;atoms&lt;/span&gt; = Icosahedron(&lt;span style="color: #008000;"&gt;'Ar'&lt;/span&gt;, noshells=2, latticeconstant=3)
-atoms.set_calculator(LennardJones())
-
-&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; time
-&lt;span style="color: #BA36A5;"&gt;t0&lt;/span&gt; = time.time()
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'energy: '&lt;/span&gt;, atoms.get_potential_energy())
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;' time: '&lt;/span&gt;, time.time() - t0)
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;()
-
-&lt;span style="color: #BA36A5;"&gt;t0&lt;/span&gt; = time.time()
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'energy: '&lt;/span&gt;, atoms.get_potential_energy())
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;' time: '&lt;/span&gt;, time.time() - t0)
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;()
-
-&lt;span style="color: #BA36A5;"&gt;atoms.calc.results&lt;/span&gt; = {}
-&lt;span style="color: #BA36A5;"&gt;t0&lt;/span&gt; = time.time()
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'energy: '&lt;/span&gt;, atoms.get_potential_energy())
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'time: '&lt;/span&gt;, time.time() - t0)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-energy:  -1.25741774649
- time:  0.0028629302978515625
-
-energy:  -1.25741774649
- time:  0.00078582763671875
-
-energy:  -1.25741774649
-time:  0.0031850337982177734
-
-&lt;/pre&gt;
-
-&lt;p&gt;
-Note the approximate order of magnitude reduction in elapsed time for the second call. After that, we reset the calculator results, and the time goes back up. So, we have to incorporate that into our timing. Also, in the ASE calculator, the forces are simultaneously calculated. There isn't a way to separate the calls. I am going to use the timeit feature in Ipython for the timing. I don't have a lot of control over what else is running on my machine, so I have observed some variability in the timing results. Finally, I am running these on a MacBook Air.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython" id="org23d2e9b"&gt;%%timeit
-atoms.get_potential_energy()
-&lt;span style="color: #BA36A5;"&gt;atoms.calc.results&lt;/span&gt; = {} &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;this resets it so it runs each time. Otherwise, we get cached results&lt;/span&gt;
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-1.46 ms ± 107 µs per loop (mean ± std. dev. of 7 runs, 1000 loops each)
-&lt;/p&gt;
-
-&lt;p&gt;
-That seems like a surprisingly long time. If you neglect the calculator reset, it looks about 10 times faster because the cache lookup is fast!
-&lt;/p&gt;
-
-&lt;p&gt;
-Let's compare that to an implementation of the Lennard-Jones potential similar to the last time. This implementation differs from &lt;a href="http://kitchingroup.cheme.cmu.edu/blog/2017/11/14/Forces-by-automatic-differentiation-in-molecular-simulation/"&gt;the first one I blogged about&lt;/a&gt;. This one is fully vectorized. It still does not support periodic boundary conditions though. This version may be up to 10 times faster than the previous version. I haven't tested this very well, I only assured it gives the same energy as ASE for the example in this post.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython" id="org2d00a75"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; autograd.numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
-
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;energy&lt;/span&gt;(positions):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #036A07;"&gt;"Compute the energy of a Lennard-Jones system."&lt;/span&gt;
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;sigma&lt;/span&gt; = 1.0
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;epsilon&lt;/span&gt; = 1.0
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;rc&lt;/span&gt; = 3 * sigma
-
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;e0&lt;/span&gt; = 4 * epsilon * ((sigma / rc)**12 - (sigma / rc)**6)
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;natoms&lt;/span&gt; = &lt;span style="color: #006FE0;"&gt;len&lt;/span&gt;(positions)
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;These are the pairs of indices we need to compute distances for.&lt;/span&gt;
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;a&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;b&lt;/span&gt; = np.triu_indices(natoms, 1)
-
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;d&lt;/span&gt; = positions[a] - positions[b]
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;r2&lt;/span&gt; = np.&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;(d**2, axis=1)
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;c6&lt;/span&gt; = np.where(r2 &amp;lt;= rc**2, (sigma**2 / r2)**3, np.zeros_like(r2))
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;energy&lt;/span&gt; = -e0 * (c6 != 0.0).&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;()
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;c12&lt;/span&gt; = c6**2
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;energy&lt;/span&gt; += np.&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;(4 * epsilon * (c12 - c6))
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; energy
-
-&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;Just to check we get the same answer&lt;/span&gt;
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(energy(atoms.positions))
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
--1.25741774649
-&lt;/p&gt;
-
-&lt;p&gt;
-The energy looks good. For timing, we store the positions in a variable, in case there is any lookup time, since this function only needs an array.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython" id="org7312f34"&gt;&lt;span style="color: #BA36A5;"&gt;pos&lt;/span&gt; = atoms.positions
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-
-&lt;/p&gt;
-
-&lt;p&gt;
-There is no caching to worry about here, we can just get the timing.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython" id="org38e167b"&gt;%%timeit
-energy(pos)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-82.2 µs ± 2.85 µs per loop (mean ± std. dev. of 7 runs, 10000 loops each)
-&lt;/p&gt;
-
-&lt;p&gt;
-Wow, that is a lot faster than the ASE implementation. Score one for vectorization.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython" id="org9087076"&gt;&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'Vectorized is {0:1.1f} times faster than ASE at energy.'&lt;/span&gt;.&lt;span style="color: #006FE0;"&gt;format&lt;/span&gt;(1.46e-3 / 82.5e-6))
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-Vectorized is 17.7 times faster than ASE at energy.
-
-&lt;/pre&gt;
-
-&lt;p&gt;
-Yep, a fully vectorized implementation is a lot faster than the ASE version which uses loops. So far the difference has nothing to do with autograd.
-&lt;/p&gt;
-
-&lt;div id="outline-container-orgb9c2faf" class="outline-2"&gt;
-&lt;h2 id="orgb9c2faf"&gt;&lt;span class="section-number-2"&gt;1&lt;/span&gt; Timing on the forces&lt;/h2&gt;
-&lt;div class="outline-text-2" id="text-1"&gt;
-&lt;p&gt;
-The forces are where derivatives are important, and it is a reasonable question of whether hand-coded derivatives are faster or slower than autograd derivatives. We first look at the forces from ASE. The analytical forces take about the same time as the energy, which is not surprising. The same work is done for both of them.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython" id="org689833d"&gt;np.set_printoptions(precision=3, suppress=&lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;)
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(atoms.get_forces())
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-[[-0.    -0.    -0.   ]
- [-0.296 -0.     0.183]
- [-0.296 -0.    -0.183]
- [ 0.296 -0.     0.183]
- [ 0.296 -0.    -0.183]
- [ 0.183 -0.296 -0.   ]
- [-0.183 -0.296  0.   ]
- [ 0.183  0.296 -0.   ]
- [-0.183  0.296  0.   ]
- [-0.     0.183 -0.296]
- [ 0.    -0.183 -0.296]
- [-0.     0.183  0.296]
- [ 0.    -0.183  0.296]]
-
-&lt;/pre&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython" id="orgcaaa884"&gt;%%timeit
-atoms.get_forces()
-&lt;span style="color: #BA36A5;"&gt;atoms.calc.results&lt;/span&gt; = {}
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-1.22 ms ± 38.7 µs per loop (mean ± std. dev. of 7 runs, 1000 loops each)
-
-&lt;/pre&gt;
-
-&lt;p&gt;
-Here is our auto-differentiated force function.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython" id="org767b1e9"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; autograd &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; elementwise_grad
-
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;forces&lt;/span&gt;(pos):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;dEdR&lt;/span&gt; = elementwise_grad(energy)
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; -dEdR(pos)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-Let's just check the forces for consistency.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython" id="org777df8d"&gt;&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(forces(atoms.positions))
-
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(np.allclose(forces(atoms.positions), atoms.get_forces()))
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-[[-0.    -0.    -0.   ]
- [-0.296 -0.     0.183]
- [-0.296 -0.    -0.183]
- [ 0.296 -0.     0.183]
- [ 0.296 -0.    -0.183]
- [ 0.183 -0.296 -0.   ]
- [-0.183 -0.296  0.   ]
- [ 0.183  0.296 -0.   ]
- [-0.183  0.296  0.   ]
- [-0.     0.183 -0.296]
- [ 0.    -0.183 -0.296]
- [-0.     0.183  0.296]
- [ 0.    -0.183  0.296]]
-True
-
-&lt;/pre&gt;
-
-&lt;p&gt;
-Those all look the same, so now performance for that:
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython" id="org90b4b07"&gt;%%timeit 
-
-forces(pos)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-727 µs ± 47.1 µs per loop (mean ± std. dev. of 7 runs, 1000 loops each)
-
-&lt;/pre&gt;
-
-&lt;p&gt;
-This is faster than the ASE version. I suspect that it is largely because of the faster, vectorized algorithm overall. 
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython" id="org7de1cf3"&gt;&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'autograd is {0:1.1f} times faster than ASE on forces.'&lt;/span&gt;.&lt;span style="color: #006FE0;"&gt;format&lt;/span&gt;(1.22e-3 / 727e-6))
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-autograd is 1.7 times faster than ASE on forces.
-
-&lt;/pre&gt;
-
-&lt;p&gt;
-autograd forces are consistently 2-6 times faster than the ASE implementation. It could be possible to hand-code a faster function for the forces, if it was fully vectorized. I spent a while seeing what would be required for that, and it is not obvious how to do that. Any solution that uses loops will be slower I think.
-&lt;/p&gt;
-
-&lt;p&gt;
-This doesn't directly answer the question of whether this can work in production. Everything is still written in Python here, which might limit the size and length of calculations you can practically do. With the right implementation though, it looks promising.
-&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;p&gt;Copyright (C) 2017 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
-&lt;p&gt;&lt;a href="/org/2017/11/20/Timing-Lennard-Jones-implementations---ASE-vs-autograd.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
 &lt;p&gt;Org-mode version = 9.1.2&lt;/p&gt;]]></content>
   </entry>
 </feed>
