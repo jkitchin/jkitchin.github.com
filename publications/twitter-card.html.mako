@@ -5,7 +5,6 @@
 </div>
 
 <div class="org-src-container">
-
 <pre class="src src-bibtex"><span style="color: #006699;">@article</span>{<span style="color: #D0372D;">thirumalai-2015-pt-pd</span>,
   <span style="color: #BA36A5;">author</span> =       "Hari Thirumalai and John R. Kitchin",
   <span style="color: #BA36A5;">title</span> =        {The Role of Vdw Interactions in Coverage Dependent Adsorption
@@ -21,9 +20,16 @@
 </pre>
 </div>
 
-<div data-badge-details="right" data-badge-type="medium-donut" data-doi="10.1016/j.susc.2015.10.001" data-hide-no-mentions="true" class="altmetric-embed"></div>
+<div class="HTML">
+<p>
+&lt;div data-badge-details="right" data-badge-type="medium-donut" data-doi="10.1016/j.susc.2015.10.001" data-hide-no-mentions="true" class="altmetric-embed"&gt;&lt;/div&gt;
+</p>
 
-<img src="http://api.elsevier.com/content/abstract/citation-count?doi=10.1016/j.susc.2015.10.001&httpAccept=image/jpeg&apiKey=5cd06d8a7df3de986bf3d0cd9971a47c"></img>
+<p>
+&lt;img src="<a href="http://api.elsevier.com/content/abstract/citation-count?doi=10.1016/j.susc.2015.10.001&amp;httpAccept=image/jpeg&amp;apiKey=5cd06d8a7df3de986bf3d0cd9971a47c">http://api.elsevier.com/content/abstract/citation-count?doi=10.1016/j.susc.2015.10.001&amp;httpAccept=image/jpeg&amp;apiKey=5cd06d8a7df3de986bf3d0cd9971a47c</a>"&gt;&lt;/img&gt;
+</p>
+
+</div>
 
 <p>
 See it here: <a href="http://www.sciencedirect.com/science/article/pii/S0039602815003052">http://www.sciencedirect.com/science/article/pii/S0039602815003052</a>.
@@ -37,10 +43,27 @@ Here is our manuscript archive: <a href="https://github.com/KitchinHUB/kitchingr
 The main goal of this page is to test run using a <a href="https://dev.twitter.com/cards/types/summary-large-image">Twitter card</a> to make better tweets about publications that lead back to pages with better information about the publication.
 </p>
 
-<a href="https://twitter.com/share" class="twitter-share-button" data-hashtags="publication" data-related="johnkitchin" data-show-count="false">Tweet</a><script async src="//platform.twitter.com/widgets.js" charset="utf-8"></script>
-
+<div class="HTML">
 <p>
-Tweeting that URL led to this tweet: 
+&lt;a href="<a href="https://twitter.com/share">https://twitter.com/share</a>" class="twitter-share-button" data-hashtags="publication" data-related="johnkitchin" data-show-count="false"&gt;Tweet&lt;/a&gt;&lt;script async src="//platform.twitter.com/widgets.js" charset="utf-8"&gt;&lt;/script&gt;
 </p>
 
-<blockquote class="twitter-tweet" data-lang="en"><p lang="en" dir="ltr">Test tweet with a twitter card: <a href="https://t.co/TagjgTgFmZ">https://t.co/TagjgTgFmZ</a></p>&mdash; John Kitchin (@johnkitchin) <a href="https://twitter.com/johnkitchin/status/769267071645540352">August 26, 2016</a></blockquote> <script async src="//platform.twitter.com/widgets.js" charset="utf-8"></script>
+</div>
+
+<p>
+Tweeting that URL led to this tweet:
+</p>
+
+<div class="HTML">
+<p>
+&lt;blockquote class="twitter-tweet" data-lang="en"&gt;&lt;p lang="en" dir="ltr"&gt;Test tweet with a twitter card: &lt;a href="<a href="https://t.co/TagjgTgFmZ">https://t.co/TagjgTgFmZ</a>"&gt;<a href="https://t.co/TagjgTgFmZ">https://t.co/TagjgTgFmZ</a>&lt;/a&gt;&lt;/p&gt;&amp;mdash; John Kitchin (@johnkitchin) &lt;a href="<a href="https://twitter.com/johnkitchin/status/769267071645540352">https://twitter.com/johnkitchin/status/769267071645540352</a>"&gt;August 26, 2016&lt;/a&gt;&lt;/blockquote&gt; &lt;script async src="//platform.twitter.com/widgets.js" charset="utf-8"&gt;&lt;/script&gt;
+</p>
+
+</div>
+
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@nytimes">
+<meta name="twitter:creator" content="@SarahMaslinNir">
+<meta name="twitter:title" content="Parade of Fans for Houston’s Funeral">
+<meta name="twitter:description" content="NEWARK - The guest list and parade of limousines with celebrities emerging from them seemed more suited to a red carpet event in Hollywood or New York than than a gritty stretch of Sussex Avenue near the former site of the James M. Baxter Terrace public housing project here.">
+<meta name="twitter:image" content="http://graphics8.nytimes.com/images/2012/02/19/us/19whitney-span/19whitney-span-articleLarge.jpg">
