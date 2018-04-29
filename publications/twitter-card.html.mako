@@ -60,3 +60,10 @@ Tweeting that URL led to this tweet:
 </p>
 
 </div>
+
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@johnkitchin">
+<meta name="twitter:creator" content="@Sjohnkitchin">
+<meta name="twitter:title" content="The Role of Vdw Interactions in Coverage Dependent Adsorption Energies of Atomic Adsorbates on Pt(111) and Pd(111)">
+<meta name="twitter:description" content="TBD">
+<meta name="twitter:image" content="http://kitchingroup.cheme.cmu.edu/publications/ss-vdw.png">
