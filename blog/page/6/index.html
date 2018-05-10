@@ -84,10 +84,137 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Zeromq-bindings-for-Emacs-via-dynamic-modules"></div>
+      <h2 class="blog_post_title"><a href="/blog/2017/07/12/Zeromq-bindings-for-Emacs-via-dynamic-modules/" rel="bookmark" title="Permanent Link to Zeromq bindings for Emacs via dynamic modules">Zeromq bindings for Emacs via dynamic modules</a></h2>
+      <p><small><span class="blog_post_date">Posted July 12, 2017 at 07:38 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/dynamic-module/'>dynamic-module</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2017/07/12/Zeromq-bindings-for-Emacs-via-dynamic-modules#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+I do a lot of scientific programming, and it is one of the reasons I have been learning to extend Emacs with dynamic modules. They have allowed me to add physical constants, numerical integration, root finding and linear algebra from established c-libraries to Emacs. Today I am taking a break from that and finally getting to another one of the reasons I started playing around with dynamic modules: <a href="http://zguide.zeromq.org/">zeromq</a>. Zeromq is a messaging library that <a href="http://jupyter-client.readthedocs.io/en/latest/messaging.html">Jupyter</a> uses to communicate with kernels. I thought we might get a smoother integration with Emacs and Jupyter if we could use zeromq directly to communicate between org-mode and the kernel. Currently we have to run a web server that does the communication for us via http requests. We won't solve the Jupyter problem today, but we will look at communicating with a Zeromq server from Emacs.
+</p>
+
+<p>
+This might have lots of other useful applications. Suppose Emacs could communicate directly with other zeromq servers to retrieve data from, perhaps scientific data. It might even be possible for Emacs to run its own zeromq server, and other instances of Emacs could then communicate with it. Collaborative editing anyone? 
+</p>
+
+<p>
+Here we just implement the "Hello world" client example in the <a href="http://zguide.zeromq.org/page:all#Ask-and-Ye-Shall-Receive">zeromq guide</a>. The code for the server, a c-client, the mod-zmq library, a makefile and tests can be found at <a href="https://github.com/jkitchin/emacs-modules/tree/master/zeromq">https://github.com/jkitchin/emacs-modules/tree/master/zeromq</a>. All the server does is receive a string, and then send a response (in this case just the string "World") back to the client. 
+</p>
+
+<p>
+To run this, make sure to run the hwserver executable in a terminal. I wrapped the  zeromq commands required to implement the client into a dynamic module. Since this example focuses on strings, the module returns strings to Emacs. I am not sure if that is always the right thing to do, as zeromq more generically uses bytes, but I will have to wait until I know more about zeromq to know if this is an issue. 
+</p>
+
+<p>
+This dynamic module uses a new feature that none of the previous posts used, and that is the user_ptr. These allow you to essentially return a reference pointer back to emacs that you can pass back to another function. That way they stay alive between function calls. For example, here we have to create a context and socket and pass these items to functions like zmq_send and zmq_recv.
+</p>
+
+<p>
+The directory this library is in is not on my path, so we load it like this:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(add-to-list 'load-path (expand-file-name <span style="color: #008000;">"."</span>))
+(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">mod-zmq</span>)
+</pre>
+</div>
+
+<p>
+Here are the functions and their signatures that have been implemented so far. I only implemented the ones I needed for the client. The signatures may change in the future; this is just a proof of concept for now for the purpose of building the client.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(apropos-command <span style="color: #008000;">"zmq*"</span> t)
+(<span style="color: #0000FF;">with-current-buffer</span> <span style="color: #008000;">"*Apropos*"</span> (buffer-string))
+</pre>
+</div>
+
+<pre class="example">
+Type RET on a type label to view its full documentation.
+
+zmq-close
+  Function: (zmq-close SOCKET)
+zmq-connect
+  Function: (zmq-connect SOCKET ENDPOINT)
+zmq-ctx-destroy
+  Function: (zmq-ctx-destroy CONTEXT)
+zmq-ctx-new
+  Function: (zmq-ctx-new)
+zmq-recv
+  Function: (zmq-recv SOCKET LEN FLAGS)
+zmq-send
+  Function: (zmq-send SOCKET BUF FLAGS)
+zmq-socket
+  Function: (zmq-socket CONTEXT TYPE)
+</pre>
+
+<p>
+You can see the c code for the client here: <a href="/media/hwclient.c">hwclient.c</a> . Here is a simple elisp version of the hwclient that basically does the same thing! The main difference is I added a while loop around the zmq-recv because sometimes it returns -1 and no result. So, here we loop until the return result is not -1. That seems to do the right thing.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let*</span> ((context (zmq-ctx-new))
+       (socket (zmq-socket context ZMQ-REQ))
+       (recv-ret -1)
+       (result))
+
+  (zmq-connect socket <span style="color: #008000;">"tcp://localhost:5555"</span>)
+  (zmq-send socket <span style="color: #008000;">"Hello"</span> 0)
+
+  (<span style="color: #0000FF;">while</span> (= recv-ret -1)
+    (<span style="color: #0000FF;">setq</span> result (zmq-recv socket 10 0)
+          recv-ret (second result)))
+
+  (print result)
+
+  (zmq-close socket)
+  (zmq-ctx-destroy context))
+</pre>
+</div>
+
+<pre class="example">
+
+("World" 5)
+
+</pre>
+
+<p>
+Basically this creates the context, then the socket, and connects to it on port 5555 of the localhost where the server is running. Then we send the string "Hello". The server returns the string "World" and tells us it sent 5 bytes. Then we close the socket and destroy the context. There is a lot of code in the module to make this happen. A lot of it is converting args in emacs functions to things we can use in c, running a few lines of zmq commands, and then code to convert those results back to emacs values. Finally, there is code to register each function and define docstrings for them. I am not totally convinced this is the best way to do this, but it does work! An alternative might be <a href="https://github.com/tromey/emacs-ffi">emacs-ffi</a>, which might enable most of this to be developed in just elisp. 
+</p>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/07/12/Zeromq-bindings-for-Emacs-via-dynamic-modules.org">org-mode source</a></p>
+<p>Org-mode version = 9.0.7</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/07/12/Zeromq-bindings-for-Emacs-via-dynamic-modules#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Adding-linear-algebra-to-Emacs-with-the-GSL-and-dynamic-modules"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/07/11/Adding-linear-algebra-to-Emacs-with-the-GSL-and-dynamic-modules/" rel="bookmark" title="Permanent Link to Adding linear algebra to Emacs with the GSL and dynamic modules">Adding linear algebra to Emacs with the GSL and dynamic modules</a></h2>
       <p><small><span class="blog_post_date">Posted July 11, 2017 at 10:27 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/dynamic-module/'>dynamic-module</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/dynamic-module/'>dynamic-module</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/07/11/Adding-linear-algebra-to-Emacs-with-the-GSL-and-dynamic-modules#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -290,7 +417,7 @@ The module does not handle 1d vectors well,, e.g. in gsl-linalg-LU-solve example
       <div id="Adding-GSL-constants-to-Emacs-in-a-dynamic-module"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/07/10/Adding-GSL-constants-to-Emacs-in-a-dynamic-module/" rel="bookmark" title="Permanent Link to Adding GSL constants to Emacs in a dynamic module">Adding GSL constants to Emacs in a dynamic module</a></h2>
       <p><small><span class="blog_post_date">Posted July 10, 2017 at 09:38 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/dynamic-module/'>dynamic-module</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/dynamic-module/'>dynamic-module</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/07/10/Adding-GSL-constants-to-Emacs-in-a-dynamic-module#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -459,7 +586,7 @@ It seems like it might be possible to partially automate creation of this module
       <div id="Adding-a-GSL-integration-function-to-Emacs-with-a-dynamic-module"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/07/09/Adding-a-GSL-integration-function-to-Emacs-with-a-dynamic-module/" rel="bookmark" title="Permanent Link to Adding a GSL integration function to Emacs with a dynamic module">Adding a GSL integration function to Emacs with a dynamic module</a></h2>
       <p><small><span class="blog_post_date">Posted July 09, 2017 at 07:22 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/integration/'>integration</a>, <a href='/blog/category/dynamic-module/'>dynamic-module</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/integration/'>integration</a>, <a href='/blog/category/dynamic-module/'>dynamic-module</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/07/09/Adding-a-GSL-integration-function-to-Emacs-with-a-dynamic-module#disqus_thread">View Comments</a>
       <p><small><span class="blog_post_date">Updated July 11, 2017 at 07:37 AM</span>
       </small></p>
@@ -969,227 +1096,6 @@ It would be nice to have a more generic foreign function interface that would al
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/07/08/Adding-numerical-methods-to-emacs-with-dynamic-modules#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Adding-keymaps-to-src-blocks-via-org-font-lock-hook"></div>
-      <h2 class="blog_post_title"><a href="/blog/2017/06/10/Adding-keymaps-to-src-blocks-via-org-font-lock-hook/" rel="bookmark" title="Permanent Link to Adding keymaps to src blocks via org-font-lock-hook">Adding keymaps to src blocks via org-font-lock-hook</a></h2>
-      <p><small><span class="blog_post_date">Posted June 10, 2017 at 03:27 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2017/06/10/Adding-keymaps-to-src-blocks-via-org-font-lock-hook#disqus_thread">View Comments</a>
-      <p><small><span class="blog_post_date">Updated June 12, 2017 at 11:28 AM</span>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<div id="table-of-contents">
-<h2>Table of Contents</h2>
-<div id="text-table-of-contents">
-<ul>
-<li><a href="#org49daca5">1. Update</a></li>
-<li><a href="#org004cb53">2. Update #2</a></li>
-</ul>
-</div>
-</div>
-<p>
-I had an idea to use custom keymaps in src-blocks. For example, you could then use lispy directly in your org-files without entering org-special-edit, or the elpy key-bindings in python blocks. There are other solutions I have seen, e.g. polymode, that claim to do this. You might guess that if they worked, I would not be writing this! There was some nice discussion about this idea on the org-mode mailing list, and Nicolas Goaziou pointed out this might be accomplished with the org-font-lock-hook.
-</p>
-
-<p>
-You can check out the video here:
-</p>
-<iframe width="560" height="315" src="https://www.youtube.com/embed/a2jHqB1qWiY" frameborder="0" allowfullscreen></iframe>
-
-<p>
-It was relatively easy to figure out how to do this. Keymaps can be added to regions during font-lock, so I just had to hook into the org-mode font lock system with a function to find the src blocks and add the keymap as a text-property. That took three steps:
-</p>
-
-<ol class="org-ol">
-<li>Define the keymaps to use. I use an a-list of (language . map) for this.</li>
-<li>Define the font-lock function. This will add the keymap properties to src-blocks.</li>
-<li>Define a minor mode to toggle this feature on and off.</li>
-</ol>
-
-<p>
-Here is the definition of the keymaps. Generally I just copy the mode-map I want and then add some things to them. For example sometimes it is still a good idea to jump into the org-special-edit mode. For example, if you try to use a command in a Python block to send the buffer to the repl while in org-mode you are sure to get an error! You might also want to add the C-c C-e export command if you use that a lot. An alternative approach, of course, is to copy the org-map and add additional bindings to it. The choice is up to you.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">lispy</span>)
-(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">elpy</span>)
-
-(<span style="color: #0000FF;">setq</span> scimax-src-block-keymaps
-      `((<span style="color: #008000;">"ipython"</span> . ,(<span style="color: #0000FF;">let</span> ((map (make-composed-keymap
-                                  `(,elpy-mode-map ,python-mode-map ,pyvenv-mode-map)
-                                  org-mode-map)))
-                        <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">In org-mode I define RET so we f</span>
-                        (define-key map (kbd <span style="color: #008000;">"&lt;return&gt;"</span>) 'newline)
-                        (define-key map (kbd <span style="color: #008000;">"C-c C-c"</span>) 'org-ctrl-c-ctrl-c)
-                        map))
-        (<span style="color: #008000;">"python"</span> . ,(<span style="color: #0000FF;">let</span> ((map (make-composed-keymap
-                                 `(,elpy-mode-map ,python-mode-map ,pyvenv-mode-map)
-                                 org-mode-map)))
-                       <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">In org-mode I define RET so we f</span>
-                       (define-key map (kbd <span style="color: #008000;">"&lt;return&gt;"</span>) 'newline)
-                       (define-key map (kbd <span style="color: #008000;">"C-c C-c"</span>) 'org-ctrl-c-ctrl-c)
-                       map))
-        (<span style="color: #008000;">"emacs-lisp"</span> . ,(<span style="color: #0000FF;">let</span> ((map (make-composed-keymap `(,lispy-mode-map
-                                                            ,emacs-lisp-mode-map
-                                                            ,outline-minor-mode-map)
-                                                          org-mode-map)))
-                           (define-key map (kbd <span style="color: #008000;">"C-c C-c"</span>) 'org-ctrl-c-ctrl-c)
-                           map))))
-</pre>
-</div>
-
-<p>
-Next we define the function that will apply the keymap to each src block. The keymaps are only applied when they are defined in the variable above. This function is derived from org-fontify-meta-lines-and-blocks-1.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">scimax-add-keymap-to-src-blocks</span> (limit)
-  <span style="color: #036A07;">"Add keymaps to src-blocks defined in `</span><span style="color: #D0372D;">scimax-src-block-keymaps</span><span style="color: #036A07;">'."</span>
-  (<span style="color: #0000FF;">let</span> ((case-fold-search t)
-        lang)
-    (<span style="color: #0000FF;">while</span> (re-search-forward org-babel-src-block-regexp limit t)
-      (<span style="color: #0000FF;">let</span> ((lang (match-string 2))
-            (beg (match-beginning 0))
-            (end (match-end 0)))
-        (<span style="color: #0000FF;">if</span> (assoc (org-no-properties lang) scimax-src-block-keymaps)
-            (<span style="color: #0000FF;">progn</span>
-              (add-text-properties
-               beg end `(local-map ,(cdr (assoc
-                                          (org-no-properties lang)
-                                          scimax-src-block-keymaps))))
-              (add-text-properties
-               beg end `(cursor-sensor-functions
-                         ((<span style="color: #0000FF;">lambda</span> (win prev-pos sym)
-                            <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">This simulates a mouse click and makes a menu change</span>
-                            (org-mouse-down-mouse nil)))))))))))
-</pre>
-</div>
-
-<p>
-Here we create an advice to trick any functions that need to know the major mode. We only apply the spoof if we are in org-mode and in a src block though. Otherwise we call the original function. So far lispy&#x2013;eval is the only function I have needed it for. This might be a general strategy though to do other things like narrow to the src-block, or even go into special edit mode temporarily if there are commands that require it.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">scimax-spoof-mode</span> (orig-func <span style="color: #6434A3;">&amp;rest</span> args)
-  <span style="color: #036A07;">"Advice function to spoof commands in org-mode src blocks.</span>
-<span style="color: #036A07;">It is for commands that depend on the major mode. One example is</span>
-<span style="color: #036A07;">`</span><span style="color: #D0372D;">lispy--eval</span><span style="color: #036A07;">'."</span>
-  (<span style="color: #0000FF;">if</span> (org-in-src-block-p)
-      (<span style="color: #0000FF;">let</span> ((major-mode (intern (format <span style="color: #008000;">"%s-mode"</span> (first (org-babel-get-src-block-info))))))
-        (apply orig-func args))
-    (apply orig-func args)))
-</pre>
-</div>
-
-<p>
-We define a minor mode so we can toggle this on and off. Here we add the function to the org-font-lock-hook and advise the lispy&#x2013;eval function. I had to add the font-lock-function to the end of the org-font-lock hook for some reason, and also add local-map as an extra-managed property so it would be removed when we toggle it off.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">define-minor-mode</span> <span style="color: #006699;">scimax-src-keymap-mode</span>
-  <span style="color: #036A07;">"Minor mode to add mode keymaps to src-blocks."</span>
-  <span style="color: #006FE0;">:init-value</span> nil
-  (<span style="color: #0000FF;">if</span> scimax-src-keymap-mode
-      (<span style="color: #0000FF;">progn</span>
-        (add-hook 'org-font-lock-hook #'scimax-add-keymap-to-src-blocks t)
-        (add-to-list 'font-lock-extra-managed-props 'local-map)
-        (add-to-list 'font-lock-extra-managed-props 'cursor-sensor-functions)
-        (advice-add 'lispy--eval <span style="color: #006FE0;">:around</span> 'scimax-spoof-mode)
-        (cursor-sensor-mode +1))
-    (remove-hook 'org-font-lock-hook #'scimax-add-keymap-to-src-blocks)
-    (advice-remove 'lispy--eval 'scimax-spoof-mode)
-    (cursor-sensor-mode -1))
-  (font-lock-fontify-buffer))
-
-(add-hook 'org-mode-hook (<span style="color: #0000FF;">lambda</span> ()
-                           (scimax-src-keymap-mode +1)))
-</pre>
-</div>
-
-<p>
-That is it! I am pretty sure this is a good idea. It helps a lot when you are writing a lot of short code blocks and near equal amounts of text (like in this blog post). It also helps write the code since many things like indentation, parentheses, etc. are automatically handled. That is what I used to go into special-edit mode all the time for!
-</p>
-
-<p>
-I have not used this long enough to know if it causes any other surprises. If you try it and find any, leave a comment!
-</p>
-
-<div id="outline-container-org49daca5" class="outline-2">
-<h2 id="org49daca5"><span class="section-number-2">1</span> Update</h2>
-<div class="outline-text-2" id="text-1">
-<p>
-It turns out you can have the best of all the worlds by combining keymaps. The make-composed-keymap creates a new keymap that combines a keymaps and falls through to a parent keymap. So here we use that to combine several keymaps, falling through to org-mode. The only subtlety I have come across is that I remapped &lt;return&gt; in orgmode to scimax/org-return, and not all modes define it, so I redefine it in some places to just be newline. Also to keep C-c C-c for executing the block, I add that back too.
-</p>
-
-<p>
-I use a few maps here, and some of them seem to just add menus that are only active when your cursor is in the block. Pretty handy!
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">setq</span> scimax-src-block-keymaps
-      `((<span style="color: #008000;">"ipython"</span> . ,(<span style="color: #0000FF;">let</span> ((map (make-composed-keymap
-                                  `(,elpy-mode-map ,python-mode-map ,pyvenv-mode-map)
-                                  org-mode-map)))
-                        <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">In org-mode I define RET so we f</span>
-                        (define-key map (kbd <span style="color: #008000;">"&lt;return&gt;"</span>) 'newline)
-                        (define-key map (kbd <span style="color: #008000;">"C-c C-c"</span>) 'org-ctrl-c-ctrl-c)
-                        map))
-        (<span style="color: #008000;">"python"</span> . ,(<span style="color: #0000FF;">let</span> ((map (make-composed-keymap
-                                 `(,elpy-mode-map ,python-mode-map ,pyvenv-mode-map)
-                                 org-mode-map)))
-                       <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">In org-mode I define RET so we f</span>
-                       (define-key map (kbd <span style="color: #008000;">"&lt;return&gt;"</span>) 'newline)
-                       (define-key map (kbd <span style="color: #008000;">"C-c C-c"</span>) 'org-ctrl-c-ctrl-c)
-                       map))
-        (<span style="color: #008000;">"emacs-lisp"</span> . ,(<span style="color: #0000FF;">let</span> ((map (make-composed-keymap `(,lispy-mode-map
-                                                            ,emacs-lisp-mode-map
-                                                            ,outline-minor-mode-map)
-                                                          org-mode-map)))
-                           (define-key map (kbd <span style="color: #008000;">"C-c C-c"</span>) 'org-ctrl-c-ctrl-c)
-                           map))))
-</pre>
-</div>
-</div>
-</div>
-<div id="outline-container-org004cb53" class="outline-2">
-<h2 id="org004cb53"><span class="section-number-2">2</span> Update #2</h2>
-<div class="outline-text-2" id="text-2">
-<p>
-The previous version had some issues where it would only add a keymap to the first block. The code in this post now addresses that and uses cursor-sensor-functions to make sure we change key map on entering and leaving blocks. That might mean you need an emacs of at least version 25 to use this. I guess it will work with an earlier version, but the cursor-sensor-functions might get ignored. You might have to comment out the cursor-sensor-mode line
-</p>
-
-<p>
-Thanks to those brave people alpha-testing this and helping refine the idea!
-</p>
-</div>
-</div>
-<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2017/06/10/Adding-keymaps-to-src-blocks-via-org-font-lock-hook.org">org-mode source</a></p>
-<p>Org-mode version = 9.0.7</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/06/10/Adding-keymaps-to-src-blocks-via-org-font-lock-hook#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="../5">« Previous Page</a>
   --  
  <a href="../7">Next Page »</a>
@@ -1231,11 +1137,11 @@ Thanks to those brave people alpha-testing this and helping refine the idea!
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2018/05/09/Making-it-easier-to-extend-the-export-of-org-mode-links-with-generic-functions/">Making it easier to extend the export of org-mode links with generic functions</a></li>
       <li><a href="/blog/2018/04/16/New-publication-in-Nature-Catalysis/">New publication in Nature Catalysis</a></li>
       <li><a href="/blog/2018/04/11/Caching-searches-using-biblio-and-only-seeing-new-results/">Caching searches using biblio and only seeing new results</a></li>
       <li><a href="/blog/2018/04/09/Zhitao-Guo-receives-the-2017-2018-James-C-Meade-Fellowship-in-Chemical-Engineering/">Zhitao Guo receives the 2017-2018 James C. Meade Fellowship in Chemical Engineering</a></li>
       <li><a href="/blog/2018/04/01/New-publication-in-Catalysis-Today/">New publication in Catalysis Today</a></li>
-      <li><a href="/blog/2018/01/27/New-publication-in-Topics-in-Catalysis/">New publication in Topics in Catalysis</a></li>
     </ul>
   </section>
 
