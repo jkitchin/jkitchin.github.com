@@ -11,6 +11,6 @@ Preprint and supporting information for
   pages =	 {106-117},
   year =	 2014,
   doi =		 {10.1007/s11244-013-0166-3},
-  url =		 {http://dx.doi.org/10.1007/s11244-013-0166-3},
+  url =		 {https://doi.org/10.1007/s11244-013-0166-3},
   keywords =	 {DESC0004031, early-career, orgmode, },
 }

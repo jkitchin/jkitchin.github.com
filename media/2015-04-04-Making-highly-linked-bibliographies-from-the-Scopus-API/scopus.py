@@ -47,7 +47,7 @@ def get_journal_link(EID):
 def get_doi_link(EID):
     data = get_abstract_info(EID)
     result = data['abstracts-retrieval-response']
-    s = '<a href="http://dx.doi.org/{doi}">doi:{doi}</a>'
+    s = '<a href="https://doi.org/{doi}">doi:{doi}</a>'
     return s.format(doi=result['coredata']['prism:doi'])
 
 def get_cite_img_link(EID):

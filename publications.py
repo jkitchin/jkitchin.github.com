@@ -49,7 +49,7 @@ Pick your favorite:
 
 The authors are linked to their Scopus page, the title linked to the Scopus
 abstract, the journal linked to the Scopus journal page, and the DOI is linked 
-to http://dx.doi.org which normally redirects you to the journal page. This page is
+to https://doi.org which normally redirects you to the journal page. This page is
 automatically generated, so it may be incomplete, and the data reflects what is in 
 the Scopus database.
 
