@@ -1,0 +1,148 @@
+---
+title: f-strings in emacs-lisp
+date: 2018/05/14 17:27:42
+updated: 2018/05/14 17:27:42
+categories: emacs,elisp
+tags: 
+---
+
+
+<p>
+I am a big fan of f-strings in Python 3. They let you put variable names and expressions in a string template that get expanded to create new strings. Here is a simple example of using those:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #BA36A5;">username</span> = <span style="color: #008000;">'John Kitchin'</span>
+<span style="color: #BA36A5;">somevar</span> = 5**0.5
+<span style="color: #0000FF;">print</span>(f<span style="color: #008000;">'{username:30s}{somevar:1.2f}'</span>)
+</pre>
+</div>
+
+<pre class="example">
+John Kitchin                  2.24
+
+
+</pre>
+
+<p>
+String formatting in emacs-lisp is by comparison not as fun and easy. Out of the box we have:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((username <span style="color: #008000;">"John Kitchin"</span>)
+      (somevar (sqrt 5)))
+  (format <span style="color: #008000;">"%-30s%1.2f"</span> username somevar))
+</pre>
+</div>
+
+<pre class="example">
+John Kitchin                  2.24
+
+</pre>
+
+<p>
+That is still three lines of code, but it is ugly and hard to read like the old python code:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">print</span>(<span style="color: #008000;">'%-30s%1.2f'</span> % (username, somevar))
+</pre>
+</div>
+
+<pre class="example">
+John Kitchin                  2.24
+
+
+</pre>
+
+
+<p>
+My experience has shown that this gets harder to figure out as the strings get larger, and f-strings are easier to read.
+</p>
+
+<p>
+The wonderful <a href="https://github.com/magnars/s.el">'s</a> library provides some salvation for emacs-lisp, if you don't want the format fields. You can refer to variables in a lexical environment like this.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((username <span style="color: #008000;">"John Kitchin"</span>)
+      (somevar (sqrt 5)))
+  (<span style="color: #0000FF;">s-lex-format</span> <span style="color: #008000;">"${username}${somevar}"</span>))
+</pre>
+</div>
+
+<pre class="example">
+John Kitchin2.23606797749979
+
+</pre>
+
+<p>
+Today, I decided to do something about this, and wrote this little macro. It is a variation on s-lex-format that introduces a slightly new syntax. You can now add an optional format field separated from the variable name by a space.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defmacro</span> <span style="color: #006699;">f-string</span> (fmt)
+  <span style="color: #036A07;">"Like `</span><span style="color: #D0372D;">s-format</span><span style="color: #036A07;">' but with format fields in it.</span>
+<span style="color: #036A07;">FMT is a string to be expanded against the current lexical</span>
+<span style="color: #036A07;">environment. It is like what is used in `</span><span style="color: #D0372D;">s-lex-format</span><span style="color: #036A07;">', but has</span>
+<span style="color: #036A07;">an expanded syntax to allow format-strings. For example:</span>
+<span style="color: #036A07;">${user-full-name 20s} will be expanded to the current value of</span>
+<span style="color: #036A07;">the variable `</span><span style="color: #D0372D;">user-full-name</span><span style="color: #036A07;">' in a field 20 characters wide.</span>
+<span style="color: #036A07;">  (let ((f (sqrt 5)))  (f-string \"${f 1.2f}\"))</span>
+<span style="color: #036A07;">  will render as: 2.24</span>
+<span style="color: #036A07;">This function is inspired by the f-strings in Python 3.6, which I</span>
+<span style="color: #036A07;">enjoy using a lot.</span>
+<span style="color: #036A07;">"</span>
+  (<span style="color: #0000FF;">let*</span> ((matches (s-match-strings-all<span style="color: #008000;">"${</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">(?3:</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">(?1:</span><span style="color: #008000;">[</span><span style="color: #008000;">^</span><span style="color: #008000;">} ]+</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">)</span><span style="color: #008000;"> *</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">(?2:</span><span style="color: #008000;">[</span><span style="color: #008000;">^</span><span style="color: #008000;">}]*</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">)</span><span style="color: #008000; font-weight: bold;">\\</span><span style="color: #008000; font-weight: bold;">)</span><span style="color: #008000;">}"</span> fmt))
+         (agetter (<span style="color: #0000FF;">loop</span> for (m0 m1 m2 m3) in matches
+                        collect `(,m3 .  ,(format (format <span style="color: #008000;">"%%%s"</span> (<span style="color: #0000FF;">if</span> (string= m2 <span style="color: #008000;">""</span>)
+                                                                     (<span style="color: #0000FF;">if</span> s-lex-value-as-lisp <span style="color: #008000;">"S"</span> <span style="color: #008000;">"s"</span>)
+                                                                   m2))
+                                                  (symbol-value (intern m1)))))))
+
+    `<span style="color: #D0372D;">(s-format ,fmt </span>'aget ',agetter)))
+</pre>
+</div>
+
+<pre class="example">
+f-string
+
+</pre>
+
+<p>
+Here it is in action.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((username <span style="color: #008000;">"John Kitchin"</span>)
+      (somevar (sqrt 5)))
+  (<span style="color: #0000FF;">f-string</span> <span style="color: #008000;">"${username -30s}${somevar 1.2f}"</span>))
+</pre>
+</div>
+
+<pre class="example">
+John Kitchin                  2.24
+
+</pre>
+
+<p>
+It still lacks some of the capability of f-strings in python, e.g. in Python, arguments inside the template to be expanded get evaluated. The solution used above is too simple for that, since it just used a regexp and is limited to the value of variables in the lexical environment.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">print</span>(f<span style="color: #008000;">'{5**0.5:1.3f}'</span>)
+</pre>
+</div>
+
+<pre class="example">
+2.236
+
+
+</pre>
+
+<p>
+Nevertheless, this simple solution matches what I do most of the time anyway, so I still consider it an improvement!
+</p>
+<p>Copyright (C) 2018 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2018/05/14/f-strings-in-emacs-lisp.org">org-mode source</a></p>
+<p>Org-mode version = 9.1.13</p>
