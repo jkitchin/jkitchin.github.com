@@ -590,7 +590,7 @@ Style information comes from `bibliography'"
   "Return formatted DOI for different backends."
   (cond
    ((eq org-export-current-backend 'html)
-    (format "http://dx.doi.org/%s" doi))
+    (format "https://doi.org/%s" doi))
    (t
     (format "doi:%s" doi))))
 

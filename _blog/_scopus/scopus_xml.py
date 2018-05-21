@@ -57,7 +57,7 @@ def get_doi_link(EID):
     coredata = results.find('./{http://www.elsevier.com/xml/svapi/abstract/dtd}coredata')
     doi = coredata.find('{http://prismstandard.org/namespaces/basic/2.0/}doi')
     if doi is not None: doi = doi.text
-    s = '<a href="http://dx.doi.org/{doi}">doi:{doi}</a>'
+    s = '<a href="https://doi.org/{doi}">doi:{doi}</a>'
     return s.format(doi=doi)
 
 def get_abstract_link(EID):

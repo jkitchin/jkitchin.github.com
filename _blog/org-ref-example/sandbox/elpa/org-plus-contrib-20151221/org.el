@@ -2281,7 +2281,7 @@ For more examples, see the system specific constants
 			(string :tag "Command")
 			(sexp :tag "Lisp form")))))
 
-(defcustom org-doi-server-url "http://dx.doi.org/"
+(defcustom org-doi-server-url "https://doi.org/"
   "The URL of the DOI server."
   :type 'string
   :version "24.3"

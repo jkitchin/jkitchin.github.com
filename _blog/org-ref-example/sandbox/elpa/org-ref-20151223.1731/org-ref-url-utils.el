@@ -123,7 +123,7 @@
     ;; A Pubmed page
     ((string-match "http://www.ncbi.nlm.nih.gov/pubmed" url)
      (with-current-buffer (url-retrieve-synchronously url)
-       (re-search-forward "\"http://dx.doi.org/\\([^\"]*\\)\"")
+       (re-search-forward "\"https://doi.org/\\([^\"]*\\)\"")
        (match-string 1))))
   "cond blocks to match urls, and a recipe to extract a DOI. This
   variable exists to make it easy for users to add new recipes.")

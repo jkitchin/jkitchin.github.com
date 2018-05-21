@@ -97,7 +97,7 @@ You should use full-paths for each file."
 
 
 (defcustom org-ref-bibliography-entry-format
-  '(("article" . "%a, %t, <i>%j</i>, <b>%v(%n)</b>, %p (%y). <a href=\"%U\">link</a>. <a href=\"http://dx.doi.org/%D\">doi</a>.")
+  '(("article" . "%a, %t, <i>%j</i>, <b>%v(%n)</b>, %p (%y). <a href=\"%U\">link</a>. <a href=\"https://doi.org/%D\">doi</a>.")
 
     ("book" . "%a, %t, %u (%y).")
     ("techreport" . "%a, %t, %i, %u (%y).")
@@ -1898,7 +1898,7 @@ Argument KEY is the bibtex key."
             (when doi
               (if (string-match "^http" doi)
                   (browse-url doi)
-                (browse-url (format "http://dx.doi.org/%s" (s-trim doi))))
+                (browse-url (format "https://doi.org/%s" (s-trim doi))))
               (throw 'done nil))))))))
 
 
@@ -1999,7 +1999,7 @@ directory.  You can also specify a new file."
         (bibtex-search-entry key)
         (setq doi (bibtex-autokey-get-field "doi"))
         ;; in case doi is a url, remove the url part.
-        (replace-regexp-in-string "^http://dx.doi.org/" "" doi)))))
+        (replace-regexp-in-string "^https://doi.org/" "" doi)))))
 
 
 ;;**** functions that operate on key at point for click menu
@@ -2509,7 +2509,7 @@ This assumes you are in an article."
                     author title journal  volume pages year)
             (when url (format " <a href=\"%s\">link</a>" url))
             (when doi
-              (format " <a href=\"http://dx.doi.org/%s\">doi</a>" doi)))))
+              (format " <a href=\"https://doi.org/%s\">doi</a>" doi)))))
 
 ;;** Open pdf in bibtex entry
 (defun org-ref-open-bibtex-pdf ()
@@ -2604,7 +2604,7 @@ construct the heading by hand."
         (when doi
           (if (string-match "^http" doi)
               (browse-url doi)
-            (browse-url (format "http://dx.doi.org/%s" doi)))
+            (browse-url (format "https://doi.org/%s" doi)))
           (throw 'done nil)))
       (message "No url or doi found"))))
 
@@ -3111,15 +3111,15 @@ specify the key should be kept"
 	;; The Journal of Chemical Physics uses eid
 	(eid (bibtex-autokey-get-field "eid")))
 
-    ;; replace http://dx.doi.org/ in doi. some journals put that in,
+    ;; replace https://doi.org/ in doi. some journals put that in,
     ;; but we only want the doi.
-    (when (string-match "^http://dx.doi.org/" doi)
+    (when (string-match "^https://doi.org/" doi)
       (bibtex-beginning-of-entry)
       (goto-char (car (cdr (bibtex-search-forward-field "doi" t))))
       (bibtex-kill-field)
       (bibtex-make-field "doi")
       (backward-char)
-      (insert (replace-regexp-in-string "^http://dx.doi.org/" "" doi)))
+      (insert (replace-regexp-in-string "^https://doi.org/" "" doi)))
 
     ;; asap articles often set year to 0, which messes up key
     ;; generation. fix that.

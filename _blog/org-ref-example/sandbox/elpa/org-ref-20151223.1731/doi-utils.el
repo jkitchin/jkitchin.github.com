@@ -60,7 +60,7 @@
 
 ;;* Getting pdf files from a DOI
 
-;; The idea here is simple. When you visit http://dx.doi.org/doi, you get
+;; The idea here is simple. When you visit https://doi.org/doi, you get
 ;; redirected to the journal site. Once you have the url for the article, you
 ;; can usually compute the url to the pdf, or find it in the page. Then you
 ;; simply download it.
@@ -96,7 +96,7 @@ Optional argument STATUS Unknown why this is optional."
   ;; start with no redirect. it will be set in the callback.
   (setq *doi-utils-redirect* nil)
   (url-retrieve
-   (format "http://dx.doi.org/%s" doi)
+   (format "https://doi.org/%s" doi)
    'doi-utils-redirect-callback)
   ;; I suspect we need to wait here for the asynchronous process to
   ;; finish. we loop and sleep until the callback says it is done via
@@ -370,9 +370,9 @@ at the end."
   (interactive)
   (save-excursion
     (bibtex-beginning-of-entry)
-    (let (;; get doi, removing http://dx.doi.org/ if it is there.
+    (let (;; get doi, removing https://doi.org/ if it is there.
           (doi (replace-regexp-in-string
-                "http://dx.doi.org/" ""
+                "https://doi.org/" ""
                 (bibtex-autokey-get-field "doi")))
           (key)
           (pdf-url)
@@ -410,7 +410,7 @@ at the end."
 
 ;; I
 ;; [[http://homepages.see.leeds.ac.uk/~eeaol/notes/2013/02/doi-metadata/][found]]
-;; you can download metadata about a DOI from http://dx.doi.org. You just have
+;; you can download metadata about a DOI from https://doi.org. You just have
 ;; to construct the right http request to get it. Here is a function that gets
 ;; the metadata as a plist in emacs.
 
@@ -426,11 +426,11 @@ at the end."
         (json-data))
     (with-current-buffer
         (url-retrieve-synchronously
-         (concat "http://dx.doi.org/" doi))
+         (concat "https://doi.org/" doi))
       (setq json-data (buffer-substring url-http-end-of-headers (point-max)))
       (if (string-match "Resource not found" json-data)
           (progn
-            (browse-url (concat "http://dx.doi.org/" doi))
+            (browse-url (concat "https://doi.org/" doi))
             (error "Resource not found.  Opening website"))
         (json-read-from-string json-data)))))
 
@@ -699,7 +699,7 @@ Optional argument NODELIM see `bibtex-make-field'."
 Every field will be updated, so previous change will be lost."
   (interactive (list
                 (or (replace-regexp-in-string
-                     "http://dx.doi.org/" ""
+                     "https://doi.org/" ""
                      (bibtex-autokey-get-field "doi"))
                     (read-string "DOI: "))))
   (let* ((results (doi-utils-get-json-metadata doi))
@@ -830,7 +830,7 @@ May be empty if none are found."
 (defun doi-utils-open (doi)
   "Open DOI in browser."
   (interactive "sDOI: ")
-  (browse-url (concat "http://dx.doi.org/" doi)))
+  (browse-url (concat "https://doi.org/" doi)))
 
 
 (defun doi-utils-open-bibtex (doi)
@@ -914,11 +914,11 @@ Argument LINK-STRING Passed in on link click."
  (lambda (doi desc format)
    (cond
     ((eq format 'html)
-     (format "<a href=\"http://dx.doi.org/%s\">%s</a>"
+     (format "<a href=\"https://doi.org/%s\">%s</a>"
              doi
              (or desc (concat "doi:" doi))))
     ((eq format 'latex)
-     (format "\\href{http://dx.doi.org/%s}{%s}"
+     (format "\\href{https://doi.org/%s}{%s}"
              doi
              (or desc (concat "doi:%s" doi)))))))
 
@@ -944,7 +944,7 @@ Argument LINK-STRING Passed in on link click."
 ;;   pages =	 1996,
 ;;   year =	 2014,
 ;;   doi =		 {10.1039/c3ee43874k,
-;;   url =		 {http://dx.doi.org/10.1039/c3ee43874k}},
+;;   url =		 {https://doi.org/10.1039/c3ee43874k}},
 
 ;; }
 
@@ -997,7 +997,7 @@ error."
                                                                 (bibtex-make-field "doi")
                                                                 (backward-char)
                                                                 ;; crossref returns doi url, but I prefer only a doi for the doi field
-                                                                (insert (replace-regexp-in-string "^http://dx.doi.org/" "" doi))
+                                                                (insert (replace-regexp-in-string "^https://doi.org/" "" doi))
                                                                 (when (string= ""(reftex-get-bib-field "url" entry))
                                                                   (bibtex-make-field "url")
                                                                   (backward-char)
@@ -1088,7 +1088,7 @@ error."
                                                                   do
                                                                   (doi-utils-add-bibtex-entry-from-doi
                                                                    (replace-regexp-in-string
-                                                                    "^http://dx.doi.org/" "" doi)
+                                                                    "^https://doi.org/" "" doi)
                                                                    ,bibtex-file))))
                                 ("Open url" . (lambda (doi)
                                                 (browse-url doi))))))))
