@@ -32,7 +32,7 @@ for YEAR in [#'2005',
 
     This bibliography is generated from a Scopus search.
 
-The authors are linked to their Scopus page, the title linked to the Scopus abstract, the journal linked to the Scopus journal page, and the DOI is linked to http://dx.doi.org which normally redirects you to the journal page.
+The authors are linked to their Scopus page, the title linked to the Scopus abstract, the journal linked to the Scopus journal page, and the DOI is linked to https://doi.org which normally redirects you to the journal page.
 
 <ol reversed="reversed">
     '''.format(year=YEAR))
