@@ -5,7 +5,7 @@ ${entry['ID']}
 <script type='text/javascript' src='https://d1bxh8uas1mnw7.cloudfront.net/assets/embed.js'></script>
 <body>
 
-<h2><a href="http://dx.doi.org/${entry.get('doi','no-doi')}">DOI</a></h2>
+<h2><a href="https://doi.org/${entry.get('doi','no-doi')}">DOI</a></h2>
 <table>
 <tr>
 <td>

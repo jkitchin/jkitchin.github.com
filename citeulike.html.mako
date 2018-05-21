@@ -32,9 +32,9 @@ function(data) {
          items.push( '<h3>' + data[i].published[0] + '</h3>');
     }
     year=data[i].published[0];
-    var cit='<li id="' + i + '">' + '<a class="pap" href="http://dx.doi.org/'+data[i].doi+'">'+ data[i].title + '</a><br>';
+    var cit='<li id="' + i + '">' + '<a class="pap" href="https://doi.org/'+data[i].doi+'">'+ data[i].title + '</a><br>';
     cit+='</li>';
-    items.push( cit )      
+    items.push( cit )
   });
 
   $('<ul/>', {
