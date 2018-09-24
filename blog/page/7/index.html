@@ -84,6 +84,495 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="An-Emacs-zeromq-library-using-an-ffi"></div>
+      <h2 class="blog_post_title"><a href="/blog/2017/07/13/An-Emacs-zeromq-library-using-an-ffi/" rel="bookmark" title="Permanent Link to An Emacs zeromq library using an ffi">An Emacs zeromq library using an ffi</a></h2>
+      <p><small><span class="blog_post_date">Posted July 13, 2017 at 06:44 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/ffi/'>ffi</a>, <a href='/blog/category/dynamic-module/'>dynamic-module</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/zeromq/'>zeromq</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2017/07/13/An-Emacs-zeromq-library-using-an-ffi#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org9367268">1. Summary thoughts</a></li>
+<li><a href="#org4003ff3">2. Modified ffi-define-function macro</a></li>
+<li><a href="#org77956c2">3. The zeromq bindings</a></li>
+</ul>
+</div>
+</div>
+<p>
+An alternative approach to writing your own dynamic module (which requires some proficiency in c) is to use a foreign function interface (ffi). There is one for emacs at <a href="https://github.com/tromey/emacs-ffi">https://github.com/tromey/emacs-ffi</a>, and it is also a dynamic module itself that uses <a href="https://github.com/libffi/libffi">libffi</a>. This lets you use elisp to create functions in Emacs that actually call functions in some other library installed on your system. Here, we use this module to recreate our zeromq bindings that I previously <a href="http://kitchingroup.cheme.cmu.edu/blog/2017/07/12/Zeromq-bindings-for-Emacs-via-dynamic-modules/">posted</a>.
+</p>
+
+<p>
+The emacs-ffi module works fine as it is, but I found it useful to redefine one of the main macros (define-ffi-function) with the following goals in mind:
+</p>
+
+<ol class="org-ol">
+<li>Allow me to specify the argument names and docstrings for each arg that contain its type and a description of the arg.</li>
+<li>Document what each function returns (type and description).</li>
+<li>Combine those two things into an overall docstring on the function.</li>
+</ol>
+
+<p>
+These are important to me because it allows Emacs to work at its fullest potential while writing elisp code, including having the right function signatures in eldoc, and easy access to documentation of each function. You can see the new definition <a href="#org4003ff3">here</a>. For example, here is a docstring for zmq-send using that new macro:
+</p>
+
+<pre class="example">
+zmq-send is a Lisp function.
+
+(zmq-send *SOCKET *MSG LEN FLAGS)
+
+For more information check the manuals.
+
+send a message part on a socket.
+http://api.zeromq.org/4-2:zmq-send
+
+*SOCKET (:pointer) Pointer to a socket.
+*MSG (:pointer) Pointer to a C-string to send
+LEN (:size_t) Number of bytes to send
+FLAGS (:int) 
+
+Returns: Number of bytes sent or -1 on failure. (:int)
+</pre>
+
+<p>
+That has everything you need to know
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">define-ffi-function</span> zmq-send-ori <span style="color: #008000;">"zmq_send"</span> <span style="color: #006FE0;">:int</span> (<span style="color: #006FE0;">:pointer</span> <span style="color: #006FE0;">:pointer</span> <span style="color: #006FE0;">:size_t</span> <span style="color: #006FE0;">:int</span>) zmq)
+</pre>
+</div>
+
+<pre class="example">
+zmq-send-ori
+
+</pre>
+
+<p>
+Compare that to this docstring from the original macro. 
+</p>
+
+<pre class="example">
+zmq-send-ori is a Lisp function.
+
+(zmq-send-ori G251 G252 G253 G254)
+
+For more information check the manuals.
+</pre>
+
+<p>
+You can see the zeromq function definitions in elisp <a href="#org77956c2">here</a>. Here is a list of the functions we have created:
+</p>
+
+<pre class="example">
+Type RET on a type label to view its full documentation.
+
+zmq
+  Function: Returns a pointer to the libzmq library.
+zmq-close
+  Function: close ØMQ socket.
+zmq-connect
+  Function: create outgoing connection from socket.
+zmq-ctx-destroy
+  Function: terminate a ØMQ context.
+zmq-ctx-new
+  Function: create new ØMQ context.
+zmq-recv
+  Function: receive a message part from a socket.
+zmq-send
+  Function: send a message part on a socket.
+zmq-socket
+  Function: create ØMQ socket.
+</pre>
+
+<p>
+Now we can use these to create the client, this time in elisp. Just as in the last post, you need to run the hwserver in a terminal for this to work. Here is the client code.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let*</span> ((context (zmq-ctx-new))
+       (socket (zmq-socket context ZMQ-REQ)))
+
+  (<span style="color: #0000FF;">with-ffi-string</span> (endpoint <span style="color: #008000;">"tcp://localhost:5555"</span>)
+    (zmq-connect socket endpoint))
+
+  (<span style="color: #0000FF;">with-ffi-string</span> (msg <span style="color: #008000;">"Hi there"</span>)
+    (zmq-send socket msg 5 0))
+
+  (<span style="color: #0000FF;">with-ffi-string</span> (recv (make-string 10 <span style="color: #008000;">""</span>))
+    (<span style="color: #0000FF;">let</span> ((status -1))
+      (<span style="color: #0000FF;">cl-loop</span> do (<span style="color: #0000FF;">setq</span> status (zmq-recv socket recv 10 0)) until (not (= -1 status)))) 
+    (print (ffi-get-c-string recv)))
+
+  (zmq-close socket)
+  (zmq-ctx-destroy context))
+</pre>
+</div>
+
+<pre class="example">
+
+"World     "
+
+</pre>
+
+<p>
+This client basically performs the same as the previously one we built. You can see we are mixing some programming styles here. For example, we have to create pointers to string variables in advance that the ffi will be writing to later like we would do in c. We use the with-ffi-string macro which frees the pointer when we are done with it. It basically just avoids me having to create, use, and destroy the pointers myself. So, there it is, a working elisp zeromq client!
+</p>
+
+
+<div id="outline-container-org9367268" class="outline-2">
+<h2 id="org9367268"><span class="section-number-2">1</span> Summary thoughts</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+For this example, I feel like the ffi approach here (with my modified function making macro) was much easier than what I previously did with a compiled c-library (although it benefited a lot from my recent work on the c-library). I really like working in elisp, which is a much greater strength of mine than programming in c. It is pretty clear, however, that you have to know how c works to use this, otherwise it isn't so obvious that some functions will return a status, and do something by side effect, e.g. put results in one of the arguments. The signatures of the ffi functions are basically limited by the signatures of the c-functions. If you want to change the signature in Emacs, you have to write wrapper functions to do that.
+</p>
+
+<p>
+The macro I used here to create the functions creates really good (the kind I like anyway) docstrings when you use it fully. That isn't a totally new idea, I tried it out <a href="http://kitchingroup.cheme.cmu.edu/blog/2017/03/22/A-better-defun-for-emacs-lisp/">here</a> before.  In contrast, the original version not only didn't have a docstring, but every arg had a gensym (i.e. practically random) name! I think it would be very difficult to get the same level of documentation when writing c-code to make a module. In the c-code, there is a decoupling of the definition of a c-function (which always has the same signature) that gets data from the Emacs env, e.g. arguments, does stuff with them, and creates data to put back into the env, and the emacs_module_init function where you declare these functions to Emacs and tell it what to call the function in emacs, about how many arguments it takes, etc&#x2026; The benefit of this is you define what the Emacs signature will look like, and then write the c-function that does the required work. The downside of this is the c-function and Emacs declarations are often far apart in the editor, and there is no easy way to auto-generate docstrings like I can with lisp macros. You would have to manually build them up yourself, and keep them synchronized. Also, I still have not figured out how to get emacs to show the right signature for c-generated functions.
+</p>
+
+<p>
+The ffi approach still uses a dynamic module approach, so it still requires a modern Emacs with the module compiled and working. It still requires (in this case) the zeromq library to be installed on the system too. Once you have those, however, the elisp zeromq bindings by this approach is done <i>completely in elisp</i>!
+</p>
+
+<p>
+It will be interesting in the coming weeks to see how this approach works with the GNU Scientific Library, particularly with arrays. Preliminary work shows that while the elisp ffi code is <i>much</i> shorter and easier to write than the corresponding c-code for some examples (e.g. a simple mathematical function), it is not as fast. So if performance is crucial, it may still pay off to write the c-code.
+</p>
+</div>
+</div>
+
+<div id="outline-container-org4003ff3" class="outline-2">
+<h2 id="org4003ff3"><a id="ID-A2B7F051-EA53-4882-A978-05FAD211BB81"></a><span class="section-number-2">2</span> Modified ffi-define-function macro</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+Here are two macros I modified to add docstrings and named arguments too.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defmacro</span> <span style="color: #006699;">define-ffi-library</span> (symbol name)
+  <span style="color: #036A07;">"Create a pointer named to the c library."</span>
+  (<span style="color: #0000FF;">let</span> ((library (cl-gensym))
+        (docstring (format <span style="color: #008000;">"Returns a pointer to the %s library."</span> name)))
+    (set library nil)
+    `(<span style="color: #0000FF;">defun</span> ,symbol ()
+       ,docstring
+       (<span style="color: #0000FF;">or</span> ,library
+           (<span style="color: #0000FF;">setq</span> ,library (ffi--dlopen ,name))))))
+
+(<span style="color: #0000FF;">defmacro</span> <span style="color: #006699;">define-ffi-function</span> (name c-name return args library <span style="color: #6434A3;">&amp;optional</span> docstring)
+  <span style="color: #036A07;">"Create an Emacs function from a c-function.</span>
+<span style="color: #036A07;">NAME is a symbol for  the emacs function to create.</span>
+<span style="color: #036A07;">C-NAME is a string of the c-function to use.</span>
+<span style="color: #036A07;">RETURN is a type-keyword or (type-keyword docstring)</span>
+<span style="color: #036A07;">ARGS is a list of type-keyword or (type-keyword name &amp;optional arg-docstring)</span>
+<span style="color: #036A07;">LIBRARY is a symbol usually defined by `</span><span style="color: #D0372D;">define-ffi-library</span><span style="color: #036A07;">'</span>
+<span style="color: #036A07;">DOCSTRING is a string for the function to be created.</span>
+
+<span style="color: #036A07;">An overall docstring is created for the function from the arg and return docstrings.</span>
+<span style="color: #036A07;">"</span>
+  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Turn variable references into actual types; while keeping</span>
+  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">keywords the same.</span>
+  (<span style="color: #0000FF;">let*</span> ((return-type (<span style="color: #0000FF;">if</span> (keywordp return)
+                          return
+                        (car return)))
+         (return-docstring (format <span style="color: #008000;">"Returns: %s (%s)"</span>
+                                   (<span style="color: #0000FF;">if</span> (listp return)
+                                       (second return)
+                                     <span style="color: #008000;">""</span>)
+                                   return-type))
+         (arg-types (vconcat (mapcar (<span style="color: #0000FF;">lambda</span> (arg)
+                                       (<span style="color: #0000FF;">if</span> (keywordp arg)
+                                           (symbol-value arg)
+                                         <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">assume list (type-keyword name &amp;optional doc)</span>
+                                         (symbol-value (car arg))))
+                                     args)))
+         (arg-names (mapcar (<span style="color: #0000FF;">lambda</span> (arg)
+                              (<span style="color: #0000FF;">if</span> (keywordp arg)
+                                  (cl-gensym)
+                                <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">assume list (type-keyword name &amp;optional doc)</span>
+                                (second arg)))
+                            args))
+         (arg-docstrings (mapcar (<span style="color: #0000FF;">lambda</span> (arg)
+                                   (<span style="color: #0000FF;">cond</span>
+                                    ((keywordp arg)
+                                     <span style="color: #008000;">""</span>)
+                                    ((<span style="color: #0000FF;">and</span> (listp arg) (= 3 (length arg)))
+                                     (third arg))
+                                    (t <span style="color: #008000;">""</span>)))
+                                 args))
+         <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Combine all the arg docstrings into one string</span>
+         (arg-docstring (mapconcat 'identity
+                                   (mapcar* (<span style="color: #0000FF;">lambda</span> (name type arg-doc)
+                                              (format <span style="color: #008000;">"%s (%s) %s"</span>
+                                                      (upcase (symbol-name name))
+                                                      type
+                                                      arg-doc))
+                                            arg-names arg-types arg-docstrings)
+                                   <span style="color: #008000;">"\n"</span>))
+         (<span style="color: #0000FF;">function</span> (cl-gensym))
+         (cif (ffi--prep-cif (symbol-value return-type) arg-types)))
+    (set function nil)
+    `(<span style="color: #0000FF;">defun</span> ,name (,@arg-names)
+       ,(concat docstring <span style="color: #008000;">"\n\n"</span> arg-docstring <span style="color: #008000;">"\n\n"</span> return-docstring)
+       (<span style="color: #0000FF;">unless</span> ,function
+         (<span style="color: #0000FF;">setq</span> ,function (ffi--dlsym ,c-name (,library))))
+       <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">FIXME do we even need a separate prep?</span>
+       (ffi--call ,cif ,function ,@arg-names))))
+</pre>
+</div>
+
+<pre class="example">
+define-ffi-function
+
+</pre>
+</div>
+</div>
+
+
+<div id="outline-container-org77956c2" class="outline-2">
+<h2 id="org77956c2"><a id="ID-29C81B62-C0DF-44D4-AFE2-6EE239C70500"></a><span class="section-number-2">3</span> The zeromq bindings</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+These define the ffi functions we use in this post. I use a convention that pointer args start with a * so they look more like the c arguments. I also replace all _ with - so it looks more lispy, and the function names are easier to type.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(add-to-list 'load-path (expand-file-name <span style="color: #008000;">"."</span>))
+(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">ffi</span>)
+
+(<span style="color: #0000FF;">define-ffi-library</span> zmq <span style="color: #008000;">"libzmq"</span>)
+
+
+(<span style="color: #0000FF;">define-ffi-function</span> zmq-ctx-new <span style="color: #008000;">"zmq_ctx_new"</span>
+  (<span style="color: #006FE0;">:pointer</span> <span style="color: #008000;">"Pointer to a context"</span>)
+  nil zmq
+  <span style="color: #008000;">"create new &#216;MQ context.</span>
+<span style="color: #008000;">http://api.zeromq.org/4-2:zmq-ctx-new"</span>)
+
+
+(<span style="color: #0000FF;">define-ffi-function</span> zmq-ctx-destroy <span style="color: #008000;">"zmq_ctx_destroy"</span>
+  (<span style="color: #006FE0;">:int</span> <span style="color: #008000;">"status"</span>)
+  ((<span style="color: #006FE0;">:pointer</span> *context)) zmq
+  <span style="color: #008000;">"terminate a &#216;MQ context.</span>
+<span style="color: #008000;">http://api.zeromq.org/4-2:zmq-ctx-destroy"</span>)
+
+
+(<span style="color: #0000FF;">define-ffi-function</span> zmq-socket <span style="color: #008000;">"zmq_socket"</span>
+  (<span style="color: #006FE0;">:pointer</span> <span style="color: #008000;">"Pointer to a socket."</span>)
+  ((<span style="color: #006FE0;">:pointer</span> *context <span style="color: #008000;">"Created by `</span><span style="color: #D0372D;">zmq-ctx-new </span><span style="color: #008000;">'."</span>) (<span style="color: #006FE0;">:int</span> type)) zmq
+  <span style="color: #008000;">"create &#216;MQ socket.</span>
+<span style="color: #008000;">http://api.zeromq.org/4-2:zmq-socket"</span>)
+
+
+(<span style="color: #0000FF;">define-ffi-function</span> zmq-close <span style="color: #008000;">"zmq_close"</span>
+  (<span style="color: #006FE0;">:int</span> <span style="color: #008000;">"Status"</span>)
+  ((<span style="color: #006FE0;">:pointer</span> *socket <span style="color: #008000;">"Socket pointer created by `</span><span style="color: #D0372D;">zmq-socket</span><span style="color: #008000;">'"</span>)) zmq
+  <span style="color: #008000;">"close &#216;MQ socket.</span>
+<span style="color: #008000;">http://api.zeromq.org/4-2:zmq-close"</span>)
+
+
+(<span style="color: #0000FF;">define-ffi-function</span> zmq-connect <span style="color: #008000;">"zmq_connect"</span> 
+  (<span style="color: #006FE0;">:int</span> <span style="color: #008000;">"Status"</span>)
+  ((<span style="color: #006FE0;">:pointer</span> *socket <span style="color: #008000;">"Socket pointer created by `</span><span style="color: #D0372D;">zmq-socket</span><span style="color: #008000;">'"</span>)
+   (<span style="color: #006FE0;">:pointer</span> *endpoint <span style="color: #008000;">"Char pointer, e.g. (ffi-make-c-string \"tcp://localhost:5555\")"</span>))
+  zmq
+  <span style="color: #008000;">"create outgoing connection from socket.</span>
+<span style="color: #008000;">http://api.zeromq.org/4-2:zmq-connect"</span>)
+
+
+(<span style="color: #0000FF;">define-ffi-function</span> zmq-send <span style="color: #008000;">"zmq_send"</span>
+  (<span style="color: #006FE0;">:int</span> <span style="color: #008000;">"Number of bytes sent or -1 on failure."</span>)
+  ((<span style="color: #006FE0;">:pointer</span> *socket <span style="color: #008000;">"Pointer to a socket."</span>)
+   (<span style="color: #006FE0;">:pointer</span> *msg <span style="color: #008000;">"Pointer to a C-string to send"</span>)
+   (<span style="color: #006FE0;">:size_t</span> len <span style="color: #008000;">"Number of bytes to send"</span>)
+   (<span style="color: #006FE0;">:int</span> flags)) 
+  zmq
+   <span style="color: #008000;">"send a message part on a socket.</span>
+<span style="color: #008000;">http://api.zeromq.org/4-2:zmq-send"</span>)
+
+
+(<span style="color: #0000FF;">define-ffi-function</span> zmq-recv <span style="color: #008000;">"zmq_recv"</span>
+  (<span style="color: #006FE0;">:int</span> <span style="color: #008000;">"Number of bytes received or -1 on failure."</span>)
+  ((<span style="color: #006FE0;">:pointer</span> *socket)
+   (<span style="color: #006FE0;">:pointer</span> *buf <span style="color: #008000;">"Pointer to c-string to put result in."</span>)
+   (<span style="color: #006FE0;">:size_t</span> len <span style="color: #008000;">"Length to truncate message at."</span>)
+   (<span style="color: #006FE0;">:int</span> flags)) 
+  zmq
+   <span style="color: #008000;">"receive a message part from a socket.</span>
+<span style="color: #008000;">http://api.zeromq.org/4-2:zmq-recv"</span>)
+
+
+<span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">We cannot get these through a ffi because the are #define'd for the CPP and</span>
+<span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">invisible in the library. They only exist in the zmq.h file.</span>
+(<span style="color: #0000FF;">defconst</span> <span style="color: #BA36A5;">ZMQ-REQ</span> 3
+  <span style="color: #036A07;">"A socket of type ZMQ_REQ is used by a client to send requests</span>
+<span style="color: #036A07;">  to and receive replies from a service. This socket type allows</span>
+<span style="color: #036A07;">  only an alternating sequence of zmq_send(request) and</span>
+<span style="color: #036A07;">  subsequent zmq_recv(reply) calls. Each request sent is</span>
+<span style="color: #036A07;">  round-robined among all services, and each reply received is</span>
+<span style="color: #036A07;">  matched with the last issued request."</span>)
+</pre>
+</div>
+</div>
+</div>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/07/13/An-Emacs-zeromq-library-using-an-ffi.org">org-mode source</a></p>
+<p>Org-mode version = 9.0.7</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/07/13/An-Emacs-zeromq-library-using-an-ffi#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
+      <div id="Zeromq-bindings-for-Emacs-via-dynamic-modules"></div>
+      <h2 class="blog_post_title"><a href="/blog/2017/07/12/Zeromq-bindings-for-Emacs-via-dynamic-modules/" rel="bookmark" title="Permanent Link to Zeromq bindings for Emacs via dynamic modules">Zeromq bindings for Emacs via dynamic modules</a></h2>
+      <p><small><span class="blog_post_date">Posted July 12, 2017 at 07:38 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/dynamic-module/'>dynamic-module</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2017/07/12/Zeromq-bindings-for-Emacs-via-dynamic-modules#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+I do a lot of scientific programming, and it is one of the reasons I have been learning to extend Emacs with dynamic modules. They have allowed me to add physical constants, numerical integration, root finding and linear algebra from established c-libraries to Emacs. Today I am taking a break from that and finally getting to another one of the reasons I started playing around with dynamic modules: <a href="http://zguide.zeromq.org/">zeromq</a>. Zeromq is a messaging library that <a href="http://jupyter-client.readthedocs.io/en/latest/messaging.html">Jupyter</a> uses to communicate with kernels. I thought we might get a smoother integration with Emacs and Jupyter if we could use zeromq directly to communicate between org-mode and the kernel. Currently we have to run a web server that does the communication for us via http requests. We won't solve the Jupyter problem today, but we will look at communicating with a Zeromq server from Emacs.
+</p>
+
+<p>
+This might have lots of other useful applications. Suppose Emacs could communicate directly with other zeromq servers to retrieve data from, perhaps scientific data. It might even be possible for Emacs to run its own zeromq server, and other instances of Emacs could then communicate with it. Collaborative editing anyone? 
+</p>
+
+<p>
+Here we just implement the "Hello world" client example in the <a href="http://zguide.zeromq.org/page:all#Ask-and-Ye-Shall-Receive">zeromq guide</a>. The code for the server, a c-client, the mod-zmq library, a makefile and tests can be found at <a href="https://github.com/jkitchin/emacs-modules/tree/master/zeromq">https://github.com/jkitchin/emacs-modules/tree/master/zeromq</a>. All the server does is receive a string, and then send a response (in this case just the string "World") back to the client. 
+</p>
+
+<p>
+To run this, make sure to run the hwserver executable in a terminal. I wrapped the  zeromq commands required to implement the client into a dynamic module. Since this example focuses on strings, the module returns strings to Emacs. I am not sure if that is always the right thing to do, as zeromq more generically uses bytes, but I will have to wait until I know more about zeromq to know if this is an issue. 
+</p>
+
+<p>
+This dynamic module uses a new feature that none of the previous posts used, and that is the user_ptr. These allow you to essentially return a reference pointer back to emacs that you can pass back to another function. That way they stay alive between function calls. For example, here we have to create a context and socket and pass these items to functions like zmq_send and zmq_recv.
+</p>
+
+<p>
+The directory this library is in is not on my path, so we load it like this:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(add-to-list 'load-path (expand-file-name <span style="color: #008000;">"."</span>))
+(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">mod-zmq</span>)
+</pre>
+</div>
+
+<p>
+Here are the functions and their signatures that have been implemented so far. I only implemented the ones I needed for the client. The signatures may change in the future; this is just a proof of concept for now for the purpose of building the client.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(apropos-command <span style="color: #008000;">"zmq*"</span> t)
+(<span style="color: #0000FF;">with-current-buffer</span> <span style="color: #008000;">"*Apropos*"</span> (buffer-string))
+</pre>
+</div>
+
+<pre class="example">
+Type RET on a type label to view its full documentation.
+
+zmq-close
+  Function: (zmq-close SOCKET)
+zmq-connect
+  Function: (zmq-connect SOCKET ENDPOINT)
+zmq-ctx-destroy
+  Function: (zmq-ctx-destroy CONTEXT)
+zmq-ctx-new
+  Function: (zmq-ctx-new)
+zmq-recv
+  Function: (zmq-recv SOCKET LEN FLAGS)
+zmq-send
+  Function: (zmq-send SOCKET BUF FLAGS)
+zmq-socket
+  Function: (zmq-socket CONTEXT TYPE)
+</pre>
+
+<p>
+You can see the c code for the client here: <a href="/media/hwclient.c">hwclient.c</a> . Here is a simple elisp version of the hwclient that basically does the same thing! The main difference is I added a while loop around the zmq-recv because sometimes it returns -1 and no result. So, here we loop until the return result is not -1. That seems to do the right thing.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let*</span> ((context (zmq-ctx-new))
+       (socket (zmq-socket context ZMQ-REQ))
+       (recv-ret -1)
+       (result))
+
+  (zmq-connect socket <span style="color: #008000;">"tcp://localhost:5555"</span>)
+  (zmq-send socket <span style="color: #008000;">"Hello"</span> 0)
+
+  (<span style="color: #0000FF;">while</span> (= recv-ret -1)
+    (<span style="color: #0000FF;">setq</span> result (zmq-recv socket 10 0)
+          recv-ret (second result)))
+
+  (print result)
+
+  (zmq-close socket)
+  (zmq-ctx-destroy context))
+</pre>
+</div>
+
+<pre class="example">
+
+("World" 5)
+
+</pre>
+
+<p>
+Basically this creates the context, then the socket, and connects to it on port 5555 of the localhost where the server is running. Then we send the string "Hello". The server returns the string "World" and tells us it sent 5 bytes. Then we close the socket and destroy the context. There is a lot of code in the module to make this happen. A lot of it is converting args in emacs functions to things we can use in c, running a few lines of zmq commands, and then code to convert those results back to emacs values. Finally, there is code to register each function and define docstrings for them. I am not totally convinced this is the best way to do this, but it does work! An alternative might be <a href="https://github.com/tromey/emacs-ffi">emacs-ffi</a>, which might enable most of this to be developed in just elisp. 
+</p>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/07/12/Zeromq-bindings-for-Emacs-via-dynamic-modules.org">org-mode source</a></p>
+<p>Org-mode version = 9.0.7</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/07/12/Zeromq-bindings-for-Emacs-via-dynamic-modules#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Adding-linear-algebra-to-Emacs-with-the-GSL-and-dynamic-modules"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/07/11/Adding-linear-algebra-to-Emacs-with-the-GSL-and-dynamic-modules/" rel="bookmark" title="Permanent Link to Adding linear algebra to Emacs with the GSL and dynamic modules">Adding linear algebra to Emacs with the GSL and dynamic modules</a></h2>
       <p><small><span class="blog_post_date">Posted July 11, 2017 at 10:27 AM</span> | categories:
@@ -718,478 +1207,6 @@ Wow! It actually works!!! That was harder won success than usual for me. I am cl
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/07/09/Adding-a-GSL-integration-function-to-Emacs-with-a-dynamic-module#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Adding-numerical-methods-to-emacs-with-dynamic-modules"></div>
-      <h2 class="blog_post_title"><a href="/blog/2017/07/08/Adding-numerical-methods-to-emacs-with-dynamic-modules/" rel="bookmark" title="Permanent Link to Adding numerical methods to emacs with dynamic modules">Adding numerical methods to emacs with dynamic modules</a></h2>
-      <p><small><span class="blog_post_date">Posted July 08, 2017 at 10:12 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2017/07/08/Adding-numerical-methods-to-emacs-with-dynamic-modules#disqus_thread">View Comments</a>
-      <p><small><span class="blog_post_date">Updated July 09, 2017 at 07:31 AM</span>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<div id="table-of-contents">
-<h2>Table of Contents</h2>
-<div id="text-table-of-contents">
-<ul>
-<li><a href="#org35cb5dc">1. Using the GSL to calculate a Bessel function value</a></li>
-<li><a href="#orgfee9627">2. A GSL dynamic module for a Bessel function</a></li>
-<li><a href="#orgfedab6e">3. Summary</a></li>
-</ul>
-</div>
-</div>
-<p>
-There is a relatively new feature in Emacs 25 that allows you to extend Emacs using compiled libraries (<a href="http://diobla.info/blog-archive/modules-tut.html">http://diobla.info/blog-archive/modules-tut.html</a>). This could be very helpful in a few ways:
-</p>
-
-<ol class="org-ol">
-<li>To add functionality that exists in other libraries, e.g.
-<ol class="org-ol">
-<li><a href="https://github.com/syohex/emacs-libyaml">libyaml</a></li>
-<li><a href="https://github.com/syohex/emacs-memcached">libmemcached</a></li>
-<li><a href="https://github.com/syohex/emacs-mruby-test">Embedding Ruby in Emacs</a></li>
-</ol></li>
-<li>Interface Emacs with hardware, e.g. <a href="http://nullprogram.com/blog/2016/11/05/">a joystick</a>, or <a href="https://github.com/syohex/emacs-eject">ejecting a CD</a>.</li>
-<li>To speed up slow elisp functions
-<ol class="org-ol">
-<li>A c implementation of a fibonacci function is 150 times faster than an elisp version <a href="https://coldnew.github.io/2d16cc25/">here</a>.</li>
-<li>This <a href="https://github.com/syohex/emacs-parson">json parser</a> is up to 4 times faster than the json.el library for some operations.</li>
-</ol></li>
-</ol>
-
-<p>
-I am interested in this in particular to bring numerical methods into Emacs. It is fair to ask why. Even I think the numpy/scipy/matplotlib Python stack is currently unparalleled in functionality for scientific programming. But I like writing elisp code so much more! So, we will take a look today at a simple example of integrating a function from the GNU Scientific Library into Emacs.
-</p>
-
-<div id="outline-container-org35cb5dc" class="outline-2">
-<h2 id="org35cb5dc"><span class="section-number-2">1</span> Using the GSL to calculate a Bessel function value</h2>
-<div class="outline-text-2" id="text-1">
-<p>
-A canonical example of using the GSL is given at <a href="https://www.gnu.org/software/gsl/manual/html_node/An-Example-Program.html">https://www.gnu.org/software/gsl/manual/html_node/An-Example-Program.html</a>. Here it is for reference. It just calculates a value for a Bessel function. We save this program in a file called example.c.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-C"><span style="color: #808080;">#include</span> <span style="color: #008000;">&lt;stdio.h&gt;</span>
-<span style="color: #808080;">#include</span> <span style="color: #008000;">&lt;gsl/gsl_sf_bessel.h&gt;</span>
-
-<span style="color: #6434A3;">int</span>
-<span style="color: #006699;">main</span> (<span style="color: #6434A3;">void</span>)
-{
-  <span style="color: #6434A3;">double</span> <span style="color: #BA36A5;">x</span> = 5.0;
-  <span style="color: #6434A3;">double</span> <span style="color: #BA36A5;">y</span> = gsl_sf_bessel_J0 (x);
-  printf (<span style="color: #008000;">"J0(%g) = %.18e\n"</span>, x, y);
-  <span style="color: #0000FF;">return</span> 0;
-}
-</pre>
-</div>
-
-<p>
-We have to compile and run this program. Here are the commands to do that.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-sh">gcc -Wall -I/usr/local/include/ -c example.c
-gcc -L/usr/local/include -lgsl example.o 
-./a.out
-</pre>
-</div>
-
-<p>
-That is a lot of code and steps to get one number. 
-</p>
-
-<p>
-What I would like to do instead is this:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">gsl-sf-bessel</span>)
-(gsl-sf-bessel-J0 5)
-</pre>
-</div>
-
-<p>
-So, enter the dynamic module!
-</p>
-</div>
-</div>
-
-<div id="outline-container-orgfee9627" class="outline-2">
-<h2 id="orgfee9627"><span class="section-number-2">2</span> A GSL dynamic module for a Bessel function</h2>
-<div class="outline-text-2" id="text-2">
-<p>
-To create the dynamic module we need a small c file that wraps the GSL function and adds it to the Emacs environment. Here is the smallest example I could come up with for this one function.  Basically, we create a function that takes the emacs environment and arguments, extract what we want from them, and use that to calculate what we need and return it to the environment. Then we register that function  and define what the module provides in emacs_module_init.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-c"><span style="color: #808080;">#include</span> <span style="color: #008000;">&lt;assert.h&gt;</span>
-<span style="color: #808080;">#include</span> <span style="color: #008000;">&lt;gsl/gsl_sf_bessel.h&gt;</span>
-<span style="color: #808080;">#include</span> <span style="color: #008000;">"emacs-module.h"</span>
-
-<span style="color: #6434A3;">int</span> <span style="color: #BA36A5;">plugin_is_GPL_compatible</span>;
-
-<span style="color: #0000FF;">static</span> <span style="color: #6434A3;">emacs_value</span>
-<span style="color: #006699;">F_gsl_sf_bessel_J0</span> (<span style="color: #6434A3;">emacs_env</span> *<span style="color: #BA36A5;">env</span>, <span style="color: #6434A3;">ptrdiff_t</span> <span style="color: #BA36A5;">nargs</span>, <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">args</span>[], <span style="color: #6434A3;">void</span> *<span style="color: #BA36A5;">data</span>)
-{
-  assert (nargs == 1);
-  <span style="color: #6434A3;">double</span> <span style="color: #BA36A5;">x</span> = env-&gt;extract_float (env, args[0]);
-  <span style="color: #0000FF;">return</span> env-&gt;make_float (env, gsl_sf_bessel_J0 (x));
-}
-
-<span style="color: #6434A3;">int</span>
-<span style="color: #006699;">emacs_module_init</span>(<span style="color: #0000FF;">struct</span> <span style="color: #6434A3;">emacs_runtime</span> *<span style="color: #BA36A5;">ert</span>)
-{
-        <span style="color: #6434A3;">emacs_env</span> *<span style="color: #BA36A5;">env</span> = ert-&gt;get_environment(ert);
-
-        <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">gsl_sf_bessel_J0_fn</span> = env-&gt;make_function(env, 1, 1, F_gsl_sf_bessel_J0, <span style="color: #008000;">"Regular cylindrical Bessel function of zeroth order, J_0(x)"</span>, <span style="color: #D0372D;">NULL</span>);
-
-        <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">Qfset</span> = env-&gt;intern(env, <span style="color: #008000;">"fset"</span>);
-        <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">Q_gsl_sf_bessel_J0</span> = env-&gt;intern(env, <span style="color: #008000;">"gsl-sf-bessel-J0"</span>);
-        <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">fset_args</span>[] = { Q_gsl_sf_bessel_J0, gsl_sf_bessel_J0_fn };
-        env-&gt;funcall(env, Qfset, 2, fset_args);
-
-        <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">Qprovide</span> = env-&gt;intern(env, <span style="color: #008000;">"provide"</span>);
-        <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">Q_gsl_sf_bessel</span> = env-&gt;intern(env, <span style="color: #008000;">"gsl-sf-bessel"</span>);
-        <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">provide_args</span>[] = { Q_gsl_sf_bessel };
-        env-&gt;funcall(env, Qprovide, 1, provide_args);
-
-        <span style="color: #0000FF;">return</span> 0;
-}
-</pre>
-</div>
-
-<p>
-Now we compile it into a shared library.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-sh">gcc -Wall -I/usr/local/include -fPIC -c gsl-sf-bessel.c
-gcc -shared -L/usr/local/include -lgsl -o gsl-sf-bessel.so gsl-sf-bessel.o
-</pre>
-</div>
-
-<p>
-That creates our shared library in gsl-sf-bessel.so.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-sh">ls *.so
-</pre>
-</div>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(add-to-list 'load-path <span style="color: #008000;">"/Users/jkitchin/vc/blogofile-jkitchin.github.com/_blog/dynamic-module/"</span>)
-(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">gsl-sf-bessel</span>)
-(gsl-sf-bessel-J0 5.0)
-</pre>
-</div>
-
-<pre class="example">
--0.17759677131433826
-
-</pre>
-
-<p>
-That is the same answer as we got before. Here is the documentation we defined. It could use some improvement, e.g. to note that the argument has to be a float, and that only one argument is allowed. I am not sure why the signature doesn't show a single argument.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(describe-function 'gsl-sf-bessel-J0)
-</pre>
-</div>
-
-<pre class="example">
-gsl-sf-bessel-J0 is a Lisp function.
-
-(gsl-sf-bessel-J0 &amp;rest ARGS)
-
-For more information check the manuals.
-
-Regular cylindrical Bessel function of zeroth order, J_0(x)
-
-</pre>
-
-<p>
-I am not a very skilled C-programmer yet, so I don't know how hard it would be to make this function accept integers as well, or to vectorize it so you could have an arbitrary number of args to it and return a list.
-</p>
-</div>
-</div>
-
-
-<div id="outline-container-orgfedab6e" class="outline-2">
-<h2 id="orgfedab6e"><span class="section-number-2">3</span> Summary</h2>
-<div class="outline-text-2" id="text-3">
-<p>
-Dynamic modules look promising to extend Emacs with. This example is about the simplest function from the GSL there is. There are many more (<a href="https://www.gnu.org/software/gsl/doc/html/index.html">https://www.gnu.org/software/gsl/doc/html/index.html</a>) functions that do linear algebra on arrays, integration or optimization of functions, interpolation of data, etc. I don't have a sense yet of how easy it will be to integrate these into a module.
-</p>
-
-<p>
-It looks like you are not limited to writing these in C. There is an example of a plugin written in Rust <a href="https://github.com/lunaryorn/emacs-module.rs/blob/master/src/lib.rs">here</a>, and a framework to write them in <a href="https://github.com/sigma/go-emacs/">Go</a>. Maybe any language that can make a shared library with the required plugin_is_GPL_compatible symbol and emacs_module_init function would work. Those examples do not look significantly easier to write than the C versions though since I am not that fluent in those languages either.
-</p>
-
-<p>
-There are some challenges to figure out in developing and using dynamic modules. Here are a few:
-</p>
-
-<ol class="org-ol">
-<li>The documentation on what is possible is not that great yet, so there is a lot of exploring to do. There are a fair number of examples out there though to learn from (<a href="https://github.com/emacs-pe/emacs-modules">https://github.com/emacs-pe/emacs-modules</a>). The <a href="https://github.com/emacs-mirror/emacs/tree/emacs-25/modules/mod-test">official example</a> shows a lot of the functionality.</li>
-<li>I guess it will be tricky to distribute these. I don't know how easy it would be to build all the libraries for each platform for distribution on MELPA for example. I don't think there is a standard way to incorporate a compile step in elisp package installation. Also, you need an Emacs version of at least 25 with the dynamic module feature compiled in. It is not yet a default enabled option. The required emacs-module.h should be gotten from the emacs build, so people with binaries might not be able to build it anyway.</li>
-<li>Users will need the libraries the dynamic module uses. In this example, they will need libgsl.</li>
-<li>Once you require the module, it does not seem possible to modify it, rebuild it, and reload it. It appears you have to close Emacs and reload it. That is tedious.</li>
-</ol>
-
-<p>
-It would be nice to have a more generic foreign function interface that would allow you to develop more on the elisp side. One effort in that direction is <a href="https://github.com/tromey/emacs-ffi">https://github.com/tromey/emacs-ffi</a>. It looks like it might be a lot simpler to use than creating a dynamic module. Once it is installed, it looks like you can write elisp code to wrap the library functions. I will write about this on another day.
-</p>
-</div>
-</div>
-<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2017/07/08/Adding-numerical-methods-to-emacs-with-dynamic-modules.org">org-mode source</a></p>
-<p>Org-mode version = 9.0.7</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/07/08/Adding-numerical-methods-to-emacs-with-dynamic-modules#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Adding-keymaps-to-src-blocks-via-org-font-lock-hook"></div>
-      <h2 class="blog_post_title"><a href="/blog/2017/06/10/Adding-keymaps-to-src-blocks-via-org-font-lock-hook/" rel="bookmark" title="Permanent Link to Adding keymaps to src blocks via org-font-lock-hook">Adding keymaps to src blocks via org-font-lock-hook</a></h2>
-      <p><small><span class="blog_post_date">Posted June 10, 2017 at 03:27 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2017/06/10/Adding-keymaps-to-src-blocks-via-org-font-lock-hook#disqus_thread">View Comments</a>
-      <p><small><span class="blog_post_date">Updated June 12, 2017 at 11:28 AM</span>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<div id="table-of-contents">
-<h2>Table of Contents</h2>
-<div id="text-table-of-contents">
-<ul>
-<li><a href="#org49daca5">1. Update</a></li>
-<li><a href="#org004cb53">2. Update #2</a></li>
-</ul>
-</div>
-</div>
-<p>
-I had an idea to use custom keymaps in src-blocks. For example, you could then use lispy directly in your org-files without entering org-special-edit, or the elpy key-bindings in python blocks. There are other solutions I have seen, e.g. polymode, that claim to do this. You might guess that if they worked, I would not be writing this! There was some nice discussion about this idea on the org-mode mailing list, and Nicolas Goaziou pointed out this might be accomplished with the org-font-lock-hook.
-</p>
-
-<p>
-You can check out the video here:
-</p>
-<iframe width="560" height="315" src="https://www.youtube.com/embed/a2jHqB1qWiY" frameborder="0" allowfullscreen></iframe>
-
-<p>
-It was relatively easy to figure out how to do this. Keymaps can be added to regions during font-lock, so I just had to hook into the org-mode font lock system with a function to find the src blocks and add the keymap as a text-property. That took three steps:
-</p>
-
-<ol class="org-ol">
-<li>Define the keymaps to use. I use an a-list of (language . map) for this.</li>
-<li>Define the font-lock function. This will add the keymap properties to src-blocks.</li>
-<li>Define a minor mode to toggle this feature on and off.</li>
-</ol>
-
-<p>
-Here is the definition of the keymaps. Generally I just copy the mode-map I want and then add some things to them. For example sometimes it is still a good idea to jump into the org-special-edit mode. For example, if you try to use a command in a Python block to send the buffer to the repl while in org-mode you are sure to get an error! You might also want to add the C-c C-e export command if you use that a lot. An alternative approach, of course, is to copy the org-map and add additional bindings to it. The choice is up to you.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">lispy</span>)
-(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">elpy</span>)
-
-(<span style="color: #0000FF;">setq</span> scimax-src-block-keymaps
-      `((<span style="color: #008000;">"ipython"</span> . ,(<span style="color: #0000FF;">let</span> ((map (make-composed-keymap
-                                  `(,elpy-mode-map ,python-mode-map ,pyvenv-mode-map)
-                                  org-mode-map)))
-                        <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">In org-mode I define RET so we f</span>
-                        (define-key map (kbd <span style="color: #008000;">"&lt;return&gt;"</span>) 'newline)
-                        (define-key map (kbd <span style="color: #008000;">"C-c C-c"</span>) 'org-ctrl-c-ctrl-c)
-                        map))
-        (<span style="color: #008000;">"python"</span> . ,(<span style="color: #0000FF;">let</span> ((map (make-composed-keymap
-                                 `(,elpy-mode-map ,python-mode-map ,pyvenv-mode-map)
-                                 org-mode-map)))
-                       <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">In org-mode I define RET so we f</span>
-                       (define-key map (kbd <span style="color: #008000;">"&lt;return&gt;"</span>) 'newline)
-                       (define-key map (kbd <span style="color: #008000;">"C-c C-c"</span>) 'org-ctrl-c-ctrl-c)
-                       map))
-        (<span style="color: #008000;">"emacs-lisp"</span> . ,(<span style="color: #0000FF;">let</span> ((map (make-composed-keymap `(,lispy-mode-map
-                                                            ,emacs-lisp-mode-map
-                                                            ,outline-minor-mode-map)
-                                                          org-mode-map)))
-                           (define-key map (kbd <span style="color: #008000;">"C-c C-c"</span>) 'org-ctrl-c-ctrl-c)
-                           map))))
-</pre>
-</div>
-
-<p>
-Next we define the function that will apply the keymap to each src block. The keymaps are only applied when they are defined in the variable above. This function is derived from org-fontify-meta-lines-and-blocks-1.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">scimax-add-keymap-to-src-blocks</span> (limit)
-  <span style="color: #036A07;">"Add keymaps to src-blocks defined in `</span><span style="color: #D0372D;">scimax-src-block-keymaps</span><span style="color: #036A07;">'."</span>
-  (<span style="color: #0000FF;">let</span> ((case-fold-search t)
-        lang)
-    (<span style="color: #0000FF;">while</span> (re-search-forward org-babel-src-block-regexp limit t)
-      (<span style="color: #0000FF;">let</span> ((lang (match-string 2))
-            (beg (match-beginning 0))
-            (end (match-end 0)))
-        (<span style="color: #0000FF;">if</span> (assoc (org-no-properties lang) scimax-src-block-keymaps)
-            (<span style="color: #0000FF;">progn</span>
-              (add-text-properties
-               beg end `(local-map ,(cdr (assoc
-                                          (org-no-properties lang)
-                                          scimax-src-block-keymaps))))
-              (add-text-properties
-               beg end `(cursor-sensor-functions
-                         ((<span style="color: #0000FF;">lambda</span> (win prev-pos sym)
-                            <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">This simulates a mouse click and makes a menu change</span>
-                            (org-mouse-down-mouse nil)))))))))))
-</pre>
-</div>
-
-<p>
-Here we create an advice to trick any functions that need to know the major mode. We only apply the spoof if we are in org-mode and in a src block though. Otherwise we call the original function. So far lispy&#x2013;eval is the only function I have needed it for. This might be a general strategy though to do other things like narrow to the src-block, or even go into special edit mode temporarily if there are commands that require it.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">scimax-spoof-mode</span> (orig-func <span style="color: #6434A3;">&amp;rest</span> args)
-  <span style="color: #036A07;">"Advice function to spoof commands in org-mode src blocks.</span>
-<span style="color: #036A07;">It is for commands that depend on the major mode. One example is</span>
-<span style="color: #036A07;">`</span><span style="color: #D0372D;">lispy--eval</span><span style="color: #036A07;">'."</span>
-  (<span style="color: #0000FF;">if</span> (org-in-src-block-p)
-      (<span style="color: #0000FF;">let</span> ((major-mode (intern (format <span style="color: #008000;">"%s-mode"</span> (first (org-babel-get-src-block-info))))))
-        (apply orig-func args))
-    (apply orig-func args)))
-</pre>
-</div>
-
-<p>
-We define a minor mode so we can toggle this on and off. Here we add the function to the org-font-lock-hook and advise the lispy&#x2013;eval function. I had to add the font-lock-function to the end of the org-font-lock hook for some reason, and also add local-map as an extra-managed property so it would be removed when we toggle it off.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">define-minor-mode</span> <span style="color: #006699;">scimax-src-keymap-mode</span>
-  <span style="color: #036A07;">"Minor mode to add mode keymaps to src-blocks."</span>
-  <span style="color: #006FE0;">:init-value</span> nil
-  (<span style="color: #0000FF;">if</span> scimax-src-keymap-mode
-      (<span style="color: #0000FF;">progn</span>
-        (add-hook 'org-font-lock-hook #'scimax-add-keymap-to-src-blocks t)
-        (add-to-list 'font-lock-extra-managed-props 'local-map)
-        (add-to-list 'font-lock-extra-managed-props 'cursor-sensor-functions)
-        (advice-add 'lispy--eval <span style="color: #006FE0;">:around</span> 'scimax-spoof-mode)
-        (cursor-sensor-mode +1))
-    (remove-hook 'org-font-lock-hook #'scimax-add-keymap-to-src-blocks)
-    (advice-remove 'lispy--eval 'scimax-spoof-mode)
-    (cursor-sensor-mode -1))
-  (font-lock-fontify-buffer))
-
-(add-hook 'org-mode-hook (<span style="color: #0000FF;">lambda</span> ()
-                           (scimax-src-keymap-mode +1)))
-</pre>
-</div>
-
-<p>
-That is it! I am pretty sure this is a good idea. It helps a lot when you are writing a lot of short code blocks and near equal amounts of text (like in this blog post). It also helps write the code since many things like indentation, parentheses, etc. are automatically handled. That is what I used to go into special-edit mode all the time for!
-</p>
-
-<p>
-I have not used this long enough to know if it causes any other surprises. If you try it and find any, leave a comment!
-</p>
-
-<div id="outline-container-org49daca5" class="outline-2">
-<h2 id="org49daca5"><span class="section-number-2">1</span> Update</h2>
-<div class="outline-text-2" id="text-1">
-<p>
-It turns out you can have the best of all the worlds by combining keymaps. The make-composed-keymap creates a new keymap that combines a keymaps and falls through to a parent keymap. So here we use that to combine several keymaps, falling through to org-mode. The only subtlety I have come across is that I remapped &lt;return&gt; in orgmode to scimax/org-return, and not all modes define it, so I redefine it in some places to just be newline. Also to keep C-c C-c for executing the block, I add that back too.
-</p>
-
-<p>
-I use a few maps here, and some of them seem to just add menus that are only active when your cursor is in the block. Pretty handy!
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">setq</span> scimax-src-block-keymaps
-      `((<span style="color: #008000;">"ipython"</span> . ,(<span style="color: #0000FF;">let</span> ((map (make-composed-keymap
-                                  `(,elpy-mode-map ,python-mode-map ,pyvenv-mode-map)
-                                  org-mode-map)))
-                        <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">In org-mode I define RET so we f</span>
-                        (define-key map (kbd <span style="color: #008000;">"&lt;return&gt;"</span>) 'newline)
-                        (define-key map (kbd <span style="color: #008000;">"C-c C-c"</span>) 'org-ctrl-c-ctrl-c)
-                        map))
-        (<span style="color: #008000;">"python"</span> . ,(<span style="color: #0000FF;">let</span> ((map (make-composed-keymap
-                                 `(,elpy-mode-map ,python-mode-map ,pyvenv-mode-map)
-                                 org-mode-map)))
-                       <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">In org-mode I define RET so we f</span>
-                       (define-key map (kbd <span style="color: #008000;">"&lt;return&gt;"</span>) 'newline)
-                       (define-key map (kbd <span style="color: #008000;">"C-c C-c"</span>) 'org-ctrl-c-ctrl-c)
-                       map))
-        (<span style="color: #008000;">"emacs-lisp"</span> . ,(<span style="color: #0000FF;">let</span> ((map (make-composed-keymap `(,lispy-mode-map
-                                                            ,emacs-lisp-mode-map
-                                                            ,outline-minor-mode-map)
-                                                          org-mode-map)))
-                           (define-key map (kbd <span style="color: #008000;">"C-c C-c"</span>) 'org-ctrl-c-ctrl-c)
-                           map))))
-</pre>
-</div>
-</div>
-</div>
-<div id="outline-container-org004cb53" class="outline-2">
-<h2 id="org004cb53"><span class="section-number-2">2</span> Update #2</h2>
-<div class="outline-text-2" id="text-2">
-<p>
-The previous version had some issues where it would only add a keymap to the first block. The code in this post now addresses that and uses cursor-sensor-functions to make sure we change key map on entering and leaving blocks. That might mean you need an emacs of at least version 25 to use this. I guess it will work with an earlier version, but the cursor-sensor-functions might get ignored. You might have to comment out the cursor-sensor-mode line
-</p>
-
-<p>
-Thanks to those brave people alpha-testing this and helping refine the idea!
-</p>
-</div>
-</div>
-<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2017/06/10/Adding-keymaps-to-src-blocks-via-org-font-lock-hook.org">org-mode source</a></p>
-<p>Org-mode version = 9.0.7</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/06/10/Adding-keymaps-to-src-blocks-via-org-font-lock-hook#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="../6">« Previous Page</a>
   --  
  <a href="../8">Next Page »</a>
@@ -1231,11 +1248,11 @@ Thanks to those brave people alpha-testing this and helping refine the idea!
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2018/09/24/Solving-nonlinear-algebra-problems-with-internal-state-information/">Solving nonlinear algebra problems with internal state information</a></li>
+      <li><a href="/blog/2018/09/05/Integration-of-the-heat-capacity/">Integration of the heat capacity</a></li>
       <li><a href="/blog/2018/09/04/A-new-ode-integrator-function-in-scipy/">A new ode integrator function in scipy</a></li>
       <li><a href="/blog/2018/07/01/Getting-geo-tagged-information-from-photos-for-blogging/">Getting geo-tagged information from photos for blogging</a></li>
       <li><a href="/blog/2018/05/17/Literate-programming-with-python-doctests/">Literate programming with python doctests</a></li>
-      <li><a href="/blog/2018/05/14/f-strings-in-emacs-lisp/">f-strings in emacs-lisp</a></li>
-      <li><a href="/blog/2018/05/09/Making-it-easier-to-extend-the-export-of-org-mode-links-with-generic-functions/">Making it easier to extend the export of org-mode links with generic functions</a></li>
     </ul>
   </section>
 

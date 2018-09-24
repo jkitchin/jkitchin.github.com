@@ -84,6 +84,224 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Line-numbers-in-org-mode-code-blocks"></div>
+      <h2 class="blog_post_title"><a href="/blog/2015/10/13/Line-numbers-in-org-mode-code-blocks/" rel="bookmark" title="Permanent Link to Line numbers in org-mode code blocks">Line numbers in org-mode code blocks</a></h2>
+      <p><small><span class="blog_post_date">Posted October 13, 2015 at 08:58 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2015/10/13/Line-numbers-in-org-mode-code-blocks#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+
+<p>
+Some of my students have wanted to show line numbers in code blocks. This is especially useful for when you run a Python block, and you get an error message with a line number in it. Right now, to figure out which line that is, you have to into the code block, type C-c ' to get into edit mode, and turn line numbers on. We look into how to achieve that here.
+</p>
+
+<p>
+You may want to see the video here: <a href="https://www.youtube.com/watch?v=kinWijGzXms">https://www.youtube.com/watch?v=kinWijGzXms</a> .
+</p>
+
+<p>
+First, we need to get the region that is the code block. We can find some info in the org-element, but, the :begin and :end include lines we don't want, like the header lines, and the results. But, we can get the beginning, and maybe from there search forward to the block. Run this code block to see where the point goes.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp" id="boring-example"><span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">a boring comment</span>
+
+(<span style="color: #0000FF;">progn</span>
+  (+ 40 2))
+
+(goto-char (org-element-property <span style="color: #006FE0;">:begin</span> (org-element-context)))
+(re-search-forward (regexp-quote (org-element-property <span style="color: #006FE0;">:value</span> (org-element-context))))
+(goto-char (match-beginning 0))
+<span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">number of lines in block. The last carriage return doesn't count.</span>
+(1- (length (s-split <span style="color: #008000;">"\n"</span> (org-element-property <span style="color: #006FE0;">:value</span> (org-element-context)))))
+</pre>
+</div>
+
+<pre class="example">
+9
+</pre>
+
+<p>
+So, we can get the number of lines, and move the point to the first line. For numbers, we will use overlays. Here is a simple way to put a number at the beginning of a line.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> (ov)
+  (beginning-of-line)
+  (<span style="color: #0000FF;">setq</span> ov (make-overlay (point) (point)))
+  (overlay-put ov 'before-string <span style="color: #008000;">"1"</span>))
+</pre>
+</div>
+
+<pre class="example">
+1
+</pre>
+
+<p>
+The next thing to do is make a function that puts a number at the beginning of a line. We might as well store these overlays in a variable, so they are easy to remove later. This is just for exploration of how to do it. Later we combine all these pieces together.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">number-line-overlays</span> '()
+  <span style="color: #036A07;">"List of overlays for line numbers."</span>)
+
+(make-variable-buffer-local 'number-line-overlays)
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">number-line</span> (N)
+ <span style="color: #036A07;">"Put an overlay at the beginning of a line."</span>
+  (beginning-of-line)
+  (<span style="color: #0000FF;">let</span> (ov)
+    (<span style="color: #0000FF;">setq</span> ov (make-overlay (point) (point)))
+    (overlay-put ov 'before-string (format <span style="color: #008000;">"%3s"</span> (number-to-string N)))
+    (add-to-list 'number-line-overlays ov)))
+
+(number-line 4)
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="left">#&lt;overlay from 1782 to 1782 in blog.org&gt;</td>
+</tr>
+</tbody>
+</table>
+
+
+<p>
+That looks promising. Let's make a function to clear those overlays. It is so easy it may not even be worth writing.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">number-line-clear</span> ()
+  (mapc 'delete-overlay number-line-overlays)
+  (<span style="color: #0000FF;">setq</span> number-line-overlays '()))
+
+(number-line-clear)
+</pre>
+</div>
+
+<p>
+Finally, we are ready to hack up the code block numbering code. The numbers will not automatically update, so we will write a function that numbers the block, but only temporarily. Any key press will get rid of the numbers so we can get back to work.  I am going to go ahead and make this a stand-alone function and block.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">number-line-overlays</span> '()
+  <span style="color: #036A07;">"List of overlays for line numbers."</span>)
+
+(make-variable-buffer-local 'number-line-overlays)
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">number-line-src-block</span> ()
+  (<span style="color: #0000FF;">interactive</span>)
+  (<span style="color: #0000FF;">save-excursion</span>
+    (<span style="color: #0000FF;">let*</span> ((src-block (org-element-context))
+           (nlines (- (length
+                       (s-split
+                        <span style="color: #008000;">"\n"</span>
+                        (org-element-property <span style="color: #006FE0;">:value</span> src-block)))
+                      1)))
+      (goto-char (org-element-property <span style="color: #006FE0;">:begin</span> src-block))
+      (re-search-forward (regexp-quote (org-element-property <span style="color: #006FE0;">:value</span> src-block)))
+      (goto-char (match-beginning 0))
+
+      (<span style="color: #0000FF;">loop</span> for i from 1 to nlines
+            do
+            (beginning-of-line)
+            (<span style="color: #0000FF;">let</span> (ov)
+              (<span style="color: #0000FF;">setq</span> ov (make-overlay (point) (point)))
+              (overlay-put ov 'before-string (format <span style="color: #008000;">"%3s"</span> (number-to-string i)))
+              (add-to-list 'number-line-overlays ov))
+            (next-line))))
+
+  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">now read a char to clear them</span>
+  (read-key <span style="color: #008000;">"Press a key to clear numbers."</span>)
+  (mapc 'delete-overlay number-line-overlays)
+  (<span style="color: #0000FF;">setq</span> number-line-overlays '()))
+
+(number-line-src-block)
+</pre>
+</div>
+
+<p>
+I am not sure how to get the numbers to automatically update smoothly like they do in linum-mode. That code uses a lot of hooks to make updates work, and embeds them in a minor mode to get rid of them. It also puts them in the fringe I think, but it is not clear how that is done.
+</p>
+
+<p>
+We could modify what happens after the numbers are put on, e.g. pressing numbers might jump to a line, or some other kind of functionality. I don't have a critical need for this right now, so I didn't explore it more. Let me know if you have any good ideas for it!
+</p>
+<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/10/13/Line-numbers-in-org-mode-code-blocks.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/10/13/Line-numbers-in-org-mode-code-blocks#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
+      <div id="The-Kitchingroup-welcomes-Kenate-Nemera"></div>
+      <h2 class="blog_post_title"><a href="/blog/2015/10/11/The-Kitchingroup-welcomes-Kenate-Nemera/" rel="bookmark" title="Permanent Link to The Kitchingroup welcomes Kenate Nemera">The Kitchingroup welcomes Kenate Nemera</a></h2>
+      <p><small><span class="blog_post_date">Posted October 11, 2015 at 02:17 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/news/'>news</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2015/10/11/The-Kitchingroup-welcomes-Kenate-Nemera#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+Kenate Nemera is joining us for 9 months on a Fulbright Fellowship! Kenate is an assistant professor at Addis Ababa University in Ethiopia. Kenate will help us with our recent work in modeling metal oxide polymorphs. Welcome Kenate!
+</p>
+<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/10/11/The-Kitchingroup-welcomes-Kenate-Nemera.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/10/11/The-Kitchingroup-welcomes-Kenate-Nemera#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Automatic-latex-image-toggling-when-cursor-is-on-a-fragment"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/10/09/Automatic-latex-image-toggling-when-cursor-is-on-a-fragment/" rel="bookmark" title="Permanent Link to Automatic latex image toggling when cursor is on a fragment">Automatic latex image toggling when cursor is on a fragment</a></h2>
       <p><small><span class="blog_post_date">Posted October 09, 2015 at 11:54 AM</span> | categories:
@@ -257,7 +475,7 @@ I think there could be another way to do this with text properties, e.g. point-l
       <div id="A-checkbox-list-in-org-mode-with-one-value"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/10/05/A-checkbox-list-in-org-mode-with-one-value/" rel="bookmark" title="Permanent Link to A checkbox list in org-mode with one value">A checkbox list in org-mode with one value</a></h2>
       <p><small><span class="blog_post_date">Posted October 05, 2015 at 07:15 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2015/10/05/A-checkbox-list-in-org-mode-with-one-value#disqus_thread">View Comments</a>
       <p><small><span class="blog_post_date">Updated December 09, 2016 at 03:10 PM</span>
       </small></p>
@@ -745,189 +963,6 @@ Maybe it would make sense to use unittests, or nose or some other testing framew
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/10/03/A-framework-for-automated-feedback-with-Python-and-org-mode#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Publication-in-PCCP-on-oxide-polymorph-reactivty"></div>
-      <h2 class="blog_post_title"><a href="/blog/2015/09/30/Publication-in-PCCP-on-oxide-polymorph-reactivty/" rel="bookmark" title="Permanent Link to Publication in PCCP on oxide polymorph reactivty">Publication in PCCP on oxide polymorph reactivty</a></h2>
-      <p><small><span class="blog_post_date">Posted September 30, 2015 at 11:58 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/publication/'>publication</a>, <a href='/blog/category/news/'>news</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2015/09/30/Publication-in-PCCP-on-oxide-polymorph-reactivty#disqus_thread">View Comments</a>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-
-<p>
-We have a new publication in Phys. Chem. Chem. Phys. on the reactivity of different oxide polymorphs. In this work we examine the reactivity of some common BO<sub>2</sub> oxide polymorphs for Ru, Rh, Pt and Ir oxides. These are all normally rutile formers, but it may be possible to synthesize them in other polymorphs as epitaxial films, or under pressure. We examined how the reactivity of the polymorphs would differ from that of the most stable phase, and the impact of those changes on the oxygen evolution reaction. We predict that the reactivity may be improved in some cases. Congratulations Zhongnan!
-</p>
-
-<p>
-<a href="http://pubs.rsc.org/en/Content/ArticleLanding/2015/CP/C5CP04840K#!divAbstract">http://pubs.rsc.org/en/Content/ArticleLanding/2015/CP/C5CP04840K#!divAbstract</a>
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-bibtex"><span style="color: #006699;">@article</span>{<span style="color: #D0372D;">xu-2015-tunin-oxide</span>,
-  <span style="color: #BA36A5;">author</span> =       "Xu, Zhongnan and Kitchin, John R",
-  <span style="color: #BA36A5;">title</span> =        {Tuning Oxide Activity Through Modification of the Crystal and
-                  Electronic Structure: From Strain To Potential Polymorphs},
-  <span style="color: #BA36A5;">journal</span> =      "Phys. Chem. Chem. Phys.",
-  <span style="color: #BA36A5;">year</span> =         2015,
-  <span style="color: #BA36A5;">doi</span> =          "<span style="color: #006DAF; text-decoration: underline;">10.1039/C5CP04840K</span>",
-  <span style="color: #BA36A5;">url</span> =          "<span style="color: #006DAF; text-decoration: underline;">https://doi.org/10.1039/C5CP04840K</span>",
-  <span style="color: #BA36A5;">publisher</span> =    "The Royal Society of Chemistry",
-  <span style="color: #BA36A5;">abstract</span> =     "Discovering new materials with tailored chemical properties is
-                  vital for advancing key technologies in catalysis and energy
-                  conversion. One strategy is the modification of a material{'}s
-                  crystal structure{,} and new methods allow for the synthesis
-                  and stabilization of potential materials in a range of crystal
-                  polymorph structures. We assess the potential reactivity of
-                  four metastable oxide polymorphs of MO2 (M=Ru{,} Rh{,} Pt{,}
-                  Ir) transition metal oxides. In spite of the similar local
-                  geometry and coordination between atoms in the metastable
-                  polymorphic and stable rutile structure{,} we find that
-                  polymorph reactivities cannot be explained by strain alone and
-                  offer tunable reactivity and increased stability.
-                  Atom-projected density of states reveals that the unique
-                  reactivity of polymorphs are caused by a redistribution of
-                  energy levels of the t2g-states. This structure-activity
-                  relationship is induced by slight distortions to the M-O bonds
-                  in polymorphic structures and is unattainable by strain. We
-                  predict columbite IrO2 to be more active than rutile IrO2 for
-                  oxygen evolution",
-}
-</pre>
-</div>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/09/30/publication-in-PCCP-on-oxide-polymorph-reactivty.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
-
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/09/30/Publication-in-PCCP-on-oxide-polymorph-reactivty#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="A-cursor-goto-hydra-for-emacs"></div>
-      <h2 class="blog_post_title"><a href="/blog/2015/09/28/A-cursor-goto-hydra-for-emacs/" rel="bookmark" title="Permanent Link to A cursor goto hydra for emacs">A cursor goto hydra for emacs</a></h2>
-      <p><small><span class="blog_post_date">Posted September 28, 2015 at 04:38 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/hydra/'>hydra</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2015/09/28/A-cursor-goto-hydra-for-emacs#disqus_thread">View Comments</a>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-
-<p>
-In the spirit of upping my navigation game, here we examine navigation by search like methods. You probably know about C-s with will search forward for a word, and C-r which will search backwards. This will get you to the start of a word pretty easily. It won't get you into a word though, you have to navigate to that, and it isn't too handy to get to a line, or window, or headline in an org-file. Each of these is an emacs command, which as with navigation I don't always remember. Today, we build a hydra to make this easy too.
-</p>
-
-<p>
-We will use features from <a href="https://github.com/abo-abo/avy">avy</a> , and <a href="https://github.com/emacs-helm/helm">helm</a> , and some standard emacs features. <code>avy</code> is pretty neat. It provides an interface to jump to characters, words and subwords by pressing keys. To jump to a character that is visible on the screen, you invoke avy-goto-char and press the character you want to jump to. <code>avy</code> will overlay a sequence of keys you then type to jump to that character. It might be more convenient to jump to a pair of characters, which you do by invoking avy-goto-char-2. Similarly, there are commands to jump to the beginning of a word, and a subword, both with variations that allow you to specify the beginning letter of the word, or to get overlays on every word.
-</p>
-
-<p>
-I spend most of my days in org-files, so I frequently want to jump to an org headline in the current buffer, or some headline in an org-file in my agenda. Helm provides a nice set of functions for this in helm-org-headlines and helm-org-agenda-files-headings. We can also use helm-multi-swoop-org to use the swoop search function in all open org-buffers with helm selection. Within a buffer, you might also use the search forward and backward capabilities, or the more advanced helm-occur or swiper-helm features.
-Finally, I may want my cursor to go to another recent file, or open buffer.
-</p>
-
-<p>
-The hydra we will develop here puts all of these commands a few keystrokes away, with a hint system to remind you what is possible. In addition to these "goto" commands, I add a character to switch to the navigation hydra we developed in the last <a href="http://kitchingroup.cheme.cmu.edu/blog/2015/09/27/Upping-my-Emacs-navigation-game/">post</a> so I can switch to navigation if I change my mind. I also put two commands to store the current position before the goto command, and to return to that stored position conveniently. I bind this hydra to super-g, because the super key isn't used much on my Mac, and g reminds of "goto". So, here is my hydra code:
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defhydra</span> goto (<span style="color: #006FE0;">:color</span> blue <span style="color: #006FE0;">:hint</span> nil)
-  <span style="color: #008000;">"</span>
-<span style="color: #008000;">Goto:</span>
-<span style="color: #008000;">^Char^              ^Word^                ^org^                    ^search^</span>
-<span style="color: #008000;">^^^^^^^^---------------------------------------------------------------------------</span>
-<span style="color: #008000;">_c_: 2 chars        _w_: word by char     _h_: headline in buffer  _o_: helm-occur</span>
-<span style="color: #008000;">_C_: char           _W_: some word        _a_: heading in agenda   _p_: helm-swiper</span>
-<span style="color: #008000;">_L_: char in line   _s_: subword by char  _q_: swoop org buffers   _f_: search forward</span>
-<span style="color: #008000;">^  ^                _S_: some subword     ^ ^                      _b_: search backward</span>
-<span style="color: #008000;">-----------------------------------------------------------------------------------</span>
-<span style="color: #008000;">_B_: helm-buffers       _l_: avy-goto-line</span>
-<span style="color: #008000;">_m_: helm-mini          _i_: ace-window</span>
-<span style="color: #008000;">_R_: helm-recentf</span>
-
-<span style="color: #008000;">_n_: Navigate           _._: mark position _/_: jump to mark</span>
-<span style="color: #008000;">"</span>
-  (<span style="color: #008000;">"c"</span> avy-goto-char-2)
-  (<span style="color: #008000;">"C"</span> avy-goto-char)
-  (<span style="color: #008000;">"L"</span> avy-goto-char-in-line)
-  (<span style="color: #008000;">"w"</span> avy-goto-word-1)
-  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">jump to beginning of some word</span>
-  (<span style="color: #008000;">"W"</span> avy-goto-word-0)
-  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">jump to subword starting with a char</span>
-  (<span style="color: #008000;">"s"</span> avy-goto-subword-1)
-  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">jump to some subword</span>
-  (<span style="color: #008000;">"S"</span> avy-goto-subword-0)
-
-  (<span style="color: #008000;">"l"</span> avy-goto-line)
-  (<span style="color: #008000;">"i"</span> ace-window)
-
-  (<span style="color: #008000;">"h"</span> helm-org-headlines)
-  (<span style="color: #008000;">"a"</span> helm-org-agenda-files-headings)
-  (<span style="color: #008000;">"q"</span> helm-multi-swoop-org)
-
-  (<span style="color: #008000;">"o"</span> helm-occur)
-  (<span style="color: #008000;">"p"</span> swiper-helm)
-
-  (<span style="color: #008000;">"f"</span> isearch-forward)
-  (<span style="color: #008000;">"b"</span> isearch-backward)
-
-  (<span style="color: #008000;">"."</span> org-mark-ring-push <span style="color: #006FE0;">:color</span> red)
-  (<span style="color: #008000;">"/"</span> org-mark-ring-goto <span style="color: #006FE0;">:color</span> blue)
-  (<span style="color: #008000;">"B"</span> helm-buffers-list)
-  (<span style="color: #008000;">"m"</span> helm-mini)
-  (<span style="color: #008000;">"R"</span> helm-recentf)
-  (<span style="color: #008000;">"n"</span> hydra-navigate/body))
-
-(global-set-key (kbd <span style="color: #008000;">"s-g"</span>) 'goto/body)
-</pre>
-</div>
-
-<p>
-As with the last navigation hydra, this is a pretty massive set of options and takes up some decent screen space at the bottom om my emacs. They are mostly here to remind me that there are better navigation options, and with practice I suspect muscle memory will provide fast navigation tools with more precision and fewer keystrokes than simple navigation.
-</p>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/09/28/A-cursor-goto-hydra-for-emacs.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2015/09/28/A-cursor-goto-hydra-for-emacs#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="../27">« Previous Page</a>
   --  
  <a href="../29">Next Page »</a>
@@ -969,11 +1004,11 @@ As with the last navigation hydra, this is a pretty massive set of options and t
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2018/09/24/Solving-nonlinear-algebra-problems-with-internal-state-information/">Solving nonlinear algebra problems with internal state information</a></li>
+      <li><a href="/blog/2018/09/05/Integration-of-the-heat-capacity/">Integration of the heat capacity</a></li>
       <li><a href="/blog/2018/09/04/A-new-ode-integrator-function-in-scipy/">A new ode integrator function in scipy</a></li>
       <li><a href="/blog/2018/07/01/Getting-geo-tagged-information-from-photos-for-blogging/">Getting geo-tagged information from photos for blogging</a></li>
       <li><a href="/blog/2018/05/17/Literate-programming-with-python-doctests/">Literate programming with python doctests</a></li>
-      <li><a href="/blog/2018/05/14/f-strings-in-emacs-lisp/">f-strings in emacs-lisp</a></li>
-      <li><a href="/blog/2018/05/09/Making-it-easier-to-extend-the-export-of-org-mode-links-with-generic-functions/">Making it easier to extend the export of org-mode links with generic functions</a></li>
     </ul>
   </section>
 

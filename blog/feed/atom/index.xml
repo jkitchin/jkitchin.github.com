@@ -8,7 +8,7 @@
   <title type="text">The Kitchin Research Group</title>
   <subtitle type="text">Chemical Engineering at Carnegie Mellon University</subtitle>
 
-  <updated>2018-09-05T01:21:11Z</updated>
+  <updated>2018-09-24T19:25:15Z</updated>
   <generator uri="http://blogofile.com/">Blogofile</generator>
 
   <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog" />
@@ -19,13 +19,512 @@
       <name></name>
       <uri>http://jkitchin.github.io/blog</uri>
     </author>
+    <title type="html"><![CDATA[Solving nonlinear algebra problems with internal state information]]></title>
+    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2018/09/24/Solving-nonlinear-algebra-problems-with-internal-state-information" />
+    <id>http://jkitchin.github.io/blog/2018/09/24/Solving-nonlinear-algebra-problems-with-internal-state-information</id>
+    <updated>2018-09-24T15:25:06Z</updated>
+    <published>2018-09-24T15:25:06Z</published>
+    <category scheme="http://jkitchin.github.io/blog" term="python" />
+    <category scheme="http://jkitchin.github.io/blog" term="nonlinear algebra" />
+    <summary type="html"><![CDATA[Solving nonlinear algebra problems with internal state information]]></summary>
+    <content type="html" xml:base="http://jkitchin.github.io/blog/2018/09/24/Solving-nonlinear-algebra-problems-with-internal-state-information"><![CDATA[
+
+
+&lt;div id="table-of-contents"&gt;
+&lt;h2&gt;Table of Contents&lt;/h2&gt;
+&lt;div id="text-table-of-contents"&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href="#org532d5ce"&gt;1. First approach&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#orga01a4af"&gt;2. Second approach - use a state dictionary as an arg in the objective function&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#orgc590864"&gt;3. third approach - a callable object&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#orgaef298d"&gt;4. Summary&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;p&gt;
+In engineering, we often need to solve an equation in one variable, and then use the solution to compute other variables. For example, we might want the bubble point temperature of a mixture, and then to determine the composition of the vapor phase that has formed. In other words, we compute the temperature, and then have to use it in a subsequent step to get the composition. Here is a bubble point computation adapted from example 10.2 in Smith and van Ness, Introduction to Chemical Engineering Thermodynamics.
+&lt;/p&gt;
+
+&lt;p&gt;
+Given a solution of acetone (x&lt;sub&gt;1&lt;/sub&gt;=0.3), acetonitrile (x&lt;sub&gt;2&lt;/sub&gt;=0.45) and nitromethane (x&lt;sub&gt;3&lt;/sub&gt;=0.25) at a total pressure of 80 kPa, compute the bubble point temperature and gas phase composition.
+&lt;/p&gt;
+
+&lt;p&gt;
+The key here is to find a temperature where the gas-phase mole fractions sum to one. The gas phase mole fractions are defined by:
+&lt;/p&gt;
+
+&lt;p&gt;
+\(y_i = x_i Pvap_i(T) / P\)
+&lt;/p&gt;
+
+&lt;p&gt;
+The typical way I would teach students how solve this looks like this. It uses the Antoine equation coded below to estimate the vapor pressure of each component as a function of temperature, and then uses fsolve to find a temperature where the gas-phase mole fractions sum to one.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; scipy.optimize &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; fsolve
+
+&lt;span style="color: #BA36A5;"&gt;acetone&lt;/span&gt; = (14.5463, 2940.46, 237.22)
+&lt;span style="color: #BA36A5;"&gt;acetonitrile&lt;/span&gt; = (14.2724, 2945.47,224)
+&lt;span style="color: #BA36A5;"&gt;nitromethane&lt;/span&gt; = (14.2043, 2972.64, 209)
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;antoine&lt;/span&gt;(T, A, B, C):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;T&lt;/span&gt; = &lt;span style="color: #006FE0;"&gt;float&lt;/span&gt;(T) &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;there is some subtle issue that comes up when T is an array,&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;as passed in from fsolve. It needs to be a float, or you get&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;the wrong answer.&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; np.exp(A - B / (T + C))
+
+&lt;span style="color: #BA36A5;"&gt;x&lt;/span&gt; = np.array([0.3, 0.45, 0.25])
+&lt;span style="color: #BA36A5;"&gt;P&lt;/span&gt; = 80
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;objective&lt;/span&gt;(T):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;Pvap&lt;/span&gt; = np.array([antoine(T, *pars) &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; pars &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; [acetone, acetonitrile, nitromethane]])
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;y&lt;/span&gt; = x * Pvap / P
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; 1 - y.&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;()
+
+Tans, = fsolve(objective, 70)
+
+&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;This is where we end up repeating code&lt;/span&gt;
+&lt;span style="color: #BA36A5;"&gt;Pvap&lt;/span&gt; = np.array([antoine(Tans, *pars) &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; pars &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; [acetone, acetonitrile, nitromethane]])
+&lt;span style="color: #BA36A5;"&gt;y&lt;/span&gt; = x * Pvap / P
+
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(f&lt;span style="color: #008000;"&gt;'The bubble point temperature is {Tans:1.2f} degC, and the gas phase compositions are {np.round(y, 4)}.'&lt;/span&gt;)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+The bubble point temperature is 68.60 degC, and the gas phase compositions are [ 0.5196  0.3773  0.1031].
+
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+This solution works fine, but there is in my opinion, an issue with the small amount of repeated code at the end that is required to get the composition of the gas-phase. This is a small problem here, but as the problems get bigger it is more and more tedious to correctly repeat all the code to see what the state of a system is at the solution, and it seems wasteful to have to repeat the computations; they were known in the objective function. In the following subsections, I explore some alternative approaches to reduce the repetition.
+&lt;/p&gt;
+
+&lt;div id="outline-container-org532d5ce" class="outline-2"&gt;
+&lt;h2 id="org532d5ce"&gt;&lt;span class="section-number-2"&gt;1&lt;/span&gt; First approach&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-1"&gt;
+&lt;p&gt;
+There are two small chunks of repeated code in the example above. One way to minimize the amount of repeated code is to pull these out into reusable functions. Here, we do that, and only have to repeat one function call at the end to get the system composition out.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; scipy.optimize &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; fsolve
+
+&lt;span style="color: #BA36A5;"&gt;acetone&lt;/span&gt; = (14.5463, 2940.46, 237.22)
+&lt;span style="color: #BA36A5;"&gt;acetonitrile&lt;/span&gt; = (14.2724, 2945.47,224)
+&lt;span style="color: #BA36A5;"&gt;nitromethane&lt;/span&gt; = (14.2043, 2972.64, 209)
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;antoine&lt;/span&gt;(T, A, B, C):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;T&lt;/span&gt; = &lt;span style="color: #006FE0;"&gt;float&lt;/span&gt;(T) &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;there is some subtle issue that comes up when T is an array,&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;as passed in from fsolve. It needs to be a float, or you get&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;the wrong answer.&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; np.exp(A - B / (T + C))
+
+&lt;span style="color: #BA36A5;"&gt;x&lt;/span&gt; = np.array([0.3, 0.45, 0.25])
+&lt;span style="color: #BA36A5;"&gt;P&lt;/span&gt; = 80
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;Pvap&lt;/span&gt;(T):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; np.array([antoine(T, *pars) &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; pars &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; [acetone, acetonitrile, nitromethane]])
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;y&lt;/span&gt;(T):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x * Pvap(T) / P
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;objective&lt;/span&gt;(T):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; 1 - y(T).&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;()
+
+Tans, = fsolve(objective, 70)
+
+&lt;span style="color: #BA36A5;"&gt;yans&lt;/span&gt; = y(Tans) &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;minimal repetition of a calculation to get the composition state.&lt;/span&gt;
+
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(f&lt;span style="color: #008000;"&gt;'The bubble point temperature is {Tans:1.2f} degC, and the gas phase compositions are {np.round(yans, 4)}.'&lt;/span&gt;)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+The bubble point temperature is 68.60 degC, and the gas phase compositions are [ 0.5196  0.3773  0.1031].
+
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+That is a small improvement. The code is not much shorter, just reorganized for easier reuse. It would be easy in this case to also get the vapor pressures of each species at this temperature, just by calling the &lt;code&gt;Pvap&lt;/code&gt; function. Still, it feels annoying we have to recalculate the answer to something you know must have already been known when the objective function was evaluated.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-orga01a4af" class="outline-2"&gt;
+&lt;h2 id="orga01a4af"&gt;&lt;span class="section-number-2"&gt;2&lt;/span&gt; Second approach - use a state dictionary as an arg in the objective function&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-2"&gt;
+&lt;p&gt;
+In this approach, we will use a dictionary to store the state of the objective function. The dictionary will be in the global namespace, and we will just update it each time the objective function is called.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; scipy.optimize &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; fsolve
+
+&lt;span style="color: #BA36A5;"&gt;acetone&lt;/span&gt; = (14.5463, 2940.46, 237.22)
+&lt;span style="color: #BA36A5;"&gt;acetonitrile&lt;/span&gt; = (14.2724, 2945.47,224)
+&lt;span style="color: #BA36A5;"&gt;nitromethane&lt;/span&gt; = (14.2043, 2972.64, 209)
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;antoine&lt;/span&gt;(T, A, B, C):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; np.exp(A - B / (T + C))
+
+&lt;span style="color: #BA36A5;"&gt;x&lt;/span&gt; = np.array([0.3, 0.45, 0.25])
+
+&lt;span style="color: #BA36A5;"&gt;state&lt;/span&gt; = {}
+
+&lt;span style="color: #BA36A5;"&gt;P&lt;/span&gt; = 80
+
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;objective&lt;/span&gt;(T, state):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;T&lt;/span&gt; = &lt;span style="color: #006FE0;"&gt;float&lt;/span&gt;(T)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;Pvap&lt;/span&gt; = np.array([antoine(T, *pars) &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; pars &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; [acetone, acetonitrile, nitromethane]])
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;y&lt;/span&gt; = x * Pvap / P
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   state.update({&lt;span style="color: #008000;"&gt;'y'&lt;/span&gt;: y,
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt; &lt;span style="color: #008000;"&gt;'T'&lt;/span&gt;:  T,
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt; &lt;span style="color: #008000;"&gt;'Pvap'&lt;/span&gt;: Pvap,
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt; &lt;span style="color: #008000;"&gt;'z'&lt;/span&gt;: 1 - y.&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;()})
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; state[&lt;span style="color: #008000;"&gt;'z'&lt;/span&gt;]
+
+Tans, = fsolve(objective, 70, args=(state,))
+
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(f&lt;span style="color: #008000;"&gt;'The bubble point temperature is {Tans:1.2f} degC, and the gas phase compositions are {np.round(state["y"], 4)}.'&lt;/span&gt;)
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(Tans- state[&lt;span style="color: #008000;"&gt;'T'&lt;/span&gt;]) &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;check to make sure last value from objective is the same as the solution&lt;/span&gt;
+state
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+The bubble point temperature is 68.60 degC, and the gas phase compositions are [ 0.5196  0.3773  0.1031].
+0.0
+
+
+&lt;/pre&gt;
+
+&lt;pre class="example"&gt;
+{'Pvap': array([ 138.5620209 ,   67.07966082,   32.98218545]),
+ 'T': 68.60064626680659,
+ 'y': array([ 0.51960758,  0.37732309,  0.10306933]),
+ 'z': -3.4194869158454821e-14}
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+What we see in the &lt;code&gt;state&lt;/code&gt; dictionary is the result from the last time that the objective function was called. It appears that the list time it was called is also where the solution comes from, so the other variables stored here should be consistent. Now you can see we have access to both the Pvap and y composition data from the solution without needing any further computations. This approach could be easily extended to store any derived quantities that represent internal states you want. We don't store any history in this, but you could by appending to lists in the dictionary.
+&lt;/p&gt;
+
+&lt;p&gt;
+One &lt;i&gt;feature&lt;/i&gt; of this is the state dictionary is updated by side effect, and you have to use the state dictionary as an argument parameter to the function.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+
+&lt;div id="outline-container-orgc590864" class="outline-2"&gt;
+&lt;h2 id="orgc590864"&gt;&lt;span class="section-number-2"&gt;3&lt;/span&gt; third approach - a callable object&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-3"&gt;
+&lt;p&gt;
+A standard approach to tracking state data is to encapsulate it in a class. fsolve requires a callable function that returns zero at the solution. It is possible to make an object &lt;i&gt;act like a callable function&lt;/i&gt; if we define a &lt;code&gt;__call__&lt;/code&gt; method on it. Then, in this method, we can set attributes on the object to keep track of the state, similar to what we did with the dictionary. Since we have a class, we can define some other special dunder methods, e.g. to print the solution. Here is one implementation.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; scipy.optimize &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; fsolve
+
+&lt;span style="color: #0000FF;"&gt;class&lt;/span&gt; &lt;span style="color: #6434A3;"&gt;Objective&lt;/span&gt;(&lt;span style="color: #006FE0;"&gt;object&lt;/span&gt;):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;acetone&lt;/span&gt; = (14.5463, 2940.46, 237.22)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;acetonitrile&lt;/span&gt; = (14.2724, 2945.47,224)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;nitromethane&lt;/span&gt; = (14.2043, 2972.64, 209)
+
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;__init__&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;, x, P):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.x = np.array(x)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.P = P
+
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;antoine&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;, T, A, B, C):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; np.exp(A - B / (T + C))
+
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;__str__&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;s&lt;/span&gt; = f&lt;span style="color: #008000;"&gt;'The bubble point temperature is {self.T:1.2f} degC, and the gas phase compositions are {np.round(self.y, 4)}.'&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; s
+
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;__call__&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;, T):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;T&lt;/span&gt; = &lt;span style="color: #006FE0;"&gt;float&lt;/span&gt;(T)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.T = T
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.Pvap = np.array([&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.antoine(T, *pars) &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; pars &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; [&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.acetone, &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.acetonitrile, &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.nitromethane]])
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.y = &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.x * &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.Pvap / &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.P
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; 1 - &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.y.&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;()
+
+&lt;span style="color: #BA36A5;"&gt;obj&lt;/span&gt; = Objective(x=np.array([0.3, 0.45, 0.25]), P=80)
+ans, = fsolve(obj, 60)
+
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(obj)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+The bubble point temperature is 68.60 degC, and the gas phase compositions are [ 0.5196  0.3773  0.1031].
+
+
+&lt;/pre&gt;
+
+
+&lt;p&gt;
+Similar to the state dictionary approach, there is no repeated code here, and no repeated evaluations to get to the state after the solution. This is a bit more advanced Python than the state dictionary. Note, this implementation doesn't have any checking in it, so if you try to print the object before calling fsolve, you will get an error because the attributes don't exist until &lt;i&gt;after&lt;/i&gt; the object has been called. That is also an issue with the state dictionary above.
+&lt;/p&gt;
+
+&lt;p&gt;
+There are many choices you could make in constructing this example. Maybe this one has gone too far in encapsulating the antoine function as a method. That limits its reusability for another problem. On the other hand, you can reuse it for any other pressure or liquid composition of acetone, acetonitrile and nitromethane very readily.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-orgaef298d" class="outline-2"&gt;
+&lt;h2 id="orgaef298d"&gt;&lt;span class="section-number-2"&gt;4&lt;/span&gt; Summary&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-4"&gt;
+&lt;p&gt;
+We looked at three ways to reduce having redundant code in the solution to problems involving nonlinear algebra. The first approach is conceptually simple; you break out as much as you can into reusable functions, and then at most have repeated function calls. These computations are usually not expensive, so repeating them is mostly tedious and provides opportunities for mistakes. This is probably what I will stick to for teaching students that are just seeing this for the first time.
+&lt;/p&gt;
+
+&lt;p&gt;
+The second approach used a dictionary (other data structures could work too) as an argument to the objective function, and internal states were kept in the dictionary so that after the problem was solved, you have immediate access to them. This is more advanced than the first approach because it requires understanding that the dictionary is modified as a side effect of solving the problem.
+&lt;/p&gt;
+
+&lt;p&gt;
+Finally,  we considered an object-oriented class encapsulation of the information we wanted. I consider this the most advanced Python solution, since it requires some understanding of classes, dunder methods and attributes, and how to make an instance of a class.
+&lt;/p&gt;
+
+&lt;p&gt;
+The last two methods seem like candidates for an advanced class in problem solving. Thoughts?
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;p&gt;Copyright (C) 2018 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
+&lt;p&gt;&lt;a href="/org/2018/09/24/Solving-nonlinear-algebra-problems-with-internal-state-information.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Org-mode version = 9.1.13&lt;/p&gt;]]></content>
+  </entry>
+  <entry>
+    <author>
+      <name></name>
+      <uri>http://jkitchin.github.io/blog</uri>
+    </author>
+    <title type="html"><![CDATA[Integration of the heat capacity]]></title>
+    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2018/09/05/Integration-of-the-heat-capacity" />
+    <id>http://jkitchin.github.io/blog/2018/09/05/Integration-of-the-heat-capacity</id>
+    <updated>2018-09-05T13:48:14Z</updated>
+    <published>2018-09-05T13:48:14Z</published>
+    <category scheme="http://jkitchin.github.io/blog" term="uncategorized" />
+    <summary type="html"><![CDATA[Integration of the heat capacity]]></summary>
+    <content type="html" xml:base="http://jkitchin.github.io/blog/2018/09/05/Integration-of-the-heat-capacity"><![CDATA[
+
+
+&lt;div id="table-of-contents"&gt;
+&lt;h2&gt;Table of Contents&lt;/h2&gt;
+&lt;div id="text-table-of-contents"&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href="#orgf41bb27"&gt;1. Integrate the heat capacity&lt;/a&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href="#orgf021687"&gt;1.1. solution&amp;#xa0;&amp;#xa0;&amp;#xa0;&lt;span class="tag"&gt;&lt;span class="solution"&gt;solution&lt;/span&gt;&lt;/span&gt;&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;a href="#orgebff74a"&gt;2. Verify via &amp;Delta; H&lt;/a&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href="#orgb0cce22"&gt;2.1. solution&amp;#xa0;&amp;#xa0;&amp;#xa0;&lt;span class="tag"&gt;&lt;span class="solution"&gt;solution&lt;/span&gt;&lt;/span&gt;&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;p&gt;
+From thermodynamics, the heat capacity is defined as \(C_p = \left(\frac{dH}{dT}\right)_P\). That means we can calculate the heat required to change the temperature of some material from the following integral:
+&lt;/p&gt;
+
+&lt;p&gt;
+\(H_2 - H_1 = Q = \int_{T_1}^{T_2} C_p(T) dT\)
+&lt;/p&gt;
+
+&lt;p&gt;
+In the range of 298-1200K, the heat capacity of CO&lt;sub&gt;2&lt;/sub&gt; is given by a &lt;a href="https://webbook.nist.gov/cgi/cbook.cgi?ID=C124389&amp;amp;Units=SI&amp;amp;Mask=1#Thermo-Gas"&gt;Shomate polynomial&lt;/a&gt;:
+&lt;/p&gt;
+
+&lt;p&gt;
+\(C_p(t) = A + B t + C t^2 + D t^3 + E/t^2\) with units of J/mol/K.
+&lt;/p&gt;
+
+&lt;p&gt;
+where \(t = T / 1000\), and \(T\) is the temperature in K. The constants in the equation are
+&lt;/p&gt;
+
+&lt;table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides"&gt;
+
+
+&lt;colgroup&gt;
+&lt;col  class="org-left" /&gt;
+
+&lt;col  class="org-right" /&gt;
+&lt;/colgroup&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th scope="col" class="org-left"&gt;&amp;#xa0;&lt;/th&gt;
+&lt;th scope="col" class="org-right"&gt;value&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td class="org-left"&gt;A&lt;/td&gt;
+&lt;td class="org-right"&gt;24.99735&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-left"&gt;B&lt;/td&gt;
+&lt;td class="org-right"&gt;55.18696&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-left"&gt;C&lt;/td&gt;
+&lt;td class="org-right"&gt;-33.69137&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-left"&gt;D&lt;/td&gt;
+&lt;td class="org-right"&gt;7.948387&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-left"&gt;E&lt;/td&gt;
+&lt;td class="org-right"&gt;-0.136638&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-left"&gt;F&lt;/td&gt;
+&lt;td class="org-right"&gt;-403.6075&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-left"&gt;G&lt;/td&gt;
+&lt;td class="org-right"&gt;228.2431&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-left"&gt;H&lt;/td&gt;
+&lt;td class="org-right"&gt;-393.5224&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;div id="outline-container-orgf41bb27" class="outline-2"&gt;
+&lt;h2 id="orgf41bb27"&gt;&lt;span class="section-number-2"&gt;1&lt;/span&gt; Integrate the heat capacity&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-1"&gt;
+&lt;p&gt;
+Use this information to compute the energy (Q in kJ/mol) required to raise the temperature of CO&lt;sub&gt;2&lt;/sub&gt; from 300K to 600K. You should use &lt;code&gt;scipy.integrate.quad&lt;/code&gt; to perform the integration.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;
+&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-orgf021687" class="outline-3"&gt;
+&lt;h3 id="orgf021687"&gt;&lt;span class="section-number-3"&gt;1.1&lt;/span&gt; solution&amp;#xa0;&amp;#xa0;&amp;#xa0;&lt;span class="tag"&gt;&lt;span class="solution"&gt;solution&lt;/span&gt;&lt;/span&gt;&lt;/h3&gt;
+&lt;div class="outline-text-3" id="text-1-1"&gt;
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #BA36A5;"&gt;A&lt;/span&gt; =  24.99735
+&lt;span style="color: #BA36A5;"&gt;B&lt;/span&gt; =  55.18696
+&lt;span style="color: #BA36A5;"&gt;C&lt;/span&gt; = -33.69137
+&lt;span style="color: #BA36A5;"&gt;D&lt;/span&gt; =  7.948387
+&lt;span style="color: #BA36A5;"&gt;E&lt;/span&gt; = -0.136638
+&lt;span style="color: #BA36A5;"&gt;F&lt;/span&gt; = -403.6075
+&lt;span style="color: #BA36A5;"&gt;G&lt;/span&gt; =  228.2431
+&lt;span style="color: #BA36A5;"&gt;H&lt;/span&gt; = -393.5224
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;Cp&lt;/span&gt;(T):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;t&lt;/span&gt; = T / 1000
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; A + B*t + C*t**2 + D*t**3 + E / t**2
+
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; scipy.integrate &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; quad
+
+&lt;span style="color: #BA36A5;"&gt;dH&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;_&lt;/span&gt; = quad(Cp, 300, 600)
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(f&lt;span style="color: #008000;"&gt;'The change in enthalpy is {dH / 1000:1.3f} kJ/mol'&lt;/span&gt;)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+The change in enthalpy is 12.841 kJ/mol
+
+
+&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+
+&lt;div id="outline-container-orgebff74a" class="outline-2"&gt;
+&lt;h2 id="orgebff74a"&gt;&lt;span class="section-number-2"&gt;2&lt;/span&gt; Verify via &amp;Delta; H&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-2"&gt;
+&lt;p&gt;
+The change in enthalpy (in kJ / mol) from standard state is
+&lt;/p&gt;
+
+&lt;p&gt;
+\(dH − dH_{298.15}= A t + B t^2/2 + C t^3/3 + D t^4/4 − E/t + F − H\)
+&lt;/p&gt;
+
+&lt;p&gt;
+again, \(t = T / 1000\).
+&lt;/p&gt;
+
+&lt;p&gt;
+Use this equation to compute the change in enthalpy when you increase the temperature from 300 K to 600 K.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;
+&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+
+&lt;div id="outline-container-orgb0cce22" class="outline-3"&gt;
+&lt;h3 id="orgb0cce22"&gt;&lt;span class="section-number-3"&gt;2.1&lt;/span&gt; solution&amp;#xa0;&amp;#xa0;&amp;#xa0;&lt;span class="tag"&gt;&lt;span class="solution"&gt;solution&lt;/span&gt;&lt;/span&gt;&lt;/h3&gt;
+&lt;div class="outline-text-3" id="text-2-1"&gt;
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;dH&lt;/span&gt;(T):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;t&lt;/span&gt; = T / 1000
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; A * t + B*t**2 / 2 + C * t**3 / 3 + D * t**4 / 4 - E/t + F - H
+
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(f&lt;span style="color: #008000;"&gt;'The change in enthalpy is {dH(600) - dH(300):1.3f} kJ/mol'&lt;/span&gt;)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+The change in enthalpy is 12.841 kJ/mol
+
+
+&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;p&gt;Copyright (C) 2018 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
+&lt;p&gt;&lt;a href="/org/2018/09/05/Integration-of-the-heat-capacity.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Org-mode version = 9.1.13&lt;/p&gt;]]></content>
+  </entry>
+  <entry>
+    <author>
+      <name></name>
+      <uri>http://jkitchin.github.io/blog</uri>
+    </author>
     <title type="html"><![CDATA[A new ode integrator function in scipy]]></title>
     <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2018/09/04/A-new-ode-integrator-function-in-scipy" />
     <id>http://jkitchin.github.io/blog/2018/09/04/A-new-ode-integrator-function-in-scipy</id>
     <updated>2018-09-04T21:20:58Z</updated>
     <published>2018-09-04T21:20:58Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="scipy" />
     <category scheme="http://jkitchin.github.io/blog" term="ode" />
+    <category scheme="http://jkitchin.github.io/blog" term="scipy" />
     <summary type="html"><![CDATA[A new ode integrator function in scipy]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2018/09/04/A-new-ode-integrator-function-in-scipy"><![CDATA[
 
@@ -285,9 +784,9 @@ Internet: am I missing something obvious here?
     <id>http://jkitchin.github.io/blog/2018/07/01/Getting-geo-tagged-information-from-photos-for-blogging</id>
     <updated>2018-07-01T20:05:42Z</updated>
     <published>2018-07-01T19:17:18Z</published>
+    <category scheme="http://jkitchin.github.io/blog" term="orgmode" />
     <category scheme="http://jkitchin.github.io/blog" term="geotag" />
     <category scheme="http://jkitchin.github.io/blog" term="emacs" />
-    <category scheme="http://jkitchin.github.io/blog" term="orgmode" />
     <summary type="html"><![CDATA[Getting geo-tagged information from photos for blogging]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2018/07/01/Getting-geo-tagged-information-from-photos-for-blogging"><![CDATA[
 
@@ -640,8 +1139,8 @@ There is one little footnote to speak of, and that is I had to do a little hacke
     <updated>2018-05-18T15:07:13Z</updated>
     <published>2018-05-17T16:41:19Z</published>
     <category scheme="http://jkitchin.github.io/blog" term="noweb" />
-    <category scheme="http://jkitchin.github.io/blog" term="python" />
     <category scheme="http://jkitchin.github.io/blog" term="orgmode" />
+    <category scheme="http://jkitchin.github.io/blog" term="python" />
     <summary type="html"><![CDATA[Literate programming with python doctests]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2018/05/17/Literate-programming-with-python-doctests"><![CDATA[
 
@@ -1115,8 +1614,8 @@ Nevertheless, this simple solution matches what I do most of the time anyway, so
     <id>http://jkitchin.github.io/blog/2018/05/09/Making-it-easier-to-extend-the-export-of-org-mode-links-with-generic-functions</id>
     <updated>2018-05-09T19:49:14Z</updated>
     <published>2018-05-09T19:49:14Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="emacs" />
     <category scheme="http://jkitchin.github.io/blog" term="orgmode" />
+    <category scheme="http://jkitchin.github.io/blog" term="emacs" />
     <summary type="html"><![CDATA[Making it easier to extend the export of org-mode links with generic functions]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2018/05/09/Making-it-easier-to-extend-the-export-of-org-mode-links-with-generic-functions"><![CDATA[
 
@@ -1373,8 +1872,8 @@ You can see a read-only version of the paper here: &lt;a href="https://rdcu.be/L
     <id>http://jkitchin.github.io/blog/2018/04/11/Caching-searches-using-biblio-and-only-seeing-new-results</id>
     <updated>2018-04-11T20:46:56Z</updated>
     <published>2018-04-11T20:46:56Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="arxiv" />
     <category scheme="http://jkitchin.github.io/blog" term="elisp" />
+    <category scheme="http://jkitchin.github.io/blog" term="arxiv" />
     <category scheme="http://jkitchin.github.io/blog" term="biblio" />
     <summary type="html"><![CDATA[Caching searches using biblio and only seeing new results]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2018/04/11/Caching-searches-using-biblio-and-only-seeing-new-results"><![CDATA[
@@ -1622,124 +2121,6 @@ Congratulations Zhitao!
 &lt;/p&gt;
 &lt;p&gt;Copyright (C) 2018 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
 &lt;p&gt;&lt;a href="/org/2018/04/09/Zhitao-Guo-receives-the-2017-2018-James-C.-Meade-Fellowship-in-Chemical-Engineering.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
-&lt;p&gt;Org-mode version = 9.1.6&lt;/p&gt;]]></content>
-  </entry>
-  <entry>
-    <author>
-      <name></name>
-      <uri>http://jkitchin.github.io/blog</uri>
-    </author>
-    <title type="html"><![CDATA[New publication in Catalysis Today]]></title>
-    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2018/04/01/New-publication-in-Catalysis-Today" />
-    <id>http://jkitchin.github.io/blog/2018/04/01/New-publication-in-Catalysis-Today</id>
-    <updated>2018-04-01T19:07:10Z</updated>
-    <published>2018-04-01T19:07:10Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="publication" />
-    <category scheme="http://jkitchin.github.io/blog" term="news" />
-    <summary type="html"><![CDATA[New publication in Catalysis Today]]></summary>
-    <content type="html" xml:base="http://jkitchin.github.io/blog/2018/04/01/New-publication-in-Catalysis-Today"><![CDATA[
-
-
-&lt;p&gt;
-In this paper we continue our exploration of using high-dimensional neural networks (NN) to model metal surface properties. Our first work started with modeling Au in a variety of structures using ReaxFF and a NN &lt;a class='org-ref-reference' href="#boes-2016-neural-networ"&gt;boes-2016-neural-networ&lt;/a&gt;. We then modeled atomic oxygen adsorbates on a Pd (111) surface &lt;a class='org-ref-reference' href="#boes-2017-neural-networ"&gt;boes-2017-neural-networ&lt;/a&gt;, and segregation of an Au-Pd alloy surface &lt;a class='org-ref-reference' href="#boes-2017-model-segreg"&gt;boes-2017-model-segreg&lt;/a&gt;. Our goal throughout this work has been to systematically build up complexity in the systems we are modeling, and to explore the limitations of these potentials for modeling surfaces. This current work happened in parallel with those works, and focused on modeling Pd adatom diffusion on Pd(111) surfaces. We show another example of how to train a neural network, and then to use it model the temperature dependent diffusion of adatoms on a metal surface using molecular dynamics and Arrhenius analysis.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-bibtex"&gt;&lt;span style="color: #006699;"&gt;@article&lt;/span&gt;{&lt;span style="color: #D0372D;"&gt;gao-2018-model-pallad&lt;/span&gt;,
-  &lt;span style="color: #BA36A5;"&gt;author&lt;/span&gt; =       {Tianyu Gao and John R. Kitchin},
-  &lt;span style="color: #BA36A5;"&gt;title&lt;/span&gt; =        {Modeling Palladium Surfaces With Density Functional Theory,
-                  Neural Networks and Molecular Dynamics},
-  &lt;span style="color: #BA36A5;"&gt;journal&lt;/span&gt; =      {Catalysis Today},
-  &lt;span style="color: #BA36A5;"&gt;year&lt;/span&gt; =         2018,
-  &lt;span style="color: #BA36A5;"&gt;doi&lt;/span&gt; =          {&lt;span style="color: #006DAF; text-decoration: underline;"&gt;10.1016/j.cattod.2018.03.045&lt;/span&gt;},
-  &lt;span style="color: #BA36A5;"&gt;url&lt;/span&gt; =          {&lt;span style="color: #006DAF; text-decoration: underline;"&gt;https://doi.org/10.1016/j.cattod.2018.03.045&lt;/span&gt;},
-  &lt;span style="color: #BA36A5;"&gt;DATE_ADDED&lt;/span&gt; =   {Sun Apr 1 18:47:55 2018},
-}
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-&lt;script type='text/javascript' src='https://d1bxh8uas1mnw7.cloudfront.net/assets/embed.js'&gt;&lt;/script&gt;
-&lt;div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1016/j.cattod.2018.03.045'&gt;&lt;/div&gt;
-&lt;/p&gt;
-
-&lt;p&gt;
-&lt;h1 class='org-ref-bib-h1'&gt;Bibliography&lt;/h1&gt;
-&lt;ul class='org-ref-bib'&gt;&lt;li&gt;&lt;a id="boes-2016-neural-networ"&gt;[boes-2016-neural-networ]&lt;/a&gt; &lt;a name="boes-2016-neural-networ"&gt;Jacob Boes, Mitchell Groenenboom, John Keith, &amp; John Kitchin, Neural Network and Reaxff Comparison for Au Properties, &lt;i&gt;Int. J. Quantum Chem.&lt;/i&gt;, &lt;b&gt;116(13)&lt;/b&gt;, 979-987 (2016). &lt;a href="https://doi.org/10.1002/qua.25115"&gt;link&lt;/a&gt;. &lt;a href="https://doi.org/10.1002/qua.25115"&gt;doi&lt;/a&gt;.&lt;/li&gt;
-&lt;li&gt;&lt;a id="boes-2017-neural-networ"&gt;[boes-2017-neural-networ]&lt;/a&gt; &lt;a name="boes-2017-neural-networ"&gt;Jacob Boes &amp; John Kitchin, Neural Network Predictions of Oxygen Interactions on a Dynamic  Pd Surface, &lt;i&gt;Molecular Simulation&lt;/i&gt;, &lt;b&gt;&lt;/b&gt;, 1-9 (2017). &lt;a href="https://doi.org/10.1080/08927022.2016.1274984"&gt;link&lt;/a&gt;. &lt;a href="https://doi.org/10.1080/08927022.2016.1274984"&gt;doi&lt;/a&gt;.&lt;/li&gt;
-&lt;li&gt;&lt;a id="boes-2017-model-segreg"&gt;[boes-2017-model-segreg]&lt;/a&gt; &lt;a name="boes-2017-model-segreg"&gt;Boes &amp; Kitchin, Modeling Segregation on AuPd(111) Surfaces With Density  Functional Theory and Monte Carlo Simulations, &lt;i&gt;The Journal of Physical Chemistry C&lt;/i&gt;, &lt;b&gt;121(6)&lt;/b&gt;, 3479-3487 (2017). &lt;a href="https://doi.org/10.1021/acs.jpcc.6b12752"&gt;link&lt;/a&gt;. &lt;a href="https://doi.org/10.1021/acs.jpcc.6b12752"&gt;doi&lt;/a&gt;.&lt;/li&gt;
-&lt;/ul&gt;&lt;/p&gt;
-&lt;p&gt;Copyright (C) 2018 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
-&lt;p&gt;&lt;a href="/org/2018/04/01/New-publication-in-Catalysis-Today.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
-&lt;p&gt;Org-mode version = 9.1.6&lt;/p&gt;
-]]></content>
-  </entry>
-  <entry>
-    <author>
-      <name></name>
-      <uri>http://jkitchin.github.io/blog</uri>
-    </author>
-    <title type="html"><![CDATA[New publication in Topics in Catalysis]]></title>
-    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2018/01/27/New-publication-in-Topics-in-Catalysis" />
-    <id>http://jkitchin.github.io/blog/2018/01/27/New-publication-in-Topics-in-Catalysis</id>
-    <updated>2018-04-01T18:49:28Z</updated>
-    <published>2018-01-27T16:39:35Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="publication" />
-    <category scheme="http://jkitchin.github.io/blog" term="news" />
-    <summary type="html"><![CDATA[New publication in Topics in Catalysis]]></summary>
-    <content type="html" xml:base="http://jkitchin.github.io/blog/2018/01/27/New-publication-in-Topics-in-Catalysis"><![CDATA[
-
-
-&lt;p&gt;
-Single atom alloys are alloys in the extreme dilute limit, where single atoms of a reactive metal are surrounded by comparatively unreactive metals. This makes the single reactive atoms like single atom sites where reactions can occur. These sites are interesting because they are metallic, but their electronic structure is different than the atoms in more concentrated alloys. This means there is the opportunity for different, perhaps better catalytic performance for the single atom alloys. In this paper, we studied the electronic structure and some representative reaction pathways on a series of single atom alloy surfaces.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-bibtex"&gt;&lt;span style="color: #006699;"&gt;@article&lt;/span&gt;{&lt;span style="color: #D0372D;"&gt;Thirumalai2018&lt;/span&gt;,
-  &lt;span style="color: #BA36A5;"&gt;author&lt;/span&gt; =       "Thirumalai, Hari and Kitchin, John R.",
-  &lt;span style="color: #BA36A5;"&gt;title&lt;/span&gt; =        "Investigating the Reactivity of Single Atom Alloys Using
-                  Density Functional Theory",
-  &lt;span style="color: #BA36A5;"&gt;journal&lt;/span&gt; =      "Topics in Catalysis",
-  &lt;span style="color: #BA36A5;"&gt;year&lt;/span&gt; =         "2018",
-  &lt;span style="color: #BA36A5;"&gt;month&lt;/span&gt; =        "Jan",
-  &lt;span style="color: #BA36A5;"&gt;day&lt;/span&gt; =          "25",
-  &lt;span style="color: #BA36A5;"&gt;abstract&lt;/span&gt; =     "Single atom alloys are gaining importance as atom-efficient
-                  catalysts which can be extremely selective and active towards
-                  the formation of desired products. They possess such desirable
-                  characteristics because of the presence of a highly reactive
-                  single atom in a less reactive host surface. In this work, we
-                  calculated the electronic structure of several representative
-                  single atom alloys. We examined single atom alloys of gold,
-                  silver and copper doped with single atoms of platinum,
-                  palladium, iridium, rhodium and nickel in the context of the
-                  d-band model of Hammer and N{\o}rskov. The reactivity of these
-                  alloys was probed through the dissociation of water and nitric
-                  oxide and the hydrogenation of acetylene to ethylene. We
-                  observed that these alloys exhibit a sharp peak in their atom
-                  projected d-band density of states, which we hypothesize could
-                  be the cause of high surface reactivity. We found that the
-                  d-band centers and d-band widths of these systems correlated
-                  linearly as with other alloys, but that the energy of
-                  adsorption of a hydrogen atom on these surfaces could not be
-                  correlated with the d-band center, or the average reactivity
-                  of the surface. Finally, the single atom alloys, with the
-                  exception of copper--palladium showed good catalytic behavior
-                  by activating the reactant molecules more strongly than the
-                  bulk atom behavior and showing favorable reaction pathways on
-                  the free energy diagrams for the reactions investigated.",
-  &lt;span style="color: #BA36A5;"&gt;issn&lt;/span&gt; =         "1572-9028",
-  &lt;span style="color: #BA36A5;"&gt;doi&lt;/span&gt; =          "&lt;span style="color: #006DAF; text-decoration: underline;"&gt;10.1007/s11244-018-0899-0&lt;/span&gt;",
-  &lt;span style="color: #BA36A5;"&gt;url&lt;/span&gt; =          "&lt;span style="color: #006DAF; text-decoration: underline;"&gt;https://doi.org/10.1007/s11244-018-0899-0&lt;/span&gt;"
-}
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-&lt;script type='text/javascript' src='https://d1bxh8uas1mnw7.cloudfront.net/assets/embed.js'&gt;&lt;/script&gt;
-&lt;div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1007/s11244-018-0899-0'&gt;&lt;/div&gt;
-&lt;/p&gt;
-&lt;p&gt;Copyright (C) 2018 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
-&lt;p&gt;&lt;a href="/org/2018/01/27/New-publication-in-Topics-in-Catalysis.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
 &lt;p&gt;Org-mode version = 9.1.6&lt;/p&gt;]]></content>
   </entry>
 </feed>

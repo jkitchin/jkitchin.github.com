@@ -8,12 +8,305 @@
   <title type="text">The Kitchin Research Group</title>
   <subtitle type="text">Chemical Engineering at Carnegie Mellon University</subtitle>
 
-  <updated>2018-09-05T01:21:10Z</updated>
+  <updated>2018-09-24T19:25:15Z</updated>
   <generator uri="http://blogofile.com/">Blogofile</generator>
 
   <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog" />
   <id>http://jkitchin.github.io/blog/feed/atom/</id>
   <link rel="self" type="application/atom+xml" href="http://jkitchin.github.io/blog/feed/atom/" />
+  <entry>
+    <author>
+      <name></name>
+      <uri>http://jkitchin.github.io/blog</uri>
+    </author>
+    <title type="html"><![CDATA[Solving nonlinear algebra problems with internal state information]]></title>
+    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2018/09/24/Solving-nonlinear-algebra-problems-with-internal-state-information" />
+    <id>http://jkitchin.github.io/blog/2018/09/24/Solving-nonlinear-algebra-problems-with-internal-state-information</id>
+    <updated>2018-09-24T15:25:06Z</updated>
+    <published>2018-09-24T15:25:06Z</published>
+    <category scheme="http://jkitchin.github.io/blog" term="python" />
+    <category scheme="http://jkitchin.github.io/blog" term="nonlinear algebra" />
+    <summary type="html"><![CDATA[Solving nonlinear algebra problems with internal state information]]></summary>
+    <content type="html" xml:base="http://jkitchin.github.io/blog/2018/09/24/Solving-nonlinear-algebra-problems-with-internal-state-information"><![CDATA[
+
+
+&lt;div id="table-of-contents"&gt;
+&lt;h2&gt;Table of Contents&lt;/h2&gt;
+&lt;div id="text-table-of-contents"&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href="#org532d5ce"&gt;1. First approach&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#orga01a4af"&gt;2. Second approach - use a state dictionary as an arg in the objective function&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#orgc590864"&gt;3. third approach - a callable object&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#orgaef298d"&gt;4. Summary&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;p&gt;
+In engineering, we often need to solve an equation in one variable, and then use the solution to compute other variables. For example, we might want the bubble point temperature of a mixture, and then to determine the composition of the vapor phase that has formed. In other words, we compute the temperature, and then have to use it in a subsequent step to get the composition. Here is a bubble point computation adapted from example 10.2 in Smith and van Ness, Introduction to Chemical Engineering Thermodynamics.
+&lt;/p&gt;
+
+&lt;p&gt;
+Given a solution of acetone (x&lt;sub&gt;1&lt;/sub&gt;=0.3), acetonitrile (x&lt;sub&gt;2&lt;/sub&gt;=0.45) and nitromethane (x&lt;sub&gt;3&lt;/sub&gt;=0.25) at a total pressure of 80 kPa, compute the bubble point temperature and gas phase composition.
+&lt;/p&gt;
+
+&lt;p&gt;
+The key here is to find a temperature where the gas-phase mole fractions sum to one. The gas phase mole fractions are defined by:
+&lt;/p&gt;
+
+&lt;p&gt;
+\(y_i = x_i Pvap_i(T) / P\)
+&lt;/p&gt;
+
+&lt;p&gt;
+The typical way I would teach students how solve this looks like this. It uses the Antoine equation coded below to estimate the vapor pressure of each component as a function of temperature, and then uses fsolve to find a temperature where the gas-phase mole fractions sum to one.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; scipy.optimize &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; fsolve
+
+&lt;span style="color: #BA36A5;"&gt;acetone&lt;/span&gt; = (14.5463, 2940.46, 237.22)
+&lt;span style="color: #BA36A5;"&gt;acetonitrile&lt;/span&gt; = (14.2724, 2945.47,224)
+&lt;span style="color: #BA36A5;"&gt;nitromethane&lt;/span&gt; = (14.2043, 2972.64, 209)
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;antoine&lt;/span&gt;(T, A, B, C):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;T&lt;/span&gt; = &lt;span style="color: #006FE0;"&gt;float&lt;/span&gt;(T) &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;there is some subtle issue that comes up when T is an array,&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;as passed in from fsolve. It needs to be a float, or you get&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;the wrong answer.&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; np.exp(A - B / (T + C))
+
+&lt;span style="color: #BA36A5;"&gt;x&lt;/span&gt; = np.array([0.3, 0.45, 0.25])
+&lt;span style="color: #BA36A5;"&gt;P&lt;/span&gt; = 80
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;objective&lt;/span&gt;(T):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;Pvap&lt;/span&gt; = np.array([antoine(T, *pars) &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; pars &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; [acetone, acetonitrile, nitromethane]])
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;y&lt;/span&gt; = x * Pvap / P
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; 1 - y.&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;()
+
+Tans, = fsolve(objective, 70)
+
+&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;This is where we end up repeating code&lt;/span&gt;
+&lt;span style="color: #BA36A5;"&gt;Pvap&lt;/span&gt; = np.array([antoine(Tans, *pars) &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; pars &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; [acetone, acetonitrile, nitromethane]])
+&lt;span style="color: #BA36A5;"&gt;y&lt;/span&gt; = x * Pvap / P
+
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(f&lt;span style="color: #008000;"&gt;'The bubble point temperature is {Tans:1.2f} degC, and the gas phase compositions are {np.round(y, 4)}.'&lt;/span&gt;)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+The bubble point temperature is 68.60 degC, and the gas phase compositions are [ 0.5196  0.3773  0.1031].
+
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+This solution works fine, but there is in my opinion, an issue with the small amount of repeated code at the end that is required to get the composition of the gas-phase. This is a small problem here, but as the problems get bigger it is more and more tedious to correctly repeat all the code to see what the state of a system is at the solution, and it seems wasteful to have to repeat the computations; they were known in the objective function. In the following subsections, I explore some alternative approaches to reduce the repetition.
+&lt;/p&gt;
+
+&lt;div id="outline-container-org532d5ce" class="outline-2"&gt;
+&lt;h2 id="org532d5ce"&gt;&lt;span class="section-number-2"&gt;1&lt;/span&gt; First approach&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-1"&gt;
+&lt;p&gt;
+There are two small chunks of repeated code in the example above. One way to minimize the amount of repeated code is to pull these out into reusable functions. Here, we do that, and only have to repeat one function call at the end to get the system composition out.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; scipy.optimize &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; fsolve
+
+&lt;span style="color: #BA36A5;"&gt;acetone&lt;/span&gt; = (14.5463, 2940.46, 237.22)
+&lt;span style="color: #BA36A5;"&gt;acetonitrile&lt;/span&gt; = (14.2724, 2945.47,224)
+&lt;span style="color: #BA36A5;"&gt;nitromethane&lt;/span&gt; = (14.2043, 2972.64, 209)
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;antoine&lt;/span&gt;(T, A, B, C):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;T&lt;/span&gt; = &lt;span style="color: #006FE0;"&gt;float&lt;/span&gt;(T) &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;there is some subtle issue that comes up when T is an array,&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;as passed in from fsolve. It needs to be a float, or you get&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;the wrong answer.&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; np.exp(A - B / (T + C))
+
+&lt;span style="color: #BA36A5;"&gt;x&lt;/span&gt; = np.array([0.3, 0.45, 0.25])
+&lt;span style="color: #BA36A5;"&gt;P&lt;/span&gt; = 80
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;Pvap&lt;/span&gt;(T):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; np.array([antoine(T, *pars) &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; pars &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; [acetone, acetonitrile, nitromethane]])
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;y&lt;/span&gt;(T):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x * Pvap(T) / P
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;objective&lt;/span&gt;(T):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; 1 - y(T).&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;()
+
+Tans, = fsolve(objective, 70)
+
+&lt;span style="color: #BA36A5;"&gt;yans&lt;/span&gt; = y(Tans) &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;minimal repetition of a calculation to get the composition state.&lt;/span&gt;
+
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(f&lt;span style="color: #008000;"&gt;'The bubble point temperature is {Tans:1.2f} degC, and the gas phase compositions are {np.round(yans, 4)}.'&lt;/span&gt;)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+The bubble point temperature is 68.60 degC, and the gas phase compositions are [ 0.5196  0.3773  0.1031].
+
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+That is a small improvement. The code is not much shorter, just reorganized for easier reuse. It would be easy in this case to also get the vapor pressures of each species at this temperature, just by calling the &lt;code&gt;Pvap&lt;/code&gt; function. Still, it feels annoying we have to recalculate the answer to something you know must have already been known when the objective function was evaluated.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-orga01a4af" class="outline-2"&gt;
+&lt;h2 id="orga01a4af"&gt;&lt;span class="section-number-2"&gt;2&lt;/span&gt; Second approach - use a state dictionary as an arg in the objective function&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-2"&gt;
+&lt;p&gt;
+In this approach, we will use a dictionary to store the state of the objective function. The dictionary will be in the global namespace, and we will just update it each time the objective function is called.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; scipy.optimize &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; fsolve
+
+&lt;span style="color: #BA36A5;"&gt;acetone&lt;/span&gt; = (14.5463, 2940.46, 237.22)
+&lt;span style="color: #BA36A5;"&gt;acetonitrile&lt;/span&gt; = (14.2724, 2945.47,224)
+&lt;span style="color: #BA36A5;"&gt;nitromethane&lt;/span&gt; = (14.2043, 2972.64, 209)
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;antoine&lt;/span&gt;(T, A, B, C):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; np.exp(A - B / (T + C))
+
+&lt;span style="color: #BA36A5;"&gt;x&lt;/span&gt; = np.array([0.3, 0.45, 0.25])
+
+&lt;span style="color: #BA36A5;"&gt;state&lt;/span&gt; = {}
+
+&lt;span style="color: #BA36A5;"&gt;P&lt;/span&gt; = 80
+
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;objective&lt;/span&gt;(T, state):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;T&lt;/span&gt; = &lt;span style="color: #006FE0;"&gt;float&lt;/span&gt;(T)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;Pvap&lt;/span&gt; = np.array([antoine(T, *pars) &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; pars &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; [acetone, acetonitrile, nitromethane]])
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;y&lt;/span&gt; = x * Pvap / P
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   state.update({&lt;span style="color: #008000;"&gt;'y'&lt;/span&gt;: y,
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt; &lt;span style="color: #008000;"&gt;'T'&lt;/span&gt;:  T,
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt; &lt;span style="color: #008000;"&gt;'Pvap'&lt;/span&gt;: Pvap,
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt; &lt;span style="color: #008000;"&gt;'z'&lt;/span&gt;: 1 - y.&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;()})
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; state[&lt;span style="color: #008000;"&gt;'z'&lt;/span&gt;]
+
+Tans, = fsolve(objective, 70, args=(state,))
+
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(f&lt;span style="color: #008000;"&gt;'The bubble point temperature is {Tans:1.2f} degC, and the gas phase compositions are {np.round(state["y"], 4)}.'&lt;/span&gt;)
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(Tans- state[&lt;span style="color: #008000;"&gt;'T'&lt;/span&gt;]) &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;check to make sure last value from objective is the same as the solution&lt;/span&gt;
+state
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+The bubble point temperature is 68.60 degC, and the gas phase compositions are [ 0.5196  0.3773  0.1031].
+0.0
+
+
+&lt;/pre&gt;
+
+&lt;pre class="example"&gt;
+{'Pvap': array([ 138.5620209 ,   67.07966082,   32.98218545]),
+ 'T': 68.60064626680659,
+ 'y': array([ 0.51960758,  0.37732309,  0.10306933]),
+ 'z': -3.4194869158454821e-14}
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+What we see in the &lt;code&gt;state&lt;/code&gt; dictionary is the result from the last time that the objective function was called. It appears that the list time it was called is also where the solution comes from, so the other variables stored here should be consistent. Now you can see we have access to both the Pvap and y composition data from the solution without needing any further computations. This approach could be easily extended to store any derived quantities that represent internal states you want. We don't store any history in this, but you could by appending to lists in the dictionary.
+&lt;/p&gt;
+
+&lt;p&gt;
+One &lt;i&gt;feature&lt;/i&gt; of this is the state dictionary is updated by side effect, and you have to use the state dictionary as an argument parameter to the function.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+
+&lt;div id="outline-container-orgc590864" class="outline-2"&gt;
+&lt;h2 id="orgc590864"&gt;&lt;span class="section-number-2"&gt;3&lt;/span&gt; third approach - a callable object&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-3"&gt;
+&lt;p&gt;
+A standard approach to tracking state data is to encapsulate it in a class. fsolve requires a callable function that returns zero at the solution. It is possible to make an object &lt;i&gt;act like a callable function&lt;/i&gt; if we define a &lt;code&gt;__call__&lt;/code&gt; method on it. Then, in this method, we can set attributes on the object to keep track of the state, similar to what we did with the dictionary. Since we have a class, we can define some other special dunder methods, e.g. to print the solution. Here is one implementation.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; scipy.optimize &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; fsolve
+
+&lt;span style="color: #0000FF;"&gt;class&lt;/span&gt; &lt;span style="color: #6434A3;"&gt;Objective&lt;/span&gt;(&lt;span style="color: #006FE0;"&gt;object&lt;/span&gt;):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;acetone&lt;/span&gt; = (14.5463, 2940.46, 237.22)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;acetonitrile&lt;/span&gt; = (14.2724, 2945.47,224)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;nitromethane&lt;/span&gt; = (14.2043, 2972.64, 209)
+
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;__init__&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;, x, P):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.x = np.array(x)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.P = P
+
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;antoine&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;, T, A, B, C):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; np.exp(A - B / (T + C))
+
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;__str__&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;s&lt;/span&gt; = f&lt;span style="color: #008000;"&gt;'The bubble point temperature is {self.T:1.2f} degC, and the gas phase compositions are {np.round(self.y, 4)}.'&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; s
+
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;__call__&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;, T):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;T&lt;/span&gt; = &lt;span style="color: #006FE0;"&gt;float&lt;/span&gt;(T)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.T = T
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.Pvap = np.array([&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.antoine(T, *pars) &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; pars &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; [&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.acetone, &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.acetonitrile, &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.nitromethane]])
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.y = &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.x * &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.Pvap / &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.P
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; 1 - &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.y.&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;()
+
+&lt;span style="color: #BA36A5;"&gt;obj&lt;/span&gt; = Objective(x=np.array([0.3, 0.45, 0.25]), P=80)
+ans, = fsolve(obj, 60)
+
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(obj)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+The bubble point temperature is 68.60 degC, and the gas phase compositions are [ 0.5196  0.3773  0.1031].
+
+
+&lt;/pre&gt;
+
+
+&lt;p&gt;
+Similar to the state dictionary approach, there is no repeated code here, and no repeated evaluations to get to the state after the solution. This is a bit more advanced Python than the state dictionary. Note, this implementation doesn't have any checking in it, so if you try to print the object before calling fsolve, you will get an error because the attributes don't exist until &lt;i&gt;after&lt;/i&gt; the object has been called. That is also an issue with the state dictionary above.
+&lt;/p&gt;
+
+&lt;p&gt;
+There are many choices you could make in constructing this example. Maybe this one has gone too far in encapsulating the antoine function as a method. That limits its reusability for another problem. On the other hand, you can reuse it for any other pressure or liquid composition of acetone, acetonitrile and nitromethane very readily.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-orgaef298d" class="outline-2"&gt;
+&lt;h2 id="orgaef298d"&gt;&lt;span class="section-number-2"&gt;4&lt;/span&gt; Summary&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-4"&gt;
+&lt;p&gt;
+We looked at three ways to reduce having redundant code in the solution to problems involving nonlinear algebra. The first approach is conceptually simple; you break out as much as you can into reusable functions, and then at most have repeated function calls. These computations are usually not expensive, so repeating them is mostly tedious and provides opportunities for mistakes. This is probably what I will stick to for teaching students that are just seeing this for the first time.
+&lt;/p&gt;
+
+&lt;p&gt;
+The second approach used a dictionary (other data structures could work too) as an argument to the objective function, and internal states were kept in the dictionary so that after the problem was solved, you have immediate access to them. This is more advanced than the first approach because it requires understanding that the dictionary is modified as a side effect of solving the problem.
+&lt;/p&gt;
+
+&lt;p&gt;
+Finally,  we considered an object-oriented class encapsulation of the information we wanted. I consider this the most advanced Python solution, since it requires some understanding of classes, dunder methods and attributes, and how to make an instance of a class.
+&lt;/p&gt;
+
+&lt;p&gt;
+The last two methods seem like candidates for an advanced class in problem solving. Thoughts?
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;p&gt;Copyright (C) 2018 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
+&lt;p&gt;&lt;a href="/org/2018/09/24/Solving-nonlinear-algebra-problems-with-internal-state-information.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Org-mode version = 9.1.13&lt;/p&gt;]]></content>
+  </entry>
   <entry>
     <author>
       <name></name>
@@ -973,406 +1266,5 @@ The minimum pipe diameter is 0.0389653369531 m
 Any pipe diameter smaller than that value will result in a larger pressure drop at the same volumetric flow rate, or a smaller volumetric flowrate at the same pressure drop. Either way, it will not meet the design specification.
 &lt;/p&gt;
 &lt;p&gt;Copyright (C) 2013 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;&lt;p&gt;&lt;a href="/org/2013/02/12/Computing-a-pipe-diameter.org"&gt;org-mode source&lt;/a&gt;&lt;p&gt;]]></content>
-  </entry>
-  <entry>
-    <author>
-      <name></name>
-      <uri>http://jkitchin.github.io/blog</uri>
-    </author>
-    <title type="html"><![CDATA[Water gas shift equilibria via the NIST Webbook]]></title>
-    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2013/02/01/Water-gas-shift-equilibria-via-the-NIST-Webbook" />
-    <id>http://jkitchin.github.io/blog/2013/02/01/Water-gas-shift-equilibria-via-the-NIST-Webbook</id>
-    <updated>2013-02-27T14:46:19Z</updated>
-    <published>2013-02-01T09:00:00Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="nonlinear algebra" />
-    <summary type="html"><![CDATA[Water gas shift equilibria via the NIST Webbook]]></summary>
-    <content type="html" xml:base="http://jkitchin.github.io/blog/2013/02/01/Water-gas-shift-equilibria-via-the-NIST-Webbook"><![CDATA[
-
-
-&lt;p&gt;
-&lt;a href="http://matlab.cheme.cmu.edu/2011/12/12/water-gas-shift-equilibria-via-the-nist-webbook/" &gt;Matlab post&lt;/a&gt;
-&lt;/p&gt;
-
-&lt;p&gt;
-The &lt;a href="http://webbook.nist.gov/chemistry/" &gt;NIST webbook&lt;/a&gt; provides parameterized models of the enthalpy, entropy and heat capacity of many molecules. In this example, we will examine how to use these to compute the equilibrium constant for the water gas shift reaction \(CO + H_2O \rightleftharpoons CO_2 + H_2\) in the temperature range of 500K to 1000K.
-&lt;/p&gt;
-
-&lt;p&gt;
-Parameters are provided for:
-&lt;/p&gt;
-
-&lt;p&gt;
-Cp = heat capacity (J/mol*K)
-H = standard enthalpy (kJ/mol)
-S = standard entropy (J/mol*K)
-&lt;/p&gt;
-
-&lt;p&gt;
-with models in the form: \(Cp^\circ = A + B*t + C*t^2 + D*t^3 + E/t^2\)
-&lt;/p&gt;
-
-&lt;p&gt;
-\(H^\circ - H^\circ_{298.15}= A*t + B*t^2/2 + C*t^3/3 + D*t^4/4 - E/t + F - H\)
-&lt;/p&gt;
-
-&lt;p&gt;
-\(S^\circ = A*ln(t) + B*t + C*t^2/2 + D*t^3/3 - E/(2*t^2) + G\)
-&lt;/p&gt;
-
-&lt;p&gt;
-where \(t=T/1000\), and \(T\) is the temperature in Kelvin. We can use this data to calculate equilibrium constants in the following manner. First, we have heats of formation at standard state for each compound; for elements, these are zero by definition, and for non-elements, they have values available from the NIST webbook. There are also values for the absolute entropy at standard state. Then, we have an expression for the change in enthalpy from standard state as defined above, as well as the absolute entropy. From these we can derive the reaction enthalpy, free energy and entropy at standard state, as well as at other temperatures.
-&lt;/p&gt;
-
-&lt;p&gt;
-We will examine the water gas shift enthalpy, free energy and equilibrium constant from 500K to 1000K, and finally compute the equilibrium composition of a gas feed containing 5 atm of CO and H_2 at 1000K.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; np
-
-T = np.linspace(500,1000) &lt;span style="color: #ff0000; font-weight: bold;"&gt;# degrees K&lt;/span&gt;
-t = T/1000;
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;div id="outline-container-1" class="outline-2"&gt;
-&lt;h2 id="sec-1"&gt;&lt;span class="section-number-2"&gt;1&lt;/span&gt; hydrogen&lt;/h2&gt;
-&lt;div class="outline-text-2" id="text-1"&gt;
-&lt;p&gt;
-\url{http://webbook.nist.gov/cgi/cbook.cgi?ID=C1333740&amp;Units=SI&amp;Mask=1#Thermo-Gas}
-&lt;/p&gt;
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;# T = 298-1000K valid temperature range&lt;/span&gt;
-A =  33.066178
-B = -11.363417
-C =  11.432816
-D = -2.772874
-E = -0.158558
-F = -9.980797
-G =  172.707974
-H =  0.0
-
-Hf_29815_H2 = 0.0 &lt;span style="color: #ff0000; font-weight: bold;"&gt;# kJ/mol&lt;/span&gt;
-S_29815_H2 = 130.68 &lt;span style="color: #ff0000; font-weight: bold;"&gt;# J/mol/K&lt;/span&gt;
-
-dH_H2 = A*t + B*t**2/2 + C*t**3/3 + D*t**4/4 - E/t + F - H;
-S_H2 = (A*np.log(t) + B*t + C*t**2/2 + D*t**3/3 - E/(2*t**2) + G);
-&lt;/pre&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div id="outline-container-2" class="outline-2"&gt;
-&lt;h2 id="sec-2"&gt;&lt;span class="section-number-2"&gt;2&lt;/span&gt; H_{2}O&lt;/h2&gt;
-&lt;div class="outline-text-2" id="text-2"&gt;
-&lt;p&gt;
-\url{http://webbook.nist.gov/cgi/cbook.cgi?ID=C7732185&amp;Units=SI&amp;Mask=1#Thermo-Gas}
-&lt;/p&gt;
-
-&lt;p&gt;
-Note these parameters limit the temperature range we can examine, as these parameters are not valid below 500K. There is another set of parameters for lower temperatures, but we do not consider them here.
-&lt;/p&gt;
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;# 500-1700 K valid temperature range&lt;/span&gt;
-A =   30.09200
-B =   6.832514
-C =   6.793435
-D =  -2.534480
-E =   0.082139
-F =  -250.8810
-G =   223.3967
-H =  -241.8264
-
-Hf_29815_H2O = -241.83 &lt;span style="color: #ff0000; font-weight: bold;"&gt;#this is Hf.&lt;/span&gt;
-S_29815_H2O = 188.84
-
-dH_H2O = A*t + B*t**2/2 + C*t**3/3 + D*t**4/4 - E/t + F - H;
-S_H2O = (A*np.log(t) + B*t + C*t**2/2 + D*t**3/3 - E/(2*t**2) + G);
-&lt;/pre&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div id="outline-container-3" class="outline-2"&gt;
-&lt;h2 id="sec-3"&gt;&lt;span class="section-number-2"&gt;3&lt;/span&gt; CO&lt;/h2&gt;
-&lt;div class="outline-text-2" id="text-3"&gt;
-&lt;p&gt;
-\url{http://webbook.nist.gov/cgi/cbook.cgi?ID=C630080&amp;Units=SI&amp;Mask=1#Thermo-Gas}
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;# 298. - 1300K valid temperature range&lt;/span&gt;
-A =   25.56759
-B =   6.096130
-C =   4.054656
-D =  -2.671301
-E =   0.131021
-F =  -118.0089
-G =   227.3665
-H = -110.5271
-
-Hf_29815_CO = -110.53 &lt;span style="color: #ff0000; font-weight: bold;"&gt;#this is Hf kJ/mol.&lt;/span&gt;
-S_29815_CO = 197.66
-
-dH_CO = A*t + B*t**2/2 + C*t**3/3 + D*t**4/4 - E/t + F - H;
-S_CO = (A*np.log(t) + B*t + C*t**2/2 + D*t**3/3 - E/(2*t**2) + G);
-&lt;/pre&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div id="outline-container-4" class="outline-2"&gt;
-&lt;h2 id="sec-4"&gt;&lt;span class="section-number-2"&gt;4&lt;/span&gt; CO_{2}&lt;/h2&gt;
-&lt;div class="outline-text-2" id="text-4"&gt;
-&lt;p&gt;
-\url{http://webbook.nist.gov/cgi/cbook.cgi?ID=C124389&amp;Units=SI&amp;Mask=1#Thermo-Gas}
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;# 298. - 1200.K valid temperature range&lt;/span&gt;
-A =   24.99735
-B =   55.18696
-C =  -33.69137
-D =   7.948387
-E =  -0.136638
-F =  -403.6075
-G =   228.2431
-H =  -393.5224
-
-Hf_29815_CO2 = -393.51 &lt;span style="color: #ff0000; font-weight: bold;"&gt;# this is Hf.&lt;/span&gt;
-S_29815_CO2 = 213.79
-
-dH_CO2 = A*t + B*t**2/2 + C*t**3/3 + D*t**4/4 - E/t + F - H;
-S_CO2 = (A*np.log(t) + B*t + C*t**2/2 + D*t**3/3 - E/(2*t**2) + G);
-&lt;/pre&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div id="outline-container-5" class="outline-2"&gt;
-&lt;h2 id="sec-5"&gt;&lt;span class="section-number-2"&gt;5&lt;/span&gt; Standard state heat of reaction&lt;/h2&gt;
-&lt;div class="outline-text-2" id="text-5"&gt;
-&lt;p&gt;
-We compute the enthalpy and free energy of reaction at 298.15 K for the following reaction \(CO + H2O \rightleftharpoons H2 + CO2\).
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;Hrxn_29815 = Hf_29815_CO2 + Hf_29815_H2 - Hf_29815_CO - Hf_29815_H2O;
-Srxn_29815 = S_29815_CO2 + S_29815_H2 - S_29815_CO - S_29815_H2O;
-Grxn_29815 = Hrxn_29815 - 298.15*(Srxn_29815)/1000;
-
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt;(&lt;span style="color: #228b22;"&gt;'deltaH = {0:1.2f}'&lt;/span&gt;.format(Hrxn_29815))
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt;(&lt;span style="color: #228b22;"&gt;'deltaG = {0:1.2f}'&lt;/span&gt;.format(Grxn_29815))
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-&amp;gt;&amp;gt;&amp;gt; &amp;gt;&amp;gt;&amp;gt; &amp;gt;&amp;gt;&amp;gt; deltaH = -41.15
-deltaG = -28.62
-&lt;/pre&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div id="outline-container-6" class="outline-2"&gt;
-&lt;h2 id="sec-6"&gt;&lt;span class="section-number-2"&gt;6&lt;/span&gt; Non-standard state \(\Delta H\) and \(\Delta G\)&lt;/h2&gt;
-&lt;div class="outline-text-2" id="text-6"&gt;
-&lt;p&gt;
-We have to correct for temperature change away from standard state. We only correct the enthalpy for this temperature change. The correction looks like this:
-&lt;/p&gt;
-
-&lt;p&gt;
-$$ \Delta H_{rxn}(T) = \Delta H_{rxn}(T_{ref}) + \sum_i \nu_i (H_i(T)-H_i(T_{ref}))$$
-&lt;/p&gt;
-
-&lt;p&gt;
-Where \(\nu_i\) are the stoichiometric coefficients of each species, with appropriate sign for reactants and products, and \((H_i(T)-H_i(T_{ref})\) is precisely what is calculated for each species with the equations
-&lt;/p&gt;
-
-&lt;p&gt;
-The entropy is on an absolute scale, so we directly calculate entropy at each temperature. Recall that H is in kJ/mol and S is in J/mol/K, so we divide S by 1000 to make the units match.
-&lt;/p&gt;
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;Hrxn = Hrxn_29815 + dH_CO2 + dH_H2 - dH_CO - dH_H2O
-Grxn = Hrxn - T*(S_CO2 + S_H2 - S_CO - S_H2O)/1000
-&lt;/pre&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div id="outline-container-7" class="outline-2"&gt;
-&lt;h2 id="sec-7"&gt;&lt;span class="section-number-2"&gt;7&lt;/span&gt; Plot how the \(\Delta G\) varies with temperature&lt;/h2&gt;
-&lt;div class="outline-text-2" id="text-7"&gt;
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; matplotlib.pyplot &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; plt
-plt.figure(); plt.clf()
-plt.plot(T,Grxn, label=&lt;span style="color: #228b22;"&gt;'$\Delta G_{rxn}$'&lt;/span&gt;)
-plt.plot(T,Hrxn, label=&lt;span style="color: #228b22;"&gt;'$\Delta H_{rxn}$'&lt;/span&gt;)
-plt.xlabel(&lt;span style="color: #228b22;"&gt;'Temperature (K)'&lt;/span&gt;)
-plt.ylabel(&lt;span style="color: #228b22;"&gt;'(kJ/mol)'&lt;/span&gt;)
-plt.legend( loc=&lt;span style="color: #228b22;"&gt;'best'&lt;/span&gt;)
-plt.savefig(&lt;span style="color: #228b22;"&gt;'images/wgs-nist-1.png'&lt;/span&gt;)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-&amp;lt;matplotlib.figure.Figure object at 0x04199CF0&amp;gt;
-[&amp;lt;matplotlib.lines.Line2D object at 0x0429BF30&amp;gt;]
-[&amp;lt;matplotlib.lines.Line2D object at 0x0427DFB0&amp;gt;]
-&amp;lt;matplotlib.text.Text object at 0x041B79F0&amp;gt;
-&amp;lt;matplotlib.text.Text object at 0x040CEF70&amp;gt;
-&amp;lt;matplotlib.legend.Legend object at 0x043CB5F0&amp;gt;
-&lt;/pre&gt;
-
-&lt;p&gt;&lt;img src="/img/./images/wgs-nist-1.png"&gt;&lt;p&gt;
-
-&lt;p&gt;
-Over this temperature range the reaction is exothermic, although near 1000K it is just barely exothermic. At higher temperatures we expect the reaction to become endothermic.
-&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div id="outline-container-8" class="outline-2"&gt;
-&lt;h2 id="sec-8"&gt;&lt;span class="section-number-2"&gt;8&lt;/span&gt; Equilibrium constant calculation&lt;/h2&gt;
-&lt;div class="outline-text-2" id="text-8"&gt;
-&lt;p&gt;
-Note the equilibrium constant starts out high, i.e. strongly favoring the formation of products, but drops very quicky with increasing temperature.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;R = 8.314e-3 &lt;span style="color: #ff0000; font-weight: bold;"&gt;# kJ/mol/K&lt;/span&gt;
-K = np.exp(-Grxn/R/T);
-
-plt.figure()
-plt.plot(T,K)
-plt.xlim([500, 1000])
-plt.xlabel(&lt;span style="color: #228b22;"&gt;'Temperature (K)'&lt;/span&gt;)
-plt.ylabel(&lt;span style="color: #228b22;"&gt;'Equilibrium constant'&lt;/span&gt;)
-plt.savefig(&lt;span style="color: #228b22;"&gt;'images/wgs-nist-2.png'&lt;/span&gt;)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-&amp;gt;&amp;gt;&amp;gt; &amp;gt;&amp;gt;&amp;gt; &amp;lt;matplotlib.figure.Figure object at 0x044DBE90&amp;gt;
-[&amp;lt;matplotlib.lines.Line2D object at 0x045A53F0&amp;gt;]
-(500, 1000)
-&amp;lt;matplotlib.text.Text object at 0x04577470&amp;gt;
-&amp;lt;matplotlib.text.Text object at 0x0457F410&amp;gt;
-&lt;/pre&gt;
-
-&lt;p&gt;&lt;img src="/img/./images/wgs-nist-2.png"&gt;&lt;p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div id="outline-container-9" class="outline-2"&gt;
-&lt;h2 id="sec-9"&gt;&lt;span class="section-number-2"&gt;9&lt;/span&gt; Equilibrium yield of WGS&lt;/h2&gt;
-&lt;div class="outline-text-2" id="text-9"&gt;
-&lt;p&gt;
-Now let us suppose we have a reactor with a feed of H_2O and CO at 10atm at 1000K. What is the equilibrium yield of H_2? Let \(\epsilon\) be the extent of reaction, so that \(F_i = F_{i,0} + \nu_i \epsilon\). For reactants, \(\nu_i\) is negative, and for products, \(\nu_i\) is positive. We have to solve for the extent of reaction that satisfies the equilibrium condition.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;from&lt;/span&gt; scipy.interpolate &lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; interp1d
-&lt;span style="color: #8b0000;"&gt;from&lt;/span&gt; scipy.optimize &lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; fsolve
-
-&lt;span style="color: #ff0000; font-weight: bold;"&gt;# &lt;/span&gt;
-&lt;span style="color: #ff0000; font-weight: bold;"&gt;# A = CO&lt;/span&gt;
-&lt;span style="color: #ff0000; font-weight: bold;"&gt;# B = H2O&lt;/span&gt;
-&lt;span style="color: #ff0000; font-weight: bold;"&gt;# C = H2&lt;/span&gt;
-&lt;span style="color: #ff0000; font-weight: bold;"&gt;# D = CO2&lt;/span&gt;
-
-Pa0 = 5; Pb0 = 5; Pc0 = 0; Pd0 = 0;  &lt;span style="color: #ff0000; font-weight: bold;"&gt;# pressure in atm&lt;/span&gt;
-R = 0.082;
-Temperature = 1000;
-
-&lt;span style="color: #ff0000; font-weight: bold;"&gt;# we can estimate the equilibrium like this. We could also calculate it&lt;/span&gt;
-&lt;span style="color: #ff0000; font-weight: bold;"&gt;# using the equations above, but we would have to evaluate each term. Above&lt;/span&gt;
-&lt;span style="color: #ff0000; font-weight: bold;"&gt;# we simply computed a vector of enthalpies, entropies, etc... Here we interpolate&lt;/span&gt;
-K_func = interp1d(T,K);
-K_Temperature = K_func(1000)
-
-
-&lt;span style="color: #ff0000; font-weight: bold;"&gt;# If we let X be fractional conversion then we have $C_A = C_{A0}(1-X)$,&lt;/span&gt;
-&lt;span style="color: #ff0000; font-weight: bold;"&gt;# $C_B = C_{B0}-C_{A0}X$, $C_C = C_{C0}+C_{A0}X$, and $C_D =&lt;/span&gt;
-&lt;span style="color: #ff0000; font-weight: bold;"&gt;# C_{D0}+C_{A0}X$. We also have $K(T) = (C_C C_D)/(C_A C_B)$, which finally&lt;/span&gt;
-&lt;span style="color: #ff0000; font-weight: bold;"&gt;# reduces to $0 = K(T) - Xeq^2/(1-Xeq)^2$ under these conditions.&lt;/span&gt;
-
-&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;f&lt;/span&gt;(X):
-    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; K_Temperature - X**2/(1-X)**2;
-
-x0 = 0.5
-Xeq, = fsolve(f, x0)
-
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt;(&lt;span style="color: #228b22;"&gt;'The equilibrium conversion for these feed conditions is: {0:1.2f}'&lt;/span&gt;.format(Xeq))
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-&amp;gt;&amp;gt;&amp;gt; &amp;gt;&amp;gt;&amp;gt; ... ... ... ... ... &amp;gt;&amp;gt;&amp;gt; &amp;gt;&amp;gt;&amp;gt; &amp;gt;&amp;gt;&amp;gt; &amp;gt;&amp;gt;&amp;gt; &amp;gt;&amp;gt;&amp;gt; ... ... ... &amp;gt;&amp;gt;&amp;gt; &amp;gt;&amp;gt;&amp;gt; &amp;gt;&amp;gt;&amp;gt; &amp;gt;&amp;gt;&amp;gt; ... ... ... ... &amp;gt;&amp;gt;&amp;gt; ... ... &amp;gt;&amp;gt;&amp;gt; &amp;gt;&amp;gt;&amp;gt; &amp;gt;&amp;gt;&amp;gt; 0.54504291144
-The equilibrium conversion for these feed conditions is: 0.55
-&lt;/pre&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div id="outline-container-10" class="outline-2"&gt;
-&lt;h2 id="sec-10"&gt;&lt;span class="section-number-2"&gt;10&lt;/span&gt; Compute gas phase pressures of each species&lt;/h2&gt;
-&lt;div class="outline-text-2" id="text-10"&gt;
-&lt;p&gt;
-Since there is no change in moles for this reaction, we can directly calculation the pressures from the equilibrium conversion and the initial pressure of gases. you can see there is a slightly higher pressure of H_2 and CO_2 than the reactants, consistent with the equilibrium constant of about 1.44 at 1000K. At a lower temperature there would be a much higher yield of the products. For example, at 550K the equilibrium constant is about 58, and the pressure of H_2 is 4.4 atm due to a much higher equilibrium conversion of 0.88.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;P_CO = Pa0*(1-Xeq)
-P_H2O = Pa0*(1-Xeq)
-P_H2 = Pa0*Xeq
-P_CO2 = Pa0*Xeq
-
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; P_CO,P_H2O, P_H2, P_CO2
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-&amp;gt;&amp;gt;&amp;gt; &amp;gt;&amp;gt;&amp;gt; &amp;gt;&amp;gt;&amp;gt; &amp;gt;&amp;gt;&amp;gt; 2.2747854428 2.2747854428 2.7252145572 2.7252145572
-&lt;/pre&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div id="outline-container-11" class="outline-2"&gt;
-&lt;h2 id="sec-11"&gt;&lt;span class="section-number-2"&gt;11&lt;/span&gt; Compare the equilibrium constants&lt;/h2&gt;
-&lt;div class="outline-text-2" id="text-11"&gt;
-&lt;p&gt;
-We can compare the equilibrium constant from the Gibbs free energy and the one from the ratio of pressures. They should be the same!
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; K_Temperature
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; (P_CO2*P_H2)/(P_CO*P_H2O)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-1.43522674762
-1.43522674762
-&lt;/pre&gt;
-
-&lt;p&gt;
-They are the same.
-&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div id="outline-container-12" class="outline-2"&gt;
-&lt;h2 id="sec-12"&gt;&lt;span class="section-number-2"&gt;12&lt;/span&gt; Summary&lt;/h2&gt;
-&lt;div class="outline-text-2" id="text-12"&gt;
-&lt;p&gt;
-The NIST Webbook provides a plethora of data for computing thermodynamic properties. It is a little tedious to enter it all into Matlab, and a little tricky to use the data to estimate temperature dependent reaction energies. A limitation of the Webbook is that it does not tell you have the thermodynamic properties change with pressure. Luckily, those changes tend to be small.
-&lt;/p&gt;
-
-&lt;p&gt;
-I noticed a different behavior in interpolation between scipy.interpolate.interp1d and Matlab's interp1. The scipy function returns an interpolating function, whereas the Matlab function directly interpolates new values, and returns the actual interpolated data. 
-&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;p&gt;Copyright (C) 2013 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;&lt;p&gt;&lt;a href="/org/2013/02/01/Water-gas-shift-equilibria-via-the-NIST-Webbook.org"&gt;org-mode source&lt;/a&gt;&lt;p&gt;]]></content>
   </entry>
 </feed>
