@@ -1,0 +1,163 @@
+* Updates on scipy.integrate.solve_ivp
+  :PROPERTIES:
+  :categories: scipy, ode
+  :END:
+
+In the last [[http://kitchingroup.cheme.cmu.edu/blog/2018/09/04/A-new-ode-integrator-function-in-scipy/][post]] I introduced a new ODE ~scipy.integrate.solve_ivp~. I have learned more about this integrator, and some things are better than I thought, and some things are still not what I would prefer. It is fantastic that you can use events now, but it is somewhat tricky. Because the solver only evaluates the event function at the points /it uses/ in the solution, and /not/ at the points you choose to evaluate, you have to be careful to set the max_step argument appropriately. It is also the case that ~solve_ivp~ doesn't return the function values at the event points, so we need a way to get these. It turns out that there is a way, which I learned about when I posted an [[https://github.com/scipy/scipy/issues/9228#issuecomment-420601092][issue]] to the scipy repo. So, here is an improved example to find the roots of the polynomial function I started with in the original post.
+
+The idea is that we use np.linspace to set the maximum step size of the solver so that the event is in theory checked near each point we will eventually visualize the solution on. We set dense_output to True so that we get a callable interpolation function on the solution. We can use that to evaluate the function values where the events occurred. This still requires a little more skill than I am used to from my pycse function, and it /requires/ the use of optional keyword arguments to get it to work, but at least it seems to work.
+
+#+BEGIN_SRC ipython
+import numpy as np
+from scipy.integrate import solve_ivp
+
+def fprime(x, y):
+    return 3 * x**2 + 12 * x - 4
+
+def event(x, y):
+    return y
+
+f0 = -120
+xspan = (-8, 4)
+xeval, h = np.linspace(*xspan, retstep=True)
+
+sol = solve_ivp(fprime, xspan, np.array([f0]), events=event, max_step=h,  dense_output=True)
+sol.message
+print(f'Roots = {sol.t_events[0]}')
+print(f'At roots, f = {sol.sol(sol.t_events[0])}')
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+# Out[45]:
+# output
+: Roots = [-6. -2.  2.]
+: At roots, f = [[  1.33226763e-14   6.10622664e-16  -8.88178420e-16]]
+:
+:END:
+
+Now, we can plot the solution, and where the events occurred.
+
+#+BEGIN_SRC ipython
+%matplotlib inline
+import matplotlib.pyplot as plt
+
+plt.plot(sol.t, sol.y.T)
+plt.plot(sol.t_events[0], sol.sol(sol.t_events[0]).T, 'ro')
+plt.xlabel('x')
+plt.ylabel('y')
+plt.legend(['solution', 'roots'])
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+# Out[46]:
+
+
+
+
+# image/png
+[[file:obipy-resources/6d66a37a957115dfc386f3ceb4836de9-38847Inm.png]]
+:END:
+
+You should be careful with the dense_output solution though. Here is an example where the interpolated solution is not that good.
+
+
+#+BEGIN_SRC ipython
+from scipy.integrate import solve_ivp
+import numpy as np
+
+def yprime(x, Y):
+    dTdt = (3 - 0.1*Y) + 0.1
+    return np.array([dTdt])
+
+Y0 = (30,)
+xspan = (0, 100)
+xeval, h = np.linspace(*xspan, retstep=True)
+
+sol = solve_ivp(yprime, xspan, Y0, dense_output=True)
+
+%matplotlib inline
+import matplotlib.pyplot as plt
+plt.plot(sol.t, sol.y[0].T, 'bo')
+plt.plot(xeval, sol.sol(xeval).T)
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+# Out[76]:
+# text/plain
+: [<matplotlib.lines.Line2D at 0x11c023438>]
+
+
+
+# image/png
+[[file:obipy-resources/6d66a37a957115dfc386f3ceb4836de9-38847vaV.png]]
+:END:
+
+The solution should be perfectly smooth, but you can see some wiggles near the points and between them. You can also see the numerical derivative of the solution is not that close to the analytical derivative defined by the ODE.
+
+#+BEGIN_SRC ipython
+plt.plot(xeval, yprime(xeval, sol.sol(xeval)[0]).T)
+plt.plot(xeval, np.gradient(sol.sol(xeval)[0], xeval, edge_order=2))
+plt.legend(['Analytical', 'numerical'])
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+# Out[77]:
+
+
+
+
+# image/png
+[[file:obipy-resources/6d66a37a957115dfc386f3ceb4836de9-388478kb.png]]
+:END:
+
+
+Here again the solution seems to be setting max_step to be sufficiently small. I again use the value determined by np.linspace here and get the solution again. You can see visually it is quite smooth now.
+
+#+BEGIN_SRC ipython
+sol = solve_ivp(yprime, xspan, Y0, max_step=h, dense_output=True)
+
+%matplotlib inline
+import matplotlib.pyplot as plt
+plt.plot(xeval, sol.sol(xeval).T)
+plt.xlabel('x')
+plt.ylabel('y')
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+# Out[86]:
+
+
+
+
+# image/png
+[[file:obipy-resources/6d66a37a957115dfc386f3ceb4836de9-38847WAc.png]]
+:END:
+
+It is also evident now that the analytical and numerical derivatives are visually indistinguishable, suggesting a better solution.
+
+#+BEGIN_SRC ipython
+plt.plot(xeval, yprime(xeval, sol.sol(xeval)[0]).T)
+plt.plot(xeval, np.gradient(sol.sol(xeval)[0], xeval, edge_order=2))
+plt.legend(['Analytical', 'numerical'])
+plt.xlabel('x')
+plt.ylabel('dy/dx')
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+# Out[80]:
+
+
+
+
+# image/png
+[[file:obipy-resources/6d66a37a957115dfc386f3ceb4836de9-38847jDu.png]]
+:END:
+
+
+Overall, I am still on the fence with solve_ivp. It seems to require a lot more care than I would expect to make sure you get good answers.

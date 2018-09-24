@@ -1,0 +1,225 @@
+* Solving nonlinear algebra problems with internal state information :thermodynamics:
+  :PROPERTIES:
+  :categories: python,nonlinear algebra
+  :date:     2018/09/24 15:25:06
+  :updated:  2018/09/24 15:25:06
+  :org-url:  http://kitchingroup.cheme.cmu.edu/org/2018/09/24/Solving-nonlinear-algebra-problems-with-internal-state-information.org
+  :permalink: http://kitchingroup.cheme.cmu.edu/blog/2018/09/24/Solving-nonlinear-algebra-problems-with-internal-state-information/index.html
+  :END:
+
+
+In engineering, we often need to solve an equation in one variable, and then use the solution to compute other variables. For example, we might want the bubble point temperature of a mixture, and then to determine the composition of the vapor phase that has formed. In other words, we compute the temperature, and then have to use it in a subsequent step to get the composition. Here is a bubble point computation adapted from example 10.2 in Smith and van Ness, Introduction to Chemical Engineering Thermodynamics.
+
+Given a solution of acetone (x_{1}=0.3), acetonitrile (x_{2}=0.45) and nitromethane (x_{3}=0.25) at a total pressure of 80 kPa, compute the bubble point temperature and gas phase composition.
+
+The key here is to find a temperature where the gas-phase mole fractions sum to one. The gas phase mole fractions are defined by:
+
+$y_i = x_i Pvap_i(T) / P$
+
+The typical way I would teach students how solve this looks like this. It uses the Antoine equation coded below to estimate the vapor pressure of each component as a function of temperature, and then uses fsolve to find a temperature where the gas-phase mole fractions sum to one.
+
+#+BEGIN_SRC ipython
+import numpy as np
+from scipy.optimize import fsolve
+
+acetone = (14.5463, 2940.46, 237.22)
+acetonitrile = (14.2724, 2945.47,224)
+nitromethane = (14.2043, 2972.64, 209)
+
+def antoine(T, A, B, C):
+    T = float(T) # there is some subtle issue that comes up when T is an array,
+                 # as passed in from fsolve. It needs to be a float, or you get
+                 # the wrong answer.
+    return np.exp(A - B / (T + C))
+
+x = np.array([0.3, 0.45, 0.25])
+P = 80
+
+def objective(T):
+    Pvap = np.array([antoine(T, *pars) for pars in [acetone, acetonitrile, nitromethane]])
+    y = x * Pvap / P
+    return 1 - y.sum()
+
+Tans, = fsolve(objective, 70)
+
+# This is where we end up repeating code
+Pvap = np.array([antoine(Tans, *pars) for pars in [acetone, acetonitrile, nitromethane]])
+y = x * Pvap / P
+
+print(f'The bubble point temperature is {Tans:1.2f} degC, and the gas phase compositions are {np.round(y, 4)}.')
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+# Out[49]:
+# output
+: The bubble point temperature is 68.60 degC, and the gas phase compositions are [ 0.5196  0.3773  0.1031].
+:
+:END:
+
+This solution works fine, but there is in my opinion, an issue with the small amount of repeated code at the end that is required to get the composition of the gas-phase. This is a small problem here, but as the problems get bigger it is more and more tedious to correctly repeat all the code to see what the state of a system is at the solution, and it seems wasteful to have to repeat the computations; they were known in the objective function. In the following subsections, I explore some alternative approaches to reduce the repetition.
+
+** First approach
+
+There are two small chunks of repeated code in the example above. One way to minimize the amount of repeated code is to pull these out into reusable functions. Here, we do that, and only have to repeat one function call at the end to get the system composition out.
+
+#+BEGIN_SRC ipython
+import numpy as np
+from scipy.optimize import fsolve
+
+acetone = (14.5463, 2940.46, 237.22)
+acetonitrile = (14.2724, 2945.47,224)
+nitromethane = (14.2043, 2972.64, 209)
+
+def antoine(T, A, B, C):
+    T = float(T) # there is some subtle issue that comes up when T is an array,
+                 # as passed in from fsolve. It needs to be a float, or you get
+                 # the wrong answer.
+    return np.exp(A - B / (T + C))
+
+x = np.array([0.3, 0.45, 0.25])
+P = 80
+
+def Pvap(T):
+    return np.array([antoine(T, *pars) for pars in [acetone, acetonitrile, nitromethane]])
+
+def y(T):
+    return x * Pvap(T) / P
+
+def objective(T):
+    return 1 - y(T).sum()
+
+Tans, = fsolve(objective, 70)
+
+yans = y(Tans) # minimal repetition of a calculation to get the composition state.
+
+print(f'The bubble point temperature is {Tans:1.2f} degC, and the gas phase compositions are {np.round(yans, 4)}.')
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+# Out[50]:
+# output
+: The bubble point temperature is 68.60 degC, and the gas phase compositions are [ 0.5196  0.3773  0.1031].
+:
+:END:
+
+That is a small improvement. The code is not much shorter, just reorganized for easier reuse. It would be easy in this case to also get the vapor pressures of each species at this temperature, just by calling the ~Pvap~ function. Still, it feels annoying we have to recalculate the answer to something you know must have already been known when the objective function was evaluated.
+
+** Second approach - use a state dictionary as an arg in the objective function
+
+In this approach, we will use a dictionary to store the state of the objective function. The dictionary will be in the global namespace, and we will just update it each time the objective function is called.
+
+#+BEGIN_SRC ipython
+import numpy as np
+from scipy.optimize import fsolve
+
+acetone = (14.5463, 2940.46, 237.22)
+acetonitrile = (14.2724, 2945.47,224)
+nitromethane = (14.2043, 2972.64, 209)
+
+def antoine(T, A, B, C):
+    return np.exp(A - B / (T + C))
+
+x = np.array([0.3, 0.45, 0.25])
+
+state = {}
+
+P = 80
+
+
+def objective(T, state):
+    T = float(T)
+    Pvap = np.array([antoine(T, *pars) for pars in [acetone, acetonitrile, nitromethane]])
+    y = x * Pvap / P
+    state.update({'y': y,
+                  'T':  T,
+                  'Pvap': Pvap,
+                  'z': 1 - y.sum()})
+    return state['z']
+
+Tans, = fsolve(objective, 70, args=(state,))
+
+print(f'The bubble point temperature is {Tans:1.2f} degC, and the gas phase compositions are {np.round(state["y"], 4)}.')
+print(Tans- state['T']) # check to make sure last value from objective is the same as the solution
+state
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+# Out[53]:
+# output
+: The bubble point temperature is 68.60 degC, and the gas phase compositions are [ 0.5196  0.3773  0.1031].
+: 0.0
+:
+# text/plain
+: {'Pvap': array([ 138.5620209 ,   67.07966082,   32.98218545]),
+:  'T': 68.60064626680659,
+:  'y': array([ 0.51960758,  0.37732309,  0.10306933]),
+:  'z': -3.4194869158454821e-14}
+:END:
+
+What we see in the ~state~ dictionary is the result from the last time that the objective function was called. It appears that the list time it was called is also where the solution comes from, so the other variables stored here should be consistent. Now you can see we have access to both the Pvap and y composition data from the solution without needing any further computations. This approach could be easily extended to store any derived quantities that represent internal states you want. We don't store any history in this, but you could by appending to lists in the dictionary.
+
+One /feature/ of this is the state dictionary is updated by side effect, and you have to use the state dictionary as an argument parameter to the function.
+
+
+** third approach - a callable object
+
+A standard approach to tracking state data is to encapsulate it in a class. fsolve requires a callable function that returns zero at the solution. It is possible to make an object /act like a callable function/ if we define a ~__call__~ method on it. Then, in this method, we can set attributes on the object to keep track of the state, similar to what we did with the dictionary. Since we have a class, we can define some other special dunder methods, e.g. to print the solution. Here is one implementation.
+
+#+BEGIN_SRC ipython
+import numpy as np
+from scipy.optimize import fsolve
+
+class Objective(object):
+    acetone = (14.5463, 2940.46, 237.22)
+    acetonitrile = (14.2724, 2945.47,224)
+    nitromethane = (14.2043, 2972.64, 209)
+
+    def __init__(self, x, P):
+        self.x = np.array(x)
+        self.P = P
+
+    def antoine(self, T, A, B, C):
+        return np.exp(A - B / (T + C))
+
+    def __str__(self):
+        s = f'The bubble point temperature is {self.T:1.2f} degC, and the gas phase compositions are {np.round(self.y, 4)}.'
+        return s
+
+    def __call__(self, T):
+        T = float(T)
+        self.T = T
+        self.Pvap = np.array([self.antoine(T, *pars) for pars in [self.acetone, self.acetonitrile, self.nitromethane]])
+        self.y = self.x * self.Pvap / self.P
+        return 1 - self.y.sum()
+
+obj = Objective(x=np.array([0.3, 0.45, 0.25]), P=80)
+ans, = fsolve(obj, 60)
+
+print(obj)
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+# Out[63]:
+# output
+: The bubble point temperature is 68.60 degC, and the gas phase compositions are [ 0.5196  0.3773  0.1031].
+:
+:END:
+
+
+Similar to the state dictionary approach, there is no repeated code here, and no repeated evaluations to get to the state after the solution. This is a bit more advanced Python than the state dictionary. Note, this implementation doesn't have any checking in it, so if you try to print the object before calling fsolve, you will get an error because the attributes don't exist until /after/ the object has been called. That is also an issue with the state dictionary above.
+
+There are many choices you could make in constructing this example. Maybe this one has gone too far in encapsulating the antoine function as a method. That limits its reusability for another problem. On the other hand, you can reuse it for any other pressure or liquid composition of acetone, acetonitrile and nitromethane very readily.
+
+** Summary
+
+We looked at three ways to reduce having redundant code in the solution to problems involving nonlinear algebra. The first approach is conceptually simple; you break out as much as you can into reusable functions, and then at most have repeated function calls. These computations are usually not expensive, so repeating them is mostly tedious and provides opportunities for mistakes. This is probably what I will stick to for teaching students that are just seeing this for the first time.
+
+The second approach used a dictionary (other data structures could work too) as an argument to the objective function, and internal states were kept in the dictionary so that after the problem was solved, you have immediate access to them. This is more advanced than the first approach because it requires understanding that the dictionary is modified as a side effect of solving the problem.
+
+Finally,  we considered an object-oriented class encapsulation of the information we wanted. I consider this the most advanced Python solution, since it requires some understanding of classes, dunder methods and attributes, and how to make an instance of a class.
+
+The last two methods seem like candidates for an advanced class in problem solving. Thoughts?
