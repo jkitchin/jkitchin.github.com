@@ -2,25 +2,25 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents">
 <ul>
-<li><a href="#orgcb6fa9c">1. The ChemE Faculty on Google Maps</a></li>
-<li><a href="#org19b202f">2. Current Department Publications</a></li>
-<li><a href="#org2ee1463">3. Department publications by year</a></li>
-<li><a href="#orge7901a6">4. Department on ResearchGate</a></li>
-<li><a href="#orged0f5f3">5. CMU alumni in academia</a></li>
-<li><a href="#org7c9108c">6. Where do our PhD students come from?</a></li>
+<li><a href="#org92cafd2">1. The ChemE Faculty on Google Maps</a></li>
+<li><a href="#org634e190">2. Current Department Publications</a></li>
+<li><a href="#org4f9cd33">3. Department publications by year</a></li>
+<li><a href="#orgb231a5a">4. Department on ResearchGate</a></li>
+<li><a href="#org9b44efc">5. CMU alumni in academia</a></li>
+<li><a href="#org2924a62">6. Where do our PhD students come from?</a></li>
 </ul>
 </div>
 </div>
 <%inherit file="_templates/site.mako" />
 
-<div id="outline-container-orgcb6fa9c" class="outline-2">
-<h2 id="orgcb6fa9c"><span class="section-number-2">1</span> The ChemE Faculty on Google Maps</h2>
+<div id="outline-container-org92cafd2" class="outline-2">
+<h2 id="org92cafd2"><span class="section-number-2">1</span> The ChemE Faculty on Google Maps</h2>
 <div class="outline-text-2" id="text-1">
 <iframe src="https://www.google.com/maps/d/embed?mid=zDNHhN3lg2P0.kZ9gh2LUcjbg" width="640" height="480"></iframe>
 </div>
 </div>
-<div id="outline-container-org19b202f" class="outline-2">
-<h2 id="org19b202f"><span class="section-number-2">2</span> Current Department Publications</h2>
+<div id="outline-container-org634e190" class="outline-2">
+<h2 id="org634e190"><span class="section-number-2">2</span> Current Department Publications</h2>
 <div class="outline-text-2" id="text-2">
 <script src="http://syndic8.scopus.com/getMessage?registrationId=HAGDHBGEOCGMJAGIJAHIHEJDHJGGLIMGIIIKOHGJKD"></script>
 
@@ -104,6 +104,10 @@
 </tr>
 
 <tr>
+<td class="org-left"><a href="http://www.scopus.com/authid/detail.url?origin=AuthorProfile&amp;authorId=35243622700">Zack Ulissi</a></td>
+</tr>
+
+<tr>
 <td class="org-left"><a href="http://www.scopus.com/authid/detail.url?origin=AuthorProfile&amp;authorId=7402361317">Lynn Walker</a></td>
 </tr>
 
@@ -122,14 +126,15 @@
 
 
 
-<div id="outline-container-org2ee1463" class="outline-2">
-<h2 id="org2ee1463"><span class="section-number-2">3</span> Department publications by year</h2>
+<div id="outline-container-org4f9cd33" class="outline-2">
+<h2 id="org4f9cd33"><span class="section-number-2">3</span> Department publications by year</h2>
 <div class="outline-text-2" id="text-3">
 <p>
 These publications were  derived from Scopus.
 </p>
 
 <ul class="org-ul">
+<li><a href="./dept-publications-2017.html">2017</a></li>
 <li><a href="./dept-publications-2016.html">2016</a></li>
 <li><a href="./dept-publications-2015.html">2015</a></li>
 <li><a href="./dept-publications-2014.html">2014</a></li>
@@ -146,8 +151,8 @@ These publications were  derived from Scopus.
 </div>
 </div>
 
-<div id="outline-container-orge7901a6" class="outline-2">
-<h2 id="orge7901a6"><span class="section-number-2">4</span> Department on ResearchGate</h2>
+<div id="outline-container-orgb231a5a" class="outline-2">
+<h2 id="orgb231a5a"><span class="section-number-2">4</span> Department on ResearchGate</h2>
 <div class="outline-text-2" id="text-4">
 <p>
 <a href="https://www.researchgate.net/institution/Carnegie_Mellon_University/department/Department_of_Chemical_Engineering">https://www.researchgate.net/institution/Carnegie_Mellon_University/department/Department_of_Chemical_Engineering</a>
@@ -155,15 +160,15 @@ These publications were  derived from Scopus.
 </div>
 </div>
 
-<div id="outline-container-orged0f5f3" class="outline-2">
-<h2 id="orged0f5f3"><span class="section-number-2">5</span> CMU alumni in academia</h2>
+<div id="outline-container-org9b44efc" class="outline-2">
+<h2 id="org9b44efc"><span class="section-number-2">5</span> CMU alumni in academia</h2>
 <div class="outline-text-2" id="text-5">
 <iframe src="https://www.google.com/maps/d/embed?mid=zDNHhN3lg2P0.kKYunRBQeH6A" width="640" height="480"></iframe>
 </div>
 </div>
 
-<div id="outline-container-org7c9108c" class="outline-2">
-<h2 id="org7c9108c"><span class="section-number-2">6</span> Where do our PhD students come from?</h2>
+<div id="outline-container-org2924a62" class="outline-2">
+<h2 id="org2924a62"><span class="section-number-2">6</span> Where do our PhD students come from?</h2>
 <div class="outline-text-2" id="text-6">
 <iframe width="100%" height="400" frameborder="0" scrolling="no" allowtransparency="true" src="https://mapalist.com/Public/pm.aspx?mapid=543490" ></iframe>
 </div>
