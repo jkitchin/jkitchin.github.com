@@ -84,10 +84,153 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Training-the-ASE-Lennard-Jones-potential-to-DFT-calculations"></div>
+      <h2 class="blog_post_title"><a href="/blog/2017/11/19/Training-the-ASE-Lennard-Jones-potential-to-DFT-calculations/" rel="bookmark" title="Permanent Link to Training the ASE Lennard-Jones potential to DFT calculations">Training the ASE Lennard-Jones potential to DFT calculations</a></h2>
+      <p><small><span class="blog_post_date">Posted November 19, 2017 at 07:58 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2017/11/19/Training-the-ASE-Lennard-Jones-potential-to-DFT-calculations#disqus_thread">View Comments</a>
+      <p><small><span class="blog_post_date">Updated November 21, 2017 at 06:27 PM</span>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+The Atomic Simulation Environment provides several useful calculators with configurable parameters. For example, the Lennard-Jones potential has two adjustable parameters, &sigma; and &epsilon;. I have always thought it would be useful to be able to fit one of these potentials to a reference database, e.g. a DFT database.
+</p>
+
+<p>
+I ran a series of DFT calculations of bulk Ar in different crystal structures, at different volumes and saved them in an ase database (<a href="/media/argon.db">argon.db</a> ). We have five crystal structures at three different volumes. Within each of those sets, I rattled the atoms a bunch of times and calculated the energies. Here is the histogram of energies we have to work with:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="org2f0b5c2">%matplotlib inline
+<span style="color: #0000FF;">import</span> matplotlib.pyplot <span style="color: #0000FF;">as</span> plt
+
+<span style="color: #0000FF;">import</span> ase.db
+<span style="color: #BA36A5;">db</span> = ase.db.connect(<span style="color: #008000;">'argon.db'</span>)
+
+<span style="color: #BA36A5;">known_energies</span> = [row.energy <span style="color: #0000FF;">for</span> row <span style="color: #0000FF;">in</span> db.select()]
+plt.hist(known_energies, 20)
+plt.xlabel(<span style="color: #008000;">'Energy'</span>)
+</pre>
+</div>
+
+<p>
+<img src="/media/ob-ipython-d6113dc5f4e887554825f1c669ff3c0d.png"> 
+</p>
+
+<p>
+What I would really like is a set of Lennard-Jones parameters that describe this data. It only recently occurred to me that we just need to define a function that takes the LJ parameters and computes energies for a set of configurations. Then we create a second objective function we can use in a minimization. Here is how we can implement that idea:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="orga0d8c08"><span style="color: #0000FF;">import</span> numpy <span style="color: #0000FF;">as</span> np
+<span style="color: #0000FF;">from</span> scipy.optimize <span style="color: #0000FF;">import</span> fmin
+<span style="color: #0000FF;">from</span> ase.calculators.lj <span style="color: #0000FF;">import</span> LennardJones
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">my_lj</span>(pars):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">epsilon</span>, <span style="color: #BA36A5;">sigma</span> = pars
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">calc</span> = LennardJones(sigma=sigma, epsilon=epsilon)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">all_atoms</span> = [row.toatoms() <span style="color: #0000FF;">for</span> row <span style="color: #0000FF;">in</span> db.select()]
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   [atoms.set_calculator(calc) <span style="color: #0000FF;">for</span> atoms <span style="color: #0000FF;">in</span> all_atoms]
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">predicted_energies</span> = np.array([atoms.get_potential_energy() <span style="color: #0000FF;">for</span> atoms <span style="color: #0000FF;">in</span> all_atoms])
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> predicted_energies
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">objective</span>(pars):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">known_energies</span> = np.array([row.energy <span style="color: #0000FF;">for</span> row <span style="color: #0000FF;">in</span> db.select()])
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">err</span> = known_energies - my_lj(pars)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> np.mean(err**2)
+
+<span style="color: #BA36A5;">LJ_pars</span> = fmin(objective, [0.005, 3.5])        
+<span style="color: #0000FF;">print</span>(LJ_pars)
+</pre>
+</div>
+
+<pre class="example">
+Optimization terminated successfully.
+         Current function value: 0.000141
+         Iterations: 28
+         Function evaluations: 53
+[ 0.00593014  3.73314611]
+
+</pre>
+
+<p>
+Now, let's see how well we do with that fit.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="org0606368">plt.subplot(121)
+
+<span style="color: #BA36A5;">calc</span> = LennardJones(epsilon=LJ_pars[0], sigma=LJ_pars[1])
+
+<span style="color: #0000FF;">for</span> structure, spec <span style="color: #0000FF;">in</span> [(<span style="color: #008000;">'fcc'</span>, <span style="color: #008000;">'b.'</span>),
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   (<span style="color: #008000;">'hcp'</span>, <span style="color: #008000;">'r.'</span>),
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   (<span style="color: #008000;">'bcc'</span>, <span style="color: #008000;">'g.'</span>),
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   (<span style="color: #008000;">'diamond'</span>, <span style="color: #008000;">'gd'</span>),
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   (<span style="color: #008000;">'sc'</span>, <span style="color: #008000;">'bs'</span>)]:
+
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">ke</span>, <span style="color: #BA36A5;">pe</span> = [], []
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">for</span> row <span style="color: #0000FF;">in</span> db.select(structure=structure):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">ke</span> += [row.energy]
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">atoms</span> = row.toatoms()
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   atoms.set_calculator(calc)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">pe</span> += [atoms.get_potential_energy()]    
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   plt.plot(ke, pe, spec, label=structure)
+
+plt.plot([-0.1, 0], [-0.1, 0], <span style="color: #008000;">'k-'</span>, label=<span style="color: #008000;">'parity'</span>)
+plt.legend()
+plt.xlabel(<span style="color: #008000;">'DFT'</span>)
+plt.ylabel(<span style="color: #008000;">'LJ'</span>)
+
+<span style="color: #BA36A5;">pred_e</span> = my_lj(LJ_pars)
+<span style="color: #BA36A5;">known_energies</span> = np.array([row.energy <span style="color: #0000FF;">for</span> row <span style="color: #0000FF;">in</span> db.select()])
+<span style="color: #BA36A5;">err</span> = known_energies - pred_e
+
+plt.subplot(122)
+plt.hist(err)
+plt.xlabel(<span style="color: #008000;">'error'</span>)
+plt.tight_layout()
+</pre>
+</div>
+
+<p>
+<img src="/media/ob-ipython-3fd078c892ba2e5ee29397f43805d2b2.png"> 
+</p>
+
+<p>
+The results aren't fantastic, but you can see that we get the closer packed structures (fcc, hcp, bcc) more accurately than the loosely packed structures (diamond, sc). Those more open structures tend to have more directional bonding, and the Lennard-Jones potential isn't expected to do too well on those. You could consider a more sophisticated model if those structures were important for your simulation.
+</p>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/11/19/Training-the-ASE-Lennard-Jones-potential-to-DFT-calculations.org">org-mode source</a></p>
+<p>Org-mode version = 9.1.2</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/11/19/Training-the-ASE-Lennard-Jones-potential-to-DFT-calculations#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Neural-networks-for-regression-with-autograd"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/11/18/Neural-networks-for-regression-with-autograd/" rel="bookmark" title="Permanent Link to Neural networks for regression with autograd">Neural networks for regression with autograd</a></h2>
       <p><small><span class="blog_post_date">Posted November 18, 2017 at 02:20 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/python/'>python</a>, <a href='/blog/category/autograd/'>autograd</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/11/18/Neural-networks-for-regression-with-autograd#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -408,7 +551,7 @@ Now you know the secret of a neural network, it is just a nonlinear model. Witho
       <div id="Using-autograd-in-nonlinear-regression"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/11/17/Using-autograd-in-nonlinear-regression/" rel="bookmark" title="Permanent Link to Using autograd in nonlinear regression">Using autograd in nonlinear regression</a></h2>
       <p><small><span class="blog_post_date">Posted November 17, 2017 at 07:49 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/regression/'>regression</a>, <a href='/blog/category/python/'>python</a>, <a href='/blog/category/autograd/'>autograd</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/python/'>python</a>, <a href='/blog/category/regression/'>regression</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/11/17/Using-autograd-in-nonlinear-regression#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -717,7 +860,7 @@ The fit looks pretty good.
       <div id="Sensitivity-analysis-using-automatic-differentiation-in-Python"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/11/15/Sensitivity-analysis-using-automatic-differentiation-in-Python/" rel="bookmark" title="Permanent Link to Sensitivity analysis using automatic differentiation in Python">Sensitivity analysis using automatic differentiation in Python</a></h2>
       <p><small><span class="blog_post_date">Posted November 15, 2017 at 08:34 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/sensitivity/'>sensitivity</a>, <a href='/blog/category/python/'>python</a>, <a href='/blog/category/autograd/'>autograd</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/python/'>python</a>, <a href='/blog/category/sensitivity/'>sensitivity</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/11/15/Sensitivity-analysis-using-automatic-differentiation-in-Python#disqus_thread">View Comments</a>
       <p><small><span class="blog_post_date">Updated November 15, 2017 at 08:41 AM</span>
       </small></p>
@@ -968,222 +1111,6 @@ In the end, this does not really solve all the problems I have with current docs
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/03/19/A-Hy-macro-for-defining-functions-with-docstrings-on-each-argument#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Modeling-a-Cu-dimer-by-EMT-nonlinear-regression-and-neural-networks"></div>
-      <h2 class="blog_post_title"><a href="/blog/2017/03/18/Modeling-a-Cu-dimer-by-EMT-nonlinear-regression-and-neural-networks/" rel="bookmark" title="Permanent Link to Modeling a Cu dimer by EMT, nonlinear regression and neural networks">Modeling a Cu dimer by EMT, nonlinear regression and neural networks</a></h2>
-      <p><small><span class="blog_post_date">Posted March 18, 2017 at 03:47 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/molecular-simulation/'>molecular-simulation</a>, <a href='/blog/category/python/'>python</a>, <a href='/blog/category/machine-learning/'>machine-learning</a>, <a href='/blog/category/neural-network/'>neural-network</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2017/03/18/Modeling-a-Cu-dimer-by-EMT-nonlinear-regression-and-neural-networks#disqus_thread">View Comments</a>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-In this post we consider a Cu<sub>2</sub> dimer and how its energy varies with the separation of the atoms. We assume we have a way to calculate this, but that it is expensive, and that we want to create a simpler model that is as accurate, but cheaper to run. A simple way to do that is to regress a physical model, but we will illustrate some challenges with that. We then show a neural network can be used as an accurate regression function without needing to know more about the physics.
-</p>
-
-<p>
-We will use an <a href="https://wiki.fysik.dtu.dk/ase/ase/calculators/emt.html">effective medium theory</a> calculator to demonstrate this. The calculations are not expected to be very accurate or relevant to any experimental data, but they are fast, and will illustrate several useful points that are independent of that. We will take as our energy zero the energy of two atoms at a large separation, in this case about 10 angstroms. Here we plot the energy as a function of the distance between the two atoms, which is the only degree of freedom that matters in this example.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">import</span> numpy <span style="color: #0000FF;">as</span> np
-%matplotlib inline
-<span style="color: #0000FF;">import</span> matplotlib.pyplot <span style="color: #0000FF;">as</span> plt
-
-<span style="color: #0000FF;">from</span> ase.calculators.emt <span style="color: #0000FF;">import</span> EMT
-<span style="color: #0000FF;">from</span> ase <span style="color: #0000FF;">import</span> Atoms
-
-<span style="color: #BA36A5;">atoms</span> = Atoms(<span style="color: #008000;">'Cu2'</span>,[[0, 0, 0], [10, 0, 0]], pbc=[<span style="color: #D0372D;">False</span>, <span style="color: #D0372D;">False</span>, <span style="color: #D0372D;">False</span>])
-atoms.set_calculator(EMT())
-
-<span style="color: #BA36A5;">e0</span> = atoms.get_potential_energy()
-
-<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">Array of bond lengths to get the energy for</span>
-<span style="color: #BA36A5;">d</span> = np.linspace(1.7, 3, 30)
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">get_e</span>(distance):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">a</span> = atoms.copy()
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   a[1]<span style="color: #BA36A5;">.x</span> = distance
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   a.set_calculator(EMT())
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">e</span> = a.get_potential_energy()
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> e
-
-<span style="color: #BA36A5;">e</span> = np.array([get_e(dist) <span style="color: #0000FF;">for</span> dist <span style="color: #0000FF;">in</span> d])
-<span style="color: #BA36A5;">e</span> -=  e0  <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">set the energy zero</span>
-
-plt.plot(d, e, <span style="color: #008000;">'bo '</span>)
-plt.xlabel(<span style="color: #008000;">'d (&#197;)'</span>)
-plt.ylabel(<span style="color: #008000;">'energy (eV)'</span>)
-</pre>
-</div>
-
-<p>
-<img src="/media/ob-ipython-82aeda9421056689d5212f9033da900a.png"> 
-</p>
-
-
-<p>
-We see there is a minimum, and the energy is asymmetric about the minimum. We have no functional form for the energy here, just the data in the plot. So to get another energy, we have to run another calculation. If that was expensive, we might prefer an analytical equation to evaluate instead.  We will get an analytical form by fitting a function to the data. A classic one is the <a href="https://en.wikipedia.org/wiki/Buckingham_potential">Buckingham potential</a>: \(E = A \exp(-B r) - \frac{C}{r^6}\). Here we perform the regression.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">def</span> <span style="color: #006699;">model</span>(r, A, B, C):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> A * np.exp(-B * r) - C / r**6
-
-<span style="color: #0000FF;">from</span> pycse <span style="color: #0000FF;">import</span> nlinfit
-<span style="color: #0000FF;">import</span> pprint
-
-<span style="color: #BA36A5;">p0</span> = [-80, 1, 1]
-<span style="color: #BA36A5;">p</span>, <span style="color: #BA36A5;">pint</span>, <span style="color: #BA36A5;">se</span> = nlinfit(model, d, e, p0, 0.05)
-<span style="color: #0000FF;">print</span>(<span style="color: #008000;">'Parameters = '</span>, p)
-<span style="color: #0000FF;">print</span>(<span style="color: #008000;">'Confidence intervals = '</span>)
-pprint.pprint(pint)
-plt.plot(d, e, <span style="color: #008000;">'bo '</span>, label=<span style="color: #008000;">'calculations'</span>)
-
-<span style="color: #BA36A5;">x</span> = np.linspace(<span style="color: #006FE0;">min</span>(d), <span style="color: #006FE0;">max</span>(d))
-plt.plot(x, model(x, *p), label=<span style="color: #008000;">'fit'</span>)
-plt.legend(loc=<span style="color: #008000;">'best'</span>)
-plt.xlabel(<span style="color: #008000;">'d (&#197;)'</span>)
-plt.ylabel(<span style="color: #008000;">'energy (eV)'</span>)
-</pre>
-</div>
-
-<p>
-Parameters =  [ -83.21072545    1.18663393 -266.15259507]
-Confidence intervals =
-array([[ -93.47624687,  -72.94520404],
-       [   1.14158438,    1.23168348],
-       [-280.92915682, -251.37603331]])
-<img src="/media/ob-ipython-a05811588d06f090a2462ba9f48dccb3.png"> 
-</p>
-
-<p>
-That fit is ok, but not great. We would be better off with a spline for this simple system! The trouble is how do we get anything better? If we had a better equation to fit to we might get better results.  While one might come up with one for this dimer, how would you extend it to more complex systems, even just a trimer? There have been decades of research dedicated to that, and we are not smarter than those researchers so, it is time for a new approach.
-</p>
-
-<p>
-We will use a Neural Network regressor. The input will be \(d\) and we want to regress a function to predict the energy.
-</p>
-
-<p>
-There are a couple of important points to make here.
-</p>
-
-<ol class="org-ol">
-<li>This is just another kind of regression.</li>
-<li>We need a lot more data to do the regression. Here we use 300 data points.</li>
-<li>We need to specify a network architecture. Here we use one hidden layer with 10 neurons, and the tanh activation function on each neuron. The last layer is just the output layer. I do not claim this is any kind of optimal architecture. It is just one that works to illustrate the idea.</li>
-</ol>
-
-<p>
-Here is the code that uses a neural network regressor, which is lightly adapted from <a href="http://scikit-neuralnetwork.readthedocs.io/en/latest/guide_model.html">http://scikit-neuralnetwork.readthedocs.io/en/latest/guide_model.html</a>.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">from</span> sknn.mlp <span style="color: #0000FF;">import</span> Regressor, Layer
-
-<span style="color: #BA36A5;">D</span> = np.linspace(1.7, 3, 300)
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">get_e</span>(distance):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">a</span> = atoms.copy()
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   a[1]<span style="color: #BA36A5;">.x</span> = distance
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   a.set_calculator(EMT())
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">e</span> = a.get_potential_energy()
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> e
-
-<span style="color: #BA36A5;">E</span> = np.array([get_e(dist) <span style="color: #0000FF;">for</span> dist <span style="color: #0000FF;">in</span> D])
-<span style="color: #BA36A5;">E</span> -=  e0  <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">set the energy zero</span>
-
-<span style="color: #BA36A5;">X_train</span> = np.row_stack(np.array(D))
-
-<span style="color: #BA36A5;">N</span> = 10
-<span style="color: #BA36A5;">nn</span> = Regressor(layers=[Layer(<span style="color: #008000;">"Tanh"</span>, units=N),
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>  Layer(<span style="color: #008000;">'Linear'</span>)])
-nn.fit(X_train, E)
-
-<span style="color: #BA36A5;">dfit</span> = np.linspace(<span style="color: #006FE0;">min</span>(d), <span style="color: #006FE0;">max</span>(d))
-
-<span style="color: #BA36A5;">efit</span> = nn.predict(np.row_stack(dfit))
-
-plt.plot(d, e, <span style="color: #008000;">'bo '</span>)
-plt.plot(dfit, efit)
-plt.legend([<span style="color: #008000;">'calculations'</span>, <span style="color: #008000;">'neural network'</span>])
-plt.xlabel(<span style="color: #008000;">'d (&#197;)'</span>)
-plt.ylabel(<span style="color: #008000;">'energy (eV)'</span>)
-</pre>
-</div>
-
-<p>
-<img src="/media/ob-ipython-025c1b30f565c5806510804582e91242.png"> 
-</p>
-
-<p>
-This fit looks pretty good, better than we got for the Buckingham potential. Well, it probably should look better, we have many more parameters that were fitted! It is not perfect, but it could be systematically improved by increasing the number of hidden layers, and neurons in each layer. I am being a little loose here by relying on a visual assessment of the fit. To systematically improve it you would need a quantitative analysis of the errors. I also note though, that if I run the block above several times in succession, I get different fits each time. I suppose that is due to some random numbers used to initialize the fit, but sometimes the fit is about as good as the result you see above, and sometimes it is terrible.
-</p>
-
-<p>
-Ok, what is the point after all? We developed a neural network that pretty accurately captures the energy of a Cu dimer <i>with no knowledge</i> of the physics involved. Now, EMT is not that expensive, but suppose this required 300 DFT calculations at 1 minute or more a piece? That is five hours just to get the data! With this neural network, we can quickly compute energies. For example, this shows we get about 10000 energy calculations in just 287 ms.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython">%%timeit
-
-<span style="color: #BA36A5;">dfit</span> = np.linspace(<span style="color: #006FE0;">min</span>(d), <span style="color: #006FE0;">max</span>(d), 10000)
-<span style="color: #BA36A5;">efit</span> = nn.predict(np.row_stack(dfit))
-</pre>
-</div>
-
-<p>
-1 loop, best of 3: 287 ms per loop
-</p>
-
-<p>
-Compare that to the time it took to compute the 300 energies with EMT
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython">%%timeit
-<span style="color: #BA36A5;">E</span> = np.array([get_e(dist) <span style="color: #0000FF;">for</span> dist <span style="color: #0000FF;">in</span> D])
-</pre>
-</div>
-
-<p>
-1 loop, best of 3: 230 ms per loop
-</p>
-
-<p>
-The neural network is a lot faster than the way we get the EMT energies!
-</p>
-
-<p>
-It is true in this case we could have used a spline, or interpolating function and it would likely be even better than this Neural Network. We are aiming to get more complicated soon though. For a trimer, we will have three dimensions to worry about, and that can still be worked out in a similar fashion I think. Past that, it becomes too hard to reduce the dimensions, and this approach breaks down. Then we have to try something else. We will get to that in another post.
-</p>
-<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2017/03/18/Modeling-a-Cu-dimer-by-EMT,-nonlinear-regression-and-neural-networks.org">org-mode source</a></p>
-<p>Org-mode version = 9.0.5</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/03/18/Modeling-a-Cu-dimer-by-EMT-nonlinear-regression-and-neural-networks#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="/blog/category/python/1">« Previous Page</a>
   --  
  <a href="/blog/category/python/3">Next Page »</a>
@@ -1225,11 +1152,11 @@ It is true in this case we could have used a spline, or interpolating function a
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2018/10/07/Compressibility-factor-variation-from-the-van-der-Waals-equation-by-three-different-approaches/">Compressibility factor variation from the van der Waals equation by three different approaches</a></li>
       <li><a href="/blog/2018/09/24/Solving-nonlinear-algebra-problems-with-internal-state-information/">Solving nonlinear algebra problems with internal state information</a></li>
       <li><a href="/blog/2018/09/05/Integration-of-the-heat-capacity/">Integration of the heat capacity</a></li>
       <li><a href="/blog/2018/09/04/A-new-ode-integrator-function-in-scipy/">A new ode integrator function in scipy</a></li>
       <li><a href="/blog/2018/07/01/Getting-geo-tagged-information-from-photos-for-blogging/">Getting geo-tagged information from photos for blogging</a></li>
-      <li><a href="/blog/2018/05/17/Literate-programming-with-python-doctests/">Literate programming with python doctests</a></li>
     </ul>
   </section>
 

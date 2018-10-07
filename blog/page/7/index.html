@@ -84,10 +84,596 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Linear-algebra-in-Emacs-using-MKL-and-dynamic-modules"></div>
+      <h2 class="blog_post_title"><a href="/blog/2017/07/21/Linear-algebra-in-Emacs-using-MKL-and-dynamic-modules/" rel="bookmark" title="Permanent Link to Linear algebra in Emacs using MKL and dynamic modules">Linear algebra in Emacs using MKL and dynamic modules</a></h2>
+      <p><small><span class="blog_post_date">Posted July 21, 2017 at 03:48 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/dynamic-module/'>dynamic-module</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2017/07/21/Linear-algebra-in-Emacs-using-MKL-and-dynamic-modules#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#orgbfb8d4e">1. Convenience functions to get array properties</a></li>
+<li><a href="#orga1c9a60">2. Matrix multiplication</a>
+<ul>
+<li><a href="#orgf536480">2.1. 1d * 1d</a></li>
+<li><a href="#org76f193d">2.2. 2d * 1d</a></li>
+<li><a href="#org82cc641">2.3. 1d * 2d</a></li>
+<li><a href="#org0849c80">2.4. 2d * 2d</a></li>
+</ul>
+</li>
+<li><a href="#org4a14b46">3. Summary thoughts</a></li>
+<li><a href="#orgba66efb">4. The module code</a></li>
+<li><a href="#org4be1bce">5. Elisp helper functions</a></li>
+</ul>
+</div>
+</div>
+<p>
+In a <a href="http://kitchingroup.cheme.cmu.edu/blog/2017/07/11/Adding-linear-algebra-to-Emacs-with-the-GSL-and-dynamic-modules/">previous post</a> I integrated some linear algebra into Emacs using the GNU Scientific library and a dynamic module. In this post, I use a similar approach that uses the Intel MKL library in conjunction with some helper elisp functions to mimic the array broadcasting features in Numpy. I thought this might be easier and lead to at least a complementary set of functionalities.
+</p>
+
+<p>
+Note: I had to follow the directions <a href="http://osxdaily.com/2015/10/05/disable-rootless-system-integrity-protection-mac-os-x">here</a> to disable some security feature on my Mac so that it would use the MKL libraries. Thanks Apple.
+</p>
+
+<p>
+It is convenient to use vectors for the representation of arrays in Emacs because there are nice functions in the emacs-module.h for accessing vector properties. Also vectors sound closer to an array than a list. So what about array broadcasting, e.g. the way numpy lets you multiply a 2d array with a 1d array? If you multiply two arrays with size (m1, n1) * (m2, n2), it is required that the number of columns in the first array (n1) be equal to the number of rows in the second one (m2), and the resulting size of the array product will be (m1, n2). What should happen though when we have 1d array? This is neither a row or column vector itself, but we can treat as either one if we choose too. For example the vector [1 2 3] can be thought of as an array with the shape (1, 3), e.g. a single row with three columns, or (3, 1), i.e. three rows in a single column. We will build this capability into the module for convenience.
+</p>
+
+<p>
+I still find it moderately tedious to write c functions that take emacs arguments, transform them to c arguments, do some c computations, and convert the results back to emacs values. So, we only implement one c function for this that multiplies two 2d arrays together using the cblas_dgemm routine in the MKL library. Then, we will create a complementary elisp library that will provide some additional functionality to get the shapes of vector arrays, dimensions, and allow us to multiply 1d and 2d vectors together the same way Numpy does array broadcasting.
+</p>
+
+<p>
+The dynamic module code is listed in <a href="#orgba66efb">The module code</a>. The elisp code is listed in <a href="#org4be1bce">Elisp helper functions</a>.  In the following sections we just demonstrate how to use the results.
+</p>
+
+<div id="outline-container-orgbfb8d4e" class="outline-2">
+<h2 id="orgbfb8d4e"><span class="section-number-2">1</span> Convenience functions to get array properties</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+I found it convenient to do array shape and dimension analysis in elisp before sending arrays to the dynamic module. The shape of an array is just the number of elements in each dimension. Here we look at a 2&times; 3 array.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(vector-shape [[1 2 3]
+               [3 4 5]])
+</pre>
+</div>
+
+<pre class="example">
+[2 3]
+
+</pre>
+
+<p>
+You see it returns a vector showing two rows and three columns. There are two convenience commands to get the number of rows (vector-nrows) and columns (vector-ncols). Here is one of them.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(vector-ncols [[1 2 3]
+               [3 4 5]])
+</pre>
+</div>
+
+<pre class="example">
+3
+
+</pre>
+</div>
+</div>
+
+
+<div id="outline-container-orga1c9a60" class="outline-2">
+<h2 id="orga1c9a60"><span class="section-number-2">2</span> Matrix multiplication</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+The main problem we want to calculate is the matrix multiplication \(A\cdotB\) where \(A\) and \(B\) are either 1d vectors or 2d arrays. Here we examine several representative cases of matrix multiplication.
+</p>
+</div>
+
+<div id="outline-container-orgf536480" class="outline-3">
+<h3 id="orgf536480"><span class="section-number-3">2.1</span> 1d * 1d</h3>
+<div class="outline-text-3" id="text-2-1">
+<p>
+This is a simple dot-product that is actually calculated in elisp.
+</p>
+
+<p>
+\([1 1 1] \cdot [2 2 2] = 6\)
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(matrix-multiply [1 1 1] [2 2 2])
+</pre>
+</div>
+
+<pre class="example">
+6.0
+
+</pre>
+
+<p>
+✓
+</p>
+
+<p>
+Note we get a float. That is because we initialize the sum with 0.0 to be consistent with all the other cases which are done with floats. dgemm is a double routine in MKL, which means it should return floats. Internally in the module, we cast all numbers as doubles for the multiplication.
+</p>
+</div>
+</div>
+
+<div id="outline-container-org76f193d" class="outline-3">
+<h3 id="org76f193d"><span class="section-number-3">2.2</span> 2d * 1d</h3>
+<div class="outline-text-3" id="text-2-2">
+<p>
+This is a matrix multiplication that is typically like \(A b\) where \(b\) is a column vector. We return a 1d array as a result, rather than a 2d array of nrows and 1 column.
+</p>
+
+<p>
+\[ \left[\begin{array}{cc}
+1 & 2 \\
+3 & 4 \end{array}\right] 
+\left [ \begin{array}{c}
+1 \\ 1 \end{array}\right] = \left[\begin{array}{c}3\\7\end{array}\right]\]
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((A [[1 2]
+          [3 4]])
+      (b [1 1]))
+  (matrix-multiply  A b))
+</pre>
+</div>
+
+<pre class="example">
+[3.0 7.0]
+
+</pre>
+
+<p>
+✓
+</p>
+</div>
+</div>
+
+<div id="outline-container-org82cc641" class="outline-3">
+<h3 id="org82cc641"><span class="section-number-3">2.3</span> 1d * 2d</h3>
+<div class="outline-text-3" id="text-2-3">
+<p>
+This case is \(b A\) where \(b\) is a row vector. For example:
+</p>
+
+<p>
+\[\left[\begin{array}{cc}1 & 1\end{array}\right]
+\left[\begin{array}{cc} 1 & 2\\ 3 & 4\end{array}\right] = \left[\begin{array}{cc} 4 & 6 \end{array}\right ]\]
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(matrix-multiply [1 1]
+                 [[1 2]
+                  [3 4]])
+</pre>
+</div>
+
+<pre class="example">
+[4.0 6.0]
+
+</pre>
+
+<p>
+✓
+</p>
+
+<p>
+As with the previous case, we return a 1d vector result rather than a 2d array with 1 row and ncolumns.
+</p>
+</div>
+</div>
+
+<div id="outline-container-org0849c80" class="outline-3">
+<h3 id="org0849c80"><span class="section-number-3">2.4</span> 2d * 2d</h3>
+<div class="outline-text-3" id="text-2-4">
+<p>
+Finally we have the case of \(A B\). The number of columns in A must be the same as the number of rows in B, and the result has a size that is the number of rows in A and the number of columns in B. Here is one <a href="http://www.sosmath.com/matrix/matrix1/matrix1.html">example</a>:
+</p>
+
+<p>
+\[\left[\begin{array}{cc} 0 & 1\\ 0 & 0\end{array}\right]  
+\left[\begin{array}{cc} 0 & 0\\ 1 & 0\end{array}\right]  
+= \left[\begin{array}{cc} 1 & 0\\ 0 & 0\end{array}\right]  \]
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(matrix-multiply [[0 1]
+                  [0 0]]
+                 [[0 0]
+                  [1 0]])
+</pre>
+</div>
+
+<pre class="example">
+[[1.0 0.0] [0.0 0.0]]
+
+</pre>
+
+<p>
+✓
+</p>
+
+<p>
+This example is adapted from <a href="https://stackoverflow.com/questions/21547462/how-to-multiply-2-dimensional-arrays-matrix-multiplication">here</a>. The correct answer is at the bottom of that page, and shown here.
+</p>
+
+<p>
+\[\left[\begin{array}{cccc} 1 & 2 & -2 & 0 \\ -3 & 4 & 7 & 2 \\ 6 & 0 & 3 & 1\end{array}\right]  
+\left[\begin{array}{cc} -1 & 3 \\ 0 & 9 \\ 1 & -11 \\ 4 & -5 \end{array}\right]
+= \left[\begin{array}{cc} -3 & 43 \\ 18 & -60 \\ 4 & -5\end{array}\right]    \]
+</p>
+
+<p>
+For readability we use temporary variables here, and pretty-print the result.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((A [[1 2 -2 0]
+          [-3 4 7 2]
+          [6 0 3 1]])
+      (B [[-1 3]
+          [0  9]
+          [1 -11]
+          [4 -5]]))
+  (pp (matrix-multiply A B)))
+</pre>
+</div>
+
+<pre class="example">
+[[-3.0 43.0]
+ [18.0 -60.0]
+ [1.0 -20.0]]
+
+</pre>
+
+<p>
+✓
+</p>
+
+<p>
+So, all these example work as we expect. The elisp function for matrix-multiply does a lot of work for you to make these cases work, including error checking for dimensional consistency.
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org4a14b46" class="outline-2">
+<h2 id="org4a14b46"><span class="section-number-2">3</span> Summary thoughts</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+It was not any easier to write this dynamic module than the previous one I used with the Gnu Scientific Library. The approach and code are remarkably similar. In one way the GSL was easier to use; it worked out of the box, whereas I had to fiddle with a security option in my OS to get it to run MKL! My  Anaconda Python distribution must get around that somehow since it ships with an MKL compiled Numpy and scipy.
+</p>
+
+<p>
+The idea of using elisp for analysis of the inputs and making sure they are correct is a good one and helps prevent segfaults. Of course it is a good idea to write defensive c-code to avoid that too. Overall, this is another good example of expanding the capabilities of Emacs with a dynamic module.
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgba66efb" class="outline-2">
+<h2 id="orgba66efb"><a id="ID-45D04B39-1927-44ED-9402-E89D166AE8C8"></a><span class="section-number-2">4</span> The module code</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+The c-code is loosely adapted from <a href="https://software.intel.com/en-us/node/529735">https://software.intel.com/en-us/node/529735</a>. We do not implement the full dgemm behavior which is able to calculate \(C = \alpha A * B + \beta*C\). We set &alpha;=1, and &beta;=0 in this example. We should do some dimension checking here, but it is easier to do it in emacs in a helper function. As long as you use the helper function there should not be an issue, but it is possible to segfault Emacs if you use the module function incorrectly.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-c"><span style="color: #808080;">#include</span> <span style="color: #008000;">"emacs-module.h"</span>
+<span style="color: #808080;">#include</span> <span style="color: #008000;">"emacs-module-helpers.h"</span>
+<span style="color: #808080;">#include</span> <span style="color: #008000;">&lt;mkl.h&gt;</span>
+
+<span style="color: #6434A3;">int</span> <span style="color: #BA36A5;">plugin_is_GPL_compatible</span>;
+
+<span style="color: #6434A3;">emacs_value</span> <span style="color: #006699;">Fmkl_dgemm</span> (<span style="color: #6434A3;">emacs_env</span> *<span style="color: #BA36A5;">env</span>, <span style="color: #6434A3;">ptrdiff_t</span> <span style="color: #BA36A5;">nargs</span>, <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">args</span>[], <span style="color: #6434A3;">void</span> *<span style="color: #BA36A5;">data</span>)
+{
+  <span style="color: #6434A3;">double</span> *<span style="color: #BA36A5;">A</span>, *<span style="color: #BA36A5;">B</span>, *<span style="color: #BA36A5;">C</span>;
+  <span style="color: #6434A3;">int</span> <span style="color: #BA36A5;">m</span>, <span style="color: #BA36A5;">n</span>, <span style="color: #BA36A5;">k</span>, <span style="color: #BA36A5;">i</span>, <span style="color: #BA36A5;">j</span>;
+  <span style="color: #6434A3;">double</span> <span style="color: #BA36A5;">alpha</span> = 1.0;
+  <span style="color: #6434A3;">double</span> <span style="color: #BA36A5;">beta</span> = 0.0;
+  
+  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">These will be 2d vectors</span>
+  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">M0</span> = args[0]; <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">array 1 - A (m x k)</span>
+  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">M1</span> = args[1]; <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">array 2 - B (k x n)</span>
+
+  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">I need to get the number of rows and columns of each one.</span>
+  m = env-&gt;vec_size(env, M0);
+  k  = 0;
+  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">We assume that we have a 2d array.</span>
+  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">el1</span> = env-&gt;vec_get (env, M0, 0);
+  k = env-&gt;vec_size(env, el1);
+  
+  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">Now we know A has dimensions (m, k)</span>
+ 
+  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">el2</span> = env-&gt;vec_get (env, M1, 0);
+  n = env-&gt;vec_size(env, el2);
+  
+  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">Now we know M1 had dimensions (k, n)</span>
+  
+  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">Now we have to build up arrays.</span>
+  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">We are looking at a * b = c</span>
+  A = (<span style="color: #6434A3;">double</span> *)mkl_malloc( m*k*<span style="color: #0000FF;">sizeof</span>( <span style="color: #6434A3;">double</span> ), 64 );
+  B = (<span style="color: #6434A3;">double</span> *)mkl_malloc( k*n*<span style="color: #0000FF;">sizeof</span>( <span style="color: #6434A3;">double</span> ), 64 );
+  C = (<span style="color: #6434A3;">double</span> *)mkl_malloc( m*n*<span style="color: #0000FF;">sizeof</span>( <span style="color: #6434A3;">double</span> ), 64 );
+  <span style="color: #0000FF;">if</span> (A == <span style="color: #D0372D;">NULL</span> || B == <span style="color: #D0372D;">NULL</span> || C == <span style="color: #D0372D;">NULL</span>) {
+    printf( <span style="color: #008000;">"\n ERROR: Can't allocate memory for matrices. Aborting... \n\n"</span>);
+    mkl_free(A);
+    mkl_free(B);
+    mkl_free(C);
+    <span style="color: #0000FF;">return</span> 1;
+  }
+
+  <span style="color: #8D8D84;">//</span><span style="color: #8D8D84; font-style: italic;">populate A</span>
+  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">row</span>, <span style="color: #BA36A5;">ij</span>;
+  <span style="color: #0000FF;">for</span> (<span style="color: #6434A3;">int</span> <span style="color: #BA36A5;">i</span> = 0; i &lt; m; i++)
+    {
+      row = env-&gt;vec_get(env, M0, i);
+      <span style="color: #0000FF;">for</span> (<span style="color: #6434A3;">int</span> <span style="color: #BA36A5;">j</span> = 0; j &lt; k; j++)
+        {
+          <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">get M0[i, j]</span>
+          ij = env-&gt;vec_get(env, row, j);
+          A[k * i + j] = extract_double(env, ij);
+        }
+    }
+
+  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">populate B</span>
+  <span style="color: #0000FF;">for</span> (<span style="color: #6434A3;">int</span> <span style="color: #BA36A5;">i</span> = 0; i &lt; k; i++)
+    {
+      row = env-&gt;vec_get(env, M1, i);
+      <span style="color: #0000FF;">for</span> (<span style="color: #6434A3;">int</span> <span style="color: #BA36A5;">j</span> = 0; j &lt; n; j++)
+        {         
+          <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">get M0[i, j]</span>
+          ij = env-&gt;vec_get(env, row, j);
+          B[n * i + j] = extract_double(env, ij);
+        }
+    }
+
+  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">initialize C.  The solution will have dimensions of (rows1, cols2).</span>
+  <span style="color: #0000FF;">for</span> (<span style="color: #6434A3;">int</span> <span style="color: #BA36A5;">i</span> = 0; i &lt; m; i++)
+    {
+      <span style="color: #0000FF;">for</span> (<span style="color: #6434A3;">int</span> <span style="color: #BA36A5;">j</span> = 0; j &lt; n; j++)
+        {
+          C[n * i + j] = 0.0;
+        }
+    }
+
+  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">the multiplication is done here.</span>
+  cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, 
+                m, n, k, alpha, A, k, B, n, beta, C, n);
+
+  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">now we build up the vector to return</span>
+  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">vector</span> = env-&gt;intern(env, <span style="color: #008000;">"vector"</span>);
+  <span style="color: #6434A3;">emacs_value</span> *<span style="color: #BA36A5;">array</span> = malloc(<span style="color: #0000FF;">sizeof</span>(emacs_value) * m);
+  <span style="color: #6434A3;">emacs_value</span> *<span style="color: #BA36A5;">row1</span>;
+  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">vec</span>;
+  <span style="color: #0000FF;">for</span> (<span style="color: #6434A3;">int</span> <span style="color: #BA36A5;">i</span> = 0; i &lt; m; i++)
+    {
+      row1 = malloc(<span style="color: #0000FF;">sizeof</span>(emacs_value) * n);
+      <span style="color: #0000FF;">for</span> (<span style="color: #6434A3;">int</span> <span style="color: #BA36A5;">j</span> = 0; j &lt; n; j++)
+        {
+          row1[j] = env-&gt;make_float(env, C[j + i * n]);
+        }
+      vec = env-&gt;funcall(env, vector, n, row1);
+      array[i] = vec;
+      free(row1);
+    }
+
+  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">result</span> = env-&gt;funcall(env, vector, m, array);
+  free(array);
+  <span style="color: #0000FF;">return</span> result;
+}
+
+
+<span style="color: #6434A3;">int</span> <span style="color: #006699;">emacs_module_init</span>(<span style="color: #0000FF;">struct</span> <span style="color: #6434A3;">emacs_runtime</span> *<span style="color: #BA36A5;">ert</span>)
+{
+  <span style="color: #6434A3;">emacs_env</span> *<span style="color: #BA36A5;">env</span> = ert-&gt;get_environment(ert);
+  
+  DEFUN(<span style="color: #008000;">"mkl-dgemm"</span>, Fmkl_dgemm, 2, 2,
+        <span style="color: #008000;">"(mkl-dgemm A B)\n"</span>\
+        <span style="color: #008000;">"Multiply the matrices A and B. A and B must both be 2d vectors.\n"</span> \
+        <span style="color: #008000;">"Returns the product as a vector."</span>,
+        <span style="color: #D0372D;">NULL</span>);
+  provide(env, <span style="color: #008000;">"mkl"</span>);
+  
+  <span style="color: #0000FF;">return</span> 0;
+}
+
+</pre>
+</div>
+
+<p>
+To build this we have to run <a href="org-babel-tangle">org-babel-tangle</a> to generate the mkl.c file, and then run this shell block to compile it.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh">sh /opt/intel/mkl/bin/mklvars.sh intel64
+gcc -Wall -m64 -I${<span style="color: #BA36A5;">MKLROOT</span>}/include -fPIC -c mkl.c
+gcc -shared -L${<span style="color: #BA36A5;">MKLROOT</span>}/lib -Wl,-rpath,${<span style="color: #BA36A5;">MKLROOT</span>}/lib -lmkl_rt -lpthread -lm -ldl -L. -lemacs-module-helpers -o mkl.so mkl.o
+</pre>
+</div>
+</div>
+</div>
+
+
+<div id="outline-container-org4be1bce" class="outline-2">
+<h2 id="org4be1bce"><a id="ID-F5AEAF4E-317F-48D4-9815-8EB0331AF0E5"></a><span class="section-number-2">5</span> Elisp helper functions</h2>
+<div class="outline-text-2" id="text-5">
+<p>
+We will often want to know the shape of our arrays. The shape is how many elements there are in each dimension. Here we define a recursive function that gets the shape of arbitrarily nested vectors and returns a vector of the shape. We define some helper functions to get the number of dimensions, elements, rows and columns.
+</p>
+
+<p>
+The main function is a helper elisp function that multiplies two arrays. The function analyzes the shapes and transforms 1d vectors into the right 2d shape to multiply them together, and then returns the shape that makes sense. The c-code is not very robust to mistakes in the array dimensions. It tends to make emacs segfault if you get it wrong. So we try to avoid that if possible.
+</p>
+
+<p>
+We have four cases to consider for multiplication:
+</p>
+
+<dl class="org-dl">
+<dt>2d * 2d</dt><dd>(assert (= m1 n2)) return (n1, m2)</dd>
+<dt>1d * 2d</dt><dd>1d is a row vector (1, n1) (assert (= n1 m2)) return vector with n2 elements</dd>
+<dt>2d * 1d</dt><dd>1d is a column vector (m2, 1) (assert (= n1 m2)) return vector with m2 elements</dd>
+<dt>1d * 1d</dt><dd>(assert (= (length m1) (length m2)) return a scalar</dd>
+</dl>
+
+<p>
+Here is the 
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(add-to-list 'load-path (expand-file-name <span style="color: #008000;">"."</span>))
+(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">mkl</span>)
+(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">cl</span>)
+(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">seq</span>)
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">vector-shape</span> (vec)
+  <span style="color: #036A07;">"Return a vector of the shape of VEC."</span>
+  (<span style="color: #0000FF;">let</span> ((shape (vector (length vec))))
+    (<span style="color: #0000FF;">if</span> (vectorp (aref vec 0))
+        (vconcat shape (vector-shape (aref vec 0)))
+      shape)))
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">vector-ndims</span> (vec)
+  <span style="color: #036A07;">"Returns the number of dimensions in VEC."</span>
+  (length (vector-shape vec)))
+
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">vector-numel</span> (vec)
+  <span style="color: #036A07;">"Returns the number of elements in VEC."</span>
+  (<span style="color: #0000FF;">if</span> (&gt; (length vec) 0)
+      (seq-reduce '* (vector-shape vec) 1)
+    0))
+
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">vector-nrows</span> (vec)
+ <span style="color: #036A07;">"Return the number of rows in VEC."</span>
+ (aref (vector-shape vec) 0))
+
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">vector-ncols</span> (vec)
+ <span style="color: #036A07;">"Return the number of columns in VEC."</span>
+ (aref (vector-shape vec) 1))
+
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">matrix-multiply</span> (A B)
+  <span style="color: #036A07;">"Return A * B in the matrix multiply sense."</span>
+  (<span style="color: #0000FF;">cond</span>
+   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">1d * 1d i.e. a dot-product</span>
+   ((<span style="color: #0000FF;">and</span> (= 1 (vector-ndims A))
+         (= 1 (vector-ndims B))
+         (= (length A) (length B)))
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">this is easy to compute so we don't use dgemm.</span>
+    (seq-reduce '+ (mapcar* (<span style="color: #0000FF;">lambda</span> (a b) (* a b)) A B) 0.0))
+
+   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">2d * 1d (m1, n1) * (n2, 1)</span>
+   ((<span style="color: #0000FF;">and</span> (= 2 (vector-ndims A))
+         (= 1 (vector-ndims B))
+         <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">ncols-A = len-B</span>
+         (= (vector-ncols A) (length B)))
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">transform B into a 2d column vector</span>
+    (<span style="color: #0000FF;">let*</span> ((B2d (apply 'vector (mapcar 'vector B)))
+           (result  (mkl-dgemm A B2d)))
+      <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Now call (dgemm A B2d) -&gt; (m2, 1) column vector</span>
+      <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">and convert it back to a 1d result</span>
+      (cl-map 'vector (<span style="color: #0000FF;">lambda</span> (v) (aref v 0)) result)))
+
+   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">1d * 2d (1, n1) * (m2, n2) len-A = nrows-B</span>
+   ((<span style="color: #0000FF;">and</span> (= 1 (vector-ndims A))
+         (= 2 (vector-ndims B))
+         (= (length A) (vector-nrows B)))
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">transform B into a 2d row vector</span>
+    (<span style="color: #0000FF;">let*</span> ((A2d (vector A))
+           (result  (mkl-dgemm A2d B)))
+      <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">should be a 2d row vector</span>
+      (aref result 0)))
+
+   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">2d * 2d (m1, n1) * (m2, n2) rows-A = ncols-B</span>
+   ((<span style="color: #0000FF;">and</span> (= 2 (vector-ndims A))
+         (= 2 (vector-ndims B))
+         (= (vector-ncols A)
+            (vector-nrows B)))
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">call (dgemm A B) and return result</span>
+    (mkl-dgemm A B))
+   (t
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Error checking, getting here means none of the cases above were caught.</span>
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">something is probably wrong.</span>
+    (<span style="color: #0000FF;">cond</span>
+     ((<span style="color: #0000FF;">or</span> (&gt; (vector-ndims A) 2)
+          (&gt; (vector-ndims B) 2))
+      (<span style="color: #ff0000; font-weight: bold;">error</span> <span style="color: #008000;">"One of your arrays has more than 2 dimensions. Only 1 or 2d arrays are supported"</span>))
+     ((<span style="color: #0000FF;">and</span> (= 1 (vector-ndims A))
+           (= 1 (vector-ndims B))
+           (not (= (length A) (length B))))
+      (<span style="color: #ff0000; font-weight: bold;">error</span> <span style="color: #008000;">"A and B must be the same length.</span>
+<span style="color: #008000;">len(A) = %d</span>
+<span style="color: #008000;">len(B) = %d"</span> (length A) (length B)))
+     ((<span style="color: #0000FF;">and</span>
+       (= (vector-ndims A) 2)
+       (= (vector-ndims B) 2)
+       (not (= (vector-nrows A) (vector-ncols B))))
+      (<span style="color: #ff0000; font-weight: bold;">error</span> <span style="color: #008000;">"Your array shapes are not correct.</span>
+<span style="color: #008000;">The number of rows in array A must equal the number of columns in array B.</span>
+<span style="color: #008000;">There are %d rows in A and %d columns in B"</span> (vector-nrows A) (vector-ncols B)))
+     ((<span style="color: #0000FF;">and</span>
+       (= (vector-ndims A) 2)
+       (= (vector-ndims B) 1)
+       (not (= (vector-nrows A) (length B))))
+      (<span style="color: #ff0000; font-weight: bold;">error</span> <span style="color: #008000;">"Your array shapes are not correct.</span>
+<span style="color: #008000;">The number of rows in array A must equal the number of columns in array B.</span>
+<span style="color: #008000;">There are %d rows in A and %d columns in B"</span> (vector-nrows A) (length B)))
+     (t
+      (<span style="color: #ff0000; font-weight: bold;">error</span> <span style="color: #008000;">"Unknown error"</span>))))))
+</pre>
+</div>
+
+<pre class="example">
+matrix-multiply
+
+</pre>
+</div>
+</div>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/07/21/Linear-algebra-in-Emacs-using-MKL-and-dynamic-modules.org">org-mode source</a></p>
+<p>Org-mode version = 9.0.7</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/07/21/Linear-algebra-in-Emacs-using-MKL-and-dynamic-modules#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="An-Emacs-zeromq-library-using-an-ffi"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/07/13/An-Emacs-zeromq-library-using-an-ffi/" rel="bookmark" title="Permanent Link to An Emacs zeromq library using an ffi">An Emacs zeromq library using an ffi</a></h2>
       <p><small><span class="blog_post_date">Posted July 13, 2017 at 06:44 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/ffi/'>ffi</a>, <a href='/blog/category/zeromq/'>zeromq</a>, <a href='/blog/category/dynamic-module/'>dynamic-module</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/ffi/'>ffi</a>, <a href='/blog/category/dynamic-module/'>dynamic-module</a>, <a href='/blog/category/zeromq/'>zeromq</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/07/13/An-Emacs-zeromq-library-using-an-ffi#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -449,7 +1035,7 @@ These define the ffi functions we use in this post. I use a convention that poin
       <div id="Zeromq-bindings-for-Emacs-via-dynamic-modules"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/07/12/Zeromq-bindings-for-Emacs-via-dynamic-modules/" rel="bookmark" title="Permanent Link to Zeromq bindings for Emacs via dynamic modules">Zeromq bindings for Emacs via dynamic modules</a></h2>
       <p><small><span class="blog_post_date">Posted July 12, 2017 at 07:38 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/dynamic-module/'>dynamic-module</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/dynamic-module/'>dynamic-module</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/07/12/Zeromq-bindings-for-Emacs-via-dynamic-modules#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -576,7 +1162,7 @@ Basically this creates the context, then the socket, and connects to it on port 
       <div id="Adding-linear-algebra-to-Emacs-with-the-GSL-and-dynamic-modules"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/07/11/Adding-linear-algebra-to-Emacs-with-the-GSL-and-dynamic-modules/" rel="bookmark" title="Permanent Link to Adding linear algebra to Emacs with the GSL and dynamic modules">Adding linear algebra to Emacs with the GSL and dynamic modules</a></h2>
       <p><small><span class="blog_post_date">Posted July 11, 2017 at 10:27 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/dynamic-module/'>dynamic-module</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/dynamic-module/'>dynamic-module</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/07/11/Adding-linear-algebra-to-Emacs-with-the-GSL-and-dynamic-modules#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -779,7 +1365,7 @@ The module does not handle 1d vectors well,, e.g. in gsl-linalg-LU-solve example
       <div id="Adding-GSL-constants-to-Emacs-in-a-dynamic-module"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/07/10/Adding-GSL-constants-to-Emacs-in-a-dynamic-module/" rel="bookmark" title="Permanent Link to Adding GSL constants to Emacs in a dynamic module">Adding GSL constants to Emacs in a dynamic module</a></h2>
       <p><small><span class="blog_post_date">Posted July 10, 2017 at 09:38 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/dynamic-module/'>dynamic-module</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/dynamic-module/'>dynamic-module</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/07/10/Adding-GSL-constants-to-Emacs-in-a-dynamic-module#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -936,277 +1522,6 @@ It seems like it might be possible to partially automate creation of this module
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/07/10/Adding-GSL-constants-to-Emacs-in-a-dynamic-module#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Adding-a-GSL-integration-function-to-Emacs-with-a-dynamic-module"></div>
-      <h2 class="blog_post_title"><a href="/blog/2017/07/09/Adding-a-GSL-integration-function-to-Emacs-with-a-dynamic-module/" rel="bookmark" title="Permanent Link to Adding a GSL integration function to Emacs with a dynamic module">Adding a GSL integration function to Emacs with a dynamic module</a></h2>
-      <p><small><span class="blog_post_date">Posted July 09, 2017 at 07:22 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/integration/'>integration</a>, <a href='/blog/category/dynamic-module/'>dynamic-module</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2017/07/09/Adding-a-GSL-integration-function-to-Emacs-with-a-dynamic-module#disqus_thread">View Comments</a>
-      <p><small><span class="blog_post_date">Updated July 11, 2017 at 07:37 AM</span>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-Here we work out how to run this program: <a href="https://www.gnu.org/software/gsl/doc/html/integration.html#adaptive-integration-example">https://www.gnu.org/software/gsl/doc/html/integration.html#adaptive-integration-example</a> in a dynamic module in emacs. The goal is to be able to evaluate \(\int_0^1 x^{-1/2} \log(x) dx\). According to the example page the answer is -4. We will define an integration function that takes at least a function and integration bounds as arguments, and several optional arguments to specify tolerances and limits. In other words we want to evaluate integrals of the form:
-</p>
-
-<p>
-\(\int_a^b f(x; params) dx\)
-</p>
-
-<p>
-I want that to happen in an elisp function with a signature like:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(gsl-integration-qags (<span style="color: #0000FF;">lambda</span> (x params) body) a b <span style="color: #6434A3;">&amp;optional</span> params epsabs epsrel limit)
-</pre>
-</div>
-
-<p>
-And that function will return a list containing (result error-estimate). Here is the C-code that makes this happen. It is more complex that the <a href="http://kitchingroup.cheme.cmu.edu/blog/2017/07/08/Adding-numerical-methods-to-emacs-with-dynamic-modules/">last example</a>, and only compiles with gcc that allows nested functions. I don't know how to write this without that feature. This is more complex also because you have to create a workspace to do the integration inside the function that does the integration. The C-module also has extra code in it to allow for optional arguments.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-c"><span style="color: #808080;">#include</span> <span style="color: #008000;">&lt;gsl/gsl_integration.h&gt;</span>
-<span style="color: #808080;">#include</span> <span style="color: #008000;">"emacs-module.h"</span>
-
-<span style="color: #6434A3;">int</span> <span style="color: #BA36A5;">plugin_is_GPL_compatible</span>;
-
-<span style="color: #0000FF;">static</span> <span style="color: #6434A3;">emacs_value</span> <span style="color: #006699;">F_gsl_integrate</span> (<span style="color: #6434A3;">emacs_env</span> *<span style="color: #BA36A5;">env</span>, <span style="color: #6434A3;">ptrdiff_t</span> <span style="color: #BA36A5;">nargs</span>, <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">args</span>[], <span style="color: #6434A3;">void</span> *<span style="color: #BA36A5;">data</span>)
-{
-  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">nested function - only supported as an extension in gcc</span>
-  <span style="color: #6434A3;">double</span> <span style="color: #006699;">f</span> (<span style="color: #6434A3;">double</span> <span style="color: #BA36A5;">x</span>, <span style="color: #6434A3;">void</span> *<span style="color: #BA36A5;">params</span>) 
-  {
-    <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">fn</span> = args[0];  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">function we will integrate</span>
-    <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">x2</span>[] = { env-&gt;make_float(env, x), params };
-    <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">y</span> = env-&gt;funcall(env, fn, 2, &amp;x2);   
-    
-    <span style="color: #0000FF;">return</span> env-&gt;extract_float (env, y);
-  }
-
-  <span style="color: #6434A3;">double</span> <span style="color: #BA36A5;">a</span> = env-&gt;extract_float (env, args[1]);
-  <span style="color: #6434A3;">double</span> <span style="color: #BA36A5;">b</span> = env-&gt;extract_float (env, args[2]);
-
-  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">default values for optional arguments</span>
-  <span style="color: #6434A3;">double</span> <span style="color: #BA36A5;">epsabs</span> = 0.0;
-  <span style="color: #6434A3;">double</span> <span style="color: #BA36A5;">epsrel</span> = 1e-7;
-  <span style="color: #6434A3;">size_t</span> <span style="color: #BA36A5;">limit</span> = 1000;
-  <span style="color: #6434A3;">double</span> <span style="color: #BA36A5;">result</span>, <span style="color: #BA36A5;">error</span>; 
-
-  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">Here is how I handle the optional arguments</span>
-  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">(gsl-integrate func a b params epsabs epsrel limit)</span>
-  <span style="color: #6434A3;">gsl_function</span> <span style="color: #BA36A5;">F</span>;
-  F.function = &amp;f;
-  <span style="color: #0000FF;">if</span> (nargs &gt;= 4) {F.params = args[3];}
-  <span style="color: #0000FF;">if</span> (nargs &gt;= 5 &amp;&amp; env-&gt;is_not_nil(env, args[4])) {epsabs = env-&gt;extract_float(env, args[4]);}
-  <span style="color: #0000FF;">if</span> (nargs &gt;= 6 &amp;&amp; env-&gt;is_not_nil(env, args[5])) {epsrel = env-&gt;extract_float(env, args[5]);}
-  <span style="color: #0000FF;">if</span> (nargs &gt;= 7 &amp;&amp; env-&gt;is_not_nil(env, args[6])) {limit = env-&gt;extract_integer(env, args[6]);}
-
-  <span style="color: #6434A3;">gsl_integration_workspace</span> * <span style="color: #BA36A5;">w</span> = gsl_integration_workspace_alloc (limit);
-
-  gsl_integration_qags (&amp;F, <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">gsl_function pointer</span>
-                        a, <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">lower integration bound</span>
-                        b, <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">upper integration bound</span>
-                        epsabs, <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">absolute error tolerance</span>
-                        epsrel, <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">relative error tolerance</span>
-                        limit, <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">max number of subintervals for integration</span>
-                        w, <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">the workspace</span>
-                        <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">pointers to put results and error in</span>
-                        &amp;result, &amp;error);
-
-  gsl_integration_workspace_free (w);
-    
-  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">make a list of (result error) to return</span>
-  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">Qlist</span> = env-&gt;intern(env, <span style="color: #008000;">"list"</span>);
-  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">Qresult</span> = env-&gt;make_float (env, result);
-  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">Qerror</span> = env-&gt;make_float (env, error);
-  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">list_args</span>[] = { Qresult, Qerror };
-  <span style="color: #0000FF;">return</span> env-&gt;funcall(env, Qlist, 2, list_args);
-}
-
-<span style="color: #6434A3;">int</span> <span style="color: #006699;">emacs_module_init</span>(<span style="color: #0000FF;">struct</span> <span style="color: #6434A3;">emacs_runtime</span> *<span style="color: #BA36A5;">ert</span>)
-{
-  <span style="color: #6434A3;">emacs_env</span> *<span style="color: #BA36A5;">env</span> = ert-&gt;get_environment(ert);
-  
-  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">Here we create the function.</span>
-  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">fset</span> = env-&gt;intern(env, <span style="color: #008000;">"fset"</span>);
-  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">args</span>[2];
-  args[0] = env-&gt;intern(env, <span style="color: #008000;">"gsl-integration-qags"</span>); <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">symbol to create for function</span>
-  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">The function we set that symbol to.</span>
-  args[1] = env-&gt;make_function(env,
-                               3, <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">min nargs</span>
-                               7, <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">max nargs</span>
-                               F_gsl_integrate,
-                               <span style="color: #008000;">"(gsl-integration-qags F A B &amp;optional PARAMS EPSABS EPSREL LIMIT)\n"</span> \
-                               <span style="color: #008000;">"Integrate F(x; params) from A to B.\n"</span> \
-                               <span style="color: #008000;">"F is a function of a single variable and parameters.\n"</span> \
-                               <span style="color: #008000;">"A is the lower bound of integration\n"</span>  \
-                               <span style="color: #008000;">"B is the upper bound of integration.\n"</span> \
-                               <span style="color: #008000;">"Optional parameters:\n"</span>\
-                               <span style="color: #008000;">"PARAMS is a list of params to pass to F.\n"</span> \
-                               <span style="color: #008000;">"EPSABS is a float (default 0.0) and is the absolute error tolerance.\n"</span> \
-                               <span style="color: #008000;">"EPSREL is a float (default 1e-7) and is the relative error tolerance.\n"</span> \
-                               <span style="color: #008000;">"LIMIT is the maximum number of subintervals for the integration (default 1000).\n"</span> \
-                               <span style="color: #008000;">"Returns (list result error-estimate).\n"</span> \
-                               <span style="color: #008000;">"See https://www.gnu.org/software/gsl/manual/html_node/QAGS-adaptive-integration-with-singularities.html."</span>,
-                               0);
-  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">This is basically (fset 'gsl-integration-qags (lambda func))</span>
-  env-&gt;funcall(env, fset, 2, args);
-  
-  <span style="color: #8D8D84;">// </span><span style="color: #8D8D84; font-style: italic;">This is what allows the shared library to provide a feature </span>
-  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">provide</span> = env-&gt;intern(env, <span style="color: #008000;">"provide"</span>);
-  <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">provide_args</span>[] = { env-&gt;intern(env, <span style="color: #008000;">"gsl-integration"</span>) };
-  env-&gt;funcall(env, provide, 1, provide_args);
-  
-  <span style="color: #0000FF;">return</span> 0;
-}
-</pre>
-</div>
-
-<p>
-Building this was moderately tricky. It appears the first gcc on my path uses clang which does not support nested functions in C. I don't know enough C to figure out how to do this without a nested function though, since the function has to be defined at run-time based on the emacs env and args. gcc does support inline functions, so the code below uses a gcc that does compile it.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-sh">rm -f gsl-integration.so gsl-integration.o
-/usr/local/Cellar/gcc/6.1.0/bin/gcc-6 -Wall -I/usr/local/include -fPIC -c gsl-integration.c
-/usr/local/Cellar/gcc/6.1.0/bin/gcc-6  -shared -L/usr/local/include -lgsl -o gsl-integration.so gsl-integration.o
-</pre>
-</div>
-
-<p>
-Now we add this directory to our path since it is not on it and require our new module.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(add-to-list 'load-path <span style="color: #008000;">"/Users/jkitchin/vc/blogofile-jkitchin.github.com/_blog/dynamic-module/"</span>)
-(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">gsl-integration</span>)
-</pre>
-</div>
-
-<pre class="example">
-gsl-integration
-
-</pre>
-
-<p>
-Let us see our new function in action. We evaluate \(\int_0^1 x^{-1/2} \log(x) dx\). According to the example page the answer is -4. Here is an example where we ignore the parameters. You have to be careful; Emacs sometimes segfaults and crashes if you use an integer or float argument when it expects the other type.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(gsl-integration-qags (<span style="color: #0000FF;">lambda</span> (x params) (/ (log x) (sqrt x))) 0.0 1.0)
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-right" />
-
-<col  class="org-right" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-right">-4.000000000000085</td>
-<td class="org-right">1.354472090042691e-13</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-Here are some optional arguments. 
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(gsl-integration-qags (<span style="color: #0000FF;">lambda</span> (x params) (/ (log x) (sqrt x))) 0.0 1.0 nil nil 0.01)
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-right" />
-
-<col  class="org-right" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-right">-4.000000000000075</td>
-<td class="org-right">0.019526557540360034</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-Nice, with a larger epsrel argument we get a larger error. Note the arguments are positional, so we have to include them all just to set the epsrel argument. How about an easier example with parameters that we actually use. Here we integrate a constant, and set the value of the constant from the params arg. The integral should be the area of a rectangle of length 1 and width of the param we use.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(list
- (gsl-integration-qags (<span style="color: #0000FF;">lambda</span> (x params) (first params)) 0.0 1.0 '(1.0))
- (gsl-integration-qags (<span style="color: #0000FF;">lambda</span> (x params) (first params)) 0.0 1.0 '(0.5)))
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-right" />
-
-<col  class="org-right" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-right">1.0</td>
-<td class="org-right">1.1102230246251565e-14</td>
-</tr>
-
-<tr>
-<td class="org-right">0.5</td>
-<td class="org-right">5.551115123125783e-15</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-Wow! It actually works!!! That was harder won success than usual for me. I am claiming victory for now and leaving the following notes to future me:
-</p>
-
-<ol class="org-ol">
-<li>It would be nice to have optional keyword arguments. This would take some handling of the arguments beyond what I know how to do for now, unless it is possible to pull in something like plist-get the way we pull in fset, provide and list in this example.</li>
-<li>Error checking on types would be helpful. It is not good for Emacs to crash because 0 is not 0.0!</li>
-<li>In numpy there is often a feature to get full_output. Here, the workspace created in the function has more information available in a struct that might be helpful to have access to at times. It seems like it might be possible to get that here too.</li>
-</ol>
-<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2017/07/09/Adding-a-GSL-integration-function-to-Emacs-with-a-dynamic-module.org">org-mode source</a></p>
-<p>Org-mode version = 9.0.7</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/07/09/Adding-a-GSL-integration-function-to-Emacs-with-a-dynamic-module#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="../6">« Previous Page</a>
   --  
  <a href="../8">Next Page »</a>
@@ -1248,11 +1563,11 @@ Wow! It actually works!!! That was harder won success than usual for me. I am cl
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2018/10/07/Compressibility-factor-variation-from-the-van-der-Waals-equation-by-three-different-approaches/">Compressibility factor variation from the van der Waals equation by three different approaches</a></li>
       <li><a href="/blog/2018/09/24/Solving-nonlinear-algebra-problems-with-internal-state-information/">Solving nonlinear algebra problems with internal state information</a></li>
       <li><a href="/blog/2018/09/05/Integration-of-the-heat-capacity/">Integration of the heat capacity</a></li>
       <li><a href="/blog/2018/09/04/A-new-ode-integrator-function-in-scipy/">A new ode integrator function in scipy</a></li>
       <li><a href="/blog/2018/07/01/Getting-geo-tagged-information-from-photos-for-blogging/">Getting geo-tagged information from photos for blogging</a></li>
-      <li><a href="/blog/2018/05/17/Literate-programming-with-python-doctests/">Literate programming with python doctests</a></li>
     </ul>
   </section>
 
