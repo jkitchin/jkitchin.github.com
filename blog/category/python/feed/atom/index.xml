@@ -8,7 +8,7 @@
   <title type="text">The Kitchin Research Group</title>
   <subtitle type="text">Chemical Engineering at Carnegie Mellon University</subtitle>
 
-  <updated>2018-10-07T17:15:34Z</updated>
+  <updated>2018-10-08T23:53:27Z</updated>
   <generator uri="http://blogofile.com/">Blogofile</generator>
 
   <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog" />
@@ -19,15 +19,318 @@
       <name></name>
       <uri>http://jkitchin.github.io/blog</uri>
     </author>
+    <title type="html"><![CDATA[Getting derivatives from implicit functions with autograd]]></title>
+    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2018/10/08/Getting-derivatives-from-implicit-functions-with-autograd" />
+    <id>http://jkitchin.github.io/blog/2018/10/08/Getting-derivatives-from-implicit-functions-with-autograd</id>
+    <updated>2018-10-08T19:53:21Z</updated>
+    <published>2018-10-08T19:53:21Z</published>
+    <category scheme="http://jkitchin.github.io/blog" term="autograd" />
+    <category scheme="http://jkitchin.github.io/blog" term="python" />
+    <summary type="html"><![CDATA[Getting derivatives from implicit functions with autograd]]></summary>
+    <content type="html" xml:base="http://jkitchin.github.io/blog/2018/10/08/Getting-derivatives-from-implicit-functions-with-autograd"><![CDATA[
+
+
+&lt;div id="table-of-contents"&gt;
+&lt;h2&gt;Table of Contents&lt;/h2&gt;
+&lt;div id="text-table-of-contents"&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href="#org1e7bbe1"&gt;1. Example 1&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#org30374e2"&gt;2. Example 2&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#orgc49e13d"&gt;3. Example 3&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#org452c660"&gt;4. Example 4&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#org67383a5"&gt;5. Example 5&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#org0081ece"&gt;6. Example 6&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#orgedd1f4b"&gt;7. Example 7&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#orgb2b9394"&gt;8. Conclusions&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;p&gt;
+If we have an implicit function: \(f(x, y(x)) = 0\), but we want to compute the derivative \(dy/dx\) we can use the chain rule to derive:
+&lt;/p&gt;
+
+&lt;p&gt;
+\(df/dx + df/dy dy/dx = 0\)
+&lt;/p&gt;
+
+&lt;p&gt;
+We can then solve for \(dy/dx\):
+&lt;/p&gt;
+
+&lt;p&gt;
+\(dy/dx = -df/dx / df/dy\) to get the desired derivative. The interesting point of this blog post is that we can get the two derivatives on the right hand side of this equation using automatic differentiation of the function \(f(x, y)\)! There are a few examples of analytical approaches to derivatives from implicit functions &lt;a href="https://www.math.ucdavis.edu/~kouba/CalcOneDIRECTORY/implicitdiffdirectory/ImplicitDiff.html"&gt;here&lt;/a&gt;, and I wanted to explore them with autograd in this post.
+&lt;/p&gt;
+
+&lt;p&gt;
+In the following examples, we will assume that \(y\) is a function of \(x\) and that \(x\) is independent. We will consider a series of implicit equations, compute \(dy/dx\) using autograd from the formula above, and compare them to the analytical results in the web page referenced above.
+&lt;/p&gt;
+
+&lt;p&gt;
+The \(dy/dx\) functions generally depend on both \(x\), and \(y\). Technically, these are the derivatives along the curve \(y(x)\), but since we can evaluate them at any points, we will use some random points for \(x\) and \(y\) to test for equality between the analytical derivatives and the autograd derivatives. This isn't a rigorous proof of equality, but it is the only thing that makes sense to do for now. It is assumed that if these points are ok, all the others are too. That might be a broad claim, since we only sample \(x\) and \(y\) from 0 to 1 here but the approach is general. Here are the imports and the random test points for all the examples that follow.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; autograd.numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; autograd &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; grad
+
+&lt;span style="color: #BA36A5;"&gt;xr&lt;/span&gt; = np.random.random(50)
+&lt;span style="color: #BA36A5;"&gt;yr&lt;/span&gt; = np.random.random(50)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+
+&lt;div id="outline-container-org1e7bbe1" class="outline-2"&gt;
+&lt;h2 id="org1e7bbe1"&gt;&lt;span class="section-number-2"&gt;1&lt;/span&gt; Example 1&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-1"&gt;
+&lt;p&gt;
+\(x^3 + y^3 = 4\)
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f1&lt;/span&gt;(x, y):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x**3 + y**3 - 4
+
+&lt;span style="color: #BA36A5;"&gt;D1x&lt;/span&gt; = grad(f1, 0)
+&lt;span style="color: #BA36A5;"&gt;D1y&lt;/span&gt; = grad(f1, 1)
+
+&lt;span style="color: #BA36A5;"&gt;dydx_1&lt;/span&gt; = &lt;span style="color: #0000FF;"&gt;lambda&lt;/span&gt; x, y: -D1x(x, y) / D1y(x, y)
+&lt;span style="color: #BA36A5;"&gt;dydx_1a&lt;/span&gt; = &lt;span style="color: #0000FF;"&gt;lambda&lt;/span&gt; x, y: -x**2 / y**2
+
+np.allclose(dydx_1a(xr, yr),
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;[dydx_1(_xr, _yr) &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; _xr, _yr &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; &lt;span style="color: #006FE0;"&gt;zip&lt;/span&gt;(xr, yr)])
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+True
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+The output of True means the autograd results and the analytical results are "all close", i.e. within a tolerance the results are the same. The required derivatives of this are not that difficult to derive, but it is nice to see a simple example that "just works". A subtle point of the dydx function is that it is not &lt;i&gt;vectorized&lt;/i&gt; which is why I used a list comprehension to evaluate all the points. It might be possible to make a pseudo-vectorized version with the np.vectorize decorator, but that is not of interest here.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-org30374e2" class="outline-2"&gt;
+&lt;h2 id="org30374e2"&gt;&lt;span class="section-number-2"&gt;2&lt;/span&gt; Example 2&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-2"&gt;
+&lt;p&gt;
+\((x - y)^2 = x + y - 1\)
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f2&lt;/span&gt;(x, y):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; (x - y)**2 - x - y + 1
+
+&lt;span style="color: #BA36A5;"&gt;D2x&lt;/span&gt; = grad(f2, 0)
+&lt;span style="color: #BA36A5;"&gt;D2y&lt;/span&gt; = grad(f2, 1)
+
+&lt;span style="color: #BA36A5;"&gt;dydx_2&lt;/span&gt; = &lt;span style="color: #0000FF;"&gt;lambda&lt;/span&gt; x, y: -D2x(x, y) / D2y(x, y)
+&lt;span style="color: #BA36A5;"&gt;dydx2_a&lt;/span&gt; = &lt;span style="color: #0000FF;"&gt;lambda&lt;/span&gt; x, y: (2 * y - 2 * x + 1) / (2 * y - 2 * x - 1)
+
+np.allclose(dydx2_a(xr, yr),
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   [dydx_2(_xr, _yr) &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; _xr, _yr &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; &lt;span style="color: #006FE0;"&gt;zip&lt;/span&gt;(xr, yr)])
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+True
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+This also works.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-orgc49e13d" class="outline-2"&gt;
+&lt;h2 id="orgc49e13d"&gt;&lt;span class="section-number-2"&gt;3&lt;/span&gt; Example 3&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-3"&gt;
+&lt;p&gt;
+\(y = sin(3x + 4y)\)
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f3&lt;/span&gt;(x, y):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; y - np.sin(3 * x + 4 * y)
+
+
+&lt;span style="color: #BA36A5;"&gt;D3x&lt;/span&gt; = grad(f3, 0)
+&lt;span style="color: #BA36A5;"&gt;D3y&lt;/span&gt; = grad(f3, 1)
+
+&lt;span style="color: #BA36A5;"&gt;dydx_3&lt;/span&gt; = &lt;span style="color: #0000FF;"&gt;lambda&lt;/span&gt; x, y: -D3x(x, y) / D3y(x, y)
+&lt;span style="color: #BA36A5;"&gt;dydx3_a&lt;/span&gt; = &lt;span style="color: #0000FF;"&gt;lambda&lt;/span&gt; x, y: (3 * np.cos(3 * x + 4 * y)) / (1 - 4 * np.cos(3 * x + 4 * y))
+
+np.allclose(dydx3_a(xr, yr),
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   [dydx_3(_xr, _yr) &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; _xr, _yr &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; &lt;span style="color: #006FE0;"&gt;zip&lt;/span&gt;(xr, yr)])
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+True
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+Check.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-org452c660" class="outline-2"&gt;
+&lt;h2 id="org452c660"&gt;&lt;span class="section-number-2"&gt;4&lt;/span&gt; Example 4&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-4"&gt;
+&lt;p&gt;
+\(y = x^2 y^3 + x^3 y^2\)
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f4&lt;/span&gt;(x, y):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; y - x**2 * y**3 - x**3 * y**2
+
+
+&lt;span style="color: #BA36A5;"&gt;D4x&lt;/span&gt; = grad(f4, 0)
+&lt;span style="color: #BA36A5;"&gt;D4y&lt;/span&gt; = grad(f4, 1)
+
+&lt;span style="color: #BA36A5;"&gt;dydx_4&lt;/span&gt; = &lt;span style="color: #0000FF;"&gt;lambda&lt;/span&gt; x, y: -D4x(x, y) / D4y(x, y)
+&lt;span style="color: #BA36A5;"&gt;dydx4_a&lt;/span&gt; = &lt;span style="color: #0000FF;"&gt;lambda&lt;/span&gt; x, y: (2 * x * y**3 + 3 * x**2 * y**2) / (1 - 3 * x**2 * y**2 - 2 * x**3 * y)
+
+np.allclose(dydx4_a(xr, yr),
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   [dydx_4(_xr, _yr) &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; _xr, _yr &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; &lt;span style="color: #006FE0;"&gt;zip&lt;/span&gt;(xr, yr)])
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+True
+
+&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-org67383a5" class="outline-2"&gt;
+&lt;h2 id="org67383a5"&gt;&lt;span class="section-number-2"&gt;5&lt;/span&gt; Example 5&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-5"&gt;
+&lt;p&gt;
+\(e^{xy} = e^{4x} - e^{5y}\)
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f5&lt;/span&gt;(x, y):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; np.exp(4 * x) - np.exp(5 * y) - np.exp(x * y)
+
+&lt;span style="color: #BA36A5;"&gt;D5x&lt;/span&gt; = grad(f5, 0)
+&lt;span style="color: #BA36A5;"&gt;D5y&lt;/span&gt; = grad(f5, 1)
+
+&lt;span style="color: #BA36A5;"&gt;dydx_5&lt;/span&gt; = &lt;span style="color: #0000FF;"&gt;lambda&lt;/span&gt; x, y: -D5x(x, y) / D5y(x, y)
+&lt;span style="color: #BA36A5;"&gt;dydx5_a&lt;/span&gt; = &lt;span style="color: #0000FF;"&gt;lambda&lt;/span&gt; x, y: (4 * np.exp(4 * x) - y * np.exp(x * y)) / (x * np.exp(x * y) + 5 * np.exp(5 * y))
+
+np.allclose(dydx5_a(xr, yr),
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   [dydx_5(_xr, _yr) &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; _xr, _yr &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; &lt;span style="color: #006FE0;"&gt;zip&lt;/span&gt;(xr, yr)])
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+True
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+Also check.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-org0081ece" class="outline-2"&gt;
+&lt;h2 id="org0081ece"&gt;&lt;span class="section-number-2"&gt;6&lt;/span&gt; Example 6&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-6"&gt;
+&lt;p&gt;
+\(\cos^2 x + cos^2 y = cos(2x + 2y)\)
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f6&lt;/span&gt;(x, y):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; np.cos(x)**2 + np.cos(y)**2 - np.cos(2 * x + 2 * y)
+
+&lt;span style="color: #BA36A5;"&gt;D6x&lt;/span&gt; = grad(f6, 0)
+&lt;span style="color: #BA36A5;"&gt;D6y&lt;/span&gt; = grad(f6, 1)
+
+&lt;span style="color: #BA36A5;"&gt;dydx_6&lt;/span&gt; = &lt;span style="color: #0000FF;"&gt;lambda&lt;/span&gt; x, y: -D6x(x, y) / D6y(x, y)
+&lt;span style="color: #BA36A5;"&gt;dydx6_a&lt;/span&gt; = &lt;span style="color: #0000FF;"&gt;lambda&lt;/span&gt; x, y: (np.cos(x) * np.sin(x) - np.sin(2 * x + 2 * y)) / (np.sin(2 * x + 2 * y) - np.cos(y) * np.sin(y))
+
+np.allclose(dydx6_a(xr, yr),
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   [dydx_6(_xr, _yr) &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; _xr, _yr &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; &lt;span style="color: #006FE0;"&gt;zip&lt;/span&gt;(xr, yr)])
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+True
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+Check.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-orgedd1f4b" class="outline-2"&gt;
+&lt;h2 id="orgedd1f4b"&gt;&lt;span class="section-number-2"&gt;7&lt;/span&gt; Example 7&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-7"&gt;
+&lt;p&gt;
+\(x = 3 + \sqrt{x^2 + y^2}\)
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f7&lt;/span&gt;(x, y):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; 3 + np.sqrt(x**2 + y**2) - x
+
+&lt;span style="color: #BA36A5;"&gt;D7x&lt;/span&gt; = grad(f7, 0)
+&lt;span style="color: #BA36A5;"&gt;D7y&lt;/span&gt; = grad(f7, 1)
+
+&lt;span style="color: #BA36A5;"&gt;dydx_7&lt;/span&gt; = &lt;span style="color: #0000FF;"&gt;lambda&lt;/span&gt; x, y: -D7x(x, y) / D7y(x, y)
+&lt;span style="color: #BA36A5;"&gt;dydx7_a&lt;/span&gt; = &lt;span style="color: #0000FF;"&gt;lambda&lt;/span&gt; x, y: (np.sqrt(x**2 + y**2) - x) / y
+
+np.allclose(dydx7_a(xr, yr),
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   [dydx_7(_xr, _yr) &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; _xr, _yr &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; &lt;span style="color: #006FE0;"&gt;zip&lt;/span&gt;(xr, yr)])
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+True
+
+&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+
+&lt;div id="outline-container-orgb2b9394" class="outline-2"&gt;
+&lt;h2 id="orgb2b9394"&gt;&lt;span class="section-number-2"&gt;8&lt;/span&gt; Conclusions&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-8"&gt;
+&lt;p&gt;
+There are a handful of other examples at the website referenced in the beginning, but I am stopping here. After seven examples of quantitative agreement between the easy to derive autograd derivatives, and the easy to moderately difficult analytical derivatives, it seems like it is autograd for the win here. This technique has some important implications for engineering calculations that I will explore in a future post. Until then, this is yet another interesting thing we can do with automatic differentiation!
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;p&gt;Copyright (C) 2018 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
+&lt;p&gt;&lt;a href="/org/2018/10/08/Getting-derivatives-from-implicit-functions-with-autograd.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Org-mode version = 9.1.13&lt;/p&gt;]]></content>
+  </entry>
+  <entry>
+    <author>
+      <name></name>
+      <uri>http://jkitchin.github.io/blog</uri>
+    </author>
     <title type="html"><![CDATA[Compressibility factor variation from the van der Waals equation by three different approaches]]></title>
     <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2018/10/07/Compressibility-factor-variation-from-the-van-der-Waals-equation-by-three-different-approaches" />
     <id>http://jkitchin.github.io/blog/2018/10/07/Compressibility-factor-variation-from-the-van-der-Waals-equation-by-three-different-approaches</id>
     <updated>2018-10-07T13:15:29Z</updated>
     <published>2018-10-07T13:08:11Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="python" />
-    <category scheme="http://jkitchin.github.io/blog" term="ode" />
-    <category scheme="http://jkitchin.github.io/blog" term="nonlinear algebra" />
     <category scheme="http://jkitchin.github.io/blog" term="autograd" />
+    <category scheme="http://jkitchin.github.io/blog" term="ode" />
+    <category scheme="http://jkitchin.github.io/blog" term="python" />
+    <category scheme="http://jkitchin.github.io/blog" term="nonlinear algebra" />
     <summary type="html"><![CDATA[Compressibility factor variation from the van der Waals equation by three different approaches]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2018/10/07/Compressibility-factor-variation-from-the-van-der-Waals-equation-by-three-different-approaches"><![CDATA[
 
@@ -575,9 +878,9 @@ The last two methods seem like candidates for an advanced class in problem solvi
     <id>http://jkitchin.github.io/blog/2018/05/17/Literate-programming-with-python-doctests</id>
     <updated>2018-05-18T15:07:13Z</updated>
     <published>2018-05-17T16:41:19Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="python" />
-    <category scheme="http://jkitchin.github.io/blog" term="orgmode" />
     <category scheme="http://jkitchin.github.io/blog" term="noweb" />
+    <category scheme="http://jkitchin.github.io/blog" term="orgmode" />
+    <category scheme="http://jkitchin.github.io/blog" term="python" />
     <summary type="html"><![CDATA[Literate programming with python doctests]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2018/05/17/Literate-programming-with-python-doctests"><![CDATA[
 
@@ -895,8 +1198,8 @@ Admittedly, this does some fragile feeling things, like trimming whitespace here
     <id>http://jkitchin.github.io/blog/2017/11/22/More-auto-differentiation-goodness-for-science-and-engineering</id>
     <updated>2017-11-22T15:55:45Z</updated>
     <published>2017-11-22T15:52:26Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="python" />
     <category scheme="http://jkitchin.github.io/blog" term="autograd" />
+    <category scheme="http://jkitchin.github.io/blog" term="python" />
     <summary type="html"><![CDATA[More auto-differentiation goodness for science and engineering]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2017/11/22/More-auto-differentiation-goodness-for-science-and-engineering"><![CDATA[
 
@@ -1203,9 +1506,9 @@ Today we examined four ways to use autograd in scientific or mathematical progra
     <id>http://jkitchin.github.io/blog/2017/11/20/Timing-Lennard-Jones-implementations-ASE-vs-autograd</id>
     <updated>2017-11-21T07:42:07Z</updated>
     <published>2017-11-20T21:19:17Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="python" />
     <category scheme="http://jkitchin.github.io/blog" term="lennardjones" />
     <category scheme="http://jkitchin.github.io/blog" term="autograd" />
+    <category scheme="http://jkitchin.github.io/blog" term="python" />
     <summary type="html"><![CDATA[Timing Lennard-Jones implementations - ASE vs autograd]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2017/11/20/Timing-Lennard-Jones-implementations-ASE-vs-autograd"><![CDATA[
 
@@ -1503,8 +1806,8 @@ This doesn't directly answer the question of whether this can work in production
     <id>http://jkitchin.github.io/blog/2017/11/19/Training-the-ASE-Lennard-Jones-potential-to-DFT-calculations</id>
     <updated>2017-11-21T18:27:29Z</updated>
     <published>2017-11-19T19:58:47Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="python" />
     <category scheme="http://jkitchin.github.io/blog" term="autograd" />
+    <category scheme="http://jkitchin.github.io/blog" term="python" />
     <summary type="html"><![CDATA[Training the ASE Lennard-Jones potential to DFT calculations]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2017/11/19/Training-the-ASE-Lennard-Jones-potential-to-DFT-calculations"><![CDATA[
 
@@ -1630,8 +1933,8 @@ The results aren't fantastic, but you can see that we get the closer packed stru
     <id>http://jkitchin.github.io/blog/2017/11/18/Neural-networks-for-regression-with-autograd</id>
     <updated>2017-11-18T14:20:17Z</updated>
     <published>2017-11-18T14:20:17Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="python" />
     <category scheme="http://jkitchin.github.io/blog" term="autograd" />
+    <category scheme="http://jkitchin.github.io/blog" term="python" />
     <summary type="html"><![CDATA[Neural networks for regression with autograd]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2017/11/18/Neural-networks-for-regression-with-autograd"><![CDATA[
 
@@ -1936,9 +2239,9 @@ Now you know the secret of a neural network, it is just a nonlinear model. Witho
     <id>http://jkitchin.github.io/blog/2017/11/17/Using-autograd-in-nonlinear-regression</id>
     <updated>2017-11-17T07:49:03Z</updated>
     <published>2017-11-17T07:49:03Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="python" />
     <category scheme="http://jkitchin.github.io/blog" term="regression" />
     <category scheme="http://jkitchin.github.io/blog" term="autograd" />
+    <category scheme="http://jkitchin.github.io/blog" term="python" />
     <summary type="html"><![CDATA[Using autograd in nonlinear regression]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2017/11/17/Using-autograd-in-nonlinear-regression"><![CDATA[
 
@@ -2231,9 +2534,9 @@ The fit looks pretty good.
     <id>http://jkitchin.github.io/blog/2017/11/15/Sensitivity-analysis-using-automatic-differentiation-in-Python</id>
     <updated>2017-11-15T08:41:05Z</updated>
     <published>2017-11-15T08:34:29Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="python" />
     <category scheme="http://jkitchin.github.io/blog" term="sensitivity" />
     <category scheme="http://jkitchin.github.io/blog" term="autograd" />
+    <category scheme="http://jkitchin.github.io/blog" term="python" />
     <summary type="html"><![CDATA[Sensitivity analysis using automatic differentiation in Python]]></summary>
     <content type="html" xml:base="http://jkitchin.github.io/blog/2017/11/15/Sensitivity-analysis-using-automatic-differentiation-in-Python"><![CDATA[
 
@@ -2306,151 +2609,5 @@ That looks like the figure in the paper. To summarize the main takeaway, autogra
 &lt;p&gt;Copyright (C) 2017 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
 &lt;p&gt;&lt;a href="/org/2017/11/15/Sensitivity-analysis-using-automatic-differentiation-in-Python.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
 &lt;p&gt;Org-mode version = 9.1.2&lt;/p&gt;]]></content>
-  </entry>
-  <entry>
-    <author>
-      <name></name>
-      <uri>http://jkitchin.github.io/blog</uri>
-    </author>
-    <title type="html"><![CDATA[A Hy macro for defining functions with docstrings on each argument]]></title>
-    <link rel="alternate" type="text/html" href="http://jkitchin.github.io/blog/2017/03/19/A-Hy-macro-for-defining-functions-with-docstrings-on-each-argument" />
-    <id>http://jkitchin.github.io/blog/2017/03/19/A-Hy-macro-for-defining-functions-with-docstrings-on-each-argument</id>
-    <updated>2017-03-19T19:53:05Z</updated>
-    <published>2017-03-19T19:47:22Z</published>
-    <category scheme="http://jkitchin.github.io/blog" term="hylang" />
-    <category scheme="http://jkitchin.github.io/blog" term="python" />
-    <summary type="html"><![CDATA[A Hy macro for defining functions with docstrings on each argument]]></summary>
-    <content type="html" xml:base="http://jkitchin.github.io/blog/2017/03/19/A-Hy-macro-for-defining-functions-with-docstrings-on-each-argument"><![CDATA[
-
-
-&lt;p&gt;
-For functions with a lot of arguments, python style docstrings leave something to be desired. For one, they are not that close to the arguments, so if you have a function with say 20 arguments, the docstring might take up a whole page! That means they are hard to keep synchronized too. Let's not argue now over the merits of a function with 20+ arguments, it is enough that they exist, and are a problem.
-&lt;/p&gt;
-
-&lt;p&gt;
-So what are typical documentation standards? Here is a Numpy style doc string:
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-python"&gt;&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;func&lt;/span&gt;(arg1, arg2):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #036A07;"&gt;"""multiply arg1 and arg2&lt;/span&gt;
-
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;&lt;span style="color: #036A07;"&gt;   Parameters&lt;/span&gt;
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;&lt;span style="color: #036A07;"&gt;   ----------&lt;/span&gt;
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;&lt;span style="color: #036A07;"&gt;   arg1 : a number&lt;/span&gt;
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;&lt;span style="color: #036A07;"&gt;   arg2 : a number&lt;/span&gt;
-
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;&lt;span style="color: #036A07;"&gt;   """&lt;/span&gt;
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; arg1 * arg2
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-It works well for a small number of arguments with limited descriptions. This is a proper docstring that is accessible by introspection and pydoc. With much longer argument lists, this falls apart. I will not pick on any code in particular here, but suffice it to say I was inspired today to think of a better way. There are some other documentation solutions at &lt;a href="http://stackoverflow.com/questions/9195455/how-to-document-a-method-with-parameters"&gt;http://stackoverflow.com/questions/9195455/how-to-document-a-method-with-parameters&lt;/a&gt;, but None of them are better in my opinion. I want accessible docstrings by instrospection, and only if that is unavailable do I want to read the code! Finally, if I have to read the code, I want it to be easy to figure out, which means the documentation is close to the arguments.
-&lt;/p&gt;
-
-&lt;p&gt;
-There is bad news, I do not have one for vanilla python. Python does not even give you a way to deal with this. But, if we had a lisp, we could make a macro to help us out. In fact, we &lt;i&gt;have&lt;/i&gt; a lisp with &lt;a href="http://docs.hylang.org/en/latest/"&gt;hy&lt;/a&gt;! And we can use a macro to make a  syntax that lets us keep the docstring close to the argument, &lt;i&gt;and&lt;/i&gt; that constructs a real docstring so we get help later!
-&lt;/p&gt;
-
-&lt;p&gt;
-Here it is:
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-jupyter-hy"&gt;(&lt;span style="color: #0000FF;"&gt;defmacro&lt;/span&gt; &lt;span style="color: #006699;"&gt;mydef&lt;/span&gt; [func args &lt;span style="color: #6434A3;"&gt;&amp;amp;optional&lt;/span&gt; docstring &lt;span style="color: #6434A3;"&gt;&amp;amp;rest&lt;/span&gt; body]
-  `(&lt;span style="color: #0000FF;"&gt;defn&lt;/span&gt; &lt;span style="color: #006699;"&gt;~func&lt;/span&gt; [~@(&lt;span style="color: #006FE0;"&gt;map&lt;/span&gt; (&lt;span style="color: #0000FF;"&gt;lambda&lt;/span&gt; [x] (&lt;span style="color: #006FE0;"&gt;nth&lt;/span&gt; x 0)) args)]
-     ~(&lt;span style="color: #006FE0;"&gt;+&lt;/span&gt; (&lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; docstring (&lt;span style="color: #006FE0;"&gt;+&lt;/span&gt; docstring &lt;span style="color: #008000;"&gt;"\n\n"&lt;/span&gt;) &lt;span style="color: #008000;"&gt;""&lt;/span&gt;)
-         &lt;span style="color: #008000;"&gt;"Parameters\n----------\n"&lt;/span&gt;
-         (.join &lt;span style="color: #008000;"&gt;"\n"&lt;/span&gt; (&lt;span style="color: #006FE0;"&gt;map&lt;/span&gt; (&lt;span style="color: #0000FF;"&gt;lambda&lt;/span&gt; [x]
-                            (.format &lt;span style="color: #008000;"&gt;"{} : {}"&lt;/span&gt;
-                                     (&lt;span style="color: #006FE0;"&gt;nth&lt;/span&gt; x 0)
-                                     (&lt;span style="color: #006FE0;"&gt;nth&lt;/span&gt; x 1))) args)))
-     ~@body))
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-We can checkout how it expands like this:
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-jupyter-hy"&gt;(&lt;span style="color: #006FE0;"&gt;print&lt;/span&gt; (&lt;span style="color: #006FE0;"&gt;macroexpand&lt;/span&gt; '(mydef f [(a &lt;span style="color: #008000;"&gt;"an int"&lt;/span&gt;)
-                               (b &lt;span style="color: #008000;"&gt;"an int"&lt;/span&gt;)]
-                            &lt;span style="color: #008000;"&gt;"some doc"&lt;/span&gt;
-                            (&lt;span style="color: #006FE0;"&gt;*&lt;/span&gt; a b))))
-&lt;/pre&gt;
-&lt;/div&gt;
-&lt;pre class="example"&gt;
-('setv' 'f' ('fn' ['a' 'b'] 'some doc\n\nParameters\n----------\na : an int\nb : an int' ('*' 'a' 'b')))
-&lt;/pre&gt;
-
-&lt;p&gt;
-That looks ok. Now, for an example of using that. Here is the same function we defined before, but I put the documentation for each argument with the argument.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-jupyter-hy"&gt;(mydef func ((arg1 &lt;span style="color: #008000;"&gt;"a number"&lt;/span&gt;)
-             (arg2 &lt;span style="color: #008000;"&gt;"a number"&lt;/span&gt;))
-  &lt;span style="color: #008000;"&gt;"Multiply arg1 by arg2"&lt;/span&gt;
-  (&lt;span style="color: #006FE0;"&gt;*&lt;/span&gt; arg1 arg2))
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-We can use the function now like a regular function.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-jupyter-hy"&gt;(&lt;span style="color: #006FE0;"&gt;print&lt;/span&gt; (func 24 3))
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-72
-&lt;/pre&gt;
-
-&lt;p&gt;
-And now for the help.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-jupyter-hy"&gt;(help func)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-Help on function func in module __main__:
-
-func(arg1, arg2)
-    Multiply arg1 by arg2
-
-    Parameters
-    ----------
-    arg1 : a number
-    arg2 : a number
-&lt;/pre&gt;
-
-&lt;p&gt;
-Now, that should amaze and astonish you if you are a vanilla Pythonista! We have our cake, and we eat it too. You just can not make up your own syntax that way in Python. Imagine, we could add type information, validation code, etc&amp;#x2026; into that macro. Maybe it could even be possible to store argument dependent documentation on the function, say in the function dictionary. That would require some conventions I guess,  but they could become introspectable then. For example, in this vanilla Python:
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-python"&gt;&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f&lt;/span&gt;(x): &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x*x
-&lt;span style="color: #BA36A5;"&gt;f.__dict__&lt;/span&gt;[&lt;span style="color: #008000;"&gt;'args'&lt;/span&gt;] = {&lt;span style="color: #008000;"&gt;'x'&lt;/span&gt;: &lt;span style="color: #008000;"&gt;'A number'&lt;/span&gt;}
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(f.__dict__)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-{'args': {'x': 'A number'}}
-&lt;/p&gt;
-
-&lt;p&gt;
-In the end, this does not really solve all the problems I have with current docstrings in Python. It does solve a problem with writing and reading the code by keeping documentation close to the arguments, but ultimately the docstring from Python's point of view will basically look the same. It is pretty awesome that it is even possible. Hy lisp for the win here (again!).
-&lt;/p&gt;
-&lt;p&gt;Copyright (C) 2017 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
-&lt;p&gt;&lt;a href="/org/2017/03/19/A-Hy-macro-for-defining-functions-with-docstrings-on-each-argument.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
-&lt;p&gt;Org-mode version = 9.0.5&lt;/p&gt;]]></content>
   </entry>
 </feed>
