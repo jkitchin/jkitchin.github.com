@@ -84,10 +84,179 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="A-differentiable-ODE-integrator-for-sensitivity-analysis"></div>
+      <h2 class="blog_post_title"><a href="/blog/2018/10/11/A-differentiable-ODE-integrator-for-sensitivity-analysis/" rel="bookmark" title="Permanent Link to A differentiable ODE integrator for sensitivity analysis">A differentiable ODE integrator for sensitivity analysis</a></h2>
+      <p><small><span class="blog_post_date">Posted October 11, 2018 at 12:13 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/sensitivity/'>sensitivity</a>, <a href='/blog/category/ode/'>ode</a>, <a href='/blog/category/autograd/'>autograd</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2018/10/11/A-differentiable-ODE-integrator-for-sensitivity-analysis#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+<a href="http://kitchingroup.cheme.cmu.edu/blog/2018/10/10/Autograd-and-the-derivative-of-an-integral-function/">Last time</a> I wrote about using automatic differentiation to find the derivative of an integral function. A related topic is finding derivatives of functions that are defined by differential equations. We typically use a numerical integrator to find solutions to these functions. Those leave us with numeric solutions which we then have to use to approximate derivatives. What if the integrator itself was differentiable? It is after all, just a program, and automatic differentiation should be able to tell us the derivatives of functions that use them. This is not a new idea, there is already a differentiable ODE solver in <a href="https://www.tensorflow.org/versions/r1.1/api_docs/python/tf/contrib/integrate/odeint">Tensorflow</a>. Here I will implement a simple Runge Kutta integrator and then show how we can use automatic differentiation to do <i>sensitivity analysis</i> on the numeric solution.
+</p>
+
+<p>
+I previously used autograd for sensitivity analysis on <i>analytical</i> solutions in this <a href="http://kitchingroup.cheme.cmu.edu/blog/2017/11/15/Sensitivity-analysis-using-automatic-differentiation-in-Python/">post</a>. Here I will compare those results to the results from sensitivity analysis on the <i>numerical solutions</i>.
+</p>
+
+<p>
+First, we need an autograd compatible ODE integrator. Here is one implementation of a simple, fourth order Runge-Kutta integrator. Usually, I would use indexing to do this, but that was not compatible with autograd, so I just accumulate the solution. This is a limitation of autograd, and it is probably not an issue with Tensorflow, for example, or probably pytorch. Those are more sophisticated, and more difficult to use packages than autograd. Here I am just prototyping an idea, so we stick with autograd.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">import</span> autograd.numpy <span style="color: #0000FF;">as</span> np
+<span style="color: #0000FF;">from</span> autograd <span style="color: #0000FF;">import</span> grad
+%matplotlib inline
+<span style="color: #0000FF;">import</span> matplotlib.pyplot <span style="color: #0000FF;">as</span> plt
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">rk4</span>(f, tspan, y0, N=50):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">x</span>, <span style="color: #BA36A5;">h</span> = np.linspace(*tspan, N, retstep=<span style="color: #D0372D;">True</span>)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">y</span> = []
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">y</span> = y + [y0]
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">for</span> i <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">range</span>(0, <span style="color: #006FE0;">len</span>(x) - 1):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">k1</span> = h * f(x[i], y[i])
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">k2</span> = h * f(x[i] + h / 2, y[i] + k1 / 2)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">k3</span> = h * f(x[i] + h / 2, y[i] + k2 / 2)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">k4</span> = h * f(x[i + 1], y[i] + k3)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">y</span> += [y[-1] + (k1 + (2 * k2) + (2 * k3) + k4) / 6]
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> x, y
+</pre>
+</div>
+
+<p>
+Now, we just check that it works as expected:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #BA36A5;">Ca0</span> = 1.0
+<span style="color: #BA36A5;">k1</span> = <span style="color: #BA36A5;">k_1</span> = 3.0
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">dCdt</span>(t, Ca):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> -k1 * Ca + k_1 * (Ca0 - Ca)
+
+<span style="color: #BA36A5;">t</span>, <span style="color: #BA36A5;">Ca</span> = rk4(dCdt, (0, 0.5), Ca0)
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">analytical_A</span>(t, k1, k_1):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> Ca0 / (k1 + k_1) * (k1 * np.exp(-(k1 + k_1) * t) + k_1)
+
+plt.plot(t, Ca, label=<span style="color: #008000;">'RK4'</span>)
+plt.plot(t, analytical_A(t, k1, k_1), <span style="color: #008000;">'r--'</span>, label=<span style="color: #008000;">'analytical'</span>)
+plt.xlabel(<span style="color: #008000;">'t'</span>)
+plt.ylabel(<span style="color: #008000;">'[A]'</span>)
+plt.xlim([0, 0.5])
+plt.ylim([0.5, 1])
+plt.legend()
+</pre>
+</div>
+
+<p>
+<img src="/media/6a1c5e4c896d855655b8da8b54214af3-90490Zdl.png"> 
+</p>
+
+<p>
+That looks fine, we cannot visually distinguish the two solutions, and they both look like Figure 1 in this <a href="http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.428.6699&amp;rep=rep1&amp;type=pdf">paper</a>. Note the analytical solution is not that complex, but it would not take much variation of the rate law to make this solution difficult to derive.
+</p>
+
+<p>
+Next, to do sensitivity analysis, we need to define a function for \(A\) that depends on the rate constants, so we can take a derivative of it with respect to the parameters we want the sensitivity from. We seek the derivatives: \(\frac{dC_A}{dk_1}\) and \(\frac{dC_A}{dk_{-1}}\). Here is a function that does that. It will return the value of [A] at \(t\) given an initial concentration and the rate constants.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">def</span> <span style="color: #006699;">A</span>(Ca0, k1, k_1, t):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">def</span> <span style="color: #006699;">dCdt</span>(t, Ca):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> -k1 * Ca + k_1 * (Ca0 - Ca)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">t</span>, <span style="color: #BA36A5;">Ca_</span> = rk4(dCdt, (0, t), Ca0)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> Ca_[-1]
+
+<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">Here are the two derivatives we seek.</span>
+<span style="color: #BA36A5;">dCadk1</span> = grad(A, 1)
+<span style="color: #BA36A5;">dCadk_1</span> = grad(A, 2)
+</pre>
+</div>
+
+<p>
+We also use autograd to get the derivatives from the analytical solution for comparison.
+</p>
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #BA36A5;">dAdk1</span> = grad(analytical_A, 1)
+<span style="color: #BA36A5;">dAdk_1</span> = grad(analytical_A, 2)
+</pre>
+</div>
+
+<p>
+Now, we can plot the sensitivities over the time range and compare them. I use the list comprehensions here because the AD functions aren't vectorized.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #BA36A5;">tspan</span> = np.linspace(0, 0.5)
+
+<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">From the numerical solutions</span>
+<span style="color: #BA36A5;">k1_sensitivity</span> = [dCadk1(1.0, 3.0, 3.0, t) <span style="color: #0000FF;">for</span> t <span style="color: #0000FF;">in</span> tspan]
+<span style="color: #BA36A5;">k_1_sensitivity</span> = [dCadk_1(1.0, 3.0, 3.0, t) <span style="color: #0000FF;">for</span> t <span style="color: #0000FF;">in</span> tspan]
+
+<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">from the analytical solutions</span>
+<span style="color: #BA36A5;">ak1_sensitivity</span> = [dAdk1(t, 3.0, 3.0) <span style="color: #0000FF;">for</span> t <span style="color: #0000FF;">in</span> tspan]
+<span style="color: #BA36A5;">ak_1_sensitivity</span> = [dAdk_1(t, 3.0, 3.0) <span style="color: #0000FF;">for</span> t <span style="color: #0000FF;">in</span> tspan]
+
+plt.plot(tspan, np.<span style="color: #006FE0;">abs</span>(ak1_sensitivity), <span style="color: #008000;">'b-'</span>, label=<span style="color: #008000;">'k1 analytical'</span>)
+plt.plot(tspan, np.<span style="color: #006FE0;">abs</span>(k1_sensitivity), <span style="color: #008000;">'y--'</span>, label=<span style="color: #008000;">'k1 numerical'</span>)
+
+plt.plot(tspan, np.<span style="color: #006FE0;">abs</span>(ak_1_sensitivity), <span style="color: #008000;">'r-'</span>, label=<span style="color: #008000;">'k_1 analytical'</span>)
+plt.plot(tspan, np.<span style="color: #006FE0;">abs</span>(k_1_sensitivity), <span style="color: #008000;">'k--'</span>, label=<span style="color: #008000;">'k_1 numerical'</span>)
+
+plt.xlim([0, 0.5])
+plt.ylim([0, 0.1])
+plt.legend()
+plt.xlabel(<span style="color: #008000;">'t'</span>)
+plt.ylabel(<span style="color: #008000;">'sensitivity'</span>)
+</pre>
+</div>
+
+<p>
+<img src="/media/6a1c5e4c896d855655b8da8b54214af3-90490mnr.png"> 
+</p>
+
+
+
+<p>
+The two approaches are indistinguishable on paper. I will note that it takes a lot longer to make the graph from the numerical solution than from the analytical solution because at each point you have to reintegrate the solution from the beginning, which is certainly not efficient. That is an implementation detail that could probably be solved, at the expense of making the code look different than the way I would normally think about the problem.
+</p>
+
+<p>
+On the other hand, it is remarkable we get derivatives from the numerical solution, <i>and they look really good</i>! That means we could do sensitivity analysis on more complex reactions, and still have a reasonable way to get sensitivity. The work here is a long way from that. My simple Runge-Kutta integrator isn't directly useful for systems of ODEs, it wouldn't work well on stiff problems, the step size isn't adaptive, etc. The Tensorflow implementation might be more suitable for this though, and maybe this post is motivation to learn how to use it!
+</p>
+<p>Copyright (C) 2018 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2018/10/11/A-differentiable-ODE-integrator-for-sensitivity-analysis.org">org-mode source</a></p>
+<p>Org-mode version = 9.1.13</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2018/10/11/A-differentiable-ODE-integrator-for-sensitivity-analysis#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Sensitivity-analysis-using-automatic-differentiation-in-Python"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/11/15/Sensitivity-analysis-using-automatic-differentiation-in-Python/" rel="bookmark" title="Permanent Link to Sensitivity analysis using automatic differentiation in Python">Sensitivity analysis using automatic differentiation in Python</a></h2>
       <p><small><span class="blog_post_date">Posted November 15, 2017 at 08:34 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/sensitivity/'>sensitivity</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/sensitivity/'>sensitivity</a>, <a href='/blog/category/python/'>python</a>, <a href='/blog/category/autograd/'>autograd</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/11/15/Sensitivity-analysis-using-automatic-differentiation-in-Python#disqus_thread">View Comments</a>
       <p><small><span class="blog_post_date">Updated November 15, 2017 at 08:41 AM</span>
       </small></p>
@@ -214,11 +383,11 @@ That looks like the figure in the paper. To summarize the main takeaway, autogra
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2018/10/11/A-differentiable-ODE-integrator-for-sensitivity-analysis/">A differentiable ODE integrator for sensitivity analysis</a></li>
       <li><a href="/blog/2018/10/10/Autograd-and-the-derivative-of-an-integral-function/">Autograd and the derivative of an integral function</a></li>
       <li><a href="/blog/2018/10/09/Compressibility-variation-from-an-implicit-equation-of-state/">Compressibility variation from an implicit equation of state</a></li>
       <li><a href="/blog/2018/10/08/Getting-derivatives-from-implicit-functions-with-autograd/">Getting derivatives from implicit functions with autograd</a></li>
       <li><a href="/blog/2018/10/07/Compressibility-factor-variation-from-the-van-der-Waals-equation-by-three-different-approaches/">Compressibility factor variation from the van der Waals equation by three different approaches</a></li>
-      <li><a href="/blog/2018/09/24/Solving-nonlinear-algebra-problems-with-internal-state-information/">Solving nonlinear algebra problems with internal state information</a></li>
     </ul>
   </section>
 
