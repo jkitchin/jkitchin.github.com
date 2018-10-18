@@ -1,7 +1,7 @@
 from scopus.scopus_xml import *
 from scopus.scopus_search import ScopusSearch
 from scopus.scopus_api import ScopusAbstract
-
+import urllib
 for YEAR in [#'2005',
              #'2006',
              #'2007',
@@ -18,9 +18,10 @@ for YEAR in [#'2005',
 ]:
 
     # this query includes Neil Donahue
-    ss = ScopusSearch('(affil(carnegie mellon university and chemical engineering)'
-                      ' or au-id(7004596535)) AND pubyear is {}'
-                      ' AND NOT DOCTYPE(cp)'.format(YEAR),
+    search_query = ('(affil(carnegie mellon university and chemical engineering)'
+                    ' or au-id(7004596535)) AND pubyear is {}'
+                    ' AND NOT DOCTYPE(cp)'.format(YEAR))
+    ss = ScopusSearch(search_query,
                       refresh=True)
 
     with open('dept-publications-{}.html.mako'.format(YEAR), 'w') as f:
@@ -32,12 +33,13 @@ for YEAR in [#'2005',
 
 <h1>Chemical Engineering publications for {year}</h1>
 
-    This bibliography is generated from a Scopus search.
+    This bibliography is generated from a <a href=\"{url}">Scopus search</a>. Only Journal articles are shown here.
 
 The authors are linked to their Scopus page, the title linked to the Scopus abstract, the journal linked to the Scopus journal page, and the DOI is linked to https://doi.org which normally redirects you to the journal page.
 
 <ol reversed="reversed">
-    '''.format(year=YEAR))
+    '''.format(year=YEAR,
+               url=f"http://www.scopus.com/results/results.url?sort=plf-f&src=s&sot=a&sdt=a&sl={len(search_query)}&s={urllib.parse.quote(search_query, safe='')}&origin=searchadvanced"))
 
         for eid in ss.EIDS:
             print('{0} - {1}'.format(YEAR, eid))
