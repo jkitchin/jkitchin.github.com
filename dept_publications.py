@@ -33,7 +33,7 @@ for YEAR in [#'2005',
 
 <h1>Chemical Engineering publications for {year}</h1>
 
-    This bibliography is generated from a <a href=\"{url}">Scopus search</a>. Only Journal articles are shown here.
+This bibliography is generated from a <a href=\"{url}">Scopus search</a>. Only Journal articles are shown here.
 
 The authors are linked to their Scopus page, the title linked to the Scopus abstract, the journal linked to the Scopus journal page, and the DOI is linked to https://doi.org which normally redirects you to the journal page.
 
