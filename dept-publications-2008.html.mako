@@ -6,7 +6,7 @@
 
 <h1>Chemical Engineering publications for 2008</h1>
 
-    This bibliography is generated from a Scopus search.
+    This bibliography is generated from a <a href="http://www.scopus.com/results/results.url?sort=plf-f&src=s&sot=a&sdt=a&sl=121&s=%28affil%28carnegie%20mellon%20university%20and%20chemical%20engineering%29%20or%20au-id%287004596535%29%29%20AND%20pubyear%20is%202008%20AND%20NOT%20DOCTYPE%28cp%29&origin=searchadvanced">Scopus search</a>. Only Journal articles are shown here.
 
 The authors are linked to their Scopus page, the title linked to the Scopus abstract, the journal linked to the Scopus journal page, and the DOI is linked to https://doi.org which normally redirects you to the journal page.
 
