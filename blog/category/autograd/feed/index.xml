@@ -12,18 +12,347 @@
     <title>The Kitchin Research Group</title>
     <link>http://jkitchin.github.io/blog</link>
     <description>Chemical Engineering at Carnegie Mellon University</description>
-    <pubDate>Wed, 24 Oct 2018 19:23:34 GMT</pubDate>
+    <pubDate>Fri, 02 Nov 2018 23:53:11 GMT</pubDate>
     <generator>Blogofile</generator>
     <sy:updatePeriod>hourly</sy:updatePeriod>
     <sy:updateFrequency>1</sy:updateFrequency>
     
     <item>
+      <title>Solving coupled ODEs with a neural network and autograd</title>
+      <link>http://jkitchin.github.io/blog/2018/11/02/Solving-coupled-ODEs-with-a-neural-network-and-autograd</link>
+      <pubDate>Fri, 02 Nov 2018 19:53:00 EDT</pubDate>
+      <category><![CDATA[ode]]></category>
+      <category><![CDATA[autograd]]></category>
+      <guid isPermaLink="false">Ry5Ux3UbG7_HZnK_dVp9iHlLtpE=</guid>
+      <description>Solving coupled ODEs with a neural network and autograd</description>
+      <content:encoded><![CDATA[
+
+
+&lt;div id="table-of-contents"&gt;
+&lt;h2&gt;Table of Contents&lt;/h2&gt;
+&lt;div id="text-table-of-contents"&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href="#orgfefaa95"&gt;1. The standard numerical solution&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#orge5dacb7"&gt;2. Can a neural network learn the solution?&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#orga332637"&gt;3. Given a neural network function how do we get the right derivatives?&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#orgf85faff"&gt;4. Solving the system of ODEs with a neural network&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#orgbbded67"&gt;5. Summary&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;p&gt;
+In a previous &lt;a href="http://kitchingroup.cheme.cmu.edu/blog/2017/11/28/Solving-ODEs-with-a-neural-network-and-autograd/index.html"&gt;post&lt;/a&gt; I wrote about using ideas from machine learning to solve an ordinary differential equation using a neural network for the solution. A friend recently tried to apply that idea to coupled ordinary differential equations, without success. It seems like that should work, so here we diagnose the issue and figure it out. This is a long post, but it works in the end.
+&lt;/p&gt;
+
+&lt;p&gt;
+In the classic series reaction \(A \rightarrow B \rightarrow C\) in a batch reactor, we get the set of coupled mole balances:
+&lt;/p&gt;
+
+&lt;p&gt;
+\(dC_A/dt = -k_1 C_A\)
+&lt;/p&gt;
+
+&lt;p&gt;
+\(dC_B/dt = k_1 C_A - k_2 C_B\)
+&lt;/p&gt;
+
+&lt;p&gt;
+\(dC_C/dt = k2 C_B\)
+&lt;/p&gt;
+
+&lt;div id="outline-container-orgfefaa95" class="outline-2"&gt;
+&lt;h2 id="orgfefaa95"&gt;&lt;span class="section-number-2"&gt;1&lt;/span&gt; The standard numerical solution&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-1"&gt;
+&lt;p&gt;
+Here is the standard numerical solution to this problem. This will give us a reference for what the solution should look like.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; scipy.integrate &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; solve_ivp
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;ode&lt;/span&gt;(t, C):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;Ca&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;Cb&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;Cc&lt;/span&gt; = C
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;dCadt&lt;/span&gt; = -k1 * Ca
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;dCbdt&lt;/span&gt; = k1 * Ca - k2 * Cb
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;dCcdt&lt;/span&gt; = k2 * Cb
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; [dCadt, dCbdt, dCcdt]
+
+&lt;span style="color: #BA36A5;"&gt;C0&lt;/span&gt; = [1.0, 0.0, 0.0]
+&lt;span style="color: #BA36A5;"&gt;k1&lt;/span&gt; = 1
+&lt;span style="color: #BA36A5;"&gt;k2&lt;/span&gt; = 1
+
+&lt;span style="color: #BA36A5;"&gt;sol&lt;/span&gt; = solve_ivp(ode, (0, 10), C0)
+
+%matplotlib inline
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; matplotlib.pyplot &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; plt
+
+plt.plot(sol.t, sol.y.T)
+plt.legend([&lt;span style="color: #008000;"&gt;'A'&lt;/span&gt;, &lt;span style="color: #008000;"&gt;'B'&lt;/span&gt;, &lt;span style="color: #008000;"&gt;'C'&lt;/span&gt;])
+plt.xlabel(&lt;span style="color: #008000;"&gt;'Time'&lt;/span&gt;)
+plt.ylabel(&lt;span style="color: #008000;"&gt;'C'&lt;/span&gt;)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+&lt;img src="/media/d0abffb7b8615837cad7f2cceb378aac-65837xDK.png"&gt; 
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-orge5dacb7" class="outline-2"&gt;
+&lt;h2 id="orge5dacb7"&gt;&lt;span class="section-number-2"&gt;2&lt;/span&gt; Can a neural network learn the solution?&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-2"&gt;
+&lt;p&gt;
+The first thing I want to show is that you can train a neural network to reproduce this solution. That is certainly a prerequisite to the idea working. We use the  same code I used before, but this time our neural network will output three values, one for each concentration.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; autograd.numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; autograd &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; grad, elementwise_grad, jacobian
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; autograd.numpy.random &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; npr
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; autograd.misc.optimizers &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; adam
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;init_random_params&lt;/span&gt;(scale, layer_sizes, rs=npr.RandomState(0)):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #036A07;"&gt;"""Build a list of (weights, biases) tuples, one for each layer."""&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; [(rs.randn(insize, outsize) * scale,   &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;weight matrix&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;rs.randn(outsize) * scale)           &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;bias vector&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; insize, outsize &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; &lt;span style="color: #006FE0;"&gt;zip&lt;/span&gt;(layer_sizes[:-1], layer_sizes[1:])]
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;swish&lt;/span&gt;(x):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #036A07;"&gt;"see https://arxiv.org/pdf/1710.05941.pdf"&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x / (1.0 + np.exp(-x))
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;C&lt;/span&gt;(params, inputs):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #036A07;"&gt;"Neural network functions"&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; W, b &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; params:
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;outputs&lt;/span&gt; = np.dot(inputs, W) + b
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;inputs&lt;/span&gt; = swish(outputs)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; outputs
+
+&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;initial guess for the weights and biases&lt;/span&gt;
+&lt;span style="color: #BA36A5;"&gt;params&lt;/span&gt; = init_random_params(0.1, layer_sizes=[1, 8, 3])
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Now, we train our network to reproduce the solution. I ran this block manually a bunch of times, but eventually you see that we can train a one layer network with 8 nodes to output all three concentrations pretty accurately. So, there is no issue there, a neural network can represent the solution.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;objective_soln&lt;/span&gt;(params, step):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; np.&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;((sol.y.T - C(params, sol.t.reshape([-1, 1])))**2)
+
+&lt;span style="color: #BA36A5;"&gt;params&lt;/span&gt; = adam(grad(objective_soln), params,
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt; step_size=0.001, num_iters=500)
+
+plt.plot(sol.t.reshape([-1, 1]), C(params, sol.t.reshape([-1, 1])),
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;sol.t, sol.y.T, &lt;span style="color: #008000;"&gt;'o'&lt;/span&gt;)
+plt.legend([&lt;span style="color: #008000;"&gt;'A'&lt;/span&gt;, &lt;span style="color: #008000;"&gt;'B'&lt;/span&gt;, &lt;span style="color: #008000;"&gt;'C'&lt;/span&gt;, &lt;span style="color: #008000;"&gt;'Ann'&lt;/span&gt;, &lt;span style="color: #008000;"&gt;'Bnn'&lt;/span&gt;, &lt;span style="color: #008000;"&gt;'Cnn'&lt;/span&gt;])
+plt.xlabel(&lt;span style="color: #008000;"&gt;'Time'&lt;/span&gt;)
+plt.ylabel(&lt;span style="color: #008000;"&gt;'C'&lt;/span&gt;)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+&lt;img src="/media/d0abffb7b8615837cad7f2cceb378aac-65837YpQ.png"&gt; 
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-orga332637" class="outline-2"&gt;
+&lt;h2 id="orga332637"&gt;&lt;span class="section-number-2"&gt;3&lt;/span&gt; Given a neural network function how do we get the right derivatives?&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-3"&gt;
+&lt;p&gt;
+The next issue is how do we get the relevant derivatives. The solution method I developed here relies on using optimization to find a set of weights that produces a neural network whose derivatives are consistent with the ODE equations. So, we need to be able to get the derivatives that are relevant in the equations.
+&lt;/p&gt;
+
+&lt;p&gt;
+The neural network outputs three concentrations, and we need the time derivatives of them. Autograd provides three options: &lt;code&gt;grad&lt;/code&gt;, &lt;code&gt;elementwise_grad&lt;/code&gt; and &lt;code&gt;jacobian&lt;/code&gt;. We cannot use &lt;code&gt;grad&lt;/code&gt; because our function is not scalar. We cannot use &lt;code&gt;elementwise_grad&lt;/code&gt; because that will give the wrong shape (I think it may be the sum of the gradients). That leaves us with the &lt;code&gt;jacobian&lt;/code&gt;. This, however, gives an initially unintuitive (i.e. it isn't what we need out of the box) result. The output is 4-dimensional in this case, consistent with the documentation of that function.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #BA36A5;"&gt;jacC&lt;/span&gt; = jacobian(C, 1)
+jacC(params, sol.t.reshape([-1, 1])).shape
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+(17, 3, 17, 1)
+
+&lt;/pre&gt;
+
+
+&lt;p&gt;
+Why does it have this shape? Our time input vector we used has 17 time values, in a column vector. That leads to an output from the NN with a shape of (17, 3), i.e. the concentrations of each species at each time. The jacobian will output an array of shape (17, 3, 17, 1), and we have to extract the pieces we want from that. The first and third dimensions are related to the time steps. The second dimension is the species, and the last dimension is nothing here, but is there because the input is in a column. I use some fancy indexing on the array to get the desired arrays of the derivatives. This is not obvious out of the box. I only figured this out by direct comparison of the data from a numerical solution and the output of the jacobian. Here I show how to do that, and make sure that the derivatives we pull out are comparable to the derivatives defined by the ODEs above. Parity here means they are comparable.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #BA36A5;"&gt;i&lt;/span&gt; = np.arange(&lt;span style="color: #006FE0;"&gt;len&lt;/span&gt;(sol.t))
+plt.plot(jacC(params, sol.t.reshape([-1, 1]))[i, 0, i, 0],   -k1 * sol.y[0], &lt;span style="color: #008000;"&gt;'ro'&lt;/span&gt;)
+plt.plot(jacC(params, sol.t.reshape([-1, 1]))[i, 1, i, 0],   -k2 * sol.y[1] + k1 * sol.y[0], &lt;span style="color: #008000;"&gt;'bo'&lt;/span&gt;)
+plt.plot(jacC(params, sol.t.reshape([-1, 1]))[i, 2, i, 0],   k2 * sol.y[1], &lt;span style="color: #008000;"&gt;'go'&lt;/span&gt;)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+[&amp;lt;matplotlib.lines.Line2D at 0x118a2e860&amp;gt;]
+
+&lt;/pre&gt;
+
+
+
+&lt;p&gt;
+&lt;img src="/media/d0abffb7b8615837cad7f2cceb378aac-65837yLF.png"&gt; 
+&lt;/p&gt;
+
+&lt;p&gt;
+Note this is pretty inefficient. It requires a lot of calculations (the jacobian here has &lt;code class="src src-python"&gt;&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(17*3*17)&lt;/code&gt; &lt;code&gt;867&lt;/code&gt; elements) to create the jacobian, and we don't need most of them. You could avoid this by creating separate neural networks for each species, and then just use elementwise_grad on each one. Alternatively, one might be able to more efficiently compute some vector-jacobian product. Nevertheless, it looks like we can get the correct derivatives out of the neural network, we just need a convenient function to return them. Here is one such function for this problem, using a fancier slicing and reshaping to get the derivative array.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;Derivatives&lt;/span&gt;
+&lt;span style="color: #BA36A5;"&gt;jac&lt;/span&gt; = jacobian(C, 1)
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;dCdt&lt;/span&gt;(params, t):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;i&lt;/span&gt; = np.arange(&lt;span style="color: #006FE0;"&gt;len&lt;/span&gt;(t))
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; jac(params, t)[i, :, i].reshape((&lt;span style="color: #006FE0;"&gt;len&lt;/span&gt;(t), 3))
+&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+
+&lt;div id="outline-container-orgf85faff" class="outline-2"&gt;
+&lt;h2 id="orgf85faff"&gt;&lt;span class="section-number-2"&gt;4&lt;/span&gt; Solving the system of ODEs with a neural network&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-4"&gt;
+&lt;p&gt;
+Finally, we are ready to try solving the ODEs solely by the neural network approach. We reinitialize the neural network first, and define a time grid to solve it on.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #BA36A5;"&gt;t&lt;/span&gt; = np.linspace(0, 10, 25).reshape((-1, 1))
+&lt;span style="color: #BA36A5;"&gt;params&lt;/span&gt; = init_random_params(0.1, layer_sizes=[1, 8, 3])
+&lt;span style="color: #BA36A5;"&gt;i&lt;/span&gt; = 0    &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;number of training steps&lt;/span&gt;
+&lt;span style="color: #BA36A5;"&gt;N&lt;/span&gt; = 501  &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;epochs for training&lt;/span&gt;
+&lt;span style="color: #BA36A5;"&gt;et&lt;/span&gt; = 0.0 &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;total elapsed time&lt;/span&gt;
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+We define our objective function. This function will be zero at the perfect solution, and has contributions for each mole balance and the initial conditions. It could make sense to put additional penalties for things like negative concentrations, or the sum of concentrations is a constant, but we do not do that here, and it does not seem to be necessary.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;objective&lt;/span&gt;(params, step):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;Ca&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;Cb&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;Cc&lt;/span&gt; = C(params, t).T
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;dCadt&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;dCbdt&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;dCcdt&lt;/span&gt; = dCdt(params, t).T
+
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;z1&lt;/span&gt; = np.&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;((dCadt + k1 * Ca)**2)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;z2&lt;/span&gt; = np.&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;((dCbdt - k1 * Ca + k2 * Cb)**2)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;z3&lt;/span&gt; = np.&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;((dCcdt - k2 * Cb)**2)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;ic&lt;/span&gt; = np.&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;((np.array([Ca[0], Cb[0], Cc[0]]) - C0)**2)  &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;initial conditions&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; z1 + z2 + z3 + ic
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;callback&lt;/span&gt;(params, step, g):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; step % 100 == 0:
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;"Iteration {0:3d} objective {1}"&lt;/span&gt;.&lt;span style="color: #006FE0;"&gt;format&lt;/span&gt;(step,
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt; objective(params, step)))
+
+objective(params, 0)  &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;make sure the objective is scalar&lt;/span&gt;
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+5.2502237371050295
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+Finally, we run the optimization. I also manually ran this block several times.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; time
+&lt;span style="color: #BA36A5;"&gt;t0&lt;/span&gt; = time.time()
+
+&lt;span style="color: #BA36A5;"&gt;params&lt;/span&gt; = adam(grad(objective), params,
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt; step_size=0.001, num_iters=N, callback=callback)
+
+&lt;span style="color: #BA36A5;"&gt;i&lt;/span&gt; += N
+&lt;span style="color: #BA36A5;"&gt;t1&lt;/span&gt; = (time.time() - t0) / 60
+&lt;span style="color: #BA36A5;"&gt;et&lt;/span&gt; += t1
+
+plt.plot(t, C(params, t), sol.t, sol.y.T, &lt;span style="color: #008000;"&gt;'o'&lt;/span&gt;)
+plt.legend([&lt;span style="color: #008000;"&gt;'Ann'&lt;/span&gt;, &lt;span style="color: #008000;"&gt;'Bnn'&lt;/span&gt;, &lt;span style="color: #008000;"&gt;'Cnn'&lt;/span&gt;, &lt;span style="color: #008000;"&gt;'A'&lt;/span&gt;, &lt;span style="color: #008000;"&gt;'B'&lt;/span&gt;, &lt;span style="color: #008000;"&gt;'C'&lt;/span&gt;])
+plt.xlabel(&lt;span style="color: #008000;"&gt;'Time'&lt;/span&gt;)
+plt.ylabel(&lt;span style="color: #008000;"&gt;'C'&lt;/span&gt;)
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(f&lt;span style="color: #008000;"&gt;'{t1:1.1f} minutes elapsed this time. Total time = {et:1.2f} min. Total epochs = {i}.'&lt;/span&gt;)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+Iteration   0 objective 0.00047651643957525214
+Iteration 100 objective 0.0004473301532609342
+Iteration 200 objective 0.00041218410058863227
+Iteration 300 objective 0.00037161526137030344
+Iteration 400 objective 0.000327567400443358
+Iteration 500 objective 0.0002836975879675981
+0.6 minutes elapsed this time. Total time = 4.05 min. Total epochs = 3006.
+
+
+&lt;/pre&gt;
+
+
+&lt;p&gt;
+&lt;img src="/media/d0abffb7b8615837cad7f2cceb378aac-65837AXS.png"&gt; 
+&lt;/p&gt;
+
+&lt;p&gt;
+The effort seems to have been worth it though, we get a pretty good solution from our neural network.
+&lt;/p&gt;
+
+&lt;p&gt;
+We can check the accuracy of the derivatives by noting the sum of the derivatives in this case should be zero. Here you can see that the sum is pretty small. It would take additional optimization to a lower error to get this to be smaller.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;plt.plot(t, np.&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;(dCdt(params, t), axis=1))
+plt.xlabel(&lt;span style="color: #008000;"&gt;'Time'&lt;/span&gt;)
+plt.ylabel(r&lt;span style="color: #008000;"&gt;'$\Sigma dC/dt$'&lt;/span&gt;)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+&lt;img src="/media/d0abffb7b8615837cad7f2cceb378aac-65837NhY.png"&gt; 
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+
+
+&lt;div id="outline-container-orgbbded67" class="outline-2"&gt;
+&lt;h2 id="orgbbded67"&gt;&lt;span class="section-number-2"&gt;5&lt;/span&gt; Summary&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-5"&gt;
+&lt;p&gt;
+In the end, this method is illustrated to work for systems of ODEs also. There is some subtlety in how to get the relevant derivatives from the jacobian, but after that, it is essentially the same. I think it would be &lt;i&gt;much&lt;/i&gt; faster to do this with separate neural networks for each function in the solution because then you do not need the jacobian, you can use elementwise_grad.
+&lt;/p&gt;
+
+&lt;p&gt;
+This is not faster than direct numerical integration. One benefit to this solution over a numerical solution is we get an actual continuous function as the solution, rather than an array of data.  This solution is not reliable at longer times, but then again neither is extrapolation of numeric data. It could be interesting to explore if this has any benefits for stiff equations. Maybe another day. For now, I am declaring victory for autograd on this problem.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;p&gt;Copyright (C) 2018 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
+&lt;p&gt;&lt;a href="/org/2018/11/02/Solving-coupled-ODEs-with-a-neural-network-and-autograd.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Org-mode version = 9.1.14&lt;/p&gt;]]></content:encoded>
+    </item>
+    <item>
       <title>A differentiable ODE integrator for sensitivity analysis</title>
       <link>http://jkitchin.github.io/blog/2018/10/11/A-differentiable-ODE-integrator-for-sensitivity-analysis</link>
       <pubDate>Thu, 11 Oct 2018 12:13:01 EDT</pubDate>
-      <category><![CDATA[autograd]]></category>
-      <category><![CDATA[sensitivity]]></category>
       <category><![CDATA[ode]]></category>
+      <category><![CDATA[sensitivity]]></category>
+      <category><![CDATA[autograd]]></category>
       <guid isPermaLink="false">x1b-cquyAyl6Ic4uE4zs0jj8a6U=</guid>
       <description>A differentiable ODE integrator for sensitivity analysis</description>
       <content:encoded><![CDATA[
@@ -171,8 +500,8 @@ On the other hand, it is remarkable we get derivatives from the numerical soluti
       <title>Autograd and the derivative of an integral function</title>
       <link>http://jkitchin.github.io/blog/2018/10/10/Autograd-and-the-derivative-of-an-integral-function</link>
       <pubDate>Wed, 10 Oct 2018 18:24:12 EDT</pubDate>
-      <category><![CDATA[autograd]]></category>
       <category><![CDATA[python]]></category>
+      <category><![CDATA[autograd]]></category>
       <guid isPermaLink="false">cO6xXl0wefWmv_shWZaPoagKeJs=</guid>
       <description>Autograd and the derivative of an integral function</description>
       <content:encoded><![CDATA[
@@ -373,8 +702,8 @@ These are amazing results to me. Before trying it, I would not have thought it w
       <title>Compressibility variation from an implicit equation of state</title>
       <link>http://jkitchin.github.io/blog/2018/10/09/Compressibility-variation-from-an-implicit-equation-of-state</link>
       <pubDate>Tue, 09 Oct 2018 09:21:06 EDT</pubDate>
-      <category><![CDATA[autograd]]></category>
       <category><![CDATA[python]]></category>
+      <category><![CDATA[autograd]]></category>
       <guid isPermaLink="false">5_ZW_tD3wR0tLozwLCnpfsH_myk=</guid>
       <description>Compressibility variation from an implicit equation of state</description>
       <content:encoded><![CDATA[
@@ -534,8 +863,8 @@ This approach also required some manipulation, but it is a standard one and that
       <title>Getting derivatives from implicit functions with autograd</title>
       <link>http://jkitchin.github.io/blog/2018/10/08/Getting-derivatives-from-implicit-functions-with-autograd</link>
       <pubDate>Mon, 08 Oct 2018 19:53:21 EDT</pubDate>
-      <category><![CDATA[autograd]]></category>
       <category><![CDATA[python]]></category>
+      <category><![CDATA[autograd]]></category>
       <guid isPermaLink="false">vzdJUvksnYiFe3TCZNWRgZOmbqc=</guid>
       <description>Getting derivatives from implicit functions with autograd</description>
       <content:encoded><![CDATA[
@@ -832,10 +1161,10 @@ There are a handful of other examples at the website referenced in the beginning
       <title>Compressibility factor variation from the van der Waals equation by three different approaches</title>
       <link>http://jkitchin.github.io/blog/2018/10/07/Compressibility-factor-variation-from-the-van-der-Waals-equation-by-three-different-approaches</link>
       <pubDate>Sun, 07 Oct 2018 13:08:11 EDT</pubDate>
+      <category><![CDATA[ode]]></category>
+      <category><![CDATA[python]]></category>
       <category><![CDATA[nonlinear algebra]]></category>
       <category><![CDATA[autograd]]></category>
-      <category><![CDATA[python]]></category>
-      <category><![CDATA[ode]]></category>
       <guid isPermaLink="false">nzuQ2552fiegwa_OqTuF-vQ3pMs=</guid>
       <description>Compressibility factor variation from the van der Waals equation by three different approaches</description>
       <content:encoded><![CDATA[
@@ -1086,8 +1415,8 @@ Not surprisingly, this answer looks the same as the previous ones. I think this 
       <link>http://jkitchin.github.io/blog/2017/11/29/Solving-an-eigenvalue-differential-equation-with-a-neural-network</link>
       <pubDate>Wed, 29 Nov 2017 21:17:03 EST</pubDate>
       <category><![CDATA[eigenvalue]]></category>
-      <category><![CDATA[autograd]]></category>
       <category><![CDATA[bvp]]></category>
+      <category><![CDATA[autograd]]></category>
       <guid isPermaLink="false">k6Vx3x7cr1E5mihuaxrKNEeJLZs=</guid>
       <description>Solving an eigenvalue differential equation with a neural network</description>
       <content:encoded><![CDATA[
@@ -1448,8 +1777,8 @@ There are other ways to solve this particular problem. What I think is interesti
       <title>Solving ODEs with a neural network and autograd</title>
       <link>http://jkitchin.github.io/blog/2017/11/28/Solving-ODEs-with-a-neural-network-and-autograd</link>
       <pubDate>Tue, 28 Nov 2017 07:23:03 EST</pubDate>
-      <category><![CDATA[autograd]]></category>
       <category><![CDATA[ode]]></category>
+      <category><![CDATA[autograd]]></category>
       <guid isPermaLink="false">9_0DaFnIWtKTkjNoCBbYQlWrdEU=</guid>
       <description>Solving ODEs with a neural network and autograd</description>
       <content:encoded><![CDATA[
@@ -1697,8 +2026,8 @@ It is hard to tell how broadly useful this is; I have not tried it beyond this e
       <title>More auto-differentiation goodness for science and engineering</title>
       <link>http://jkitchin.github.io/blog/2017/11/22/More-auto-differentiation-goodness-for-science-and-engineering</link>
       <pubDate>Wed, 22 Nov 2017 15:52:26 EST</pubDate>
-      <category><![CDATA[autograd]]></category>
       <category><![CDATA[python]]></category>
+      <category><![CDATA[autograd]]></category>
       <guid isPermaLink="false">40tEiid--9b6BhN59nVkbejz494=</guid>
       <description>More auto-differentiation goodness for science and engineering</description>
       <content:encoded><![CDATA[
@@ -1994,301 +2323,6 @@ Today we examined four ways to use autograd in scientific or mathematical progra
 &lt;/div&gt;
 &lt;p&gt;Copyright (C) 2017 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
 &lt;p&gt;&lt;a href="/org/2017/11/22/More-auto-differentiation-goodness-for-science-and-engineering.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
-&lt;p&gt;Org-mode version = 9.1.2&lt;/p&gt;]]></content:encoded>
-    </item>
-    <item>
-      <title>Timing Lennard-Jones implementations - ASE vs autograd</title>
-      <link>http://jkitchin.github.io/blog/2017/11/20/Timing-Lennard-Jones-implementations-ASE-vs-autograd</link>
-      <pubDate>Mon, 20 Nov 2017 21:19:17 EST</pubDate>
-      <category><![CDATA[lennardjones]]></category>
-      <category><![CDATA[autograd]]></category>
-      <category><![CDATA[python]]></category>
-      <guid isPermaLink="false">nSG47QhTDNSZivajfbKAXC-gvIU=</guid>
-      <description>Timing Lennard-Jones implementations - ASE vs autograd</description>
-      <content:encoded><![CDATA[
-
-
-&lt;div id="table-of-contents"&gt;
-&lt;h2&gt;Table of Contents&lt;/h2&gt;
-&lt;div id="text-table-of-contents"&gt;
-&lt;ul&gt;
-&lt;li&gt;&lt;a href="#orgb9c2faf"&gt;1. Timing on the forces&lt;/a&gt;&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;p&gt;
-In a comment on this &lt;a href="http://kitchingroup.cheme.cmu.edu/blog/2017/11/14/Forces-by-automatic-differentiation-in-molecular-simulation/"&gt;post&lt;/a&gt; Konrad Hinsen asked if the autograd forces on a Lennard-Jones potential would be useable in production. I wasn't sure, and was suspicious that analytical force functions would be faster. It turns out to not be so simple. In this post, I attempt to do some timing experiments for comparison. These are tricky to do right, and in a meaningful way, so I will start by explaining what is tricky and why I think the results are meaningful. 
-&lt;/p&gt;
-
-&lt;p&gt;
-The ASE calculators cache their results, and return the cached results after the first run. We will do these on a 13-atom icosahedron cluster.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython" id="orgb9b1952"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; ase.calculators.lj &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; LennardJones
-&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; ase.cluster.icosahedron &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; Icosahedron
-
-&lt;span style="color: #BA36A5;"&gt;atoms&lt;/span&gt; = Icosahedron(&lt;span style="color: #008000;"&gt;'Ar'&lt;/span&gt;, noshells=2, latticeconstant=3)
-atoms.set_calculator(LennardJones())
-
-&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; time
-&lt;span style="color: #BA36A5;"&gt;t0&lt;/span&gt; = time.time()
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'energy: '&lt;/span&gt;, atoms.get_potential_energy())
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;' time: '&lt;/span&gt;, time.time() - t0)
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;()
-
-&lt;span style="color: #BA36A5;"&gt;t0&lt;/span&gt; = time.time()
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'energy: '&lt;/span&gt;, atoms.get_potential_energy())
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;' time: '&lt;/span&gt;, time.time() - t0)
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;()
-
-&lt;span style="color: #BA36A5;"&gt;atoms.calc.results&lt;/span&gt; = {}
-&lt;span style="color: #BA36A5;"&gt;t0&lt;/span&gt; = time.time()
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'energy: '&lt;/span&gt;, atoms.get_potential_energy())
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'time: '&lt;/span&gt;, time.time() - t0)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-energy:  -1.25741774649
- time:  0.0028629302978515625
-
-energy:  -1.25741774649
- time:  0.00078582763671875
-
-energy:  -1.25741774649
-time:  0.0031850337982177734
-
-&lt;/pre&gt;
-
-&lt;p&gt;
-Note the approximate order of magnitude reduction in elapsed time for the second call. After that, we reset the calculator results, and the time goes back up. So, we have to incorporate that into our timing. Also, in the ASE calculator, the forces are simultaneously calculated. There isn't a way to separate the calls. I am going to use the timeit feature in Ipython for the timing. I don't have a lot of control over what else is running on my machine, so I have observed some variability in the timing results. Finally, I am running these on a MacBook Air.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython" id="org23d2e9b"&gt;%%timeit
-atoms.get_potential_energy()
-&lt;span style="color: #BA36A5;"&gt;atoms.calc.results&lt;/span&gt; = {} &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;this resets it so it runs each time. Otherwise, we get cached results&lt;/span&gt;
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-1.46 ms ± 107 µs per loop (mean ± std. dev. of 7 runs, 1000 loops each)
-&lt;/p&gt;
-
-&lt;p&gt;
-That seems like a surprisingly long time. If you neglect the calculator reset, it looks about 10 times faster because the cache lookup is fast!
-&lt;/p&gt;
-
-&lt;p&gt;
-Let's compare that to an implementation of the Lennard-Jones potential similar to the last time. This implementation differs from &lt;a href="http://kitchingroup.cheme.cmu.edu/blog/2017/11/14/Forces-by-automatic-differentiation-in-molecular-simulation/"&gt;the first one I blogged about&lt;/a&gt;. This one is fully vectorized. It still does not support periodic boundary conditions though. This version may be up to 10 times faster than the previous version. I haven't tested this very well, I only assured it gives the same energy as ASE for the example in this post.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython" id="org2d00a75"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; autograd.numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
-
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;energy&lt;/span&gt;(positions):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #036A07;"&gt;"Compute the energy of a Lennard-Jones system."&lt;/span&gt;
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;sigma&lt;/span&gt; = 1.0
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;epsilon&lt;/span&gt; = 1.0
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;rc&lt;/span&gt; = 3 * sigma
-
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;e0&lt;/span&gt; = 4 * epsilon * ((sigma / rc)**12 - (sigma / rc)**6)
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;natoms&lt;/span&gt; = &lt;span style="color: #006FE0;"&gt;len&lt;/span&gt;(positions)
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;These are the pairs of indices we need to compute distances for.&lt;/span&gt;
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;a&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;b&lt;/span&gt; = np.triu_indices(natoms, 1)
-
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;d&lt;/span&gt; = positions[a] - positions[b]
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;r2&lt;/span&gt; = np.&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;(d**2, axis=1)
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;c6&lt;/span&gt; = np.where(r2 &amp;lt;= rc**2, (sigma**2 / r2)**3, np.zeros_like(r2))
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;energy&lt;/span&gt; = -e0 * (c6 != 0.0).&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;()
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;c12&lt;/span&gt; = c6**2
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;energy&lt;/span&gt; += np.&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;(4 * epsilon * (c12 - c6))
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; energy
-
-&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;Just to check we get the same answer&lt;/span&gt;
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(energy(atoms.positions))
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
--1.25741774649
-&lt;/p&gt;
-
-&lt;p&gt;
-The energy looks good. For timing, we store the positions in a variable, in case there is any lookup time, since this function only needs an array.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython" id="org7312f34"&gt;&lt;span style="color: #BA36A5;"&gt;pos&lt;/span&gt; = atoms.positions
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-
-&lt;/p&gt;
-
-&lt;p&gt;
-There is no caching to worry about here, we can just get the timing.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython" id="org38e167b"&gt;%%timeit
-energy(pos)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-82.2 µs ± 2.85 µs per loop (mean ± std. dev. of 7 runs, 10000 loops each)
-&lt;/p&gt;
-
-&lt;p&gt;
-Wow, that is a lot faster than the ASE implementation. Score one for vectorization.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython" id="org9087076"&gt;&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'Vectorized is {0:1.1f} times faster than ASE at energy.'&lt;/span&gt;.&lt;span style="color: #006FE0;"&gt;format&lt;/span&gt;(1.46e-3 / 82.5e-6))
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-Vectorized is 17.7 times faster than ASE at energy.
-
-&lt;/pre&gt;
-
-&lt;p&gt;
-Yep, a fully vectorized implementation is a lot faster than the ASE version which uses loops. So far the difference has nothing to do with autograd.
-&lt;/p&gt;
-
-&lt;div id="outline-container-orgb9c2faf" class="outline-2"&gt;
-&lt;h2 id="orgb9c2faf"&gt;&lt;span class="section-number-2"&gt;1&lt;/span&gt; Timing on the forces&lt;/h2&gt;
-&lt;div class="outline-text-2" id="text-1"&gt;
-&lt;p&gt;
-The forces are where derivatives are important, and it is a reasonable question of whether hand-coded derivatives are faster or slower than autograd derivatives. We first look at the forces from ASE. The analytical forces take about the same time as the energy, which is not surprising. The same work is done for both of them.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython" id="org689833d"&gt;np.set_printoptions(precision=3, suppress=&lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;)
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(atoms.get_forces())
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-[[-0.    -0.    -0.   ]
- [-0.296 -0.     0.183]
- [-0.296 -0.    -0.183]
- [ 0.296 -0.     0.183]
- [ 0.296 -0.    -0.183]
- [ 0.183 -0.296 -0.   ]
- [-0.183 -0.296  0.   ]
- [ 0.183  0.296 -0.   ]
- [-0.183  0.296  0.   ]
- [-0.     0.183 -0.296]
- [ 0.    -0.183 -0.296]
- [-0.     0.183  0.296]
- [ 0.    -0.183  0.296]]
-
-&lt;/pre&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython" id="orgcaaa884"&gt;%%timeit
-atoms.get_forces()
-&lt;span style="color: #BA36A5;"&gt;atoms.calc.results&lt;/span&gt; = {}
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-1.22 ms ± 38.7 µs per loop (mean ± std. dev. of 7 runs, 1000 loops each)
-
-&lt;/pre&gt;
-
-&lt;p&gt;
-Here is our auto-differentiated force function.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython" id="org767b1e9"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; autograd &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; elementwise_grad
-
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;forces&lt;/span&gt;(pos):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;dEdR&lt;/span&gt; = elementwise_grad(energy)
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; -dEdR(pos)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-Let's just check the forces for consistency.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython" id="org777df8d"&gt;&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(forces(atoms.positions))
-
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(np.allclose(forces(atoms.positions), atoms.get_forces()))
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-[[-0.    -0.    -0.   ]
- [-0.296 -0.     0.183]
- [-0.296 -0.    -0.183]
- [ 0.296 -0.     0.183]
- [ 0.296 -0.    -0.183]
- [ 0.183 -0.296 -0.   ]
- [-0.183 -0.296  0.   ]
- [ 0.183  0.296 -0.   ]
- [-0.183  0.296  0.   ]
- [-0.     0.183 -0.296]
- [ 0.    -0.183 -0.296]
- [-0.     0.183  0.296]
- [ 0.    -0.183  0.296]]
-True
-
-&lt;/pre&gt;
-
-&lt;p&gt;
-Those all look the same, so now performance for that:
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython" id="org90b4b07"&gt;%%timeit 
-
-forces(pos)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-727 µs ± 47.1 µs per loop (mean ± std. dev. of 7 runs, 1000 loops each)
-
-&lt;/pre&gt;
-
-&lt;p&gt;
-This is faster than the ASE version. I suspect that it is largely because of the faster, vectorized algorithm overall. 
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython" id="org7de1cf3"&gt;&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'autograd is {0:1.1f} times faster than ASE on forces.'&lt;/span&gt;.&lt;span style="color: #006FE0;"&gt;format&lt;/span&gt;(1.22e-3 / 727e-6))
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-autograd is 1.7 times faster than ASE on forces.
-
-&lt;/pre&gt;
-
-&lt;p&gt;
-autograd forces are consistently 2-6 times faster than the ASE implementation. It could be possible to hand-code a faster function for the forces, if it was fully vectorized. I spent a while seeing what would be required for that, and it is not obvious how to do that. Any solution that uses loops will be slower I think.
-&lt;/p&gt;
-
-&lt;p&gt;
-This doesn't directly answer the question of whether this can work in production. Everything is still written in Python here, which might limit the size and length of calculations you can practically do. With the right implementation though, it looks promising.
-&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;p&gt;Copyright (C) 2017 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
-&lt;p&gt;&lt;a href="/org/2017/11/20/Timing-Lennard-Jones-implementations---ASE-vs-autograd.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
 &lt;p&gt;Org-mode version = 9.1.2&lt;/p&gt;]]></content:encoded>
     </item>
   </channel>

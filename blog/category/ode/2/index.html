@@ -84,6 +84,134 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Uncertainty-in-the-solution-of-an-ODE"></div>
+      <h2 class="blog_post_title"><a href="/blog/2013/07/14/Uncertainty-in-the-solution-of-an-ODE/" rel="bookmark" title="Permanent Link to Uncertainty in the solution of an ODE">Uncertainty in the solution of an ODE</a></h2>
+      <p><small><span class="blog_post_date">Posted July 14, 2013 at 01:36 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/ode/'>ode</a>, <a href='/blog/category/uncertainty/'>uncertainty</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2013/07/14/Uncertainty-in-the-solution-of-an-ODE#disqus_thread">View Comments</a>
+      <p><small><span class="blog_post_date">Updated October 18, 2013 at 03:55 PM</span>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+
+<p>
+Our objective in this post is to examine the effects of uncertainty in parameters that define an ODE on the integrated solution of the ODE. My favorite method for numerical uncertainty analysis is Monte Carlo simulation because it is easy to code and usually easy to understand. We take that approach first.
+</p>
+
+<p>
+The problem to solve is to estimate the conversion in a constant volume batch reactor with a second order reaction \(A \rightarrow B\), and the rate law: \(-r_A = k C_A^2\), after one hour of reaction. There is 5% uncertainty in the rate constant \(k=0.001\) and in the initial concentration \(C_{A0}=1\). 
+</p>
+
+<p>
+The relevant differential equation is:
+</p>
+
+<p>
+\(\frac{dX}{dt} = -r_A /C_{A0}\).
+</p>
+
+<p>
+We have to assume that 5% uncertainty refers to a normal distribution of error that has a standard deviation of 5% of the mean value. 
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">from</span> scipy.integrate <span style="color: #8b0000;">import</span> odeint
+<span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
+
+<span style="color: #8b008b;">N</span> = 1000
+
+<span style="color: #8b008b;">K</span> = np.random.normal(0.001, 0.05*0.001, N)
+<span style="color: #8b008b;">CA0</span> = np.random.normal(1, 0.05*1, N)
+
+<span style="color: #8b008b;">X</span> = [] <span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">to store answer in</span>
+<span style="color: #8b0000;">for</span> k, Ca0 <span style="color: #8b0000;">in</span> <span style="color: #cd0000;">zip</span>(K, CA0):
+    <span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">define ODE</span>
+    <span style="color: #8b0000;">def</span> <span style="color: #8b2323;">ode</span>(X, t):
+        <span style="color: #8b008b;">ra</span> = -k * (Ca0 * (1 - X))**2
+        <span style="color: #8b0000;">return</span> -ra / Ca0
+    
+    <span style="color: #8b008b;">X0</span> = 0
+    <span style="color: #8b008b;">tspan</span> = np.linspace(0,3600)
+
+    <span style="color: #8b008b;">sol</span> = odeint(ode, X0, tspan)
+
+    <span style="color: #8b008b;">X</span> += [sol[-1][0]]
+
+<span style="color: #8b008b;">s</span> = <span style="color: #228b22;">'Final conversion at one hour is {0:1.3f} +- {1:1.3f} (1 sigma)'</span>
+<span style="color: #8b0000;">print</span> s.<span style="color: #cd0000;">format</span>(np.average(X),
+               np.std(X))
+</pre>
+</div>
+
+<pre class="example">
+Final conversion at one hour is 0.782 +- 0.013 (1 sigma)
+</pre>
+
+<p>
+See, it is not too difficulty to write. It is however, a little on the expensive side to run, since we typically need 1e3-1e6 samples to get the statistics reasonable. Let us try the uncertainties package too. For this we have to wrap a function that takes uncertainties and returns a single float number. 
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">from</span> scipy.integrate <span style="color: #8b0000;">import</span> odeint
+<span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
+<span style="color: #8b0000;">import</span> uncertainties <span style="color: #8b0000;">as</span> u
+
+<span style="color: #8b008b;">k</span> = u.ufloat(0.001, 0.05*0.001)
+<span style="color: #8b008b;">Ca0</span> = u.ufloat(1.0, 0.05)
+
+<span style="color: #4682b4;">@u.wrap</span>
+<span style="color: #8b0000;">def</span> <span style="color: #8b2323;">func</span>(k, Ca0):
+    <span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">define the ODE</span>
+    <span style="color: #8b0000;">def</span> <span style="color: #8b2323;">ode</span>(X, t):
+        <span style="color: #8b008b;">ra</span> = -k * (Ca0 * (1 - X))**2
+        <span style="color: #8b0000;">return</span> -ra / Ca0
+    
+    <span style="color: #8b008b;">X0</span> = 0 <span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">initial condition</span>
+    <span style="color: #8b008b;">tspan</span> = np.linspace(0, 3600)
+    <span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">integrate it</span>
+    <span style="color: #8b008b;">sol</span> = odeint(ode, X0, tspan)
+    <span style="color: #8b0000;">return</span> sol[-1][0]
+
+<span style="color: #8b008b;">result</span> = func(k, Ca0)
+<span style="color: #8b008b;">s</span> = <span style="color: #228b22;">'Final conversion at one hour is {0}(1 sigma)'</span>
+<span style="color: #8b0000;">print</span> s.<span style="color: #cd0000;">format</span>(result)
+</pre>
+</div>
+
+<pre class="example">
+Final conversion at one hour is 0.783+/-0.012(1 sigma)
+</pre>
+
+<p>
+This is about the same amount of code as the Monte Carlo approach, but it runs much faster, and gets approximately the same results. You have to remember the wrapping technique, since the uncertainties package does not run natively with the odeint function. 
+</p>
+<p>Copyright (C) 2013 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2013/07/14/Uncertainty-in-the-solution-of-an-ODE.org">org-mode source</a><p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2013/07/14/Uncertainty-in-the-solution-of-an-ODE#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Linear-algebra-approaches-to-solving-systems-of-constant-coefficient-ODEs"></div>
       <h2 class="blog_post_title"><a href="/blog/2013/02/27/Linear-algebra-approaches-to-solving-systems-of-constant-coefficient-ODEs/" rel="bookmark" title="Permanent Link to Linear algebra approaches to solving systems of constant coefficient ODEs">Linear algebra approaches to solving systems of constant coefficient ODEs</a></h2>
       <p><small><span class="blog_post_date">Posted February 27, 2013 at 02:33 PM</span> | categories:
@@ -557,96 +685,6 @@ The problem here was the derivative value varied by four orders of magnitude ove
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2013/02/27/Error-tolerance-in-numerical-solutions-to-ODEs#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Finding-minima-and-maxima-in-ODE-solutions-with-events"></div>
-      <h2 class="blog_post_title"><a href="/blog/2013/02/27/Finding-minima-and-maxima-in-ODE-solutions-with-events/" rel="bookmark" title="Permanent Link to Finding minima and maxima in ODE solutions with events">Finding minima and maxima in ODE solutions with events</a></h2>
-      <p><small><span class="blog_post_date">Posted February 27, 2013 at 02:31 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/ode/'>ode</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2013/02/27/Finding-minima-and-maxima-in-ODE-solutions-with-events#disqus_thread">View Comments</a>
-      <p><small><span class="blog_post_date">Updated February 27, 2013 at 02:31 PM</span>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-<a href="http://matlab.cheme.cmu.edu/2011/09/17/finding-minima-and-maxima-in-ode-solutions-with-events" >Matlab post</a>
-
-Today we look at another way to use events in an ode solver. We use an events function to find minima and maxima, by evaluating the ODE in the event function to find conditions where the first derivative is zero, and approached from the right direction. A maximum is when the fisrt derivative is zero and increasing, and a minimum is when the first derivative is zero and decreasing.
-</p>
-
-<p>
-We use a simple ODE, \(y' = sin(x)*e^{-0.05x}\), which has minima and maxima.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #8b0000;">from</span> pycse <span style="color: #8b0000;">import</span> *
-<span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
-
-<span style="color: #8b0000;">def</span> <span style="color: #8b2323;">ode</span>(y, x):
-    <span style="color: #8b0000;">return</span> np.sin(x) * np.exp(-0.05 * x)
-
-<span style="color: #8b0000;">def</span> <span style="color: #8b2323;">minima</span>(y, x):
-    <span style="color: #228b22;">'''Approaching a minumum, dydx is negatime and going to zero. our event function is increasing'''</span>
-    value = ode(y, x)
-    direction = 1
-    isterminal = <span style="color: #8b0000;">False</span>
-    <span style="color: #8b0000;">return</span> value,  isterminal, direction
-
-<span style="color: #8b0000;">def</span> <span style="color: #8b2323;">maxima</span>(y, x):
-    <span style="color: #228b22;">'''Approaching a maximum, dydx is positive and going to zero. our event function is decreasing'''</span>
-    value = ode(y, x)
-    direction = -1
-    isterminal = <span style="color: #8b0000;">False</span>
-    <span style="color: #8b0000;">return</span> value,  isterminal, direction
-
-xspan = np.linspace(0, 20, 100)
-
-y0 = 0
-
-X, Y, XE, YE, IE = odelay(ode, y0, xspan, events=[minima, maxima])
-<span style="color: #8b0000;">print</span> IE
-<span style="color: #8b0000;">import</span> matplotlib.pyplot <span style="color: #8b0000;">as</span> plt
-plt.plot(X, Y)
-
-<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">blue is maximum, red is minimum</span>
-colors = <span style="color: #228b22;">'rb'</span>
-<span style="color: #8b0000;">for</span> xe, ye, ie <span style="color: #8b0000;">in</span> <span style="color: #8b0000;">zip</span>(XE, YE, IE):
-    plt.plot([xe], [ye], <span style="color: #228b22;">'o'</span>, color=colors[ie])
-
-plt.savefig(<span style="color: #228b22;">'./images/ode-events-min-max.png'</span>)
-plt.show()
-</pre>
-</div>
-
-<pre class="example">
-[1, 0, 1, 0, 1, 0]
-</pre>
-
-<p><img src="/img/./images/ode-events-min-max.png"><p>
-<p>Copyright (C) 2013 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2013/02/27/Finding-minima-and-maxima-in-ODE-solutions-with-events.org">org-mode source</a><p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2013/02/27/Finding-minima-and-maxima-in-ODE-solutions-with-events#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="/blog/category/ode/1">« Previous Page</a>
   --  
  <a href="/blog/category/ode/3">Next Page »</a>
@@ -688,11 +726,11 @@ plt.show()
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2018/11/02/Solving-coupled-ODEs-with-a-neural-network-and-autograd/">Solving coupled ODEs with a neural network and autograd</a></li>
       <li><a href="/blog/2018/10/11/A-differentiable-ODE-integrator-for-sensitivity-analysis/">A differentiable ODE integrator for sensitivity analysis</a></li>
       <li><a href="/blog/2018/10/10/Autograd-and-the-derivative-of-an-integral-function/">Autograd and the derivative of an integral function</a></li>
       <li><a href="/blog/2018/10/09/Compressibility-variation-from-an-implicit-equation-of-state/">Compressibility variation from an implicit equation of state</a></li>
       <li><a href="/blog/2018/10/08/Getting-derivatives-from-implicit-functions-with-autograd/">Getting derivatives from implicit functions with autograd</a></li>
-      <li><a href="/blog/2018/10/07/Compressibility-factor-variation-from-the-van-der-Waals-equation-by-three-different-approaches/">Compressibility factor variation from the van der Waals equation by three different approaches</a></li>
     </ul>
   </section>
 

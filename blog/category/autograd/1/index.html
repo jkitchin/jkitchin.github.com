@@ -84,10 +84,359 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Solving-coupled-ODEs-with-a-neural-network-and-autograd"></div>
+      <h2 class="blog_post_title"><a href="/blog/2018/11/02/Solving-coupled-ODEs-with-a-neural-network-and-autograd/" rel="bookmark" title="Permanent Link to Solving coupled ODEs with a neural network and autograd">Solving coupled ODEs with a neural network and autograd</a></h2>
+      <p><small><span class="blog_post_date">Posted November 02, 2018 at 07:53 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/ode/'>ode</a>, <a href='/blog/category/autograd/'>autograd</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2018/11/02/Solving-coupled-ODEs-with-a-neural-network-and-autograd#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#orgfefaa95">1. The standard numerical solution</a></li>
+<li><a href="#orge5dacb7">2. Can a neural network learn the solution?</a></li>
+<li><a href="#orga332637">3. Given a neural network function how do we get the right derivatives?</a></li>
+<li><a href="#orgf85faff">4. Solving the system of ODEs with a neural network</a></li>
+<li><a href="#orgbbded67">5. Summary</a></li>
+</ul>
+</div>
+</div>
+<p>
+In a previous <a href="http://kitchingroup.cheme.cmu.edu/blog/2017/11/28/Solving-ODEs-with-a-neural-network-and-autograd/index.html">post</a> I wrote about using ideas from machine learning to solve an ordinary differential equation using a neural network for the solution. A friend recently tried to apply that idea to coupled ordinary differential equations, without success. It seems like that should work, so here we diagnose the issue and figure it out. This is a long post, but it works in the end.
+</p>
+
+<p>
+In the classic series reaction \(A \rightarrow B \rightarrow C\) in a batch reactor, we get the set of coupled mole balances:
+</p>
+
+<p>
+\(dC_A/dt = -k_1 C_A\)
+</p>
+
+<p>
+\(dC_B/dt = k_1 C_A - k_2 C_B\)
+</p>
+
+<p>
+\(dC_C/dt = k2 C_B\)
+</p>
+
+<div id="outline-container-orgfefaa95" class="outline-2">
+<h2 id="orgfefaa95"><span class="section-number-2">1</span> The standard numerical solution</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+Here is the standard numerical solution to this problem. This will give us a reference for what the solution should look like.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">from</span> scipy.integrate <span style="color: #0000FF;">import</span> solve_ivp
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">ode</span>(t, C):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">Ca</span>, <span style="color: #BA36A5;">Cb</span>, <span style="color: #BA36A5;">Cc</span> = C
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">dCadt</span> = -k1 * Ca
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">dCbdt</span> = k1 * Ca - k2 * Cb
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">dCcdt</span> = k2 * Cb
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> [dCadt, dCbdt, dCcdt]
+
+<span style="color: #BA36A5;">C0</span> = [1.0, 0.0, 0.0]
+<span style="color: #BA36A5;">k1</span> = 1
+<span style="color: #BA36A5;">k2</span> = 1
+
+<span style="color: #BA36A5;">sol</span> = solve_ivp(ode, (0, 10), C0)
+
+%matplotlib inline
+<span style="color: #0000FF;">import</span> matplotlib.pyplot <span style="color: #0000FF;">as</span> plt
+
+plt.plot(sol.t, sol.y.T)
+plt.legend([<span style="color: #008000;">'A'</span>, <span style="color: #008000;">'B'</span>, <span style="color: #008000;">'C'</span>])
+plt.xlabel(<span style="color: #008000;">'Time'</span>)
+plt.ylabel(<span style="color: #008000;">'C'</span>)
+</pre>
+</div>
+
+<p>
+<img src="/media/d0abffb7b8615837cad7f2cceb378aac-65837xDK.png"> 
+</p>
+</div>
+</div>
+
+<div id="outline-container-orge5dacb7" class="outline-2">
+<h2 id="orge5dacb7"><span class="section-number-2">2</span> Can a neural network learn the solution?</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+The first thing I want to show is that you can train a neural network to reproduce this solution. That is certainly a prerequisite to the idea working. We use the  same code I used before, but this time our neural network will output three values, one for each concentration.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">import</span> autograd.numpy <span style="color: #0000FF;">as</span> np
+<span style="color: #0000FF;">from</span> autograd <span style="color: #0000FF;">import</span> grad, elementwise_grad, jacobian
+<span style="color: #0000FF;">import</span> autograd.numpy.random <span style="color: #0000FF;">as</span> npr
+<span style="color: #0000FF;">from</span> autograd.misc.optimizers <span style="color: #0000FF;">import</span> adam
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">init_random_params</span>(scale, layer_sizes, rs=npr.RandomState(0)):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #036A07;">"""Build a list of (weights, biases) tuples, one for each layer."""</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> [(rs.randn(insize, outsize) * scale,   <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">weight matrix</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>rs.randn(outsize) * scale)           <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">bias vector</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">for</span> insize, outsize <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">zip</span>(layer_sizes[:-1], layer_sizes[1:])]
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">swish</span>(x):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #036A07;">"see https://arxiv.org/pdf/1710.05941.pdf"</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> x / (1.0 + np.exp(-x))
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">C</span>(params, inputs):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #036A07;">"Neural network functions"</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">for</span> W, b <span style="color: #0000FF;">in</span> params:
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">outputs</span> = np.dot(inputs, W) + b
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">inputs</span> = swish(outputs)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> outputs
+
+<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">initial guess for the weights and biases</span>
+<span style="color: #BA36A5;">params</span> = init_random_params(0.1, layer_sizes=[1, 8, 3])
+</pre>
+</div>
+
+<p>
+Now, we train our network to reproduce the solution. I ran this block manually a bunch of times, but eventually you see that we can train a one layer network with 8 nodes to output all three concentrations pretty accurately. So, there is no issue there, a neural network can represent the solution.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">def</span> <span style="color: #006699;">objective_soln</span>(params, step):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> np.<span style="color: #006FE0;">sum</span>((sol.y.T - C(params, sol.t.reshape([-1, 1])))**2)
+
+<span style="color: #BA36A5;">params</span> = adam(grad(objective_soln), params,
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> step_size=0.001, num_iters=500)
+
+plt.plot(sol.t.reshape([-1, 1]), C(params, sol.t.reshape([-1, 1])),
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>sol.t, sol.y.T, <span style="color: #008000;">'o'</span>)
+plt.legend([<span style="color: #008000;">'A'</span>, <span style="color: #008000;">'B'</span>, <span style="color: #008000;">'C'</span>, <span style="color: #008000;">'Ann'</span>, <span style="color: #008000;">'Bnn'</span>, <span style="color: #008000;">'Cnn'</span>])
+plt.xlabel(<span style="color: #008000;">'Time'</span>)
+plt.ylabel(<span style="color: #008000;">'C'</span>)
+</pre>
+</div>
+
+<p>
+<img src="/media/d0abffb7b8615837cad7f2cceb378aac-65837YpQ.png"> 
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga332637" class="outline-2">
+<h2 id="orga332637"><span class="section-number-2">3</span> Given a neural network function how do we get the right derivatives?</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+The next issue is how do we get the relevant derivatives. The solution method I developed here relies on using optimization to find a set of weights that produces a neural network whose derivatives are consistent with the ODE equations. So, we need to be able to get the derivatives that are relevant in the equations.
+</p>
+
+<p>
+The neural network outputs three concentrations, and we need the time derivatives of them. Autograd provides three options: <code>grad</code>, <code>elementwise_grad</code> and <code>jacobian</code>. We cannot use <code>grad</code> because our function is not scalar. We cannot use <code>elementwise_grad</code> because that will give the wrong shape (I think it may be the sum of the gradients). That leaves us with the <code>jacobian</code>. This, however, gives an initially unintuitive (i.e. it isn't what we need out of the box) result. The output is 4-dimensional in this case, consistent with the documentation of that function.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #BA36A5;">jacC</span> = jacobian(C, 1)
+jacC(params, sol.t.reshape([-1, 1])).shape
+</pre>
+</div>
+
+<pre class="example">
+(17, 3, 17, 1)
+
+</pre>
+
+
+<p>
+Why does it have this shape? Our time input vector we used has 17 time values, in a column vector. That leads to an output from the NN with a shape of (17, 3), i.e. the concentrations of each species at each time. The jacobian will output an array of shape (17, 3, 17, 1), and we have to extract the pieces we want from that. The first and third dimensions are related to the time steps. The second dimension is the species, and the last dimension is nothing here, but is there because the input is in a column. I use some fancy indexing on the array to get the desired arrays of the derivatives. This is not obvious out of the box. I only figured this out by direct comparison of the data from a numerical solution and the output of the jacobian. Here I show how to do that, and make sure that the derivatives we pull out are comparable to the derivatives defined by the ODEs above. Parity here means they are comparable.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #BA36A5;">i</span> = np.arange(<span style="color: #006FE0;">len</span>(sol.t))
+plt.plot(jacC(params, sol.t.reshape([-1, 1]))[i, 0, i, 0],   -k1 * sol.y[0], <span style="color: #008000;">'ro'</span>)
+plt.plot(jacC(params, sol.t.reshape([-1, 1]))[i, 1, i, 0],   -k2 * sol.y[1] + k1 * sol.y[0], <span style="color: #008000;">'bo'</span>)
+plt.plot(jacC(params, sol.t.reshape([-1, 1]))[i, 2, i, 0],   k2 * sol.y[1], <span style="color: #008000;">'go'</span>)
+</pre>
+</div>
+
+<pre class="example">
+[&lt;matplotlib.lines.Line2D at 0x118a2e860&gt;]
+
+</pre>
+
+
+
+<p>
+<img src="/media/d0abffb7b8615837cad7f2cceb378aac-65837yLF.png"> 
+</p>
+
+<p>
+Note this is pretty inefficient. It requires a lot of calculations (the jacobian here has <code class="src src-python"><span style="color: #0000FF;">print</span>(17*3*17)</code> <code>867</code> elements) to create the jacobian, and we don't need most of them. You could avoid this by creating separate neural networks for each species, and then just use elementwise_grad on each one. Alternatively, one might be able to more efficiently compute some vector-jacobian product. Nevertheless, it looks like we can get the correct derivatives out of the neural network, we just need a convenient function to return them. Here is one such function for this problem, using a fancier slicing and reshaping to get the derivative array.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">Derivatives</span>
+<span style="color: #BA36A5;">jac</span> = jacobian(C, 1)
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">dCdt</span>(params, t):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">i</span> = np.arange(<span style="color: #006FE0;">len</span>(t))
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> jac(params, t)[i, :, i].reshape((<span style="color: #006FE0;">len</span>(t), 3))
+</pre>
+</div>
+</div>
+</div>
+
+
+<div id="outline-container-orgf85faff" class="outline-2">
+<h2 id="orgf85faff"><span class="section-number-2">4</span> Solving the system of ODEs with a neural network</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+Finally, we are ready to try solving the ODEs solely by the neural network approach. We reinitialize the neural network first, and define a time grid to solve it on.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #BA36A5;">t</span> = np.linspace(0, 10, 25).reshape((-1, 1))
+<span style="color: #BA36A5;">params</span> = init_random_params(0.1, layer_sizes=[1, 8, 3])
+<span style="color: #BA36A5;">i</span> = 0    <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">number of training steps</span>
+<span style="color: #BA36A5;">N</span> = 501  <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">epochs for training</span>
+<span style="color: #BA36A5;">et</span> = 0.0 <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">total elapsed time</span>
+</pre>
+</div>
+
+<p>
+We define our objective function. This function will be zero at the perfect solution, and has contributions for each mole balance and the initial conditions. It could make sense to put additional penalties for things like negative concentrations, or the sum of concentrations is a constant, but we do not do that here, and it does not seem to be necessary.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">def</span> <span style="color: #006699;">objective</span>(params, step):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">Ca</span>, <span style="color: #BA36A5;">Cb</span>, <span style="color: #BA36A5;">Cc</span> = C(params, t).T
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">dCadt</span>, <span style="color: #BA36A5;">dCbdt</span>, <span style="color: #BA36A5;">dCcdt</span> = dCdt(params, t).T
+
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">z1</span> = np.<span style="color: #006FE0;">sum</span>((dCadt + k1 * Ca)**2)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">z2</span> = np.<span style="color: #006FE0;">sum</span>((dCbdt - k1 * Ca + k2 * Cb)**2)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">z3</span> = np.<span style="color: #006FE0;">sum</span>((dCcdt - k2 * Cb)**2)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">ic</span> = np.<span style="color: #006FE0;">sum</span>((np.array([Ca[0], Cb[0], Cc[0]]) - C0)**2)  <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">initial conditions</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> z1 + z2 + z3 + ic
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">callback</span>(params, step, g):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">if</span> step % 100 == 0:
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">print</span>(<span style="color: #008000;">"Iteration {0:3d} objective {1}"</span>.<span style="color: #006FE0;">format</span>(step,
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> objective(params, step)))
+
+objective(params, 0)  <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">make sure the objective is scalar</span>
+</pre>
+</div>
+
+<pre class="example">
+5.2502237371050295
+
+</pre>
+
+<p>
+Finally, we run the optimization. I also manually ran this block several times.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">import</span> time
+<span style="color: #BA36A5;">t0</span> = time.time()
+
+<span style="color: #BA36A5;">params</span> = adam(grad(objective), params,
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> step_size=0.001, num_iters=N, callback=callback)
+
+<span style="color: #BA36A5;">i</span> += N
+<span style="color: #BA36A5;">t1</span> = (time.time() - t0) / 60
+<span style="color: #BA36A5;">et</span> += t1
+
+plt.plot(t, C(params, t), sol.t, sol.y.T, <span style="color: #008000;">'o'</span>)
+plt.legend([<span style="color: #008000;">'Ann'</span>, <span style="color: #008000;">'Bnn'</span>, <span style="color: #008000;">'Cnn'</span>, <span style="color: #008000;">'A'</span>, <span style="color: #008000;">'B'</span>, <span style="color: #008000;">'C'</span>])
+plt.xlabel(<span style="color: #008000;">'Time'</span>)
+plt.ylabel(<span style="color: #008000;">'C'</span>)
+<span style="color: #0000FF;">print</span>(f<span style="color: #008000;">'{t1:1.1f} minutes elapsed this time. Total time = {et:1.2f} min. Total epochs = {i}.'</span>)
+</pre>
+</div>
+
+<pre class="example">
+Iteration   0 objective 0.00047651643957525214
+Iteration 100 objective 0.0004473301532609342
+Iteration 200 objective 0.00041218410058863227
+Iteration 300 objective 0.00037161526137030344
+Iteration 400 objective 0.000327567400443358
+Iteration 500 objective 0.0002836975879675981
+0.6 minutes elapsed this time. Total time = 4.05 min. Total epochs = 3006.
+
+
+</pre>
+
+
+<p>
+<img src="/media/d0abffb7b8615837cad7f2cceb378aac-65837AXS.png"> 
+</p>
+
+<p>
+The effort seems to have been worth it though, we get a pretty good solution from our neural network.
+</p>
+
+<p>
+We can check the accuracy of the derivatives by noting the sum of the derivatives in this case should be zero. Here you can see that the sum is pretty small. It would take additional optimization to a lower error to get this to be smaller.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython">plt.plot(t, np.<span style="color: #006FE0;">sum</span>(dCdt(params, t), axis=1))
+plt.xlabel(<span style="color: #008000;">'Time'</span>)
+plt.ylabel(r<span style="color: #008000;">'$\Sigma dC/dt$'</span>)
+</pre>
+</div>
+
+<p>
+<img src="/media/d0abffb7b8615837cad7f2cceb378aac-65837NhY.png"> 
+</p>
+</div>
+</div>
+
+
+
+<div id="outline-container-orgbbded67" class="outline-2">
+<h2 id="orgbbded67"><span class="section-number-2">5</span> Summary</h2>
+<div class="outline-text-2" id="text-5">
+<p>
+In the end, this method is illustrated to work for systems of ODEs also. There is some subtlety in how to get the relevant derivatives from the jacobian, but after that, it is essentially the same. I think it would be <i>much</i> faster to do this with separate neural networks for each function in the solution because then you do not need the jacobian, you can use elementwise_grad.
+</p>
+
+<p>
+This is not faster than direct numerical integration. One benefit to this solution over a numerical solution is we get an actual continuous function as the solution, rather than an array of data.  This solution is not reliable at longer times, but then again neither is extrapolation of numeric data. It could be interesting to explore if this has any benefits for stiff equations. Maybe another day. For now, I am declaring victory for autograd on this problem.
+</p>
+</div>
+</div>
+<p>Copyright (C) 2018 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2018/11/02/Solving-coupled-ODEs-with-a-neural-network-and-autograd.org">org-mode source</a></p>
+<p>Org-mode version = 9.1.14</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2018/11/02/Solving-coupled-ODEs-with-a-neural-network-and-autograd#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="A-differentiable-ODE-integrator-for-sensitivity-analysis"></div>
       <h2 class="blog_post_title"><a href="/blog/2018/10/11/A-differentiable-ODE-integrator-for-sensitivity-analysis/" rel="bookmark" title="Permanent Link to A differentiable ODE integrator for sensitivity analysis">A differentiable ODE integrator for sensitivity analysis</a></h2>
       <p><small><span class="blog_post_date">Posted October 11, 2018 at 12:13 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/sensitivity/'>sensitivity</a>, <a href='/blog/category/ode/'>ode</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/ode/'>ode</a>, <a href='/blog/category/sensitivity/'>sensitivity</a>, <a href='/blog/category/autograd/'>autograd</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2018/10/11/A-differentiable-ODE-integrator-for-sensitivity-analysis#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -256,7 +605,7 @@ On the other hand, it is remarkable we get derivatives from the numerical soluti
       <div id="Autograd-and-the-derivative-of-an-integral-function"></div>
       <h2 class="blog_post_title"><a href="/blog/2018/10/10/Autograd-and-the-derivative-of-an-integral-function/" rel="bookmark" title="Permanent Link to Autograd and the derivative of an integral function">Autograd and the derivative of an integral function</a></h2>
       <p><small><span class="blog_post_date">Posted October 10, 2018 at 06:24 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/python/'>python</a>, <a href='/blog/category/autograd/'>autograd</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2018/10/10/Autograd-and-the-derivative-of-an-integral-function#disqus_thread">View Comments</a>
       <p><small><span class="blog_post_date">Updated October 10, 2018 at 06:32 PM</span>
       </small></p>
@@ -479,7 +828,7 @@ These are amazing results to me. Before trying it, I would not have thought it w
       <div id="Compressibility-variation-from-an-implicit-equation-of-state"></div>
       <h2 class="blog_post_title"><a href="/blog/2018/10/09/Compressibility-variation-from-an-implicit-equation-of-state/" rel="bookmark" title="Permanent Link to Compressibility variation from an implicit equation of state">Compressibility variation from an implicit equation of state</a></h2>
       <p><small><span class="blog_post_date">Posted October 09, 2018 at 09:21 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/python/'>python</a>, <a href='/blog/category/autograd/'>autograd</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2018/10/09/Compressibility-variation-from-an-implicit-equation-of-state#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -660,7 +1009,7 @@ This approach also required some manipulation, but it is a standard one and that
       <div id="Getting-derivatives-from-implicit-functions-with-autograd"></div>
       <h2 class="blog_post_title"><a href="/blog/2018/10/08/Getting-derivatives-from-implicit-functions-with-autograd/" rel="bookmark" title="Permanent Link to Getting derivatives from implicit functions with autograd">Getting derivatives from implicit functions with autograd</a></h2>
       <p><small><span class="blog_post_date">Posted October 08, 2018 at 07:53 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/python/'>python</a>, <a href='/blog/category/autograd/'>autograd</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2018/10/08/Getting-derivatives-from-implicit-functions-with-autograd#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -966,278 +1315,6 @@ There are a handful of other examples at the website referenced in the beginning
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2018/10/08/Getting-derivatives-from-implicit-functions-with-autograd#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Compressibility-factor-variation-from-the-van-der-Waals-equation-by-three-different-approaches"></div>
-      <h2 class="blog_post_title"><a href="/blog/2018/10/07/Compressibility-factor-variation-from-the-van-der-Waals-equation-by-three-different-approaches/" rel="bookmark" title="Permanent Link to Compressibility factor variation from the van der Waals equation by three different approaches">Compressibility factor variation from the van der Waals equation by three different approaches</a></h2>
-      <p><small><span class="blog_post_date">Posted October 07, 2018 at 01:08 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/nonlinear-algebra/'>nonlinear algebra</a>, <a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/python/'>python</a>, <a href='/blog/category/ode/'>ode</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2018/10/07/Compressibility-factor-variation-from-the-van-der-Waals-equation-by-three-different-approaches#disqus_thread">View Comments</a>
-      <p><small><span class="blog_post_date">Updated October 07, 2018 at 01:15 PM</span>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<div id="table-of-contents">
-<h2>Table of Contents</h2>
-<div id="text-table-of-contents">
-<ul>
-<li><a href="#org2fd7cfa">1. Method 1 - fsolve</a></li>
-<li><a href="#org7ade82a">2. Method 2 - solve_ivp</a></li>
-<li><a href="#orge63b16e">3. Method 3 - autograd + solve_ivp</a></li>
-</ul>
-</div>
-</div>
-<p>
-In the book <span class="underline">Problem solving in chemical and biochemical engineering with POLYMATH, Excel and Matlab</span> by Cutlip and Shacham there is a problem (7.1) where you want to plot the compressibility factor for CO<sub>2</sub> over a range of \(0.1 \le P_r <= 10\) for a constant \(T_r=1.1\) using the van der Waal equation of state. There are a two standard ways to do this:
-</p>
-
-<ol class="org-ol">
-<li>Solve a nonlinear equation for different values of \(P_r\).</li>
-<li>Solve a nonlinear equation for one value of \(P_r\), then derive an ODE for how the compressibility varies with \(P_r\) and integrate it over the relevant range.</li>
-</ol>
-
-<p>
-In this post, we compare and contrast the two methods, and consider a variation of the second method that uses automatic differentiation.
-</p>
-
-<div id="outline-container-org2fd7cfa" class="outline-2">
-<h2 id="org2fd7cfa"><span class="section-number-2">1</span> Method 1 - fsolve</h2>
-<div class="outline-text-2" id="text-1">
-<p>
-The van der Waal equation of state is:
-</p>
-
-<p>
-\(P = \frac{R T}{V - b} - \frac{a}{V^2}\).
-</p>
-
-<p>
-We define the reduced pressure as \(P_r = P / P_c\), and the reduced temperature as \(T_r = T / T_c\).
-</p>
-
-<p>
-So, we simply solve for V at a given \(P_r\), and then compute \(Z\). There is a subtle trick needed to make this easy to solve, and that is to multiply each side of the equation by \((V - b)\) to avoid a singularity when \(V = b\), which happens in this case near \(P_r \approx 7.5\).
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">from</span> scipy.optimize <span style="color: #0000FF;">import</span> fsolve
-<span style="color: #0000FF;">import</span> numpy <span style="color: #0000FF;">as</span> np
-%matplotlib inline
-<span style="color: #0000FF;">import</span> matplotlib.pyplot <span style="color: #0000FF;">as</span> plt
-
-<span style="color: #BA36A5;">R</span> = 0.08206
-<span style="color: #BA36A5;">Pc</span> = 72.9
-<span style="color: #BA36A5;">Tc</span> = 304.2
-
-<span style="color: #BA36A5;">a</span> = 27 * R**2 * Tc**2 / (Pc * 64)
-<span style="color: #BA36A5;">b</span> = R * Tc / (8 * Pc)
-
-<span style="color: #BA36A5;">Tr</span> = 1.1
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">objective</span>(V, Pr):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">P</span> = Pr * Pc
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">T</span> = Tr * Tc
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> P * (V - b) - (R * T)  +  a / V**2 * (V - b)
-
-
-<span style="color: #BA36A5;">Pr_range</span> = np.linspace(0.1, 10)
-<span style="color: #BA36A5;">V</span> = [fsolve(objective, 3, args=(Pr,))[0] <span style="color: #0000FF;">for</span> Pr <span style="color: #0000FF;">in</span> Pr_range]
-
-<span style="color: #BA36A5;">T</span> = Tr * Tc
-<span style="color: #BA36A5;">P_range</span> = Pr_range * Pc
-<span style="color: #BA36A5;">Z</span> = P_range * V / (R * T)
-
-plt.plot(Pr_range, Z)
-plt.xlabel(<span style="color: #008000;">'$P_r$'</span>)
-plt.ylabel(<span style="color: #008000;">'Z'</span>)
-plt.xlim([0, 10])
-plt.ylim([0, 2])
-</pre>
-</div>
-
-<pre class="example">
-(0, 2)
-
-</pre>
-
-
-
-<p>
-<img src="/media/13bc1d996aa4bd032faad00425793120-90490byl.png"> 
-</p>
-
-<p>
-That looks like Figure 7-1 in the book. This approach is fine, but the equation did require a little algebraic finesse to solve, and you have to use some iteration to get the solution.
-</p>
-</div>
-</div>
-
-<div id="outline-container-org7ade82a" class="outline-2">
-<h2 id="org7ade82a"><span class="section-number-2">2</span> Method 2 - solve_ivp</h2>
-<div class="outline-text-2" id="text-2">
-<p>
-In this method, you have to derive an expression for \(\frac{dV}{dP_r}\). That derivation goes like this:
-</p>
-
-<p>
-\(\frac{dV}{dP_r} = \frac{dV}{dP} \frac{dP}{dP_r}\)
-</p>
-
-<p>
-The first term \(\frac{dV}{dP}\) is \((\frac{dP}{dV})^{-1}\), which we can derive directly from the van der Waal equation, and the second term is just a constant: \(P_c\) from the definition of \(P_r\).
-</p>
-
-<p>
-They derived:
-</p>
-
-<p>
-\(\frac{dP}{dV} = -\frac{R T}{(V - b)^2} + \frac{2 a}{V^3}\)
-</p>
-
-<p>
-We need to solve for one V, at the beginning of the range of \(P_r\) we are interested in.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython">V0, = fsolve(objective, 3, args=(0.1,))
-V0
-</pre>
-</div>
-
-<pre class="example">
-3.6764763125625461
-
-</pre>
-
-<p>
-Now, we can define the functions, and integrate them to get the same solution. I defined these pretty verbosely, just for readability.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">from</span> scipy.integrate <span style="color: #0000FF;">import</span> solve_ivp
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">dPdV</span>(V):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> -R * T / (V - b)**2 + 2 * a / V**3
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">dVdP</span>(V):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> 1 / dPdV(V)
-
-<span style="color: #BA36A5;">dPdPr</span> = Pc
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">dVdPr</span>(Pr, V):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> dVdP(V) * dPdPr
-
-<span style="color: #BA36A5;">Pr_span</span> = (0.1, 10)
-<span style="color: #BA36A5;">Pr_eval</span>, <span style="color: #BA36A5;">h</span> = np.linspace(*Pr_span, retstep=<span style="color: #D0372D;">True</span>)
-
-<span style="color: #BA36A5;">sol</span> = solve_ivp(dVdPr, Pr_span, (V0,), dense_output=<span style="color: #D0372D;">True</span>, max_step=h)
-
-<span style="color: #BA36A5;">V</span> = sol.y[0]
-<span style="color: #BA36A5;">P</span> = sol.t * Pc
-<span style="color: #BA36A5;">Z</span> = P * V / (R * T)
-plt.plot(sol.t, Z)
-plt.xlabel(<span style="color: #008000;">'$P_r$'</span>)
-plt.ylabel(<span style="color: #008000;">'Z'</span>)
-plt.xlim([0, 10])
-plt.ylim([0, 2])
-</pre>
-</div>
-
-<pre class="example">
-(0, 2)
-
-</pre>
-
-
-
-<p>
-<img src="/media/13bc1d996aa4bd032faad00425793120-90490o8r.png"> 
-</p>
-
-<p>
-This also looks like Figure 7-1. It is arguably a better approach since we only need an initial condition, and after that have a reliable integration (rather than many iterative solutions from an initial guess of the solution in fsolve).
-</p>
-
-<p>
-The only downside to this approach (in my opinion) is the need to derive and implement derivatives. As equations of state get more complex, this gets more tedious and complicated.
-</p>
-</div>
-</div>
-
-<div id="outline-container-orge63b16e" class="outline-2">
-<h2 id="orge63b16e"><span class="section-number-2">3</span> Method 3 - autograd + solve_ivp</h2>
-<div class="outline-text-2" id="text-3">
-<p>
-The whole point of automatic differentiation is to get derivatives of functions that are written as programs. We explore here the possibility of using this to solve this problem. The idea is to use autograd to define the derivative \(dP/dV\), and then solve the ODE like we did before.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">from</span> autograd <span style="color: #0000FF;">import</span> grad
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">P</span>(V):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> R * T / (V - b) - a / V**2
-
-<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">autograd.grad returns a callable that acts like a function</span>
-<span style="color: #BA36A5;">dPdV</span> = grad(P, 0)
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">dVdPr</span>(Pr, V):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> 1 / dPdV(V) * Pc
-
-<span style="color: #BA36A5;">sol</span> = solve_ivp(dVdPr,  Pr_span, (V0,), dense_output=<span style="color: #D0372D;">True</span>, max_step=h)
-
-V, = sol.y
-<span style="color: #BA36A5;">P</span> = sol.t * Pc
-<span style="color: #BA36A5;">Z</span> = P * V / (R * T)
-plt.plot(sol.t, Z)
-plt.xlabel(<span style="color: #008000;">'$P_r$'</span>)
-plt.ylabel(<span style="color: #008000;">'Z'</span>)
-plt.xlim([0, 10])
-plt.ylim([0, 2])
-</pre>
-</div>
-
-<pre class="example">
-(0, 2)
-
-</pre>
-
-
-
-<p>
-<img src="/media/13bc1d996aa4bd032faad00425793120-90490O2H.png"> 
-</p>
-
-<p>
-Not surprisingly, this answer looks the same as the previous ones. I think this solution is pretty awesome. We only had to implement the van der Waal equation, and then let autograd do its job to get the relevant derivative. We don't get a free pass on calculus here; we still have to know which derivatives are important. We also need some knowledge about how to use autograd, but with that, this problem becomes pretty easy to solve.
-</p>
-</div>
-</div>
-<p>Copyright (C) 2018 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2018/10/07/Compressibility-factor-variation-from-the-van-der-Waals-equation-by-three-different-approaches.org">org-mode source</a></p>
-<p>Org-mode version = 9.1.13</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2018/10/07/Compressibility-factor-variation-from-the-van-der-Waals-equation-by-three-different-approaches#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="/blog/category/autograd/2">Next Page »</a>
 
           </div>
@@ -1277,11 +1354,11 @@ Not surprisingly, this answer looks the same as the previous ones. I think this 
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2018/11/02/Solving-coupled-ODEs-with-a-neural-network-and-autograd/">Solving coupled ODEs with a neural network and autograd</a></li>
       <li><a href="/blog/2018/10/11/A-differentiable-ODE-integrator-for-sensitivity-analysis/">A differentiable ODE integrator for sensitivity analysis</a></li>
       <li><a href="/blog/2018/10/10/Autograd-and-the-derivative-of-an-integral-function/">Autograd and the derivative of an integral function</a></li>
       <li><a href="/blog/2018/10/09/Compressibility-variation-from-an-implicit-equation-of-state/">Compressibility variation from an implicit equation of state</a></li>
       <li><a href="/blog/2018/10/08/Getting-derivatives-from-implicit-functions-with-autograd/">Getting derivatives from implicit functions with autograd</a></li>
-      <li><a href="/blog/2018/10/07/Compressibility-factor-variation-from-the-van-der-Waals-equation-by-three-different-approaches/">Compressibility factor variation from the van der Waals equation by three different approaches</a></li>
     </ul>
   </section>
 
