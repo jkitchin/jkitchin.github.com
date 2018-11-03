@@ -84,10 +84,168 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Constrained-optimization-with-Lagrange-multipliers-and-autograd"></div>
+      <h2 class="blog_post_title"><a href="/blog/2018/11/03/Constrained-optimization-with-Lagrange-multipliers-and-autograd/" rel="bookmark" title="Permanent Link to Constrained optimization with Lagrange multipliers and autograd">Constrained optimization with Lagrange multipliers and autograd</a></h2>
+      <p><small><span class="blog_post_date">Posted November 03, 2018 at 09:39 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/optimization/'>optimization</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2018/11/03/Constrained-optimization-with-Lagrange-multipliers-and-autograd#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+Constrained optimization is common in engineering problems solving. A prototypical example (from Greenberg, Advanced Engineering Mathematics, Ch 13.7) is to find the point on a plane that is closest to the origin. The plane is defined by the equation \(2x - y + z = 3\), and we seek to minimize \(x^2 + y^2 + z^2\) subject to the equality constraint defined by the plane. <code>scipy.optimize.minimize</code> provides a pretty convenient interface to solve a problem like this, ans shown here.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">import</span> numpy <span style="color: #0000FF;">as</span> np
+<span style="color: #0000FF;">from</span> scipy.optimize <span style="color: #0000FF;">import</span> minimize
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">objective</span>(X):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">x</span>, <span style="color: #BA36A5;">y</span>, <span style="color: #BA36A5;">z</span> = X
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> x**2 + y**2 + z**2
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">eq</span>(X):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">x</span>, <span style="color: #BA36A5;">y</span>, <span style="color: #BA36A5;">z</span> = X
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> 2 * x - y + z - 3
+
+<span style="color: #BA36A5;">sol</span> = minimize(objective, [1, -0.5, 0.5], constraints={<span style="color: #008000;">'type'</span>: <span style="color: #008000;">'eq'</span>, <span style="color: #008000;">'fun'</span>: eq})
+sol
+</pre>
+</div>
+
+<pre class="example">
+    fun: 1.5
+    jac: array([ 2.00000001, -0.99999999,  1.00000001])
+message: 'Optimization terminated successfully.'
+   nfev: 5
+    nit: 1
+   njev: 1
+ status: 0
+success: True
+      x: array([ 1. , -0.5,  0.5])
+
+</pre>
+
+<p>
+I like the minimize function a lot, although I am not crazy for how the constraints are provided. The alternative used to be that there was an argument for equality constraints and another for inequality constraints. Analogous to <code>scipy.integrate.solve_ivp</code> event functions, they could have also used function attributes.
+</p>
+
+<p>
+Sometimes, it might be desirable to go back to basics though, especially if you are unaware of the <code>minimize</code> function or perhaps suspect it is not working right and want an independent answer. Next we look at how to construct this constrained optimization problem using Lagrange multipliers. This converts the problem into an augmented unconstrained optimization problem we can use <code>fsolve</code> on. The gist of this method is we formulate a new problem:
+</p>
+
+<p>
+\(F(X) = f(X) - \lambda g(X)\)
+</p>
+
+<p>
+and then solve the simultaneous resulting equations:
+</p>
+
+<p>
+\(F_x(X) = F_y(X) = F_z(X) = g(X) = 0\) where \(F_x\) is the derivative of \(f*\) with respect to \(x\), and \(g(X)\) is the equality constraint written so it is equal to zero. Since we end up with four equations that equal zero, we can simply use fsolve to get the solution. Many <a href="http://kitchingroup.cheme.cmu.edu/blog/2013/02/03/Using-Lagrange-multipliers-in-optimization/">years ago</a> I used a finite difference approximation to the derivatives. Today we use autograd to get the desired derivatives. Here it is.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">import</span> autograd.numpy <span style="color: #0000FF;">as</span> np
+<span style="color: #0000FF;">from</span> autograd <span style="color: #0000FF;">import</span> grad
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">F</span>(L):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #036A07;">'Augmented Lagrange function'</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">x</span>, <span style="color: #BA36A5;">y</span>, <span style="color: #BA36A5;">z</span>, <span style="color: #BA36A5;">_lambda</span> = L
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> objective([x, y, z]) - _lambda * eq([x, y, z])
+
+<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">Gradients of the Lagrange function</span>
+<span style="color: #BA36A5;">dfdL</span> = grad(F, 0)
+
+<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">Find L that returns all zeros in this function.</span>
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">obj</span>(L):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">x</span>, <span style="color: #BA36A5;">y</span>, <span style="color: #BA36A5;">z</span>, <span style="color: #BA36A5;">_lambda</span> = L
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">dFdx</span>, <span style="color: #BA36A5;">dFdy</span>, <span style="color: #BA36A5;">dFdz</span>, <span style="color: #BA36A5;">dFdlam</span> = dfdL(L)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> [dFdx, dFdy, dFdz, eq([x, y, z])]
+
+<span style="color: #0000FF;">from</span> scipy.optimize <span style="color: #0000FF;">import</span> fsolve
+<span style="color: #BA36A5;">x</span>, <span style="color: #BA36A5;">y</span>, <span style="color: #BA36A5;">z</span>, <span style="color: #BA36A5;">_lam</span> = fsolve(obj, [0.0, 0.0, 0.0, 1.0])
+<span style="color: #0000FF;">print</span>(f<span style="color: #008000;">'The answer is at {x, y, z}'</span>)
+</pre>
+</div>
+
+<pre class="example">
+The answer is at (1.0, -0.5, 0.5)
+
+
+</pre>
+
+<p>
+That is the same answer as before. Note we have still relied on some black box solver inside of fsolve (instead of inside minimize), but it might be more clear what problem we are solving (e.g. finding zeros). It takes a bit more work to set this up, since we have to construct the augmented function, but autograd makes it pretty convenient to set up the final objective function we want to solve.
+</p>
+
+<p>
+How do we know we are at a minimum? We can check that the Hessian is positive definite in the original function we wanted to minimize. You can see here the array is positive definite, e.g. all the eigenvalues are positive. autograd makes this easy too.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">from</span> autograd <span style="color: #0000FF;">import</span> hessian
+<span style="color: #BA36A5;">h</span> = hessian(objective, 0)
+h(np.array([x, y, z]))
+</pre>
+</div>
+
+<pre class="example">
+array([[ 2.,  0.,  0.],
+       [ 0.,  2.,  0.],
+       [ 0.,  0.,  2.]])
+
+</pre>
+
+<p>
+In case it isn't evident from that structure that the eigenvalues are all positive, here we compute them:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython">np.linalg.eig(h(np.array([x, y, z])))[0]
+</pre>
+</div>
+
+<pre class="example">
+array([ 2.,  2.,  2.])
+
+</pre>
+
+<p>
+In summary, autograd continues to enable advanced engineering problems to be solved.
+</p>
+<p>Copyright (C) 2018 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2018/11/03/Constrained-optimization-with-Lagrange-multipliers-and-autograd.org">org-mode source</a></p>
+<p>Org-mode version = 9.1.14</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2018/11/03/Constrained-optimization-with-Lagrange-multipliers-and-autograd#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Finding-the-maximum-power-of-a-photovoltaic-device"></div>
       <h2 class="blog_post_title"><a href="/blog/2014/04/15/Finding-the-maximum-power-of-a-photovoltaic-device/" rel="bookmark" title="Permanent Link to Finding the maximum power of a photovoltaic device.">Finding the maximum power of a photovoltaic device.</a></h2>
       <p><small><span class="blog_post_date">Posted April 15, 2014 at 08:38 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/python/'>python</a>, <a href='/blog/category/optimization/'>optimization</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/optimization/'>optimization</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2014/04/15/Finding-the-maximum-power-of-a-photovoltaic-device#disqus_thread">View Comments</a>
       <p><small><span class="blog_post_date">Updated April 04, 2016 at 11:54 AM</span>
       </small></p>
@@ -248,7 +406,7 @@ You can see the maximum power is approximately 0.2 (unspecified units), at the c
       <div id="Constrained-fits-to-data"></div>
       <h2 class="blog_post_title"><a href="/blog/2013/06/11/Constrained-fits-to-data/" rel="bookmark" title="Permanent Link to Constrained fits to data">Constrained fits to data</a></h2>
       <p><small><span class="blog_post_date">Posted June 11, 2013 at 07:39 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/data-analysis/'>data analysis</a>, <a href='/blog/category/optimization/'>optimization</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/optimization/'>optimization</a>, <a href='/blog/category/data-analysis/'>data analysis</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2013/06/11/Constrained-fits-to-data#disqus_thread">View Comments</a>
       <p><small><span class="blog_post_date">Updated June 12, 2013 at 08:31 AM</span>
       </small></p>
@@ -772,80 +930,6 @@ This is an appealing way to minimize the Gibbs energy of a mixture. No assumptio
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2013/03/01/Finding-equilibrium-composition-by-direct-minimization-of-Gibbs-free-energy-on-mole-numbers#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Constrained-optimization"></div>
-      <h2 class="blog_post_title"><a href="/blog/2013/02/27/Constrained-optimization/" rel="bookmark" title="Permanent Link to Constrained optimization">Constrained optimization</a></h2>
-      <p><small><span class="blog_post_date">Posted February 27, 2013 at 02:43 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/optimization/'>optimization</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2013/02/27/Constrained-optimization#disqus_thread">View Comments</a>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-
-
-<a href="http://matlab.cheme.cmu.edu/2011/12/24/constrained-optimization/" >Matlab post</a>
-</p>
-
-<p>
-adapted from <a href="http://en.wikipedia.org/wiki/Lagrange_multipliers" >http://en.wikipedia.org/wiki/Lagrange_multipliers</a>.
-</p>
-
-<p>
-Suppose we seek to minimize the function \(f(x,y)=x+y\) subject to the constraint that \(x^2 + y^2 = 1\). The function we seek to maximize is an unbounded plane, while the constraint is a unit circle. We could setup a Lagrange multiplier approach to solving this problem, but we will use a constrained optimization approach instead.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #8b0000;">from</span> scipy.optimize <span style="color: #8b0000;">import</span> fmin_slsqp
-
-<span style="color: #8b0000;">def</span> <span style="color: #8b2323;">objective</span>(X):
-    x, y = X
-    <span style="color: #8b0000;">return</span> x + y
-
-<span style="color: #8b0000;">def</span> <span style="color: #8b2323;">eqc</span>(X):
-    <span style="color: #228b22;">'equality constraint'</span>
-    x, y = X
-    <span style="color: #8b0000;">return</span> x**2 + y**2 - 1.0
-
-X0 = [-1, -1]
-X = fmin_slsqp(objective, X0, eqcons=[eqc])
-<span style="color: #8b0000;">print</span> X
-</pre>
-</div>
-
-<pre class="example">
-Optimization terminated successfully.    (Exit mode 0)
-            Current function value: -1.41421356237
-            Iterations: 5
-            Function evaluations: 20
-            Gradient evaluations: 5
-[-0.70710678 -0.70710678]
-</pre>
-<p>Copyright (C) 2013 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2013/02/27/Constrained-optimization.org">org-mode source</a><p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2013/02/27/Constrained-optimization#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="/blog/category/optimization/2">Next Page »</a>
 
           </div>
@@ -885,11 +969,11 @@ Optimization terminated successfully.    (Exit mode 0)
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2018/11/03/Constrained-optimization-with-Lagrange-multipliers-and-autograd/">Constrained optimization with Lagrange multipliers and autograd</a></li>
       <li><a href="/blog/2018/11/02/Solving-coupled-ODEs-with-a-neural-network-and-autograd/">Solving coupled ODEs with a neural network and autograd</a></li>
       <li><a href="/blog/2018/10/11/A-differentiable-ODE-integrator-for-sensitivity-analysis/">A differentiable ODE integrator for sensitivity analysis</a></li>
       <li><a href="/blog/2018/10/10/Autograd-and-the-derivative-of-an-integral-function/">Autograd and the derivative of an integral function</a></li>
       <li><a href="/blog/2018/10/09/Compressibility-variation-from-an-implicit-equation-of-state/">Compressibility variation from an implicit equation of state</a></li>
-      <li><a href="/blog/2018/10/08/Getting-derivatives-from-implicit-functions-with-autograd/">Getting derivatives from implicit functions with autograd</a></li>
     </ul>
   </section>
 
