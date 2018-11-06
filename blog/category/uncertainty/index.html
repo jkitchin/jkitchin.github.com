@@ -84,6 +84,167 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Using-autograd-for-error-propagation"></div>
+      <h2 class="blog_post_title"><a href="/blog/2018/11/05/Using-autograd-for-error-propagation/" rel="bookmark" title="Permanent Link to Using autograd for error propagation">Using autograd for error propagation</a></h2>
+      <p><small><span class="blog_post_date">Posted November 05, 2018 at 09:04 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/uncertainty/'>uncertainty</a>, <a href='/blog/category/autograd/'>autograd</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2018/11/05/Using-autograd-for-error-propagation#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+Back in <a href="http://kitchingroup.cheme.cmu.edu/blog/2013/03/07/Another-approach-to-error-propagation/">2013</a> I wrote about using the uncertainties package to propagate uncertainties. The problem setup was for finding the uncertainty in the exit concentration from a CSTR when there are uncertainties in the other parameters. In this problem we were given this information about the parameters and their uncertainties.
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-right" />
+
+<col  class="org-right" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">Parameter</th>
+<th scope="col" class="org-right">value</th>
+<th scope="col" class="org-right">&sigma;</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">Fa0</td>
+<td class="org-right">5</td>
+<td class="org-right">0.05</td>
+</tr>
+
+<tr>
+<td class="org-left">v0</td>
+<td class="org-right">10</td>
+<td class="org-right">0.1</td>
+</tr>
+
+<tr>
+<td class="org-left">V</td>
+<td class="org-right">66000</td>
+<td class="org-right">100</td>
+</tr>
+
+<tr>
+<td class="org-left">k</td>
+<td class="org-right">3</td>
+<td class="org-right">0.2</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+The exit concentration is found by solving this equation:
+</p>
+
+<p>
+\(0 = Fa0 - v0 * Ca - k * Ca**2 * V\)
+</p>
+
+<p>
+So the question was what is Ca, and what is the uncertainty on it? Finding Ca is easy with fsolve.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">from</span> scipy.optimize <span style="color: #0000FF;">import</span> fsolve
+
+<span style="color: #BA36A5;">Fa0</span> = 5.0
+<span style="color: #BA36A5;">v0</span> = 10.0
+
+<span style="color: #BA36A5;">V</span> = 66000.0
+<span style="color: #BA36A5;">k</span> = 3.0
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">func</span>(Ca, v0, k, Fa0, V):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #036A07;">"Mole balance for a CSTR. Solve this equation for func(Ca)=0"</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">Fa</span> = v0 * Ca     <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">exit molar flow of A</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">ra</span> = -k * Ca**2  <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">rate of reaction of A L/mol/h</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> Fa0 - Fa + V * ra
+
+Ca, = fsolve(func, 0.1 * Fa0 / v0, args=(v0, k, Fa0, V))
+Ca
+</pre>
+</div>
+
+<pre class="example">
+0.0050000000000000001
+
+</pre>
+
+<p>
+The uncertainty on Ca is a little trickier. A <a href="https://en.wikipedia.org/wiki/Propagation_of_uncertainty#Simplification">simplified</a> way to estimate it is:
+</p>
+
+<p>
+\(\sigma_{Ca} = \sqrt{(dCa/dv0)^2 \sigma_{v0}^2 + (dCa/dv0)^2 \sigma_{v0}^2 + (dCa/dFa0)^2 \sigma_{Fa0}^2 + (dCa/dV)^2 \sigma_{V}^2}\)
+</p>
+
+<p>
+We know the &sigma;_i for each input, we just need those partial derivatives. However, we only have the implicit function we used to solve for Ca, and I do not want to do the algebra to solve for Ca. Luckily, we <a href="http://kitchingroup.cheme.cmu.edu/blog/2018/10/08/Getting-derivatives-from-implicit-functions-with-autograd/">previously worked out</a> how to get these derivatives from an implicit function using autograd. We just need to loop through the arguments, get the relevant derivatives, and accumulate the product of the squared derivatives and errors. Finally, take the square root of that sum.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">import</span> autograd.numpy <span style="color: #0000FF;">as</span> np
+<span style="color: #0000FF;">from</span> autograd <span style="color: #0000FF;">import</span> grad
+
+<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">these are the uncertainties on the inputs</span>
+<span style="color: #BA36A5;">s</span> = [<span style="color: #D0372D;">None</span>, 0.1, 0.2, 0.05, 100]
+
+<span style="color: #BA36A5;">S2</span> = 0.0
+
+<span style="color: #BA36A5;">dfdCa</span> = grad(func, 0)
+<span style="color: #0000FF;">for</span> i <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">range</span>(1, 5):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">dfdarg2</span> = grad(func, i)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">dCadarg2</span> = -dfdarg2(Ca, v0, k, Fa0, V) / dfdCa(Ca, v0, k, Fa0, V)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">S2</span> += dCadarg2**2 * s[i]**2
+
+<span style="color: #BA36A5;">Ca_s</span> = np.sqrt(S2)
+<span style="color: #0000FF;">print</span>(f<span style="color: #008000;">'Ca = {Ca:1.5f} +\- {Ca_s}'</span>)
+</pre>
+</div>
+
+<pre class="example">
+Ca = 0.00500 +\- 0.00016776432898276802
+
+
+</pre>
+
+<p>
+That is the same uncertainty estimate the quantities package provided. One benefit here is I did not have to do the somewhat complicated wrapping procedure around fsolve that was required with uncertainties to get this. On the other hand, I did have to derive the formula and implement them. It worked fine here, since we have an implicit function and a way to get the required derivatives. It could take some work to do this with the exit concentration of a PFR, which requires an integrator. Maybe that <a href="http://kitchingroup.cheme.cmu.edu/blog/2018/10/11/A-differentiable-ODE-integrator-for-sensitivity-analysis/">differentiable integrator</a> will come in handy again!
+</p>
+<p>Copyright (C) 2018 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2018/11/05/Using-autograd-for-error-propagation.org">org-mode source</a></p>
+<p>Org-mode version = 9.1.14</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2018/11/05/Using-autograd-for-error-propagation#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Visualizing-uncertainty-in-linear-regression"></div>
       <h2 class="blog_post_title"><a href="/blog/2013/07/18/Visualizing-uncertainty-in-linear-regression/" rel="bookmark" title="Permanent Link to Visualizing uncertainty in linear regression">Visualizing uncertainty in linear regression</a></h2>
       <p><small><span class="blog_post_date">Posted July 18, 2013 at 07:13 PM</span> | categories:
@@ -313,7 +474,7 @@ This is about the same amount of code as the Monte Carlo approach, but it runs m
       <div id="Uncertainty-in-an-integral-equation"></div>
       <h2 class="blog_post_title"><a href="/blog/2013/07/10/Uncertainty-in-an-integral-equation/" rel="bookmark" title="Permanent Link to Uncertainty in an integral equation">Uncertainty in an integral equation</a></h2>
       <p><small><span class="blog_post_date">Posted July 10, 2013 at 09:05 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/math/'>math</a>, <a href='/blog/category/uncertainty/'>uncertainty</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/uncertainty/'>uncertainty</a>, <a href='/blog/category/math/'>math</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2013/07/10/Uncertainty-in-an-integral-equation#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -574,217 +735,7 @@ It is good to see this is the same result we got earlier, with <i>a lot less wor
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2013/07/06/Uncertainty-in-polynomial-roots-Part-II#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Uncertainty-in-polynomial-roots"></div>
-      <h2 class="blog_post_title"><a href="/blog/2013/07/05/Uncertainty-in-polynomial-roots/" rel="bookmark" title="Permanent Link to Uncertainty in polynomial roots">Uncertainty in polynomial roots</a></h2>
-      <p><small><span class="blog_post_date">Posted July 05, 2013 at 09:10 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/data-analysis/'>data analysis</a>, <a href='/blog/category/uncertainty/'>uncertainty</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2013/07/05/Uncertainty-in-polynomial-roots#disqus_thread">View Comments</a>
-      <p><small><span class="blog_post_date">Updated July 07, 2013 at 08:40 AM</span>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-
-<p>
-Polynomials are convenient for fitting to data. Frequently we need to derive some properties of the data from the fit, e.g. the minimum value, or the slope, etc&#x2026; Since we are fitting data, there is uncertainty in the polynomial parameters, and corresponding uncertainty in any properties derived from those parameters. 
-</p>
-
-<p>
-Here is our data.
-</p>
-
-<table id="data" border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col class="right"/>
-
-<col class="right"/>
-</colgroup>
-<tbody>
-<tr>
-<td class="right">-3.00</td>
-<td class="right">8.10</td>
-</tr>
-
-<tr>
-<td class="right">-2.33</td>
-<td class="right">4.49</td>
-</tr>
-
-<tr>
-<td class="right">-1.67</td>
-<td class="right">1.73</td>
-</tr>
-
-<tr>
-<td class="right">-1.00</td>
-<td class="right">-0.02</td>
-</tr>
-
-<tr>
-<td class="right">-0.33</td>
-<td class="right">-0.90</td>
-</tr>
-
-<tr>
-<td class="right">0.33</td>
-<td class="right">-0.83</td>
-</tr>
-
-<tr>
-<td class="right">1.00</td>
-<td class="right">0.04</td>
-</tr>
-
-<tr>
-<td class="right">1.67</td>
-<td class="right">1.78</td>
-</tr>
-
-<tr>
-<td class="right">2.33</td>
-<td class="right">4.43</td>
-</tr>
-
-<tr>
-<td class="right">3.00</td>
-<td class="right">7.95</td>
-</tr>
-</tbody>
-</table>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #8b0000;">import</span> matplotlib.pyplot <span style="color: #8b0000;">as</span> plt
-
-x = [a[0] <span style="color: #8b0000;">for</span> a <span style="color: #8b0000;">in</span> data]
-y = [a[1] <span style="color: #8b0000;">for</span> a <span style="color: #8b0000;">in</span> data]
-plt.plot(x, y)
-plt.savefig(<span style="color: #228b22;">'images/uncertain-roots.png'</span>)
-</pre>
-</div>
-
-<p><img src="/img/./images/uncertain-roots.png"><p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #8b0000;">import</span> matplotlib.pyplot <span style="color: #8b0000;">as</span> plt
-<span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
-<span style="color: #8b0000;">from</span> pycse <span style="color: #8b0000;">import</span> regress
-
-x = np.array([a[0] <span style="color: #8b0000;">for</span> a <span style="color: #8b0000;">in</span> data])
-y = [a[1] <span style="color: #8b0000;">for</span> a <span style="color: #8b0000;">in</span> data]
-
-A = np.column_stack([x**0, x**1, x**2])
-
-p, pint, se = regress(A, y, alpha=0.05)
-
-<span style="color: #8b0000;">print</span> p
-
-<span style="color: #8b0000;">print</span> pint
-
-<span style="color: #8b0000;">print</span> se
-
-plt.plot(x, y, <span style="color: #228b22;">'bo '</span>)
-
-xfit = np.linspace(x.min(), x.max())
-plt.plot(xfit, np.dot(np.column_stack([xfit**0, xfit**1, xfit**2]), p), <span style="color: #228b22;">'b-'</span>)
-plt.savefig(<span style="color: #228b22;">'images/uncertain-roots-1.png'</span>)
-</pre>
-</div>
-
-<pre class="example">
-[-0.99526746 -0.011546    1.00188999]
-[[-1.05418017 -0.93635474]
- [-0.03188236  0.00879037]
- [ 0.98982737  1.01395261]]
-[ 0.0249142   0.00860025  0.00510128]
-</pre>
-
-<p><img src="/img/./images/uncertain-roots-1.png"><p>
-
-<p>
-Since this is a quadratic equation, we know the roots analytically: \(x = \frac{-b \pm \sqrt{b^2 - 4 a c}{2 a}\). So, we can use the uncertainties package to directly compute the uncertainties in the roots. 
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
-<span style="color: #8b0000;">import</span> uncertainties <span style="color: #8b0000;">as</span> u
-
-c, b, a = [-0.99526746, -0.011546,    1.00188999]
-sc, sb, sa = [ 0.0249142,   0.00860025,  0.00510128]
-
-A = u.ufloat((a, sa))
-B = u.ufloat((b, sb))
-C = u.ufloat((c, sc))
-
-<span style="color: #ff0000; font-weight: bold;"># np.sqrt does not work with uncertainity</span>
-r1 = (-B + (B**2 - 4 * A * C)**0.5) / (2 * A)
-r2 = (-B - (B**2 - 4 * A * C)**0.5) / (2 * A)
-
-<span style="color: #8b0000;">print</span> r1
-<span style="color: #8b0000;">print</span> r2
-</pre>
-</div>
-
-<pre class="example">
-1.00246826738+/-0.0134477390832
--0.990944048037+/-0.0134208013339
-</pre>
-
-<p>
-The minimum is also straightforward to analyze here. The derivative of the polynomial is \(2 a x + b\) and it is equal to zero at \(x = -b / (2 a)\).
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
-<span style="color: #8b0000;">import</span> uncertainties <span style="color: #8b0000;">as</span> u
-
-c, b, a = [-0.99526746, -0.011546,    1.00188999]
-sc, sb, sa = [ 0.0249142,   0.00860025,  0.00510128]
-
-A = u.ufloat((a, sa))
-B = u.ufloat((b, sb))
-
-zero = -B / (2 * A)
-<span style="color: #8b0000;">print</span> <span style="color: #228b22;">'The minimum is at {0}.'</span>.format(zero)
-</pre>
-</div>
-
-<pre class="example">
-The minimum is at 0.00576210967034+/-0.00429211341136.
-</pre>
-
-<p>
-You can see there is uncertainty in both the roots of the original polynomial, as well as the minimum of the data. The approach here worked well because the polynomials were low order (quadratic or linear) where we know the formulas for the roots. Consequently, we can take advantage of the uncertainties module with little effort to propagate the errors. For higher order polynomials, we would probably have to do some wrapping of functions to propagate uncertainties.
-</p>
-<p>Copyright (C) 2013 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2013/07/05/Uncertainty-in-polynomial-roots.org">org-mode source</a><p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2013/07/05/Uncertainty-in-polynomial-roots#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
+ <a href="/blog/category/uncertainty/2">Next Page »</a>
 
           </div>
           <div id="sidebar" class="grid_4">
@@ -823,11 +774,11 @@ You can see there is uncertainty in both the roots of the original polynomial, a
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2018/11/05/Using-autograd-for-error-propagation/">Using autograd for error propagation</a></li>
       <li><a href="/blog/2018/11/03/Constrained-optimization-with-Lagrange-multipliers-and-autograd/">Constrained optimization with Lagrange multipliers and autograd</a></li>
       <li><a href="/blog/2018/11/02/Solving-coupled-ODEs-with-a-neural-network-and-autograd/">Solving coupled ODEs with a neural network and autograd</a></li>
       <li><a href="/blog/2018/10/11/A-differentiable-ODE-integrator-for-sensitivity-analysis/">A differentiable ODE integrator for sensitivity analysis</a></li>
       <li><a href="/blog/2018/10/10/Autograd-and-the-derivative-of-an-integral-function/">Autograd and the derivative of an integral function</a></li>
-      <li><a href="/blog/2018/10/09/Compressibility-variation-from-an-implicit-equation-of-state/">Compressibility variation from an implicit equation of state</a></li>
     </ul>
   </section>
 
