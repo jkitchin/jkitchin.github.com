@@ -84,10 +84,153 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Training-the-ASE-Lennard-Jones-potential-to-DFT-calculations"></div>
+      <h2 class="blog_post_title"><a href="/blog/2017/11/19/Training-the-ASE-Lennard-Jones-potential-to-DFT-calculations/" rel="bookmark" title="Permanent Link to Training the ASE Lennard-Jones potential to DFT calculations">Training the ASE Lennard-Jones potential to DFT calculations</a></h2>
+      <p><small><span class="blog_post_date">Posted November 19, 2017 at 07:58 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2017/11/19/Training-the-ASE-Lennard-Jones-potential-to-DFT-calculations#disqus_thread">View Comments</a>
+      <p><small><span class="blog_post_date">Updated November 21, 2017 at 06:27 PM</span>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+The Atomic Simulation Environment provides several useful calculators with configurable parameters. For example, the Lennard-Jones potential has two adjustable parameters, &sigma; and &epsilon;. I have always thought it would be useful to be able to fit one of these potentials to a reference database, e.g. a DFT database.
+</p>
+
+<p>
+I ran a series of DFT calculations of bulk Ar in different crystal structures, at different volumes and saved them in an ase database (<a href="/media/argon.db">argon.db</a> ). We have five crystal structures at three different volumes. Within each of those sets, I rattled the atoms a bunch of times and calculated the energies. Here is the histogram of energies we have to work with:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="org2f0b5c2">%matplotlib inline
+<span style="color: #0000FF;">import</span> matplotlib.pyplot <span style="color: #0000FF;">as</span> plt
+
+<span style="color: #0000FF;">import</span> ase.db
+<span style="color: #BA36A5;">db</span> = ase.db.connect(<span style="color: #008000;">'argon.db'</span>)
+
+<span style="color: #BA36A5;">known_energies</span> = [row.energy <span style="color: #0000FF;">for</span> row <span style="color: #0000FF;">in</span> db.select()]
+plt.hist(known_energies, 20)
+plt.xlabel(<span style="color: #008000;">'Energy'</span>)
+</pre>
+</div>
+
+<p>
+<img src="/media/ob-ipython-d6113dc5f4e887554825f1c669ff3c0d.png"> 
+</p>
+
+<p>
+What I would really like is a set of Lennard-Jones parameters that describe this data. It only recently occurred to me that we just need to define a function that takes the LJ parameters and computes energies for a set of configurations. Then we create a second objective function we can use in a minimization. Here is how we can implement that idea:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="orga0d8c08"><span style="color: #0000FF;">import</span> numpy <span style="color: #0000FF;">as</span> np
+<span style="color: #0000FF;">from</span> scipy.optimize <span style="color: #0000FF;">import</span> fmin
+<span style="color: #0000FF;">from</span> ase.calculators.lj <span style="color: #0000FF;">import</span> LennardJones
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">my_lj</span>(pars):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">epsilon</span>, <span style="color: #BA36A5;">sigma</span> = pars
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">calc</span> = LennardJones(sigma=sigma, epsilon=epsilon)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">all_atoms</span> = [row.toatoms() <span style="color: #0000FF;">for</span> row <span style="color: #0000FF;">in</span> db.select()]
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   [atoms.set_calculator(calc) <span style="color: #0000FF;">for</span> atoms <span style="color: #0000FF;">in</span> all_atoms]
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">predicted_energies</span> = np.array([atoms.get_potential_energy() <span style="color: #0000FF;">for</span> atoms <span style="color: #0000FF;">in</span> all_atoms])
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> predicted_energies
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">objective</span>(pars):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">known_energies</span> = np.array([row.energy <span style="color: #0000FF;">for</span> row <span style="color: #0000FF;">in</span> db.select()])
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">err</span> = known_energies - my_lj(pars)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> np.mean(err**2)
+
+<span style="color: #BA36A5;">LJ_pars</span> = fmin(objective, [0.005, 3.5])        
+<span style="color: #0000FF;">print</span>(LJ_pars)
+</pre>
+</div>
+
+<pre class="example">
+Optimization terminated successfully.
+         Current function value: 0.000141
+         Iterations: 28
+         Function evaluations: 53
+[ 0.00593014  3.73314611]
+
+</pre>
+
+<p>
+Now, let's see how well we do with that fit.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="org0606368">plt.subplot(121)
+
+<span style="color: #BA36A5;">calc</span> = LennardJones(epsilon=LJ_pars[0], sigma=LJ_pars[1])
+
+<span style="color: #0000FF;">for</span> structure, spec <span style="color: #0000FF;">in</span> [(<span style="color: #008000;">'fcc'</span>, <span style="color: #008000;">'b.'</span>),
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   (<span style="color: #008000;">'hcp'</span>, <span style="color: #008000;">'r.'</span>),
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   (<span style="color: #008000;">'bcc'</span>, <span style="color: #008000;">'g.'</span>),
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   (<span style="color: #008000;">'diamond'</span>, <span style="color: #008000;">'gd'</span>),
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   (<span style="color: #008000;">'sc'</span>, <span style="color: #008000;">'bs'</span>)]:
+
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">ke</span>, <span style="color: #BA36A5;">pe</span> = [], []
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">for</span> row <span style="color: #0000FF;">in</span> db.select(structure=structure):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">ke</span> += [row.energy]
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">atoms</span> = row.toatoms()
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   atoms.set_calculator(calc)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">pe</span> += [atoms.get_potential_energy()]    
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   plt.plot(ke, pe, spec, label=structure)
+
+plt.plot([-0.1, 0], [-0.1, 0], <span style="color: #008000;">'k-'</span>, label=<span style="color: #008000;">'parity'</span>)
+plt.legend()
+plt.xlabel(<span style="color: #008000;">'DFT'</span>)
+plt.ylabel(<span style="color: #008000;">'LJ'</span>)
+
+<span style="color: #BA36A5;">pred_e</span> = my_lj(LJ_pars)
+<span style="color: #BA36A5;">known_energies</span> = np.array([row.energy <span style="color: #0000FF;">for</span> row <span style="color: #0000FF;">in</span> db.select()])
+<span style="color: #BA36A5;">err</span> = known_energies - pred_e
+
+plt.subplot(122)
+plt.hist(err)
+plt.xlabel(<span style="color: #008000;">'error'</span>)
+plt.tight_layout()
+</pre>
+</div>
+
+<p>
+<img src="/media/ob-ipython-3fd078c892ba2e5ee29397f43805d2b2.png"> 
+</p>
+
+<p>
+The results aren't fantastic, but you can see that we get the closer packed structures (fcc, hcp, bcc) more accurately than the loosely packed structures (diamond, sc). Those more open structures tend to have more directional bonding, and the Lennard-Jones potential isn't expected to do too well on those. You could consider a more sophisticated model if those structures were important for your simulation.
+</p>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/11/19/Training-the-ASE-Lennard-Jones-potential-to-DFT-calculations.org">org-mode source</a></p>
+<p>Org-mode version = 9.1.2</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/11/19/Training-the-ASE-Lennard-Jones-potential-to-DFT-calculations#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Neural-networks-for-regression-with-autograd"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/11/18/Neural-networks-for-regression-with-autograd/" rel="bookmark" title="Permanent Link to Neural networks for regression with autograd">Neural networks for regression with autograd</a></h2>
       <p><small><span class="blog_post_date">Posted November 18, 2017 at 02:20 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/python/'>python</a>, <a href='/blog/category/autograd/'>autograd</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/11/18/Neural-networks-for-regression-with-autograd#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -408,7 +551,7 @@ Now you know the secret of a neural network, it is just a nonlinear model. Witho
       <div id="Using-autograd-in-nonlinear-regression"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/11/17/Using-autograd-in-nonlinear-regression/" rel="bookmark" title="Permanent Link to Using autograd in nonlinear regression">Using autograd in nonlinear regression</a></h2>
       <p><small><span class="blog_post_date">Posted November 17, 2017 at 07:49 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/python/'>python</a>, <a href='/blog/category/regression/'>regression</a>, <a href='/blog/category/autograd/'>autograd</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/regression/'>regression</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/11/17/Using-autograd-in-nonlinear-regression#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -717,7 +860,7 @@ The fit looks pretty good.
       <div id="Sensitivity-analysis-using-automatic-differentiation-in-Python"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/11/15/Sensitivity-analysis-using-automatic-differentiation-in-Python/" rel="bookmark" title="Permanent Link to Sensitivity analysis using automatic differentiation in Python">Sensitivity analysis using automatic differentiation in Python</a></h2>
       <p><small><span class="blog_post_date">Posted November 15, 2017 at 08:34 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/python/'>python</a>, <a href='/blog/category/sensitivity/'>sensitivity</a>, <a href='/blog/category/autograd/'>autograd</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/sensitivity/'>sensitivity</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/11/15/Sensitivity-analysis-using-automatic-differentiation-in-Python#disqus_thread">View Comments</a>
       <p><small><span class="blog_post_date">Updated November 15, 2017 at 08:41 AM</span>
       </small></p>
@@ -818,7 +961,7 @@ That looks like the figure in the paper. To summarize the main takeaway, autogra
       <div id="Forces-by-automatic-differentiation-in-molecular-simulation"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/11/14/Forces-by-automatic-differentiation-in-molecular-simulation/" rel="bookmark" title="Permanent Link to Forces by automatic differentiation in molecular simulation">Forces by automatic differentiation in molecular simulation</a></h2>
       <p><small><span class="blog_post_date">Posted November 14, 2017 at 09:06 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/simulation/'>simulation</a>, <a href='/blog/category/autograd/'>autograd</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/simulation/'>simulation</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2017/11/14/Forces-by-automatic-differentiation-in-molecular-simulation#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -986,72 +1129,6 @@ Wow. We got forces without deriving a derivative, or using numerical finite diff
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/11/14/Forces-by-automatic-differentiation-in-molecular-simulation#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="New-publication-in-J-Phys-Chem-Lett"></div>
-      <h2 class="blog_post_title"><a href="/blog/2017/09/25/New-publication-in-J-Phys-Chem-Lett/" rel="bookmark" title="Permanent Link to New publication in J. Phys. Chem. Lett.">New publication in J. Phys. Chem. Lett.</a></h2>
-      <p><small><span class="blog_post_date">Posted September 25, 2017 at 08:24 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/news/'>news</a>, <a href='/blog/category/publication/'>publication</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2017/09/25/New-publication-in-J-Phys-Chem-Lett#disqus_thread">View Comments</a>
-      <p><small><span class="blog_post_date">Updated September 26, 2017 at 07:16 AM</span>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-DFT calculations are extensively used to predict the chemical properties of metal alloy surfaces, but they are expensive which limits the number of calculations that can be practically be calculated. In this paper, we explore a perturbation approach known as alchemy to take previously calculated results and extend them to new compositions. We use oxygen reduction as a prototype reaction, and show that alchemy is often much faster than DFT, with an accuracy within 0.1 eV of the DFT. There are cases where the accuracy is not as good suggesting that further improvements to the perturbation model could be beneficial. Overall, alchemy appears to be a useful tool in high-throughput screening research.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-bibtex"><span style="color: #006699;">@article</span>{<span style="color: #D0372D;">saravanan-2017-alchem-predic</span>,
-  <span style="color: #BA36A5;">title</span> =        {Alchemical Predictions for Computational Catalysis: Potential
-                  and Limitations},
-  <span style="color: #BA36A5;">year</span> =         2017,
-  <span style="color: #BA36A5;">Author</span> =       {Saravanan, Karthikeyan and Kitchin, John R. and von
-                  Lilienfeld, O. Anatole and Keith, John A.},
-  <span style="color: #BA36A5;">Bdsk-Url-1</span> =   {https://doi.org/10.1021/acs.jpclett.7b01974},
-  <span style="color: #BA36A5;">Doi</span> =          {<span style="color: #006DAF; text-decoration: underline;">10.1021/acs.jpclett.7b01974</span>},
-  <span style="color: #BA36A5;">Eprint</span> =       {https://doi.org/10.1021/acs.jpclett.7b01974},
-  <span style="color: #BA36A5;">Journal</span> =      {The Journal of Physical Chemistry Letters},
-  <span style="color: #BA36A5;">Note</span> =         {PMID: 28938798},
-  <span style="color: #BA36A5;">Number</span> =       {ja},
-  <span style="color: #BA36A5;">Pages</span> =        {null},
-  <span style="color: #BA36A5;">Url</span> =          {<span style="color: #006DAF; text-decoration: underline;">https://doi.org/10.1021/acs.jpclett.7b01974</span>},
-  <span style="color: #BA36A5;">Volume</span> =       0,
-}
-
-</pre>
-</div>
-
-<p>
-<script type='text/javascript' src='https://d1bxh8uas1mnw7.cloudfront.net/assets/embed.js'></script>
-<div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/acs.jpclett.7b01974'></div>
-</p>
-<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2017/09/25/New-publication-in-J.-Phys.-Chem.-Lett..org">org-mode source</a></p>
-<p>Org-mode version = 9.0.7</p>
-
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/09/25/New-publication-in-J-Phys-Chem-Lett#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="../6">« Previous Page</a>
   --  
  <a href="../8">Next Page »</a>
@@ -1093,11 +1170,11 @@ DFT calculations are extensively used to predict the chemical properties of meta
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2019/02/12/Using-results-from-one-code-block-in-another-org-mode/">Using results from one code block in another org-mode</a></li>
       <li><a href="/blog/2018/12/31/2018-in-a-nutshell-for-the-Kitchin-Research-Group/">2018 in a nutshell for the Kitchin Research Group</a></li>
       <li><a href="/blog/2018/11/16/Line-integrals-in-Python-with-autograd/">Line integrals in Python with autograd</a></li>
       <li><a href="/blog/2018/11/05/Using-autograd-for-error-propagation/">Using autograd for error propagation</a></li>
       <li><a href="/blog/2018/11/03/Constrained-optimization-with-Lagrange-multipliers-and-autograd/">Constrained optimization with Lagrange multipliers and autograd</a></li>
-      <li><a href="/blog/2018/11/02/Solving-coupled-ODEs-with-a-neural-network-and-autograd/">Solving coupled ODEs with a neural network and autograd</a></li>
     </ul>
   </section>
 
@@ -1126,7 +1203,7 @@ DFT calculations are extensively used to predict the chemical properties of meta
     </div>
     <div class="grid_4" id="credits">
       <p>
-        Copyright 2018
+        Copyright 2019
         John Kitchin
       </p>
       <p>
