@@ -15,6 +15,7 @@ for YEAR in [#'2005',
 #             '2015',
         #        '2016',
 #        '2017'
+        '2018'
 ]:
 
     # this query includes Neil Donahue
