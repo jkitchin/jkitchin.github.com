@@ -31,7 +31,7 @@
         | <a href="${post.permalink}#disqus_thread">View Comments</a>
         % endif
         % if post.date < post.updated:
-      <p><small><span class="blog_post_date">Updated ${post.updated.strftime("%B %d, %Y at %I:%M %p")}</span>
+      <p><small><span class="blog_post_date">Updated ${post.updated.strftime("%B %d, %Y at %I:%M %p")}</span></small>
         % endif
       </small></p>
     </header>
