@@ -84,10 +84,168 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Sensitivity-analysis-with-odeint-and-autograd"></div>
+      <h2 class="blog_post_title"><a href="/blog/2019/09/13/Sensitivity-analysis-with-odeint-and-autograd/" rel="bookmark" title="Permanent Link to Sensitivity analysis with odeint and autograd">Sensitivity analysis with odeint and autograd</a></h2>
+      <p><small><span class="blog_post_date">Posted September 13, 2019 at 09:56 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/ode/'>ode</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2019/09/13/Sensitivity-analysis-with-odeint-and-autograd#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+In this <a href="http://kitchingroup.cheme.cmu.edu/blog/2018/10/11/A-differentiable-ODE-integrator-for-sensitivity-analysis/">previous post</a> I showed a way to do sensitivity analysis of the solution of a differential equation to parameters in the equation using autograd. The basic approach was to write a differentiable integrator, and then use it in a function so that autograd could take the derivative.
+</p>
+
+<p>
+Since that time, autograd has added <a href="https://github.com/HIPS/autograd/blob/master/autograd/scipy/integrate.py">derivative support</a> for <code>scipy.integrate.odeint</code>. In this post we examine that. As usual with autograd, we have to import the autograd version of numpy, and the autograd version of odeint. We will find the derivative of the solution to an ODE (which is an array) so we need to also import the jacobian function. Finally, there is a subtle, and non-obvious requirement that we need to import the autograd tuple. That ensures that the variables are differentiable through the tuple we will use for the arguments.
+</p>
+
+<p>
+The differential equation we solve returns the concentration of a species as a function of time, and the solution depends on two parameters, i.e. \(C = f(t; k_1, k_{-1})\), and we are interested in the time-dependent sensitivity of \(C\) with respect to those parameters. The approach we use is to define a function that has those parameters as arguments. The function will solve the ODE and return the time-dependent solution. First we make that solution, mostly to see that the autograd version of odeint works.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">import</span> autograd.numpy <span style="color: #0000FF;">as</span> np
+<span style="color: #0000FF;">from</span> autograd.scipy.integrate <span style="color: #0000FF;">import</span> odeint
+<span style="color: #0000FF;">from</span> autograd <span style="color: #0000FF;">import</span> jacobian
+<span style="color: #0000FF;">from</span> autograd.builtins <span style="color: #0000FF;">import</span> <span style="color: #006FE0;">tuple</span>
+
+<span style="color: #0000FF;">import</span> matplotlib.pyplot <span style="color: #0000FF;">as</span> plt
+
+<span style="color: #BA36A5;">Ca0</span> = 1.0
+<span style="color: #BA36A5;">k1</span> = <span style="color: #BA36A5;">k_1</span> = 3.0
+
+<span style="color: #BA36A5;">tspan</span> = np.linspace(0, 0.5)
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">C</span>(K):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">k1</span>, <span style="color: #BA36A5;">k_1</span> = K
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">def</span> <span style="color: #006699;">dCdt</span>(Ca, t, k1, k_1):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> -k1 * Ca + k_1 * (Ca0 - Ca)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">sol</span> = odeint(dCdt, Ca0, tspan, <span style="color: #006FE0;">tuple</span>((k1, k_1)))
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> sol
+
+plt.plot(tspan, C([k1, k_1]))
+plt.xlim([tspan.<span style="color: #006FE0;">min</span>(), tspan.<span style="color: #006FE0;">max</span>()])
+plt.xlabel(<span style="color: #008000;">'t'</span>)
+plt.ylabel(<span style="color: #008000;">'C'</span>);
+</pre>
+</div>
+
+<pre class="example">
+&lt;Figure size 432x288 with 1 Axes&gt;
+</pre>
+
+
+<p>
+<figure><img src="/media/bca9e95a16f361ce6d92dd6efe90a2e653e014ef.png"></figure> 
+</p>
+
+
+<p>
+Now, the solution is an array, and we want the derivative of C with respect to the parameters at each time point. That means we want the jacobian derivative of the output with respect to the input. Here is the autograd approach to doing that. The jacobian function returns a function that we can evaluate to get the derivatives.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">import</span> time
+<span style="color: #BA36A5;">t0</span> = time.time()
+<span style="color: #BA36A5;">dCdk</span> = jacobian(C, 0)
+
+
+<span style="color: #BA36A5;">k_sensitivity</span> = dCdk(np.array([k1, k_1]))
+
+<span style="color: #BA36A5;">k1_sensitivity</span> = k_sensitivity[:, 0, 0]
+<span style="color: #BA36A5;">k_1_sensitivity</span> = k_sensitivity[:, 0, 1]
+
+plt.plot(tspan, np.<span style="color: #006FE0;">abs</span>(k1_sensitivity), label=<span style="color: #008000;">'dC/dk1'</span>)
+plt.plot(tspan, np.<span style="color: #006FE0;">abs</span>(k_1_sensitivity), label=<span style="color: #008000;">'dC/dk_1'</span>)
+plt.legend(loc=<span style="color: #008000;">'best'</span>)
+plt.xlabel(<span style="color: #008000;">'t'</span>)
+plt.ylabel(<span style="color: #008000;">'sensitivity'</span>)
+<span style="color: #0000FF;">print</span>(f<span style="color: #008000;">'Elapsed time = {time.time() - t0:1.1f} seconds'</span>)
+</pre>
+</div>
+
+<p>
+Elapsed time = 38.2 seconds
+</p>
+
+<pre class="example">
+&lt;Figure size 432x288 with 1 Axes&gt;
+</pre>
+
+
+<p>
+<figure><img src="/media/3a0a58bb6d4b3e1b215c2918d511f3a8a3a2ca3d.png"></figure> 
+</p>
+
+<p>
+That looks similar to the results from before. It is pretty slow I think, that took more than half a minute to work out. That is still faster and probably more correct than if I had to do it by hand. In contrast, however, the finite difference code below is comparatively very fast! I don't know what is slow in the autograd implementation. I guess it is an implementation detail.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">import</span> numdifftools <span style="color: #0000FF;">as</span> nd
+<span style="color: #BA36A5;">t0</span> = time.time()
+
+<span style="color: #BA36A5;">fdk1</span>, <span style="color: #BA36A5;">fdk_1</span> = nd.Jacobian(C)([k1, k_1]).T
+<span style="color: #0000FF;">print</span>(f<span style="color: #008000;">'Elapsed time = {time.time() - t0:1.1f} seconds'</span>)
+
+plt.plot(tspan, np.<span style="color: #006FE0;">abs</span>(fdk1), label=<span style="color: #008000;">'fd dC/dk1'</span>)
+plt.plot(tspan, np.<span style="color: #006FE0;">abs</span>(fdk_1), label=<span style="color: #008000;">'fd dC/dk_1'</span>)
+plt.plot(tspan, np.<span style="color: #006FE0;">abs</span>(k1_sensitivity), <span style="color: #008000;">'y--'</span>, label=<span style="color: #008000;">'dC/dk1'</span>)
+plt.plot(tspan, np.<span style="color: #006FE0;">abs</span>(k_1_sensitivity),<span style="color: #008000;">'m--'</span>, label=<span style="color: #008000;">'dC/dk_1'</span>)
+plt.legend(loc=<span style="color: #008000;">'best'</span>);
+plt.xlabel(<span style="color: #008000;">'t'</span>);
+plt.ylabel(<span style="color: #008000;">'sensitivity'</span>);
+</pre>
+</div>
+
+<p>
+Elapsed time = 0.1 seconds
+</p>
+
+<pre class="example">
+&lt;Figure size 432x288 with 1 Axes&gt;
+</pre>
+
+
+<p>
+<figure><img src="/media/be7bf4798396d6a27938715f6bb0e22b8f3e0b1c.png"></figure> 
+</p>
+
+<p>
+You can see the two results are visually indistinguishable. Even the code is pretty similar. I would tend to prefer the autograd way since it should be less sensitive to finite difference artifacts, but it is nice to have an independent way to test if it is working.
+</p>
+<p>Copyright (C) 2019 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2019/09/13/Sensitivity-analysis-with-odeint-and-autograd.org">org-mode source</a></p>
+<p>Org-mode version = 9.2.3</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2019/09/13/Sensitivity-analysis-with-odeint-and-autograd#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Line-integrals-in-Python-with-autograd"></div>
       <h2 class="blog_post_title"><a href="/blog/2018/11/16/Line-integrals-in-Python-with-autograd/" rel="bookmark" title="Permanent Link to Line integrals in Python with autograd">Line integrals in Python with autograd</a></h2>
       <p><small><span class="blog_post_date">Posted November 16, 2018 at 08:39 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/integration/'>integration</a>, <a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/integration/'>integration</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2018/11/16/Line-integrals-in-Python-with-autograd#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -460,7 +618,7 @@ That is the same uncertainty estimate the quantities package provided. One benef
       <div id="Constrained-optimization-with-Lagrange-multipliers-and-autograd"></div>
       <h2 class="blog_post_title"><a href="/blog/2018/11/03/Constrained-optimization-with-Lagrange-multipliers-and-autograd/" rel="bookmark" title="Permanent Link to Constrained optimization with Lagrange multipliers and autograd">Constrained optimization with Lagrange multipliers and autograd</a></h2>
       <p><small><span class="blog_post_date">Posted November 03, 2018 at 09:39 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/optimization/'>optimization</a>, <a href='/blog/category/autograd/'>autograd</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/optimization/'>optimization</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2018/11/03/Constrained-optimization-with-Lagrange-multipliers-and-autograd#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -618,7 +776,7 @@ In summary, autograd continues to enable advanced engineering problems to be sol
       <div id="Solving-coupled-ODEs-with-a-neural-network-and-autograd"></div>
       <h2 class="blog_post_title"><a href="/blog/2018/11/02/Solving-coupled-ODEs-with-a-neural-network-and-autograd/" rel="bookmark" title="Permanent Link to Solving coupled ODEs with a neural network and autograd">Solving coupled ODEs with a neural network and autograd</a></h2>
       <p><small><span class="blog_post_date">Posted November 02, 2018 at 07:53 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/ode/'>ode</a>, <a href='/blog/category/autograd/'>autograd</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/ode/'>ode</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2018/11/02/Solving-coupled-ODEs-with-a-neural-network-and-autograd#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -955,175 +1113,6 @@ This is not faster than direct numerical integration. One benefit to this soluti
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2018/11/02/Solving-coupled-ODEs-with-a-neural-network-and-autograd#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="A-differentiable-ODE-integrator-for-sensitivity-analysis"></div>
-      <h2 class="blog_post_title"><a href="/blog/2018/10/11/A-differentiable-ODE-integrator-for-sensitivity-analysis/" rel="bookmark" title="Permanent Link to A differentiable ODE integrator for sensitivity analysis">A differentiable ODE integrator for sensitivity analysis</a></h2>
-      <p><small><span class="blog_post_date">Posted October 11, 2018 at 12:13 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/ode/'>ode</a>, <a href='/blog/category/sensitivity/'>sensitivity</a>, <a href='/blog/category/autograd/'>autograd</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2018/10/11/A-differentiable-ODE-integrator-for-sensitivity-analysis#disqus_thread">View Comments</a>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-<a href="http://kitchingroup.cheme.cmu.edu/blog/2018/10/10/Autograd-and-the-derivative-of-an-integral-function/">Last time</a> I wrote about using automatic differentiation to find the derivative of an integral function. A related topic is finding derivatives of functions that are defined by differential equations. We typically use a numerical integrator to find solutions to these functions. Those leave us with numeric solutions which we then have to use to approximate derivatives. What if the integrator itself was differentiable? It is after all, just a program, and automatic differentiation should be able to tell us the derivatives of functions that use them. This is not a new idea, there is already a differentiable ODE solver in <a href="https://www.tensorflow.org/versions/r1.1/api_docs/python/tf/contrib/integrate/odeint">Tensorflow</a>. Here I will implement a simple Runge Kutta integrator and then show how we can use automatic differentiation to do <i>sensitivity analysis</i> on the numeric solution.
-</p>
-
-<p>
-I previously used autograd for sensitivity analysis on <i>analytical</i> solutions in this <a href="http://kitchingroup.cheme.cmu.edu/blog/2017/11/15/Sensitivity-analysis-using-automatic-differentiation-in-Python/">post</a>. Here I will compare those results to the results from sensitivity analysis on the <i>numerical solutions</i>.
-</p>
-
-<p>
-First, we need an autograd compatible ODE integrator. Here is one implementation of a simple, fourth order Runge-Kutta integrator. Usually, I would use indexing to do this, but that was not compatible with autograd, so I just accumulate the solution. This is a limitation of autograd, and it is probably not an issue with Tensorflow, for example, or probably pytorch. Those are more sophisticated, and more difficult to use packages than autograd. Here I am just prototyping an idea, so we stick with autograd.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">import</span> autograd.numpy <span style="color: #0000FF;">as</span> np
-<span style="color: #0000FF;">from</span> autograd <span style="color: #0000FF;">import</span> grad
-%matplotlib inline
-<span style="color: #0000FF;">import</span> matplotlib.pyplot <span style="color: #0000FF;">as</span> plt
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">rk4</span>(f, tspan, y0, N=50):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">x</span>, <span style="color: #BA36A5;">h</span> = np.linspace(*tspan, N, retstep=<span style="color: #D0372D;">True</span>)
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">y</span> = []
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">y</span> = y + [y0]
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">for</span> i <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">range</span>(0, <span style="color: #006FE0;">len</span>(x) - 1):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">k1</span> = h * f(x[i], y[i])
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">k2</span> = h * f(x[i] + h / 2, y[i] + k1 / 2)
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">k3</span> = h * f(x[i] + h / 2, y[i] + k2 / 2)
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">k4</span> = h * f(x[i + 1], y[i] + k3)
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">y</span> += [y[-1] + (k1 + (2 * k2) + (2 * k3) + k4) / 6]
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> x, y
-</pre>
-</div>
-
-<p>
-Now, we just check that it works as expected:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #BA36A5;">Ca0</span> = 1.0
-<span style="color: #BA36A5;">k1</span> = <span style="color: #BA36A5;">k_1</span> = 3.0
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">dCdt</span>(t, Ca):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> -k1 * Ca + k_1 * (Ca0 - Ca)
-
-<span style="color: #BA36A5;">t</span>, <span style="color: #BA36A5;">Ca</span> = rk4(dCdt, (0, 0.5), Ca0)
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">analytical_A</span>(t, k1, k_1):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> Ca0 / (k1 + k_1) * (k1 * np.exp(-(k1 + k_1) * t) + k_1)
-
-plt.plot(t, Ca, label=<span style="color: #008000;">'RK4'</span>)
-plt.plot(t, analytical_A(t, k1, k_1), <span style="color: #008000;">'r--'</span>, label=<span style="color: #008000;">'analytical'</span>)
-plt.xlabel(<span style="color: #008000;">'t'</span>)
-plt.ylabel(<span style="color: #008000;">'[A]'</span>)
-plt.xlim([0, 0.5])
-plt.ylim([0.5, 1])
-plt.legend()
-</pre>
-</div>
-
-<p>
-<img src="/media/6a1c5e4c896d855655b8da8b54214af3-90490Zdl.png"> 
-</p>
-
-<p>
-That looks fine, we cannot visually distinguish the two solutions, and they both look like Figure 1 in this <a href="http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.428.6699&amp;rep=rep1&amp;type=pdf">paper</a>. Note the analytical solution is not that complex, but it would not take much variation of the rate law to make this solution difficult to derive.
-</p>
-
-<p>
-Next, to do sensitivity analysis, we need to define a function for \(A\) that depends on the rate constants, so we can take a derivative of it with respect to the parameters we want the sensitivity from. We seek the derivatives: \(\frac{dC_A}{dk_1}\) and \(\frac{dC_A}{dk_{-1}}\). Here is a function that does that. It will return the value of [A] at \(t\) given an initial concentration and the rate constants.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">def</span> <span style="color: #006699;">A</span>(Ca0, k1, k_1, t):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">def</span> <span style="color: #006699;">dCdt</span>(t, Ca):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> -k1 * Ca + k_1 * (Ca0 - Ca)
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">t</span>, <span style="color: #BA36A5;">Ca_</span> = rk4(dCdt, (0, t), Ca0)
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> Ca_[-1]
-
-<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">Here are the two derivatives we seek.</span>
-<span style="color: #BA36A5;">dCadk1</span> = grad(A, 1)
-<span style="color: #BA36A5;">dCadk_1</span> = grad(A, 2)
-</pre>
-</div>
-
-<p>
-We also use autograd to get the derivatives from the analytical solution for comparison.
-</p>
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #BA36A5;">dAdk1</span> = grad(analytical_A, 1)
-<span style="color: #BA36A5;">dAdk_1</span> = grad(analytical_A, 2)
-</pre>
-</div>
-
-<p>
-Now, we can plot the sensitivities over the time range and compare them. I use the list comprehensions here because the AD functions aren't vectorized.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #BA36A5;">tspan</span> = np.linspace(0, 0.5)
-
-<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">From the numerical solutions</span>
-<span style="color: #BA36A5;">k1_sensitivity</span> = [dCadk1(1.0, 3.0, 3.0, t) <span style="color: #0000FF;">for</span> t <span style="color: #0000FF;">in</span> tspan]
-<span style="color: #BA36A5;">k_1_sensitivity</span> = [dCadk_1(1.0, 3.0, 3.0, t) <span style="color: #0000FF;">for</span> t <span style="color: #0000FF;">in</span> tspan]
-
-<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">from the analytical solutions</span>
-<span style="color: #BA36A5;">ak1_sensitivity</span> = [dAdk1(t, 3.0, 3.0) <span style="color: #0000FF;">for</span> t <span style="color: #0000FF;">in</span> tspan]
-<span style="color: #BA36A5;">ak_1_sensitivity</span> = [dAdk_1(t, 3.0, 3.0) <span style="color: #0000FF;">for</span> t <span style="color: #0000FF;">in</span> tspan]
-
-plt.plot(tspan, np.<span style="color: #006FE0;">abs</span>(ak1_sensitivity), <span style="color: #008000;">'b-'</span>, label=<span style="color: #008000;">'k1 analytical'</span>)
-plt.plot(tspan, np.<span style="color: #006FE0;">abs</span>(k1_sensitivity), <span style="color: #008000;">'y--'</span>, label=<span style="color: #008000;">'k1 numerical'</span>)
-
-plt.plot(tspan, np.<span style="color: #006FE0;">abs</span>(ak_1_sensitivity), <span style="color: #008000;">'r-'</span>, label=<span style="color: #008000;">'k_1 analytical'</span>)
-plt.plot(tspan, np.<span style="color: #006FE0;">abs</span>(k_1_sensitivity), <span style="color: #008000;">'k--'</span>, label=<span style="color: #008000;">'k_1 numerical'</span>)
-
-plt.xlim([0, 0.5])
-plt.ylim([0, 0.1])
-plt.legend()
-plt.xlabel(<span style="color: #008000;">'t'</span>)
-plt.ylabel(<span style="color: #008000;">'sensitivity'</span>)
-</pre>
-</div>
-
-<p>
-<img src="/media/6a1c5e4c896d855655b8da8b54214af3-90490mnr.png"> 
-</p>
-
-
-
-<p>
-The two approaches are indistinguishable on paper. I will note that it takes a lot longer to make the graph from the numerical solution than from the analytical solution because at each point you have to reintegrate the solution from the beginning, which is certainly not efficient. That is an implementation detail that could probably be solved, at the expense of making the code look different than the way I would normally think about the problem.
-</p>
-
-<p>
-On the other hand, it is remarkable we get derivatives from the numerical solution, <i>and they look really good</i>! That means we could do sensitivity analysis on more complex reactions, and still have a reasonable way to get sensitivity. The work here is a long way from that. My simple Runge-Kutta integrator isn't directly useful for systems of ODEs, it wouldn't work well on stiff problems, the step size isn't adaptive, etc. The Tensorflow implementation might be more suitable for this though, and maybe this post is motivation to learn how to use it!
-</p>
-<p>Copyright (C) 2018 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2018/10/11/A-differentiable-ODE-integrator-for-sensitivity-analysis.org">org-mode source</a></p>
-<p>Org-mode version = 9.1.13</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2018/10/11/A-differentiable-ODE-integrator-for-sensitivity-analysis#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="/blog/category/autograd/2">Next Page »</a>
 
           </div>
@@ -1163,11 +1152,11 @@ On the other hand, it is remarkable we get derivatives from the numerical soluti
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2019/09/13/Sensitivity-analysis-with-odeint-and-autograd/">Sensitivity analysis with odeint and autograd</a></li>
       <li><a href="/blog/2019/07/08/New-publication-in-SoftwareX/">New publication in SoftwareX</a></li>
       <li><a href="/blog/2019/03/12/An-improvement-for-figures-in-ipython-+-scimax/">An improvement for figures in ipython + scimax</a></li>
       <li><a href="/blog/2019/02/12/Using-results-from-one-code-block-in-another-org-mode/">Using results from one code block in another org-mode</a></li>
       <li><a href="/blog/2018/12/31/2018-in-a-nutshell-for-the-Kitchin-Research-Group/">2018 in a nutshell for the Kitchin Research Group</a></li>
-      <li><a href="/blog/2018/11/16/Line-integrals-in-Python-with-autograd/">Line integrals in Python with autograd</a></li>
     </ul>
   </section>
 

@@ -84,10 +84,168 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Sensitivity-analysis-with-odeint-and-autograd"></div>
+      <h2 class="blog_post_title"><a href="/blog/2019/09/13/Sensitivity-analysis-with-odeint-and-autograd/" rel="bookmark" title="Permanent Link to Sensitivity analysis with odeint and autograd">Sensitivity analysis with odeint and autograd</a></h2>
+      <p><small><span class="blog_post_date">Posted September 13, 2019 at 09:56 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/ode/'>ode</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2019/09/13/Sensitivity-analysis-with-odeint-and-autograd#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+In this <a href="http://kitchingroup.cheme.cmu.edu/blog/2018/10/11/A-differentiable-ODE-integrator-for-sensitivity-analysis/">previous post</a> I showed a way to do sensitivity analysis of the solution of a differential equation to parameters in the equation using autograd. The basic approach was to write a differentiable integrator, and then use it in a function so that autograd could take the derivative.
+</p>
+
+<p>
+Since that time, autograd has added <a href="https://github.com/HIPS/autograd/blob/master/autograd/scipy/integrate.py">derivative support</a> for <code>scipy.integrate.odeint</code>. In this post we examine that. As usual with autograd, we have to import the autograd version of numpy, and the autograd version of odeint. We will find the derivative of the solution to an ODE (which is an array) so we need to also import the jacobian function. Finally, there is a subtle, and non-obvious requirement that we need to import the autograd tuple. That ensures that the variables are differentiable through the tuple we will use for the arguments.
+</p>
+
+<p>
+The differential equation we solve returns the concentration of a species as a function of time, and the solution depends on two parameters, i.e. \(C = f(t; k_1, k_{-1})\), and we are interested in the time-dependent sensitivity of \(C\) with respect to those parameters. The approach we use is to define a function that has those parameters as arguments. The function will solve the ODE and return the time-dependent solution. First we make that solution, mostly to see that the autograd version of odeint works.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">import</span> autograd.numpy <span style="color: #0000FF;">as</span> np
+<span style="color: #0000FF;">from</span> autograd.scipy.integrate <span style="color: #0000FF;">import</span> odeint
+<span style="color: #0000FF;">from</span> autograd <span style="color: #0000FF;">import</span> jacobian
+<span style="color: #0000FF;">from</span> autograd.builtins <span style="color: #0000FF;">import</span> <span style="color: #006FE0;">tuple</span>
+
+<span style="color: #0000FF;">import</span> matplotlib.pyplot <span style="color: #0000FF;">as</span> plt
+
+<span style="color: #BA36A5;">Ca0</span> = 1.0
+<span style="color: #BA36A5;">k1</span> = <span style="color: #BA36A5;">k_1</span> = 3.0
+
+<span style="color: #BA36A5;">tspan</span> = np.linspace(0, 0.5)
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">C</span>(K):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">k1</span>, <span style="color: #BA36A5;">k_1</span> = K
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">def</span> <span style="color: #006699;">dCdt</span>(Ca, t, k1, k_1):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> -k1 * Ca + k_1 * (Ca0 - Ca)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">sol</span> = odeint(dCdt, Ca0, tspan, <span style="color: #006FE0;">tuple</span>((k1, k_1)))
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> sol
+
+plt.plot(tspan, C([k1, k_1]))
+plt.xlim([tspan.<span style="color: #006FE0;">min</span>(), tspan.<span style="color: #006FE0;">max</span>()])
+plt.xlabel(<span style="color: #008000;">'t'</span>)
+plt.ylabel(<span style="color: #008000;">'C'</span>);
+</pre>
+</div>
+
+<pre class="example">
+&lt;Figure size 432x288 with 1 Axes&gt;
+</pre>
+
+
+<p>
+<figure><img src="/media/bca9e95a16f361ce6d92dd6efe90a2e653e014ef.png"></figure> 
+</p>
+
+
+<p>
+Now, the solution is an array, and we want the derivative of C with respect to the parameters at each time point. That means we want the jacobian derivative of the output with respect to the input. Here is the autograd approach to doing that. The jacobian function returns a function that we can evaluate to get the derivatives.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">import</span> time
+<span style="color: #BA36A5;">t0</span> = time.time()
+<span style="color: #BA36A5;">dCdk</span> = jacobian(C, 0)
+
+
+<span style="color: #BA36A5;">k_sensitivity</span> = dCdk(np.array([k1, k_1]))
+
+<span style="color: #BA36A5;">k1_sensitivity</span> = k_sensitivity[:, 0, 0]
+<span style="color: #BA36A5;">k_1_sensitivity</span> = k_sensitivity[:, 0, 1]
+
+plt.plot(tspan, np.<span style="color: #006FE0;">abs</span>(k1_sensitivity), label=<span style="color: #008000;">'dC/dk1'</span>)
+plt.plot(tspan, np.<span style="color: #006FE0;">abs</span>(k_1_sensitivity), label=<span style="color: #008000;">'dC/dk_1'</span>)
+plt.legend(loc=<span style="color: #008000;">'best'</span>)
+plt.xlabel(<span style="color: #008000;">'t'</span>)
+plt.ylabel(<span style="color: #008000;">'sensitivity'</span>)
+<span style="color: #0000FF;">print</span>(f<span style="color: #008000;">'Elapsed time = {time.time() - t0:1.1f} seconds'</span>)
+</pre>
+</div>
+
+<p>
+Elapsed time = 38.2 seconds
+</p>
+
+<pre class="example">
+&lt;Figure size 432x288 with 1 Axes&gt;
+</pre>
+
+
+<p>
+<figure><img src="/media/3a0a58bb6d4b3e1b215c2918d511f3a8a3a2ca3d.png"></figure> 
+</p>
+
+<p>
+That looks similar to the results from before. It is pretty slow I think, that took more than half a minute to work out. That is still faster and probably more correct than if I had to do it by hand. In contrast, however, the finite difference code below is comparatively very fast! I don't know what is slow in the autograd implementation. I guess it is an implementation detail.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">import</span> numdifftools <span style="color: #0000FF;">as</span> nd
+<span style="color: #BA36A5;">t0</span> = time.time()
+
+<span style="color: #BA36A5;">fdk1</span>, <span style="color: #BA36A5;">fdk_1</span> = nd.Jacobian(C)([k1, k_1]).T
+<span style="color: #0000FF;">print</span>(f<span style="color: #008000;">'Elapsed time = {time.time() - t0:1.1f} seconds'</span>)
+
+plt.plot(tspan, np.<span style="color: #006FE0;">abs</span>(fdk1), label=<span style="color: #008000;">'fd dC/dk1'</span>)
+plt.plot(tspan, np.<span style="color: #006FE0;">abs</span>(fdk_1), label=<span style="color: #008000;">'fd dC/dk_1'</span>)
+plt.plot(tspan, np.<span style="color: #006FE0;">abs</span>(k1_sensitivity), <span style="color: #008000;">'y--'</span>, label=<span style="color: #008000;">'dC/dk1'</span>)
+plt.plot(tspan, np.<span style="color: #006FE0;">abs</span>(k_1_sensitivity),<span style="color: #008000;">'m--'</span>, label=<span style="color: #008000;">'dC/dk_1'</span>)
+plt.legend(loc=<span style="color: #008000;">'best'</span>);
+plt.xlabel(<span style="color: #008000;">'t'</span>);
+plt.ylabel(<span style="color: #008000;">'sensitivity'</span>);
+</pre>
+</div>
+
+<p>
+Elapsed time = 0.1 seconds
+</p>
+
+<pre class="example">
+&lt;Figure size 432x288 with 1 Axes&gt;
+</pre>
+
+
+<p>
+<figure><img src="/media/be7bf4798396d6a27938715f6bb0e22b8f3e0b1c.png"></figure> 
+</p>
+
+<p>
+You can see the two results are visually indistinguishable. Even the code is pretty similar. I would tend to prefer the autograd way since it should be less sensitive to finite difference artifacts, but it is nice to have an independent way to test if it is working.
+</p>
+<p>Copyright (C) 2019 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2019/09/13/Sensitivity-analysis-with-odeint-and-autograd.org">org-mode source</a></p>
+<p>Org-mode version = 9.2.3</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2019/09/13/Sensitivity-analysis-with-odeint-and-autograd#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Solving-coupled-ODEs-with-a-neural-network-and-autograd"></div>
       <h2 class="blog_post_title"><a href="/blog/2018/11/02/Solving-coupled-ODEs-with-a-neural-network-and-autograd/" rel="bookmark" title="Permanent Link to Solving coupled ODEs with a neural network and autograd">Solving coupled ODEs with a neural network and autograd</a></h2>
       <p><small><span class="blog_post_date">Posted November 02, 2018 at 07:53 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/ode/'>ode</a>, <a href='/blog/category/autograd/'>autograd</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/ode/'>ode</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2018/11/02/Solving-coupled-ODEs-with-a-neural-network-and-autograd#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -436,7 +594,7 @@ This is not faster than direct numerical integration. One benefit to this soluti
       <div id="A-differentiable-ODE-integrator-for-sensitivity-analysis"></div>
       <h2 class="blog_post_title"><a href="/blog/2018/10/11/A-differentiable-ODE-integrator-for-sensitivity-analysis/" rel="bookmark" title="Permanent Link to A differentiable ODE integrator for sensitivity analysis">A differentiable ODE integrator for sensitivity analysis</a></h2>
       <p><small><span class="blog_post_date">Posted October 11, 2018 at 12:13 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/ode/'>ode</a>, <a href='/blog/category/sensitivity/'>sensitivity</a>, <a href='/blog/category/autograd/'>autograd</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/sensitivity/'>sensitivity</a>, <a href='/blog/category/ode/'>ode</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2018/10/11/A-differentiable-ODE-integrator-for-sensitivity-analysis#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -605,7 +763,7 @@ On the other hand, it is remarkable we get derivatives from the numerical soluti
       <div id="Compressibility-factor-variation-from-the-van-der-Waals-equation-by-three-different-approaches"></div>
       <h2 class="blog_post_title"><a href="/blog/2018/10/07/Compressibility-factor-variation-from-the-van-der-Waals-equation-by-three-different-approaches/" rel="bookmark" title="Permanent Link to Compressibility factor variation from the van der Waals equation by three different approaches">Compressibility factor variation from the van der Waals equation by three different approaches</a></h2>
       <p><small><span class="blog_post_date">Posted October 07, 2018 at 01:08 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/ode/'>ode</a>, <a href='/blog/category/nonlinear-algebra/'>nonlinear algebra</a>, <a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/nonlinear-algebra/'>nonlinear algebra</a>, <a href='/blog/category/ode/'>ode</a>, <a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2018/10/07/Compressibility-factor-variation-from-the-van-der-Waals-equation-by-three-different-approaches#disqus_thread">View Comments</a>
       <p><small><span class="blog_post_date">Updated October 07, 2018 at 01:15 PM</span></small>
       </small></p>
@@ -1141,145 +1299,6 @@ Internet: am I missing something obvious here?
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2018/09/04/A-new-ode-integrator-function-in-scipy#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Solving-ODEs-with-a-neural-network-and-autograd"></div>
-      <h2 class="blog_post_title"><a href="/blog/2017/11/28/Solving-ODEs-with-a-neural-network-and-autograd/" rel="bookmark" title="Permanent Link to Solving ODEs with a neural network and autograd">Solving ODEs with a neural network and autograd</a></h2>
-      <p><small><span class="blog_post_date">Posted November 28, 2017 at 07:23 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/ode/'>ode</a>, <a href='/blog/category/autograd/'>autograd</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2017/11/28/Solving-ODEs-with-a-neural-network-and-autograd#disqus_thread">View Comments</a>
-      <p><small><span class="blog_post_date">Updated November 28, 2017 at 07:23 AM</span></small>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-In the last <a href="http://kitchingroup.cheme.cmu.edu/blog/2017/11/27/Solving-BVPs-with-a-neural-network-and-autograd/">post</a> I explored using a neural network to solve a BVP. Here, I expand the idea to solving an initial value ordinary differential equation. The idea is basically the same, we just have a slightly different objective function.
-</p>
-
-<p>
-\(dCa/dt = -k Ca(t)\) where \(Ca(t=0) = 2.0\).
-</p>
-
-<p>
-Here is the code that solves this equation, along with a comparison to the analytical solution: \(Ca(t) = Ca0 \exp -kt\).
-</p>
-
-<div class="org-src-container">
-<pre class="src src-python"><span style="color: #0000FF;">import</span> autograd.numpy <span style="color: #0000FF;">as</span> np
-<span style="color: #0000FF;">from</span> autograd <span style="color: #0000FF;">import</span> grad, elementwise_grad
-<span style="color: #0000FF;">import</span> autograd.numpy.random <span style="color: #0000FF;">as</span> npr
-<span style="color: #0000FF;">from</span> autograd.misc.optimizers <span style="color: #0000FF;">import</span> adam
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">init_random_params</span>(scale, layer_sizes, rs=npr.RandomState(0)):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #036A07;">"""Build a list of (weights, biases) tuples, one for each layer."""</span>
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> [(rs.randn(insize, outsize) * scale,   <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">weight matrix</span>
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>rs.randn(outsize) * scale)           <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">bias vector</span>
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">for</span> insize, outsize <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">zip</span>(layer_sizes[:-1], layer_sizes[1:])]
-
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">swish</span>(x):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #036A07;">"see https://arxiv.org/pdf/1710.05941.pdf"</span>
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> x / (1.0 + np.exp(-x))
-
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">Ca</span>(params, inputs):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #036A07;">"Neural network functions"</span>
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">for</span> W, b <span style="color: #0000FF;">in</span> params:
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">outputs</span> = np.dot(inputs, W) + b
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">inputs</span> = swish(outputs)    
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> outputs
-
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   
-<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">Here is our initial guess of params:</span>
-<span style="color: #BA36A5;">params</span> = init_random_params(0.1, layer_sizes=[1, 8, 1])
-
-<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">Derivatives</span>
-<span style="color: #BA36A5;">dCadt</span> = elementwise_grad(Ca, 1)
-
-<span style="color: #BA36A5;">k</span> = 0.23
-<span style="color: #BA36A5;">Ca0</span> = 2.0
-<span style="color: #BA36A5;">t</span> = np.linspace(0, 10).reshape((-1, 1))
-
-<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">This is the function we seek to minimize</span>
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">objective</span>(params, step):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">These should all be zero at the solution</span>
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">dCadt = -k * Ca(t)</span>
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">zeq</span> = dCadt(params, t) - (-k * Ca(params, t))
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">ic</span> = Ca(params, 0) - Ca0
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> np.mean(zeq**2) + ic**2
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">callback</span>(params, step, g):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">if</span> step % 1000 == 0:
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">print</span>(<span style="color: #008000;">"Iteration {0:3d} objective {1}"</span>.<span style="color: #006FE0;">format</span>(step,
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> objective(params, step)))
-
-<span style="color: #BA36A5;">params</span> = adam(grad(objective), params,
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> step_size=0.001, num_iters=5001, callback=callback) 
-
-
-<span style="color: #BA36A5;">tfit</span> = np.linspace(0, 20).reshape(-1, 1)
-<span style="color: #0000FF;">import</span> matplotlib.pyplot <span style="color: #0000FF;">as</span> plt
-plt.plot(tfit, Ca(params, tfit), label=<span style="color: #008000;">'soln'</span>)
-plt.plot(tfit, Ca0 * np.exp(-k * tfit), <span style="color: #008000;">'r--'</span>, label=<span style="color: #008000;">'analytical soln'</span>)
-plt.legend()
-plt.xlabel(<span style="color: #008000;">'time'</span>)
-plt.ylabel(<span style="color: #008000;">'$C_A$'</span>)
-plt.xlim([0, 20])
-plt.savefig(<span style="color: #008000;">'nn-ode.png'</span>)
-</pre>
-</div>
-
-<pre class="example">
-Iteration   0 objective [[ 3.20374053]]
-Iteration 1000 objective [[  3.13906829e-05]]
-Iteration 2000 objective [[  1.95894699e-05]]
-Iteration 3000 objective [[  1.60381564e-05]]
-Iteration 4000 objective [[  1.39930673e-05]]
-Iteration 5000 objective [[  1.03554970e-05]]
-
-</pre>
-
-
-<p>
-<img src="/media/nn-ode.png"> 
-</p>
-
-<p>
-Huh. Those two solutions are nearly indistinguishable. Since we used a neural network, let's hype it up and say we learned the solution to a differential equation! But seriously, note that although we got an "analytical" solution, we should only rely on it in the region we trained the solution on. You can see the solution above is not that good past t=10, even perhaps going negative (which is not even physically correct). That is a reminder that the function we have for the solution <i>is not the same as the analytical solution</i>, it just approximates it really well over the region we solved over. Of course, you can expand that region to the region you care about, but the main point is don't rely on the solution outside where you know it is good.
-</p>
-
-<p>
-This idea isn't new. There are several papers in the literature on using neural networks to solve differential equations, e.g. <a href="http://www.sciencedirect.com/science/article/pii/S0255270102002076">http://www.sciencedirect.com/science/article/pii/S0255270102002076</a> and <a href="https://arxiv.org/pdf/physics/9705023.pdf">https://arxiv.org/pdf/physics/9705023.pdf</a>, and other blog posts that are similar (<a href="https://becominghuman.ai/neural-networks-for-solving-differential-equations-fa230ac5e04c">https://becominghuman.ai/neural-networks-for-solving-differential-equations-fa230ac5e04c</a>, even using autograd). That means to me that there is some merit to continuing to investigate this approach to solving differential equations.
-</p>
-
-<p>
-There are some interesting challenges for engineers to consider with this approach though. When is the solution accurate enough? How reliable are derivatives of the solution? What network architecture is appropriate or best? How do you know how good the solution is? Is it possible to build in solution features, e.g. asymptotes, or constraints on derivatives, or that the solution should be monotonic, etc. These would help us trust the solutions not to do weird things, and to extrapolate more reliably.
-</p>
-<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2017/11/28/Solving-ODEs-with-a-neural-network-and-autograd.org">org-mode source</a></p>
-<p>Org-mode version = 9.1.2</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2017/11/28/Solving-ODEs-with-a-neural-network-and-autograd#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="/blog/category/ode/2">Next Page »</a>
 
           </div>
@@ -1319,11 +1338,11 @@ There are some interesting challenges for engineers to consider with this approa
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2019/09/13/Sensitivity-analysis-with-odeint-and-autograd/">Sensitivity analysis with odeint and autograd</a></li>
       <li><a href="/blog/2019/07/08/New-publication-in-SoftwareX/">New publication in SoftwareX</a></li>
       <li><a href="/blog/2019/03/12/An-improvement-for-figures-in-ipython-+-scimax/">An improvement for figures in ipython + scimax</a></li>
       <li><a href="/blog/2019/02/12/Using-results-from-one-code-block-in-another-org-mode/">Using results from one code block in another org-mode</a></li>
       <li><a href="/blog/2018/12/31/2018-in-a-nutshell-for-the-Kitchin-Research-Group/">2018 in a nutshell for the Kitchin Research Group</a></li>
-      <li><a href="/blog/2018/11/16/Line-integrals-in-Python-with-autograd/">Line integrals in Python with autograd</a></li>
     </ul>
   </section>
 
