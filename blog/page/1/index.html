@@ -84,6 +84,250 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Solving-differential-algebraic-equations-with-help-from-autograd"></div>
+      <h2 class="blog_post_title"><a href="/blog/2019/09/22/Solving-differential-algebraic-equations-with-help-from-autograd/" rel="bookmark" title="Permanent Link to Solving differential algebraic equations with help from autograd">Solving differential algebraic equations with help from autograd</a></h2>
+      <p><small><span class="blog_post_date">Posted September 22, 2019 at 12:59 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/ode/'>ode</a>, <a href='/blog/category/dae/'>dae</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2019/09/22/Solving-differential-algebraic-equations-with-help-from-autograd#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+This problem is adapted from one in "Problem Solving in Chemical Engineering with Numerical Methods, Michael B. Cutlip, Mordechai Shacham".
+</p>
+
+<p>
+In the binary, batch distillation of benzene (1) and toluene (2), the moles of liquid \(L\) remaining as a function of the mole fraction of toluene (\(x_2\)) is expressed by:
+</p>
+
+<p>
+\(\frac{dL}{dx_2} = \frac{L}{x_2 (k_2 - 1)}\)
+</p>
+
+<p>
+where \(k_2\) is the vapor liquid equilibrium ratio for toluene. This can be computed as:
+</p>
+
+<p>
+\(k_i = P_i / P\) where \(P_i = 10^{A_i + \frac{B_i}{T +C_i}}\) and that pressure is in mmHg, and the temperature is in degrees Celsius.
+</p>
+
+<p>
+One difficulty in solving this problem is that the temperature is not constant; it changes with the composition. We know that the temperature changes to satisfy this constraint  \(k_1(T) x_1 + k_2(T) x_2 = 1\).
+</p>
+
+<p>
+Sometimes, one can solve for T directly, and substitute it into the first ODE, but this is not a possibility here. One way you might solve this is to use the constraint to find \(T\) inside an ODE function, but that is tricky; nonlinear algebra solvers need a guess and don't always converge, or may converge to non-physical solutions. They also require iterative solutions, so they will be slower than an approach where we just have to integrate the solution.  A better way is to derive a second ODE \(dT/dx_2\) from the constraint.  The constraint is implicit in \(T\), so We  compute it as \(dT/dx_2 = -df/dx_2 / df/dT\) where \(f(x_2, T) = k_1(T) x_1 + k_2(T) x_2  - 1 = 0\). This equation is used to compute the bubble point temperature. Note, it is possible to derive these analytically, but who wants to?  We can use autograd to get those derivatives for us instead.
+</p>
+
+<p>
+The following information is given:
+</p>
+
+<p>
+The total pressure is fixed at 1.2 atm, and the distillation starts at \(x_2=0.4\). There are initially 100 moles in the distillation.
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-right" />
+
+<col  class="org-right" />
+
+<col  class="org-right" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">species</th>
+<th scope="col" class="org-right">A</th>
+<th scope="col" class="org-right">B</th>
+<th scope="col" class="org-right">C</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">benzene</td>
+<td class="org-right">6.90565</td>
+<td class="org-right">-1211.033</td>
+<td class="org-right">220.79</td>
+</tr>
+
+<tr>
+<td class="org-left">toluene</td>
+<td class="org-right">6.95464</td>
+<td class="org-right">-1344.8</td>
+<td class="org-right">219.482</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+We have to start by finding the initial temperature from the constraint.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">import</span> autograd.numpy <span style="color: #0000FF;">as</span> np
+<span style="color: #0000FF;">from</span> autograd <span style="color: #0000FF;">import</span> grad
+<span style="color: #0000FF;">from</span> scipy.integrate <span style="color: #0000FF;">import</span> solve_ivp
+<span style="color: #0000FF;">from</span> scipy.optimize <span style="color: #0000FF;">import</span> fsolve
+%matplotlib inline
+<span style="color: #0000FF;">import</span> matplotlib.pyplot <span style="color: #0000FF;">as</span> plt
+
+<span style="color: #BA36A5;">P</span> = 760 * 1.2 <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">mmHg</span>
+<span style="color: #BA36A5;">A1</span>, <span style="color: #BA36A5;">B1</span>, <span style="color: #BA36A5;">C1</span> = 6.90565, -1211.033,  220.79
+<span style="color: #BA36A5;">A2</span>, <span style="color: #BA36A5;">B2</span>, <span style="color: #BA36A5;">C2</span> = 6.95464, -1344.8, 219.482
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">k1</span>(T):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> 10**(A1 + B1 / (C1 + T)) / P
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">k2</span>(T):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> 10**(A2 + B2 / (C2 + T)) / P
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">f</span>(x2, T):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">x1</span> = 1 - x2
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> k1(T) * x1 + k2(T) * x2 - 1
+
+T0, = fsolve(<span style="color: #0000FF;">lambda</span> T: f(0.4, T), 96)
+<span style="color: #0000FF;">print</span>(f<span style="color: #008000;">'The initial temperature is {T0:1.2f} degC.'</span>)
+</pre>
+</div>
+
+<p>
+The initial temperature is 95.59 degC.
+</p>
+
+<p>
+Next, we compute the derivative we need. This derivative is derived from the constraint, which should ensure that the temperature changes as required to maintain the constraint.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #BA36A5;">dfdx2</span> = grad(f, 0)
+<span style="color: #BA36A5;">dfdT</span> = grad(f, 1)
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">dTdx2</span>(x2, T):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> -dfdx2(x2, T) / dfdT(x2, T)
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">ode</span>(x2, X):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">L</span>, <span style="color: #BA36A5;">T</span> = X
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">dLdx2</span> = L / (x2 * (k2(T) - 1))
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> [dLdx2, dTdx2(x2, T)]
+</pre>
+</div>
+
+<p>
+Next we solve and plot the ODE.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #BA36A5;">x2span</span> = (0.4, 0.8)
+<span style="color: #BA36A5;">X0</span> = (100, T0)
+<span style="color: #BA36A5;">sol</span> = solve_ivp(ode, x2span, X0, max_step=0.01)
+
+plt.plot(sol.t, sol.y.T)
+plt.legend([<span style="color: #008000;">'L'</span>, <span style="color: #008000;">'T'</span>]);
+plt.xlabel(<span style="color: #008000;">'$x_2$'</span>)
+plt.ylabel(<span style="color: #008000;">'L, T'</span>)
+<span style="color: #BA36A5;">x2</span> = sol.t
+<span style="color: #BA36A5;">L</span>, <span style="color: #BA36A5;">T</span> = sol.y
+<span style="color: #0000FF;">print</span>(f<span style="color: #008000;">'At x2={x2[-1]:1.2f} there are {L[-1]:1.2f} moles of liquid left at {T[-1]:1.2f} degC'</span>)
+</pre>
+</div>
+
+<p>
+At x2=0.80 there are 14.04 moles of liquid left at 108.57 degC
+</p>
+
+<pre class="example">
+&lt;Figure size 432x288 with 1 Axes&gt;
+</pre>
+
+
+<p>
+<figure><img src="/media/a75e63c53e3c2cb02c40c808789084c337e174ff.png"></figure> 
+</p>
+
+<p>
+You can see that the liquid level drops, and the temperature rises.
+</p>
+
+<p>
+Let's double check that the constraint is actually met. We do that qualitatively here by plotting it, and quantitatively by showing all values are close to 0.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #BA36A5;">constraint</span> = k1(T) * (1 - x2) + k2(T) * x2 - 1
+plt.plot(x2, constraint)
+plt.ylim([-1, 1])
+plt.xlabel(<span style="color: #008000;">'$x_2$'</span>)
+plt.ylabel(<span style="color: #008000;">'constraint value'</span>)
+<span style="color: #0000FF;">print</span>(np.allclose(constraint, np.zeros_like(constraint)))
+constraint
+</pre>
+</div>
+
+<p>
+True
+</p>
+
+<pre class="example">
+array([ 2.22044605e-16,  4.44089210e-16,  2.22044605e-16,  0.00000000e+00,
+        1.11022302e-15,  0.00000000e+00,  6.66133815e-16,  0.00000000e+00,
+       -2.22044605e-16,  1.33226763e-15,  8.88178420e-16, -4.44089210e-16,
+        4.44089210e-16,  1.11022302e-15, -2.22044605e-16,  0.00000000e+00,
+       -2.22044605e-16, -1.11022302e-15,  4.44089210e-16,  0.00000000e+00,
+       -4.44089210e-16,  4.44089210e-16, -6.66133815e-16, -4.44089210e-16,
+        4.44089210e-16, -1.11022302e-16, -8.88178420e-16, -8.88178420e-16,
+       -9.99200722e-16, -3.33066907e-16, -7.77156117e-16, -2.22044605e-16,
+       -9.99200722e-16, -1.11022302e-15, -3.33066907e-16, -1.99840144e-15,
+       -1.33226763e-15, -2.44249065e-15, -1.55431223e-15, -6.66133815e-16,
+       -2.22044605e-16])
+</pre>
+
+
+<pre class="example">
+&lt;Figure size 432x288 with 1 Axes&gt;
+</pre>
+
+
+<p>
+<figure><img src="/media/bb2b32002658b8724d214f2441c9f55a97c565c8.png"></figure> 
+</p>
+
+
+<p>
+So indeed, the constraint is met! Once again, autograd comes to the rescue in making a computable derivative from an algebraic constraint so that we can solve a DAE as a set of ODEs using our regular machinery. Nice work autograd!
+</p>
+<p>Copyright (C) 2019 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2019/09/22/Solving-differential-algebraic-equations-with-help-from-autograd.org">org-mode source</a></p>
+<p>Org-mode version = 9.2.3</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2019/09/22/Solving-differential-algebraic-equations-with-help-from-autograd#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Sensitivity-analysis-with-odeint-and-autograd"></div>
       <h2 class="blog_post_title"><a href="/blog/2019/09/13/Sensitivity-analysis-with-odeint-and-autograd/" rel="bookmark" title="Permanent Link to Sensitivity analysis with odeint and autograd">Sensitivity analysis with odeint and autograd</a></h2>
       <p><small><span class="blog_post_date">Posted September 13, 2019 at 09:56 AM</span> | categories:
@@ -245,7 +489,7 @@ You can see the two results are visually indistinguishable. Even the code is pre
       <div id="New-publication-in-SoftwareX"></div>
       <h2 class="blog_post_title"><a href="/blog/2019/07/08/New-publication-in-SoftwareX/" rel="bookmark" title="Permanent Link to New publication in SoftwareX">New publication in SoftwareX</a></h2>
       <p><small><span class="blog_post_date">Posted July 08, 2019 at 07:15 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/news/'>news</a>, <a href='/blog/category/publication/'>publication</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/publication/'>publication</a>, <a href='/blog/category/news/'>news</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2019/07/08/New-publication-in-SoftwareX#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -392,7 +636,7 @@ x .dot. y = 1.3598389888491538
       <div id="Using-results-from-one-code-block-in-another-org-mode"></div>
       <h2 class="blog_post_title"><a href="/blog/2019/02/12/Using-results-from-one-code-block-in-another-org-mode/" rel="bookmark" title="Permanent Link to Using results from one code block in another org-mode">Using results from one code block in another org-mode</a></h2>
       <p><small><span class="blog_post_date">Posted February 12, 2019 at 09:20 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/elisp/'>elisp</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/elisp/'>elisp</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2019/02/12/Using-results-from-one-code-block-in-another-org-mode#disqus_thread">View Comments</a>
       <p><small><span class="blog_post_date">Updated February 25, 2019 at 02:17 PM</span></small>
       </small></p>
@@ -834,317 +1078,6 @@ Overall, org-mode has one of the most flexible and powerful systems for passing 
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2019/02/12/Using-results-from-one-code-block-in-another-org-mode#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="2018-in-a-nutshell-for-the-Kitchin-Research-Group"></div>
-      <h2 class="blog_post_title"><a href="/blog/2018/12/31/2018-in-a-nutshell-for-the-Kitchin-Research-Group/" rel="bookmark" title="Permanent Link to 2018 in a nutshell for the Kitchin Research Group">2018 in a nutshell for the Kitchin Research Group</a></h2>
-      <p><small><span class="blog_post_date">Posted December 31, 2018 at 03:17 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/news/'>news</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2018/12/31/2018-in-a-nutshell-for-the-Kitchin-Research-Group#disqus_thread">View Comments</a>
-      <p><small><span class="blog_post_date">Updated December 31, 2018 at 03:22 PM</span></small>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<div id="table-of-contents">
-<h2>Table of Contents</h2>
-<div id="text-table-of-contents">
-<ul>
-<li><a href="#orgbd65150">1. An all new research group</a></li>
-<li><a href="#orgf1eb546">2. Publications</a></li>
-<li><a href="#org6dc4f47">3. New courses</a></li>
-<li><a href="#orgf521ee8">4. Emacs, org-mode and scimax</a></li>
-<li><a href="#orge03ea8f">5. Online activity</a>
-<ul>
-<li><a href="#org189de38">5.1. kitchingroup.cheme.cmu.edu</a></li>
-<li><a href="#orgc1d2765">5.2. Github</a></li>
-<li><a href="#org08ef442">5.3. YouTube</a></li>
-<li><a href="#org552c652">5.4. Twitter</a></li>
-</ul>
-</li>
-<li><a href="#org9d4a3c6">6. Summary and outlook</a></li>
-</ul>
-</div>
-</div>
-<p>
-The majority of this year was spent finishing my sabbatical in the Google Accelerated Science Research group. I finished that up in August, and have returned to Pittsburgh now. I spent that time learning about differentiable programming and machine learning applications in science and engineering. It was a great learning year for me, and the beginning of some new research directions.
-</p>
-
-<p>
-It wasn't all work, I was able to bike over 3000 miles while we lived in California, spent lots of weekends at beaches, state parks, San Francisco, and many other beautiful places. There is a lot I miss from my sabbatical, but I am mostly glad to be back home.
-</p>
-
-<div id="outline-container-orgbd65150" class="outline-2">
-<h2 id="orgbd65150"><span class="section-number-2">1</span> An all new research group</h2>
-<div class="outline-text-2" id="text-1">
-<p>
-In 2017, the last of my students finished, and my group shrunk temporarily to zero for a semester. That luckily coincided with the beginning of my sabbatical, which allowed me to focus exclusively on starting new research directions. Towards the end of last year, three new PhD students joined my group. I did not take any new PhD students this year, but several new MS students joined the group at the end of 2018:
-</p>
-
-<ol class="org-ol">
-<li>Siddhant Lambor (co-advised with Prof. Lynn Walker)</li>
-<li>Gautham Swaminathan (co-advised with Prof. Lynn Walker)</li>
-<li>Siddarth Achar</li>
-<li>Senhong Liu</li>
-<li>Dingqi Nai</li>
-<li>Qiong Wang</li>
-</ol>
-
-<p>
-These students will all work on some aspect of machine learning in formulation research, design of experiments, and molecular simulation. It should be an exciting year!
-</p>
-</div>
-</div>
-
-<div id="outline-container-orgf1eb546" class="outline-2">
-<h2 id="orgf1eb546"><span class="section-number-2">2</span> Publications</h2>
-<div class="outline-text-2" id="text-2">
-<p>
-2018 was a light year on publications, largely due to my group shrinking to zero, and being on sabbatical.  I wrote a nice perspective article on machine learning in catalysis:
-</p>
-
-<dl class="org-dl">
-<dt><a class='org-ref-reference' href="#kitchin-2018-machin-learn-catal">kitchin-2018-machin-learn-catal</a></dt><dd>This perspective article describes how machine learning is being used in catalysis research and opportunities for further research.</dd>
-</dl>
-
-<p>
-And several publications from past M.S. students got finished and published:
-</p>
-
-<dl class="org-dl">
-<dt><a class='org-ref-reference' href="#thirumalai-2018-inves-react">thirumalai-2018-inves-react</a></dt><dd>This paper shows that many single atom alloys have unique electronic structure features that are responsible for their special catalytic properties.</dd>
-<dt><a class='org-ref-reference' href="#gao-2018-model-pallad">gao-2018-model-pallad</a></dt><dd>We used DFT calculations to build a neural network potential to model adatom diffusion on a metal surface.</dd>
-<dt><a class='org-ref-reference' href="#wang-2018-densit-funct">wang-2018-densit-funct</a></dt><dd>We used DFT calculations to build a neural network potential to model zirconia polymorphs, oxygen vacancy formation and diffusion.</dd>
-</dl>
-
-
-<p>
-This was technically published in 2017, but it was <a href="https://twitter.com/JPhysCM/status/1078217723790921728">the most cited article in J. Phys.: Cond. Matt. in 2018</a>!
-</p>
-
-
-<dl class="org-dl">
-<dt><a class='org-ref-reference' href="#larsen-2017-atomic-simul">larsen-2017-atomic-simul</a></dt><dd>This is a modern update on the Atomic Simulation Environment Python software. We have been using and contributing to this software for about 15 years now!</dd>
-</dl>
-
-<p>
-Citations on our past work continue to grow.
-</p>
-
-<p>
-<img src="/media/date-30-12-2018-time-09-13-15.png"> 
-</p>
-
-<p>
-<h1 class='org-ref-bib-h1'>Bibliography</h1>
-<ul class='org-ref-bib'><li><a id="kitchin-2018-machin-learn-catal">[kitchin-2018-machin-learn-catal]</a> <a name="kitchin-2018-machin-learn-catal"></a>John Kitchin, Machine Learning in Catalysis, <i>Nature Catalysis</i>, <b>1(4)</b>, 230-232 (2018). <a href="https://doi.org/10.1038/s41929-018-0056-y">link</a>. <a href="http://dx.doi.org/10.1038/s41929-018-0056-y">doi</a>.</li>
-<li><a id="thirumalai-2018-inves-react">[thirumalai-2018-inves-react]</a> <a name="thirumalai-2018-inves-react"></a>Hari Thirumalai & John Kitchin, Investigating the Reactivity of Single Atom Alloys Using  Density Functional Theory, <i>Topics in Catalysis</i>, <b>61(5-6)</b>, 462-474 (2018). <a href="https://doi.org/10.1007/s11244-018-0899-0">link</a>. <a href="http://dx.doi.org/10.1007/s11244-018-0899-0">doi</a>.</li>
-<li><a id="gao-2018-model-pallad">[gao-2018-model-pallad]</a> <a name="gao-2018-model-pallad"></a>Tianyu Gao & John Kitchin, Modeling Palladium Surfaces With Density Functional Theory,  Neural Networks and Molecular Dynamics, <i>Catalysis Today</i>, <b>312</b>, 132-140 (2018). <a href="https://doi.org/10.1016/j.cattod.2018.03.045">link</a>. <a href="http://dx.doi.org/10.1016/j.cattod.2018.03.045">doi</a>.</li>
-<li><a id="wang-2018-densit-funct">[wang-2018-densit-funct]</a> <a name="wang-2018-densit-funct"></a>Chen Wang, Akshay Tharval & John Kitchin, A Density Functional Theory Parameterised Neural Network Model  of Zirconia, <i>Molecular Simulation</i>, <b>44(8)</b>, 623-630 (2018). <a href="https://doi.org/10.1080/08927022.2017.1420185">link</a>. <a href="http://dx.doi.org/10.1080/08927022.2017.1420185">doi</a>.</li>
-<li><a id="larsen-2017-atomic-simul">[larsen-2017-atomic-simul]</a> <a name="larsen-2017-atomic-simul"></a>Ask Hjorth Larsen, Jens J\orgen Mortensen, Jakob, Blomqvist, Ivano E Castelli, Rune Christensen, , Marcin Dułak, Jesper Friis, Michael N Groves, , Bj\ork Hammer, Cory Hargus, Eric D Hermes, Paul C, Jennings, Peter Bjerre Jensen, James Kermode, John, R Kitchin, Esben Leonhard Kolsbjerg, Joseph Kubal, , Kristen Kaasbjerg, Steen Lysgaard, J\'on Bergmann, Maronsson, Tristan Maxson, Thomas Olsen, Lars, Pastewka, Andrew Peterson, Carsten Rostgaard, Jakob, Schi\otz, Ole Sch\"utt, Mikkel Strange, Kristian, S Thygesen, Tejs Vegge, Lasse Vilhelmsen, Michael, Walter, Zhenhua Zeng & Karsten W Jacobsen, The Atomic Simulation Environment-A Python Library for Working  With Atoms, <i>Journal of Physics: Condensed Matter</i>, <b>29(27)</b>, 273002 (2017). <a href="http://stacks.iop.org/0953-8984/29/i=27/a=273002">link</a>.</li>
-</ul>
-</p>
-</div>
-</div>
-
-<div id="outline-container-org6dc4f47" class="outline-2">
-<h2 id="org6dc4f47"><span class="section-number-2">3</span> New courses</h2>
-<div class="outline-text-2" id="text-3">
-<p>
-On my return from my sabbatical, I taught a new course for me, 06-623 Mathematical modeling of chemical engineering processes. I taught this course in Python, and it was a tour of mathematical and scientific programming that started with <code class="src src-ipython"><span style="color: #036A07;">"Hello world"</span></code> 'Hello world' and ended with machine learning. We traveled through differential equations, nonlinear algebra, optimization, and regression along the way using numpy and scipy. It was a fun class, and I look forward to teaching it again next Fall. You can see the course notes at <a href="https://github.com/jkitchin/f18-06623">https://github.com/jkitchin/f18-06623</a>. I ran this course using Jupyter notebooks (of course I wrote the notes in org-mode and used the jupyter notebook exporter I wrote to make these!) and Box.com. It worked, but wasn't my favorite. I will try to go back to Emacs+org-mode for this next year.
-</p>
-
-<p>
-This coming spring will be another new course: our junior Transport Lab course.
-</p>
-</div>
-</div>
-
-<div id="outline-container-orgf521ee8" class="outline-2">
-<h2 id="orgf521ee8"><span class="section-number-2">4</span> Emacs, org-mode and scimax</h2>
-<div class="outline-text-2" id="text-4">
-<p>
-org-ref has been downloaded close to 40K times! I thought it <a href="https://twitter.com/johnkitchin/status/1072555130850041856">passed 40K</a> early in December, but MELPA shows it with just under 40K today. They switched servers recently, so maybe some statistics were lost. If you count the Melpa-stable downloads, it is still over 40K. There are now over 50 contributors to org-ref besides me! That is pretty awesome, and hopefully speaks to the number of people interested in using Emacs for scientific publishing.
-</p>
-
-<p>
-This fall I picked up scimax development again after my sabbatical break, and have a few notable improvements I will launch in 2019. These include:
-</p>
-
-<ul class="org-ul">
-<li>Many improvements to ipython in scimax:
-<ul class="org-ul">
-<li>Code completion</li>
-<li>Inspection</li>
-<li>More jupyter-like features (?, ??) and key-bindings</li>
-<li>export to Jupyter notebooks</li>
-<li>src-block keymaps</li>
-<li>and more.</li>
-</ul></li>
-<li>A new editmarks package that will allow persistent comments, highlights, and track-change mode.</li>
-<li>Improved support for literate programming in org-mode including jump to the definition in org-mode.</li>
-</ul>
-
-<p>
-Scimax is an increasingly important project to me, and in 2019 I am going to work on some ways that will make it easier for me to spend more time on it in the future.
-</p>
-</div>
-</div>
-
-<div id="outline-container-orge03ea8f" class="outline-2">
-<h2 id="orge03ea8f"><span class="section-number-2">5</span> Online activity</h2>
-<div class="outline-text-2" id="text-5">
-</div>
-<div id="outline-container-org189de38" class="outline-3">
-<h3 id="org189de38"><span class="section-number-3">5.1</span> kitchingroup.cheme.cmu.edu</h3>
-<div class="outline-text-3" id="text-5-1">
-<p>
-Since I was on sabbatical, it was a low volume blogging year with only 22 posts. Traffic to the blog was up nonetheless from the last year. I suspect I will blog more this year.
-</p>
-
-
-<p>
-<img src="/media/date-30-12-2018-time-09-25-34.png"> 
-</p>
-</div>
-</div>
-
-
-
-<div id="outline-container-orgc1d2765" class="outline-3">
-<h3 id="orgc1d2765"><span class="section-number-3">5.2</span> Github</h3>
-<div class="outline-text-3" id="text-5-2">
-<p>
-I was even less active in 2018 than in 2017 on GitHub activity. You can see it picked back up this past fall as I returned to my day job as a professor. I expect 2019 will pick back up as usual.
-</p>
-
-<p>
-<img src="/media/date-30-12-2018-time-09-26-11.png"> 
-</p>
-</div>
-</div>
-
-<div id="outline-container-org08ef442" class="outline-3">
-<h3 id="org08ef442"><span class="section-number-3">5.3</span> YouTube</h3>
-<div class="outline-text-3" id="text-5-3">
-<p>
-Our <a href="https://studio.youtube.com/channel/UCQp2VLAOlvq142YN3JO3y8w/analytics/tab-overview/period-year?utm_campaign=upgrade&amp;utm_medium=redirect&amp;utm_source=/analytics">YouTube traffic</a> is down this year compared to last year. It is still always interesting to see the spikes in traffic on the org-mode is awesome video. Maybe it got mentioned on Hacker News or something. I only made one video last year; I took a break while on sabbatical, and was busy this fall with a new course. Maybe 2019 will be a better year for that. I have some plans for new videos in the new year on ipython, and some updates in scimax.
-</p>
-
-<p>
-<img src="/media/date-30-12-2018-time-09-28-26.png"> 
-</p>
-
-<p>
-We did cross 1000 subscribers this year. That doesn't qualify my channel for monetization yet, you also need 4000 watch hours in the past year. Last year we only had 1466 hours, so not that close yet. Why am I interested in this? I am actively looking for ways to support scimax development, and this could be one way to do that.
-</p>
-</div>
-</div>
-
-<div id="outline-container-org552c652" class="outline-3">
-<h3 id="org552c652"><span class="section-number-3">5.4</span> Twitter</h3>
-<div class="outline-text-3" id="text-5-4">
-<p>
-It wasn't super easy to get all the Twitter data, I had to manually download the information from each month. Now that I have it, I did some analysis, so here it is. First we look at how many tweets, likes, retweets, etc. there were last year:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">import</span> csv
-<span style="color: #0000FF;">import</span> glob
-
-<span style="color: #BA36A5;">tweets</span> = 0
-<span style="color: #BA36A5;">impressions</span> = 0
-<span style="color: #BA36A5;">texts</span> = []
-<span style="color: #BA36A5;">times</span> = [] <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">times of the tweets</span>
-<span style="color: #BA36A5;">likes</span> = 0
-<span style="color: #BA36A5;">retweets</span> = 0
-<span style="color: #BA36A5;">replies</span> = 0
-
-<span style="color: #0000FF;">for</span> csvfile <span style="color: #0000FF;">in</span> glob.glob(<span style="color: #008000;">'*.csv'</span>):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">with</span> <span style="color: #006FE0;">open</span>(csvfile) <span style="color: #0000FF;">as</span> f:
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">reader</span> = csv.DictReader(f)
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">for</span> row <span style="color: #0000FF;">in</span> reader:
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">tweets</span> += 1
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">impressions</span> += <span style="color: #006FE0;">float</span>(row[<span style="color: #008000;">'impressions'</span>])
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">texts</span> += [row[<span style="color: #008000;">'Tweet text'</span>]]
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">times</span> += [row[<span style="color: #008000;">'time'</span>]]
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">likes</span> += <span style="color: #006FE0;">float</span>(row[<span style="color: #008000;">'likes'</span>])
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">replies</span> += <span style="color: #006FE0;">float</span>(row[<span style="color: #008000;">'replies'</span>])
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">retweets</span> += <span style="color: #006FE0;">float</span>(row[<span style="color: #008000;">'retweets'</span>])
-
-<span style="color: #0000FF;">print</span>(f<span style="color: #008000;">'''{tweets} Tweets with {int(impressions)} impressions.</span>
-<span style="color: #008000;">There were {int(likes)} likes, {int(retweets)} retweets, and {int(replies)} replies.'''</span>)
-</pre>
-</div>
-
-<p>
-471 Tweets with 282655 impressions.
-There were 1089 likes, 220 retweets, and 341 replies.
-</p>
-
-<p>
-Next, we look at the time distribution of these tweets. It seems like this should be easier to do (it probably is in Pandas).
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">import</span> datetime
-<span style="color: #0000FF;">import</span> numpy <span style="color: #0000FF;">as</span> np
-
-<span style="color: #BA36A5;">x</span> = np.array([datetime.datetime.strptime(time[0:-6], <span style="color: #008000;">"%Y-%m-%d %H:%M"</span>)
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> <span style="color: #0000FF;">for</span> time <span style="color: #0000FF;">in</span> times])
-
-<span style="color: #BA36A5;">months</span> = np.zeros(12)
-<span style="color: #0000FF;">for</span> time <span style="color: #0000FF;">in</span> x:
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">months</span>[time.month - 1] += 1
-
-plt.bar(np.arange(12), months)
-plt.xticks(np.arange(12), [<span style="color: #008000;">'January'</span>, <span style="color: #008000;">'February'</span>, <span style="color: #008000;">'March'</span>,
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>  <span style="color: #008000;">'April'</span>, <span style="color: #008000;">'May'</span>, <span style="color: #008000;">'June'</span>,
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>  <span style="color: #008000;">'July'</span>, <span style="color: #008000;">'August'</span>, <span style="color: #008000;">'September'</span>,
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>  <span style="color: #008000;">'October'</span>, <span style="color: #008000;">'November'</span>, <span style="color: #008000;">'December'</span>],
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>  rotation=45);
-plt.ylabel(<span style="color: #008000;">'Tweet count'</span>)
-</pre>
-</div>
-
-<p>
-<img src="/media/cdc7d711087c709e77a3f6d76ca7f635-2070zAJ.png"> 
-</p>
-</div>
-</div>
-</div>
-<div id="outline-container-org9d4a3c6" class="outline-2">
-<h2 id="org9d4a3c6"><span class="section-number-2">6</span> Summary and outlook</h2>
-<div class="outline-text-2" id="text-6">
-<p>
-2018 was a pretty good year. I took a break from several things I have spent a lot of time in the past and learned some new things I spend my time on now. I am looking forward to getting back to some of the old things, especially scimax development. I still think it is a key component of modern scientific research and publishing, and that it has an important role in education. Stay tuned!
-</p>
-</div>
-</div>
-<p>Copyright (C) 2018 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2018/12/31/2018-in-a-nutshell-for-the-Kitchin-Research-Group.org">org-mode source</a></p>
-<p>Org-mode version = 9.1.14</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2018/12/31/2018-in-a-nutshell-for-the-Kitchin-Research-Group#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="../2">Next Page »</a>
 
           </div>
@@ -1184,11 +1117,11 @@ plt.ylabel(<span style="color: #008000;">'Tweet count'</span>)
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2019/09/22/Solving-differential-algebraic-equations-with-help-from-autograd/">Solving differential algebraic equations with help from autograd</a></li>
       <li><a href="/blog/2019/09/13/Sensitivity-analysis-with-odeint-and-autograd/">Sensitivity analysis with odeint and autograd</a></li>
       <li><a href="/blog/2019/07/08/New-publication-in-SoftwareX/">New publication in SoftwareX</a></li>
       <li><a href="/blog/2019/03/12/An-improvement-for-figures-in-ipython-+-scimax/">An improvement for figures in ipython + scimax</a></li>
       <li><a href="/blog/2019/02/12/Using-results-from-one-code-block-in-another-org-mode/">Using results from one code block in another org-mode</a></li>
-      <li><a href="/blog/2018/12/31/2018-in-a-nutshell-for-the-Kitchin-Research-Group/">2018 in a nutshell for the Kitchin Research Group</a></li>
     </ul>
   </section>
 

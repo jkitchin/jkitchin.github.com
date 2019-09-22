@@ -12,11 +12,236 @@
     <title>The Kitchin Research Group</title>
     <link>http://jkitchin.github.io/blog</link>
     <description>Chemical Engineering at Carnegie Mellon University</description>
-    <pubDate>Fri, 13 Sep 2019 13:56:21 GMT</pubDate>
+    <pubDate>Sun, 22 Sep 2019 16:59:35 GMT</pubDate>
     <generator>Blogofile</generator>
     <sy:updatePeriod>hourly</sy:updatePeriod>
     <sy:updateFrequency>1</sy:updateFrequency>
     
+    <item>
+      <title>Solving differential algebraic equations with help from autograd</title>
+      <link>http://jkitchin.github.io/blog/2019/09/22/Solving-differential-algebraic-equations-with-help-from-autograd</link>
+      <pubDate>Sun, 22 Sep 2019 12:59:25 EDT</pubDate>
+      <category><![CDATA[autograd]]></category>
+      <category><![CDATA[ode]]></category>
+      <category><![CDATA[dae]]></category>
+      <guid isPermaLink="false">eATX_e4VOuQRCAt5B_CujmZtj4w=</guid>
+      <description>Solving differential algebraic equations with help from autograd</description>
+      <content:encoded><![CDATA[
+
+
+&lt;p&gt;
+This problem is adapted from one in "Problem Solving in Chemical Engineering with Numerical Methods, Michael B. Cutlip, Mordechai Shacham".
+&lt;/p&gt;
+
+&lt;p&gt;
+In the binary, batch distillation of benzene (1) and toluene (2), the moles of liquid \(L\) remaining as a function of the mole fraction of toluene (\(x_2\)) is expressed by:
+&lt;/p&gt;
+
+&lt;p&gt;
+\(\frac{dL}{dx_2} = \frac{L}{x_2 (k_2 - 1)}\)
+&lt;/p&gt;
+
+&lt;p&gt;
+where \(k_2\) is the vapor liquid equilibrium ratio for toluene. This can be computed as:
+&lt;/p&gt;
+
+&lt;p&gt;
+\(k_i = P_i / P\) where \(P_i = 10^{A_i + \frac{B_i}{T +C_i}}\) and that pressure is in mmHg, and the temperature is in degrees Celsius.
+&lt;/p&gt;
+
+&lt;p&gt;
+One difficulty in solving this problem is that the temperature is not constant; it changes with the composition. We know that the temperature changes to satisfy this constraint  \(k_1(T) x_1 + k_2(T) x_2 = 1\).
+&lt;/p&gt;
+
+&lt;p&gt;
+Sometimes, one can solve for T directly, and substitute it into the first ODE, but this is not a possibility here. One way you might solve this is to use the constraint to find \(T\) inside an ODE function, but that is tricky; nonlinear algebra solvers need a guess and don't always converge, or may converge to non-physical solutions. They also require iterative solutions, so they will be slower than an approach where we just have to integrate the solution.  A better way is to derive a second ODE \(dT/dx_2\) from the constraint.  The constraint is implicit in \(T\), so We  compute it as \(dT/dx_2 = -df/dx_2 / df/dT\) where \(f(x_2, T) = k_1(T) x_1 + k_2(T) x_2  - 1 = 0\). This equation is used to compute the bubble point temperature. Note, it is possible to derive these analytically, but who wants to?  We can use autograd to get those derivatives for us instead.
+&lt;/p&gt;
+
+&lt;p&gt;
+The following information is given:
+&lt;/p&gt;
+
+&lt;p&gt;
+The total pressure is fixed at 1.2 atm, and the distillation starts at \(x_2=0.4\). There are initially 100 moles in the distillation.
+&lt;/p&gt;
+
+&lt;table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides"&gt;
+
+
+&lt;colgroup&gt;
+&lt;col  class="org-left" /&gt;
+
+&lt;col  class="org-right" /&gt;
+
+&lt;col  class="org-right" /&gt;
+
+&lt;col  class="org-right" /&gt;
+&lt;/colgroup&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th scope="col" class="org-left"&gt;species&lt;/th&gt;
+&lt;th scope="col" class="org-right"&gt;A&lt;/th&gt;
+&lt;th scope="col" class="org-right"&gt;B&lt;/th&gt;
+&lt;th scope="col" class="org-right"&gt;C&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td class="org-left"&gt;benzene&lt;/td&gt;
+&lt;td class="org-right"&gt;6.90565&lt;/td&gt;
+&lt;td class="org-right"&gt;-1211.033&lt;/td&gt;
+&lt;td class="org-right"&gt;220.79&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-left"&gt;toluene&lt;/td&gt;
+&lt;td class="org-right"&gt;6.95464&lt;/td&gt;
+&lt;td class="org-right"&gt;-1344.8&lt;/td&gt;
+&lt;td class="org-right"&gt;219.482&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;
+We have to start by finding the initial temperature from the constraint.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; autograd.numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; autograd &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; grad
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; scipy.integrate &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; solve_ivp
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; scipy.optimize &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; fsolve
+%matplotlib inline
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; matplotlib.pyplot &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; plt
+
+&lt;span style="color: #BA36A5;"&gt;P&lt;/span&gt; = 760 * 1.2 &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;mmHg&lt;/span&gt;
+&lt;span style="color: #BA36A5;"&gt;A1&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;B1&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;C1&lt;/span&gt; = 6.90565, -1211.033,  220.79
+&lt;span style="color: #BA36A5;"&gt;A2&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;B2&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;C2&lt;/span&gt; = 6.95464, -1344.8, 219.482
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;k1&lt;/span&gt;(T):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; 10**(A1 + B1 / (C1 + T)) / P
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;k2&lt;/span&gt;(T):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; 10**(A2 + B2 / (C2 + T)) / P
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f&lt;/span&gt;(x2, T):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;x1&lt;/span&gt; = 1 - x2
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; k1(T) * x1 + k2(T) * x2 - 1
+
+T0, = fsolve(&lt;span style="color: #0000FF;"&gt;lambda&lt;/span&gt; T: f(0.4, T), 96)
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(f&lt;span style="color: #008000;"&gt;'The initial temperature is {T0:1.2f} degC.'&lt;/span&gt;)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+The initial temperature is 95.59 degC.
+&lt;/p&gt;
+
+&lt;p&gt;
+Next, we compute the derivative we need. This derivative is derived from the constraint, which should ensure that the temperature changes as required to maintain the constraint.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #BA36A5;"&gt;dfdx2&lt;/span&gt; = grad(f, 0)
+&lt;span style="color: #BA36A5;"&gt;dfdT&lt;/span&gt; = grad(f, 1)
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;dTdx2&lt;/span&gt;(x2, T):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; -dfdx2(x2, T) / dfdT(x2, T)
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;ode&lt;/span&gt;(x2, X):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;L&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;T&lt;/span&gt; = X
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;dLdx2&lt;/span&gt; = L / (x2 * (k2(T) - 1))
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; [dLdx2, dTdx2(x2, T)]
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Next we solve and plot the ODE.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #BA36A5;"&gt;x2span&lt;/span&gt; = (0.4, 0.8)
+&lt;span style="color: #BA36A5;"&gt;X0&lt;/span&gt; = (100, T0)
+&lt;span style="color: #BA36A5;"&gt;sol&lt;/span&gt; = solve_ivp(ode, x2span, X0, max_step=0.01)
+
+plt.plot(sol.t, sol.y.T)
+plt.legend([&lt;span style="color: #008000;"&gt;'L'&lt;/span&gt;, &lt;span style="color: #008000;"&gt;'T'&lt;/span&gt;]);
+plt.xlabel(&lt;span style="color: #008000;"&gt;'$x_2$'&lt;/span&gt;)
+plt.ylabel(&lt;span style="color: #008000;"&gt;'L, T'&lt;/span&gt;)
+&lt;span style="color: #BA36A5;"&gt;x2&lt;/span&gt; = sol.t
+&lt;span style="color: #BA36A5;"&gt;L&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;T&lt;/span&gt; = sol.y
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(f&lt;span style="color: #008000;"&gt;'At x2={x2[-1]:1.2f} there are {L[-1]:1.2f} moles of liquid left at {T[-1]:1.2f} degC'&lt;/span&gt;)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+At x2=0.80 there are 14.04 moles of liquid left at 108.57 degC
+&lt;/p&gt;
+
+&lt;pre class="example"&gt;
+&amp;lt;Figure size 432x288 with 1 Axes&amp;gt;
+&lt;/pre&gt;
+
+
+&lt;p&gt;
+&lt;figure&gt;&lt;img src="/media/a75e63c53e3c2cb02c40c808789084c337e174ff.png"&gt;&lt;/figure&gt; 
+&lt;/p&gt;
+
+&lt;p&gt;
+You can see that the liquid level drops, and the temperature rises.
+&lt;/p&gt;
+
+&lt;p&gt;
+Let's double check that the constraint is actually met. We do that qualitatively here by plotting it, and quantitatively by showing all values are close to 0.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #BA36A5;"&gt;constraint&lt;/span&gt; = k1(T) * (1 - x2) + k2(T) * x2 - 1
+plt.plot(x2, constraint)
+plt.ylim([-1, 1])
+plt.xlabel(&lt;span style="color: #008000;"&gt;'$x_2$'&lt;/span&gt;)
+plt.ylabel(&lt;span style="color: #008000;"&gt;'constraint value'&lt;/span&gt;)
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(np.allclose(constraint, np.zeros_like(constraint)))
+constraint
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+True
+&lt;/p&gt;
+
+&lt;pre class="example"&gt;
+array([ 2.22044605e-16,  4.44089210e-16,  2.22044605e-16,  0.00000000e+00,
+        1.11022302e-15,  0.00000000e+00,  6.66133815e-16,  0.00000000e+00,
+       -2.22044605e-16,  1.33226763e-15,  8.88178420e-16, -4.44089210e-16,
+        4.44089210e-16,  1.11022302e-15, -2.22044605e-16,  0.00000000e+00,
+       -2.22044605e-16, -1.11022302e-15,  4.44089210e-16,  0.00000000e+00,
+       -4.44089210e-16,  4.44089210e-16, -6.66133815e-16, -4.44089210e-16,
+        4.44089210e-16, -1.11022302e-16, -8.88178420e-16, -8.88178420e-16,
+       -9.99200722e-16, -3.33066907e-16, -7.77156117e-16, -2.22044605e-16,
+       -9.99200722e-16, -1.11022302e-15, -3.33066907e-16, -1.99840144e-15,
+       -1.33226763e-15, -2.44249065e-15, -1.55431223e-15, -6.66133815e-16,
+       -2.22044605e-16])
+&lt;/pre&gt;
+
+
+&lt;pre class="example"&gt;
+&amp;lt;Figure size 432x288 with 1 Axes&amp;gt;
+&lt;/pre&gt;
+
+
+&lt;p&gt;
+&lt;figure&gt;&lt;img src="/media/bb2b32002658b8724d214f2441c9f55a97c565c8.png"&gt;&lt;/figure&gt; 
+&lt;/p&gt;
+
+
+&lt;p&gt;
+So indeed, the constraint is met! Once again, autograd comes to the rescue in making a computable derivative from an algebraic constraint so that we can solve a DAE as a set of ODEs using our regular machinery. Nice work autograd!
+&lt;/p&gt;
+&lt;p&gt;Copyright (C) 2019 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
+&lt;p&gt;&lt;a href="/org/2019/09/22/Solving-differential-algebraic-equations-with-help-from-autograd.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Org-mode version = 9.2.3&lt;/p&gt;]]></content:encoded>
+    </item>
     <item>
       <title>Sensitivity analysis with odeint and autograd</title>
       <link>http://jkitchin.github.io/blog/2019/09/13/Sensitivity-analysis-with-odeint-and-autograd</link>
@@ -159,8 +384,8 @@ You can see the two results are visually indistinguishable. Even the code is pre
       <title>New publication in SoftwareX</title>
       <link>http://jkitchin.github.io/blog/2019/07/08/New-publication-in-SoftwareX</link>
       <pubDate>Mon, 08 Jul 2019 07:15:33 EDT</pubDate>
-      <category><![CDATA[news]]></category>
       <category><![CDATA[publication]]></category>
+      <category><![CDATA[news]]></category>
       <guid isPermaLink="false">fmIo7oU0ElRNK5iJCK9Iv9po1wY=</guid>
       <description>New publication in SoftwareX</description>
       <content:encoded><![CDATA[
@@ -264,8 +489,8 @@ x .dot. y = 1.3598389888491538
       <title>Using results from one code block in another org-mode</title>
       <link>http://jkitchin.github.io/blog/2019/02/12/Using-results-from-one-code-block-in-another-org-mode</link>
       <pubDate>Tue, 12 Feb 2019 09:20:58 EST</pubDate>
-      <category><![CDATA[emacs]]></category>
       <category><![CDATA[elisp]]></category>
+      <category><![CDATA[emacs]]></category>
       <category><![CDATA[orgmode]]></category>
       <guid isPermaLink="false">gzZgY5oqeB9thgLDRCfcJu-iwyw=</guid>
       <description>Using results from one code block in another org-mode</description>
@@ -988,8 +1213,8 @@ plt.ylabel(&lt;span style="color: #008000;"&gt;'Tweet count'&lt;/span&gt;)
       <link>http://jkitchin.github.io/blog/2018/11/16/Line-integrals-in-Python-with-autograd</link>
       <pubDate>Fri, 16 Nov 2018 08:39:44 EST</pubDate>
       <category><![CDATA[autograd]]></category>
-      <category><![CDATA[integration]]></category>
       <category><![CDATA[python]]></category>
+      <category><![CDATA[integration]]></category>
       <guid isPermaLink="false">8pnl2uSxymXf56S8frpp6psrwys=</guid>
       <description>Line integrals in Python with autograd</description>
       <content:encoded><![CDATA[
@@ -1783,156 +2008,6 @@ This is not faster than direct numerical integration. One benefit to this soluti
 &lt;p&gt;Copyright (C) 2018 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
 &lt;p&gt;&lt;a href="/org/2018/11/02/Solving-coupled-ODEs-with-a-neural-network-and-autograd.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
 &lt;p&gt;Org-mode version = 9.1.14&lt;/p&gt;]]></content:encoded>
-    </item>
-    <item>
-      <title>A differentiable ODE integrator for sensitivity analysis</title>
-      <link>http://jkitchin.github.io/blog/2018/10/11/A-differentiable-ODE-integrator-for-sensitivity-analysis</link>
-      <pubDate>Thu, 11 Oct 2018 12:13:01 EDT</pubDate>
-      <category><![CDATA[autograd]]></category>
-      <category><![CDATA[sensitivity]]></category>
-      <category><![CDATA[ode]]></category>
-      <guid isPermaLink="false">x1b-cquyAyl6Ic4uE4zs0jj8a6U=</guid>
-      <description>A differentiable ODE integrator for sensitivity analysis</description>
-      <content:encoded><![CDATA[
-
-
-&lt;p&gt;
-&lt;a href="http://kitchingroup.cheme.cmu.edu/blog/2018/10/10/Autograd-and-the-derivative-of-an-integral-function/"&gt;Last time&lt;/a&gt; I wrote about using automatic differentiation to find the derivative of an integral function. A related topic is finding derivatives of functions that are defined by differential equations. We typically use a numerical integrator to find solutions to these functions. Those leave us with numeric solutions which we then have to use to approximate derivatives. What if the integrator itself was differentiable? It is after all, just a program, and automatic differentiation should be able to tell us the derivatives of functions that use them. This is not a new idea, there is already a differentiable ODE solver in &lt;a href="https://www.tensorflow.org/versions/r1.1/api_docs/python/tf/contrib/integrate/odeint"&gt;Tensorflow&lt;/a&gt;. Here I will implement a simple Runge Kutta integrator and then show how we can use automatic differentiation to do &lt;i&gt;sensitivity analysis&lt;/i&gt; on the numeric solution.
-&lt;/p&gt;
-
-&lt;p&gt;
-I previously used autograd for sensitivity analysis on &lt;i&gt;analytical&lt;/i&gt; solutions in this &lt;a href="http://kitchingroup.cheme.cmu.edu/blog/2017/11/15/Sensitivity-analysis-using-automatic-differentiation-in-Python/"&gt;post&lt;/a&gt;. Here I will compare those results to the results from sensitivity analysis on the &lt;i&gt;numerical solutions&lt;/i&gt;.
-&lt;/p&gt;
-
-&lt;p&gt;
-First, we need an autograd compatible ODE integrator. Here is one implementation of a simple, fourth order Runge-Kutta integrator. Usually, I would use indexing to do this, but that was not compatible with autograd, so I just accumulate the solution. This is a limitation of autograd, and it is probably not an issue with Tensorflow, for example, or probably pytorch. Those are more sophisticated, and more difficult to use packages than autograd. Here I am just prototyping an idea, so we stick with autograd.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; autograd.numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
-&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; autograd &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; grad
-%matplotlib inline
-&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; matplotlib.pyplot &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; plt
-
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;rk4&lt;/span&gt;(f, tspan, y0, N=50):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;x&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;h&lt;/span&gt; = np.linspace(*tspan, N, retstep=&lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;)
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;y&lt;/span&gt; = []
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;y&lt;/span&gt; = y + [y0]
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; i &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; &lt;span style="color: #006FE0;"&gt;range&lt;/span&gt;(0, &lt;span style="color: #006FE0;"&gt;len&lt;/span&gt;(x) - 1):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;k1&lt;/span&gt; = h * f(x[i], y[i])
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;k2&lt;/span&gt; = h * f(x[i] + h / 2, y[i] + k1 / 2)
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;k3&lt;/span&gt; = h * f(x[i] + h / 2, y[i] + k2 / 2)
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;k4&lt;/span&gt; = h * f(x[i + 1], y[i] + k3)
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;y&lt;/span&gt; += [y[-1] + (k1 + (2 * k2) + (2 * k3) + k4) / 6]
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x, y
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-Now, we just check that it works as expected:
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython"&gt;&lt;span style="color: #BA36A5;"&gt;Ca0&lt;/span&gt; = 1.0
-&lt;span style="color: #BA36A5;"&gt;k1&lt;/span&gt; = &lt;span style="color: #BA36A5;"&gt;k_1&lt;/span&gt; = 3.0
-
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;dCdt&lt;/span&gt;(t, Ca):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; -k1 * Ca + k_1 * (Ca0 - Ca)
-
-&lt;span style="color: #BA36A5;"&gt;t&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;Ca&lt;/span&gt; = rk4(dCdt, (0, 0.5), Ca0)
-
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;analytical_A&lt;/span&gt;(t, k1, k_1):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; Ca0 / (k1 + k_1) * (k1 * np.exp(-(k1 + k_1) * t) + k_1)
-
-plt.plot(t, Ca, label=&lt;span style="color: #008000;"&gt;'RK4'&lt;/span&gt;)
-plt.plot(t, analytical_A(t, k1, k_1), &lt;span style="color: #008000;"&gt;'r--'&lt;/span&gt;, label=&lt;span style="color: #008000;"&gt;'analytical'&lt;/span&gt;)
-plt.xlabel(&lt;span style="color: #008000;"&gt;'t'&lt;/span&gt;)
-plt.ylabel(&lt;span style="color: #008000;"&gt;'[A]'&lt;/span&gt;)
-plt.xlim([0, 0.5])
-plt.ylim([0.5, 1])
-plt.legend()
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-&lt;img src="/media/6a1c5e4c896d855655b8da8b54214af3-90490Zdl.png"&gt; 
-&lt;/p&gt;
-
-&lt;p&gt;
-That looks fine, we cannot visually distinguish the two solutions, and they both look like Figure 1 in this &lt;a href="http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.428.6699&amp;amp;rep=rep1&amp;amp;type=pdf"&gt;paper&lt;/a&gt;. Note the analytical solution is not that complex, but it would not take much variation of the rate law to make this solution difficult to derive.
-&lt;/p&gt;
-
-&lt;p&gt;
-Next, to do sensitivity analysis, we need to define a function for \(A\) that depends on the rate constants, so we can take a derivative of it with respect to the parameters we want the sensitivity from. We seek the derivatives: \(\frac{dC_A}{dk_1}\) and \(\frac{dC_A}{dk_{-1}}\). Here is a function that does that. It will return the value of [A] at \(t\) given an initial concentration and the rate constants.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;A&lt;/span&gt;(Ca0, k1, k_1, t):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;dCdt&lt;/span&gt;(t, Ca):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; -k1 * Ca + k_1 * (Ca0 - Ca)
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;t&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;Ca_&lt;/span&gt; = rk4(dCdt, (0, t), Ca0)
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; Ca_[-1]
-
-&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;Here are the two derivatives we seek.&lt;/span&gt;
-&lt;span style="color: #BA36A5;"&gt;dCadk1&lt;/span&gt; = grad(A, 1)
-&lt;span style="color: #BA36A5;"&gt;dCadk_1&lt;/span&gt; = grad(A, 2)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-We also use autograd to get the derivatives from the analytical solution for comparison.
-&lt;/p&gt;
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython"&gt;&lt;span style="color: #BA36A5;"&gt;dAdk1&lt;/span&gt; = grad(analytical_A, 1)
-&lt;span style="color: #BA36A5;"&gt;dAdk_1&lt;/span&gt; = grad(analytical_A, 2)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-Now, we can plot the sensitivities over the time range and compare them. I use the list comprehensions here because the AD functions aren't vectorized.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython"&gt;&lt;span style="color: #BA36A5;"&gt;tspan&lt;/span&gt; = np.linspace(0, 0.5)
-
-&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;From the numerical solutions&lt;/span&gt;
-&lt;span style="color: #BA36A5;"&gt;k1_sensitivity&lt;/span&gt; = [dCadk1(1.0, 3.0, 3.0, t) &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; t &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; tspan]
-&lt;span style="color: #BA36A5;"&gt;k_1_sensitivity&lt;/span&gt; = [dCadk_1(1.0, 3.0, 3.0, t) &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; t &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; tspan]
-
-&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;from the analytical solutions&lt;/span&gt;
-&lt;span style="color: #BA36A5;"&gt;ak1_sensitivity&lt;/span&gt; = [dAdk1(t, 3.0, 3.0) &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; t &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; tspan]
-&lt;span style="color: #BA36A5;"&gt;ak_1_sensitivity&lt;/span&gt; = [dAdk_1(t, 3.0, 3.0) &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; t &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; tspan]
-
-plt.plot(tspan, np.&lt;span style="color: #006FE0;"&gt;abs&lt;/span&gt;(ak1_sensitivity), &lt;span style="color: #008000;"&gt;'b-'&lt;/span&gt;, label=&lt;span style="color: #008000;"&gt;'k1 analytical'&lt;/span&gt;)
-plt.plot(tspan, np.&lt;span style="color: #006FE0;"&gt;abs&lt;/span&gt;(k1_sensitivity), &lt;span style="color: #008000;"&gt;'y--'&lt;/span&gt;, label=&lt;span style="color: #008000;"&gt;'k1 numerical'&lt;/span&gt;)
-
-plt.plot(tspan, np.&lt;span style="color: #006FE0;"&gt;abs&lt;/span&gt;(ak_1_sensitivity), &lt;span style="color: #008000;"&gt;'r-'&lt;/span&gt;, label=&lt;span style="color: #008000;"&gt;'k_1 analytical'&lt;/span&gt;)
-plt.plot(tspan, np.&lt;span style="color: #006FE0;"&gt;abs&lt;/span&gt;(k_1_sensitivity), &lt;span style="color: #008000;"&gt;'k--'&lt;/span&gt;, label=&lt;span style="color: #008000;"&gt;'k_1 numerical'&lt;/span&gt;)
-
-plt.xlim([0, 0.5])
-plt.ylim([0, 0.1])
-plt.legend()
-plt.xlabel(&lt;span style="color: #008000;"&gt;'t'&lt;/span&gt;)
-plt.ylabel(&lt;span style="color: #008000;"&gt;'sensitivity'&lt;/span&gt;)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-&lt;img src="/media/6a1c5e4c896d855655b8da8b54214af3-90490mnr.png"&gt; 
-&lt;/p&gt;
-
-
-
-&lt;p&gt;
-The two approaches are indistinguishable on paper. I will note that it takes a lot longer to make the graph from the numerical solution than from the analytical solution because at each point you have to reintegrate the solution from the beginning, which is certainly not efficient. That is an implementation detail that could probably be solved, at the expense of making the code look different than the way I would normally think about the problem.
-&lt;/p&gt;
-
-&lt;p&gt;
-On the other hand, it is remarkable we get derivatives from the numerical solution, &lt;i&gt;and they look really good&lt;/i&gt;! That means we could do sensitivity analysis on more complex reactions, and still have a reasonable way to get sensitivity. The work here is a long way from that. My simple Runge-Kutta integrator isn't directly useful for systems of ODEs, it wouldn't work well on stiff problems, the step size isn't adaptive, etc. The Tensorflow implementation might be more suitable for this though, and maybe this post is motivation to learn how to use it!
-&lt;/p&gt;
-&lt;p&gt;Copyright (C) 2018 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
-&lt;p&gt;&lt;a href="/org/2018/10/11/A-differentiable-ODE-integrator-for-sensitivity-analysis.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
-&lt;p&gt;Org-mode version = 9.1.13&lt;/p&gt;]]></content:encoded>
     </item>
   </channel>
 </rss>

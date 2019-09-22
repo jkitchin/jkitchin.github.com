@@ -12,11 +12,236 @@
     <title>The Kitchin Research Group</title>
     <link>http://jkitchin.github.io/blog</link>
     <description>Chemical Engineering at Carnegie Mellon University</description>
-    <pubDate>Fri, 13 Sep 2019 13:56:21 GMT</pubDate>
+    <pubDate>Sun, 22 Sep 2019 16:59:35 GMT</pubDate>
     <generator>Blogofile</generator>
     <sy:updatePeriod>hourly</sy:updatePeriod>
     <sy:updateFrequency>1</sy:updateFrequency>
     
+    <item>
+      <title>Solving differential algebraic equations with help from autograd</title>
+      <link>http://jkitchin.github.io/blog/2019/09/22/Solving-differential-algebraic-equations-with-help-from-autograd</link>
+      <pubDate>Sun, 22 Sep 2019 12:59:25 EDT</pubDate>
+      <category><![CDATA[autograd]]></category>
+      <category><![CDATA[ode]]></category>
+      <category><![CDATA[dae]]></category>
+      <guid isPermaLink="false">eATX_e4VOuQRCAt5B_CujmZtj4w=</guid>
+      <description>Solving differential algebraic equations with help from autograd</description>
+      <content:encoded><![CDATA[
+
+
+&lt;p&gt;
+This problem is adapted from one in "Problem Solving in Chemical Engineering with Numerical Methods, Michael B. Cutlip, Mordechai Shacham".
+&lt;/p&gt;
+
+&lt;p&gt;
+In the binary, batch distillation of benzene (1) and toluene (2), the moles of liquid \(L\) remaining as a function of the mole fraction of toluene (\(x_2\)) is expressed by:
+&lt;/p&gt;
+
+&lt;p&gt;
+\(\frac{dL}{dx_2} = \frac{L}{x_2 (k_2 - 1)}\)
+&lt;/p&gt;
+
+&lt;p&gt;
+where \(k_2\) is the vapor liquid equilibrium ratio for toluene. This can be computed as:
+&lt;/p&gt;
+
+&lt;p&gt;
+\(k_i = P_i / P\) where \(P_i = 10^{A_i + \frac{B_i}{T +C_i}}\) and that pressure is in mmHg, and the temperature is in degrees Celsius.
+&lt;/p&gt;
+
+&lt;p&gt;
+One difficulty in solving this problem is that the temperature is not constant; it changes with the composition. We know that the temperature changes to satisfy this constraint  \(k_1(T) x_1 + k_2(T) x_2 = 1\).
+&lt;/p&gt;
+
+&lt;p&gt;
+Sometimes, one can solve for T directly, and substitute it into the first ODE, but this is not a possibility here. One way you might solve this is to use the constraint to find \(T\) inside an ODE function, but that is tricky; nonlinear algebra solvers need a guess and don't always converge, or may converge to non-physical solutions. They also require iterative solutions, so they will be slower than an approach where we just have to integrate the solution.  A better way is to derive a second ODE \(dT/dx_2\) from the constraint.  The constraint is implicit in \(T\), so We  compute it as \(dT/dx_2 = -df/dx_2 / df/dT\) where \(f(x_2, T) = k_1(T) x_1 + k_2(T) x_2  - 1 = 0\). This equation is used to compute the bubble point temperature. Note, it is possible to derive these analytically, but who wants to?  We can use autograd to get those derivatives for us instead.
+&lt;/p&gt;
+
+&lt;p&gt;
+The following information is given:
+&lt;/p&gt;
+
+&lt;p&gt;
+The total pressure is fixed at 1.2 atm, and the distillation starts at \(x_2=0.4\). There are initially 100 moles in the distillation.
+&lt;/p&gt;
+
+&lt;table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides"&gt;
+
+
+&lt;colgroup&gt;
+&lt;col  class="org-left" /&gt;
+
+&lt;col  class="org-right" /&gt;
+
+&lt;col  class="org-right" /&gt;
+
+&lt;col  class="org-right" /&gt;
+&lt;/colgroup&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th scope="col" class="org-left"&gt;species&lt;/th&gt;
+&lt;th scope="col" class="org-right"&gt;A&lt;/th&gt;
+&lt;th scope="col" class="org-right"&gt;B&lt;/th&gt;
+&lt;th scope="col" class="org-right"&gt;C&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td class="org-left"&gt;benzene&lt;/td&gt;
+&lt;td class="org-right"&gt;6.90565&lt;/td&gt;
+&lt;td class="org-right"&gt;-1211.033&lt;/td&gt;
+&lt;td class="org-right"&gt;220.79&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-left"&gt;toluene&lt;/td&gt;
+&lt;td class="org-right"&gt;6.95464&lt;/td&gt;
+&lt;td class="org-right"&gt;-1344.8&lt;/td&gt;
+&lt;td class="org-right"&gt;219.482&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;
+We have to start by finding the initial temperature from the constraint.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; autograd.numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; autograd &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; grad
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; scipy.integrate &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; solve_ivp
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; scipy.optimize &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; fsolve
+%matplotlib inline
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; matplotlib.pyplot &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; plt
+
+&lt;span style="color: #BA36A5;"&gt;P&lt;/span&gt; = 760 * 1.2 &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;mmHg&lt;/span&gt;
+&lt;span style="color: #BA36A5;"&gt;A1&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;B1&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;C1&lt;/span&gt; = 6.90565, -1211.033,  220.79
+&lt;span style="color: #BA36A5;"&gt;A2&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;B2&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;C2&lt;/span&gt; = 6.95464, -1344.8, 219.482
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;k1&lt;/span&gt;(T):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; 10**(A1 + B1 / (C1 + T)) / P
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;k2&lt;/span&gt;(T):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; 10**(A2 + B2 / (C2 + T)) / P
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f&lt;/span&gt;(x2, T):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;x1&lt;/span&gt; = 1 - x2
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; k1(T) * x1 + k2(T) * x2 - 1
+
+T0, = fsolve(&lt;span style="color: #0000FF;"&gt;lambda&lt;/span&gt; T: f(0.4, T), 96)
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(f&lt;span style="color: #008000;"&gt;'The initial temperature is {T0:1.2f} degC.'&lt;/span&gt;)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+The initial temperature is 95.59 degC.
+&lt;/p&gt;
+
+&lt;p&gt;
+Next, we compute the derivative we need. This derivative is derived from the constraint, which should ensure that the temperature changes as required to maintain the constraint.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #BA36A5;"&gt;dfdx2&lt;/span&gt; = grad(f, 0)
+&lt;span style="color: #BA36A5;"&gt;dfdT&lt;/span&gt; = grad(f, 1)
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;dTdx2&lt;/span&gt;(x2, T):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; -dfdx2(x2, T) / dfdT(x2, T)
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;ode&lt;/span&gt;(x2, X):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;L&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;T&lt;/span&gt; = X
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;dLdx2&lt;/span&gt; = L / (x2 * (k2(T) - 1))
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; [dLdx2, dTdx2(x2, T)]
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Next we solve and plot the ODE.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #BA36A5;"&gt;x2span&lt;/span&gt; = (0.4, 0.8)
+&lt;span style="color: #BA36A5;"&gt;X0&lt;/span&gt; = (100, T0)
+&lt;span style="color: #BA36A5;"&gt;sol&lt;/span&gt; = solve_ivp(ode, x2span, X0, max_step=0.01)
+
+plt.plot(sol.t, sol.y.T)
+plt.legend([&lt;span style="color: #008000;"&gt;'L'&lt;/span&gt;, &lt;span style="color: #008000;"&gt;'T'&lt;/span&gt;]);
+plt.xlabel(&lt;span style="color: #008000;"&gt;'$x_2$'&lt;/span&gt;)
+plt.ylabel(&lt;span style="color: #008000;"&gt;'L, T'&lt;/span&gt;)
+&lt;span style="color: #BA36A5;"&gt;x2&lt;/span&gt; = sol.t
+&lt;span style="color: #BA36A5;"&gt;L&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;T&lt;/span&gt; = sol.y
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(f&lt;span style="color: #008000;"&gt;'At x2={x2[-1]:1.2f} there are {L[-1]:1.2f} moles of liquid left at {T[-1]:1.2f} degC'&lt;/span&gt;)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+At x2=0.80 there are 14.04 moles of liquid left at 108.57 degC
+&lt;/p&gt;
+
+&lt;pre class="example"&gt;
+&amp;lt;Figure size 432x288 with 1 Axes&amp;gt;
+&lt;/pre&gt;
+
+
+&lt;p&gt;
+&lt;figure&gt;&lt;img src="/media/a75e63c53e3c2cb02c40c808789084c337e174ff.png"&gt;&lt;/figure&gt; 
+&lt;/p&gt;
+
+&lt;p&gt;
+You can see that the liquid level drops, and the temperature rises.
+&lt;/p&gt;
+
+&lt;p&gt;
+Let's double check that the constraint is actually met. We do that qualitatively here by plotting it, and quantitatively by showing all values are close to 0.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #BA36A5;"&gt;constraint&lt;/span&gt; = k1(T) * (1 - x2) + k2(T) * x2 - 1
+plt.plot(x2, constraint)
+plt.ylim([-1, 1])
+plt.xlabel(&lt;span style="color: #008000;"&gt;'$x_2$'&lt;/span&gt;)
+plt.ylabel(&lt;span style="color: #008000;"&gt;'constraint value'&lt;/span&gt;)
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(np.allclose(constraint, np.zeros_like(constraint)))
+constraint
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+True
+&lt;/p&gt;
+
+&lt;pre class="example"&gt;
+array([ 2.22044605e-16,  4.44089210e-16,  2.22044605e-16,  0.00000000e+00,
+        1.11022302e-15,  0.00000000e+00,  6.66133815e-16,  0.00000000e+00,
+       -2.22044605e-16,  1.33226763e-15,  8.88178420e-16, -4.44089210e-16,
+        4.44089210e-16,  1.11022302e-15, -2.22044605e-16,  0.00000000e+00,
+       -2.22044605e-16, -1.11022302e-15,  4.44089210e-16,  0.00000000e+00,
+       -4.44089210e-16,  4.44089210e-16, -6.66133815e-16, -4.44089210e-16,
+        4.44089210e-16, -1.11022302e-16, -8.88178420e-16, -8.88178420e-16,
+       -9.99200722e-16, -3.33066907e-16, -7.77156117e-16, -2.22044605e-16,
+       -9.99200722e-16, -1.11022302e-15, -3.33066907e-16, -1.99840144e-15,
+       -1.33226763e-15, -2.44249065e-15, -1.55431223e-15, -6.66133815e-16,
+       -2.22044605e-16])
+&lt;/pre&gt;
+
+
+&lt;pre class="example"&gt;
+&amp;lt;Figure size 432x288 with 1 Axes&amp;gt;
+&lt;/pre&gt;
+
+
+&lt;p&gt;
+&lt;figure&gt;&lt;img src="/media/bb2b32002658b8724d214f2441c9f55a97c565c8.png"&gt;&lt;/figure&gt; 
+&lt;/p&gt;
+
+
+&lt;p&gt;
+So indeed, the constraint is met! Once again, autograd comes to the rescue in making a computable derivative from an algebraic constraint so that we can solve a DAE as a set of ODEs using our regular machinery. Nice work autograd!
+&lt;/p&gt;
+&lt;p&gt;Copyright (C) 2019 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
+&lt;p&gt;&lt;a href="/org/2019/09/22/Solving-differential-algebraic-equations-with-help-from-autograd.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Org-mode version = 9.2.3&lt;/p&gt;]]></content:encoded>
+    </item>
     <item>
       <title>Sensitivity analysis with odeint and autograd</title>
       <link>http://jkitchin.github.io/blog/2019/09/13/Sensitivity-analysis-with-odeint-and-autograd</link>
@@ -489,8 +714,8 @@ This is not faster than direct numerical integration. One benefit to this soluti
       <link>http://jkitchin.github.io/blog/2018/10/11/A-differentiable-ODE-integrator-for-sensitivity-analysis</link>
       <pubDate>Thu, 11 Oct 2018 12:13:01 EDT</pubDate>
       <category><![CDATA[autograd]]></category>
-      <category><![CDATA[sensitivity]]></category>
       <category><![CDATA[ode]]></category>
+      <category><![CDATA[sensitivity]]></category>
       <guid isPermaLink="false">x1b-cquyAyl6Ic4uE4zs0jj8a6U=</guid>
       <description>A differentiable ODE integrator for sensitivity analysis</description>
       <content:encoded><![CDATA[
@@ -638,10 +863,10 @@ On the other hand, it is remarkable we get derivatives from the numerical soluti
       <title>Compressibility factor variation from the van der Waals equation by three different approaches</title>
       <link>http://jkitchin.github.io/blog/2018/10/07/Compressibility-factor-variation-from-the-van-der-Waals-equation-by-three-different-approaches</link>
       <pubDate>Sun, 07 Oct 2018 13:08:11 EDT</pubDate>
-      <category><![CDATA[nonlinear algebra]]></category>
-      <category><![CDATA[ode]]></category>
       <category><![CDATA[autograd]]></category>
       <category><![CDATA[python]]></category>
+      <category><![CDATA[ode]]></category>
+      <category><![CDATA[nonlinear algebra]]></category>
       <guid isPermaLink="false">nzuQ2552fiegwa_OqTuF-vQ3pMs=</guid>
       <description>Compressibility factor variation from the van der Waals equation by three different approaches</description>
       <content:encoded><![CDATA[
@@ -891,8 +1116,8 @@ Not surprisingly, this answer looks the same as the previous ones. I think this 
       <title>A new ode integrator function in scipy</title>
       <link>http://jkitchin.github.io/blog/2018/09/04/A-new-ode-integrator-function-in-scipy</link>
       <pubDate>Tue, 04 Sep 2018 21:20:58 EDT</pubDate>
-      <category><![CDATA[ode]]></category>
       <category><![CDATA[scipy]]></category>
+      <category><![CDATA[ode]]></category>
       <guid isPermaLink="false">e7L6DytRVe1VWizNIhScM2uYiQs=</guid>
       <description>A new ode integrator function in scipy</description>
       <content:encoded><![CDATA[
@@ -1265,8 +1490,8 @@ There are some interesting challenges for engineers to consider with this approa
       <title>Uncertainty in the solution of an ODE</title>
       <link>http://jkitchin.github.io/blog/2013/07/14/Uncertainty-in-the-solution-of-an-ODE</link>
       <pubDate>Sun, 14 Jul 2013 13:36:36 EDT</pubDate>
-      <category><![CDATA[ode]]></category>
       <category><![CDATA[uncertainty]]></category>
+      <category><![CDATA[ode]]></category>
       <guid isPermaLink="false">vgxLM1eNdDWFxYoYzKL_cdL_bP8=</guid>
       <description>Uncertainty in the solution of an ODE</description>
       <content:encoded><![CDATA[
@@ -1554,61 +1779,6 @@ plt.show()
 You can see the solution changes dramatically for different values of mu. The point here is not to understand why, but to show an easy way to study a parameterize ode with a nested function. Nested functions can be a great way to &amp;ldquo;share&amp;rdquo; variables between functions especially for ODE solving, and nonlinear algebra solving, or any other application where you need a lot of parameters defined in one function in another function.
 &lt;/p&gt;
 &lt;p&gt;Copyright (C) 2013 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;&lt;p&gt;&lt;a href="/org/2013/02/27/Another-way-to-parameterize-an-ODE---nested-function.org"&gt;org-mode source&lt;/a&gt;&lt;p&gt;]]></content:encoded>
-    </item>
-    <item>
-      <title>Yet another way to parameterize an ODE</title>
-      <link>http://jkitchin.github.io/blog/2013/02/27/Yet-another-way-to-parameterize-an-ODE</link>
-      <pubDate>Wed, 27 Feb 2013 14:31:44 EST</pubDate>
-      <category><![CDATA[ode]]></category>
-      <guid isPermaLink="false">0ShdfvBeKn5XbD-SY1Lh5FwYquI=</guid>
-      <description>Yet another way to parameterize an ODE</description>
-      <content:encoded><![CDATA[
-
-
-&lt;p&gt;
-&lt;a href="http://matlab.cheme.cmu.edu/2011/11/06/yet-another-way-to-parameterize-an-ode/" &gt;Matlab post&lt;/a&gt;
-
-We previously examined a way to parameterize an ODE. In those methods, we either used an anonymous function to parameterize an ode function, or we used a nested function that used variables from the shared workspace.
-&lt;/p&gt;
-
-&lt;p&gt;
-We want a convenient way to solve \(dCa/dt = -k Ca\) for multiple values of \(k\). Here we use a trick to pass a parameter to an ODE through the initial conditions. We expand the ode function definition to include this parameter, and set its derivative to zero, effectively making it a constant.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; np
-&lt;span style="color: #8b0000;"&gt;from&lt;/span&gt; scipy.integrate &lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; odeint
-&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; matplotlib.pyplot &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; plt
-
-&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;ode&lt;/span&gt;(F, t):
-    Ca, k = F
-    dCadt = -k * Ca
-    dkdt = 0.0
-    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; [dCadt, dkdt]
-
-tspan = np.linspace(0, 4)
-
-Ca0 = 1;
-K = [2.0, 3.0]
-&lt;span style="color: #8b0000;"&gt;for&lt;/span&gt; k &lt;span style="color: #8b0000;"&gt;in&lt;/span&gt; K:
-    F = odeint(ode, [Ca0, k], tspan)
-    Ca = F[:,0]
-    plt.plot(tspan, Ca, label=&lt;span style="color: #228b22;"&gt;'k={0}'&lt;/span&gt;.format(k))
-plt.xlabel(&lt;span style="color: #228b22;"&gt;'time'&lt;/span&gt;)
-plt.ylabel(&lt;span style="color: #228b22;"&gt;'$C_A$'&lt;/span&gt;)
-plt.legend(loc=&lt;span style="color: #228b22;"&gt;'best'&lt;/span&gt;)
-plt.savefig(&lt;span style="color: #228b22;"&gt;'images/ode-parameterized-1.png'&lt;/span&gt;)
-plt.show()
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;&lt;img src="/img/./images/ode-parameterized-1.png"&gt;&lt;p&gt;
-
-&lt;p&gt;
-I do not think this is a very elegant way to pass parameters around compared to the previous methods, but it nicely illustrates that there is more than one way to do it. And who knows, maybe it will be useful in some other context one day!
-&lt;/p&gt;
-&lt;p&gt;Copyright (C) 2013 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;&lt;p&gt;&lt;a href="/org/2013/02/27/Yet-another-way-to-parameterize-an-ODE.org"&gt;org-mode source&lt;/a&gt;&lt;p&gt;]]></content:encoded>
     </item>
   </channel>
 </rss>

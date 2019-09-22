@@ -84,6 +84,250 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Solving-differential-algebraic-equations-with-help-from-autograd"></div>
+      <h2 class="blog_post_title"><a href="/blog/2019/09/22/Solving-differential-algebraic-equations-with-help-from-autograd/" rel="bookmark" title="Permanent Link to Solving differential algebraic equations with help from autograd">Solving differential algebraic equations with help from autograd</a></h2>
+      <p><small><span class="blog_post_date">Posted September 22, 2019 at 12:59 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/ode/'>ode</a>, <a href='/blog/category/dae/'>dae</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2019/09/22/Solving-differential-algebraic-equations-with-help-from-autograd#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+This problem is adapted from one in "Problem Solving in Chemical Engineering with Numerical Methods, Michael B. Cutlip, Mordechai Shacham".
+</p>
+
+<p>
+In the binary, batch distillation of benzene (1) and toluene (2), the moles of liquid \(L\) remaining as a function of the mole fraction of toluene (\(x_2\)) is expressed by:
+</p>
+
+<p>
+\(\frac{dL}{dx_2} = \frac{L}{x_2 (k_2 - 1)}\)
+</p>
+
+<p>
+where \(k_2\) is the vapor liquid equilibrium ratio for toluene. This can be computed as:
+</p>
+
+<p>
+\(k_i = P_i / P\) where \(P_i = 10^{A_i + \frac{B_i}{T +C_i}}\) and that pressure is in mmHg, and the temperature is in degrees Celsius.
+</p>
+
+<p>
+One difficulty in solving this problem is that the temperature is not constant; it changes with the composition. We know that the temperature changes to satisfy this constraint  \(k_1(T) x_1 + k_2(T) x_2 = 1\).
+</p>
+
+<p>
+Sometimes, one can solve for T directly, and substitute it into the first ODE, but this is not a possibility here. One way you might solve this is to use the constraint to find \(T\) inside an ODE function, but that is tricky; nonlinear algebra solvers need a guess and don't always converge, or may converge to non-physical solutions. They also require iterative solutions, so they will be slower than an approach where we just have to integrate the solution.  A better way is to derive a second ODE \(dT/dx_2\) from the constraint.  The constraint is implicit in \(T\), so We  compute it as \(dT/dx_2 = -df/dx_2 / df/dT\) where \(f(x_2, T) = k_1(T) x_1 + k_2(T) x_2  - 1 = 0\). This equation is used to compute the bubble point temperature. Note, it is possible to derive these analytically, but who wants to?  We can use autograd to get those derivatives for us instead.
+</p>
+
+<p>
+The following information is given:
+</p>
+
+<p>
+The total pressure is fixed at 1.2 atm, and the distillation starts at \(x_2=0.4\). There are initially 100 moles in the distillation.
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-right" />
+
+<col  class="org-right" />
+
+<col  class="org-right" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">species</th>
+<th scope="col" class="org-right">A</th>
+<th scope="col" class="org-right">B</th>
+<th scope="col" class="org-right">C</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">benzene</td>
+<td class="org-right">6.90565</td>
+<td class="org-right">-1211.033</td>
+<td class="org-right">220.79</td>
+</tr>
+
+<tr>
+<td class="org-left">toluene</td>
+<td class="org-right">6.95464</td>
+<td class="org-right">-1344.8</td>
+<td class="org-right">219.482</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+We have to start by finding the initial temperature from the constraint.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">import</span> autograd.numpy <span style="color: #0000FF;">as</span> np
+<span style="color: #0000FF;">from</span> autograd <span style="color: #0000FF;">import</span> grad
+<span style="color: #0000FF;">from</span> scipy.integrate <span style="color: #0000FF;">import</span> solve_ivp
+<span style="color: #0000FF;">from</span> scipy.optimize <span style="color: #0000FF;">import</span> fsolve
+%matplotlib inline
+<span style="color: #0000FF;">import</span> matplotlib.pyplot <span style="color: #0000FF;">as</span> plt
+
+<span style="color: #BA36A5;">P</span> = 760 * 1.2 <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">mmHg</span>
+<span style="color: #BA36A5;">A1</span>, <span style="color: #BA36A5;">B1</span>, <span style="color: #BA36A5;">C1</span> = 6.90565, -1211.033,  220.79
+<span style="color: #BA36A5;">A2</span>, <span style="color: #BA36A5;">B2</span>, <span style="color: #BA36A5;">C2</span> = 6.95464, -1344.8, 219.482
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">k1</span>(T):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> 10**(A1 + B1 / (C1 + T)) / P
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">k2</span>(T):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> 10**(A2 + B2 / (C2 + T)) / P
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">f</span>(x2, T):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">x1</span> = 1 - x2
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> k1(T) * x1 + k2(T) * x2 - 1
+
+T0, = fsolve(<span style="color: #0000FF;">lambda</span> T: f(0.4, T), 96)
+<span style="color: #0000FF;">print</span>(f<span style="color: #008000;">'The initial temperature is {T0:1.2f} degC.'</span>)
+</pre>
+</div>
+
+<p>
+The initial temperature is 95.59 degC.
+</p>
+
+<p>
+Next, we compute the derivative we need. This derivative is derived from the constraint, which should ensure that the temperature changes as required to maintain the constraint.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #BA36A5;">dfdx2</span> = grad(f, 0)
+<span style="color: #BA36A5;">dfdT</span> = grad(f, 1)
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">dTdx2</span>(x2, T):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> -dfdx2(x2, T) / dfdT(x2, T)
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">ode</span>(x2, X):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">L</span>, <span style="color: #BA36A5;">T</span> = X
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">dLdx2</span> = L / (x2 * (k2(T) - 1))
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> [dLdx2, dTdx2(x2, T)]
+</pre>
+</div>
+
+<p>
+Next we solve and plot the ODE.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #BA36A5;">x2span</span> = (0.4, 0.8)
+<span style="color: #BA36A5;">X0</span> = (100, T0)
+<span style="color: #BA36A5;">sol</span> = solve_ivp(ode, x2span, X0, max_step=0.01)
+
+plt.plot(sol.t, sol.y.T)
+plt.legend([<span style="color: #008000;">'L'</span>, <span style="color: #008000;">'T'</span>]);
+plt.xlabel(<span style="color: #008000;">'$x_2$'</span>)
+plt.ylabel(<span style="color: #008000;">'L, T'</span>)
+<span style="color: #BA36A5;">x2</span> = sol.t
+<span style="color: #BA36A5;">L</span>, <span style="color: #BA36A5;">T</span> = sol.y
+<span style="color: #0000FF;">print</span>(f<span style="color: #008000;">'At x2={x2[-1]:1.2f} there are {L[-1]:1.2f} moles of liquid left at {T[-1]:1.2f} degC'</span>)
+</pre>
+</div>
+
+<p>
+At x2=0.80 there are 14.04 moles of liquid left at 108.57 degC
+</p>
+
+<pre class="example">
+&lt;Figure size 432x288 with 1 Axes&gt;
+</pre>
+
+
+<p>
+<figure><img src="/media/a75e63c53e3c2cb02c40c808789084c337e174ff.png"></figure> 
+</p>
+
+<p>
+You can see that the liquid level drops, and the temperature rises.
+</p>
+
+<p>
+Let's double check that the constraint is actually met. We do that qualitatively here by plotting it, and quantitatively by showing all values are close to 0.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #BA36A5;">constraint</span> = k1(T) * (1 - x2) + k2(T) * x2 - 1
+plt.plot(x2, constraint)
+plt.ylim([-1, 1])
+plt.xlabel(<span style="color: #008000;">'$x_2$'</span>)
+plt.ylabel(<span style="color: #008000;">'constraint value'</span>)
+<span style="color: #0000FF;">print</span>(np.allclose(constraint, np.zeros_like(constraint)))
+constraint
+</pre>
+</div>
+
+<p>
+True
+</p>
+
+<pre class="example">
+array([ 2.22044605e-16,  4.44089210e-16,  2.22044605e-16,  0.00000000e+00,
+        1.11022302e-15,  0.00000000e+00,  6.66133815e-16,  0.00000000e+00,
+       -2.22044605e-16,  1.33226763e-15,  8.88178420e-16, -4.44089210e-16,
+        4.44089210e-16,  1.11022302e-15, -2.22044605e-16,  0.00000000e+00,
+       -2.22044605e-16, -1.11022302e-15,  4.44089210e-16,  0.00000000e+00,
+       -4.44089210e-16,  4.44089210e-16, -6.66133815e-16, -4.44089210e-16,
+        4.44089210e-16, -1.11022302e-16, -8.88178420e-16, -8.88178420e-16,
+       -9.99200722e-16, -3.33066907e-16, -7.77156117e-16, -2.22044605e-16,
+       -9.99200722e-16, -1.11022302e-15, -3.33066907e-16, -1.99840144e-15,
+       -1.33226763e-15, -2.44249065e-15, -1.55431223e-15, -6.66133815e-16,
+       -2.22044605e-16])
+</pre>
+
+
+<pre class="example">
+&lt;Figure size 432x288 with 1 Axes&gt;
+</pre>
+
+
+<p>
+<figure><img src="/media/bb2b32002658b8724d214f2441c9f55a97c565c8.png"></figure> 
+</p>
+
+
+<p>
+So indeed, the constraint is met! Once again, autograd comes to the rescue in making a computable derivative from an algebraic constraint so that we can solve a DAE as a set of ODEs using our regular machinery. Nice work autograd!
+</p>
+<p>Copyright (C) 2019 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2019/09/22/Solving-differential-algebraic-equations-with-help-from-autograd.org">org-mode source</a></p>
+<p>Org-mode version = 9.2.3</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2019/09/22/Solving-differential-algebraic-equations-with-help-from-autograd#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Sensitivity-analysis-with-odeint-and-autograd"></div>
       <h2 class="blog_post_title"><a href="/blog/2019/09/13/Sensitivity-analysis-with-odeint-and-autograd/" rel="bookmark" title="Permanent Link to Sensitivity analysis with odeint and autograd">Sensitivity analysis with odeint and autograd</a></h2>
       <p><small><span class="blog_post_date">Posted September 13, 2019 at 09:56 AM</span> | categories:
@@ -594,7 +838,7 @@ This is not faster than direct numerical integration. One benefit to this soluti
       <div id="A-differentiable-ODE-integrator-for-sensitivity-analysis"></div>
       <h2 class="blog_post_title"><a href="/blog/2018/10/11/A-differentiable-ODE-integrator-for-sensitivity-analysis/" rel="bookmark" title="Permanent Link to A differentiable ODE integrator for sensitivity analysis">A differentiable ODE integrator for sensitivity analysis</a></h2>
       <p><small><span class="blog_post_date">Posted October 11, 2018 at 12:13 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/sensitivity/'>sensitivity</a>, <a href='/blog/category/ode/'>ode</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/ode/'>ode</a>, <a href='/blog/category/sensitivity/'>sensitivity</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2018/10/11/A-differentiable-ODE-integrator-for-sensitivity-analysis#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -763,7 +1007,7 @@ On the other hand, it is remarkable we get derivatives from the numerical soluti
       <div id="Compressibility-factor-variation-from-the-van-der-Waals-equation-by-three-different-approaches"></div>
       <h2 class="blog_post_title"><a href="/blog/2018/10/07/Compressibility-factor-variation-from-the-van-der-Waals-equation-by-three-different-approaches/" rel="bookmark" title="Permanent Link to Compressibility factor variation from the van der Waals equation by three different approaches">Compressibility factor variation from the van der Waals equation by three different approaches</a></h2>
       <p><small><span class="blog_post_date">Posted October 07, 2018 at 01:08 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/nonlinear-algebra/'>nonlinear algebra</a>, <a href='/blog/category/ode/'>ode</a>, <a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/python/'>python</a>, <a href='/blog/category/ode/'>ode</a>, <a href='/blog/category/nonlinear-algebra/'>nonlinear algebra</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2018/10/07/Compressibility-factor-variation-from-the-van-der-Waals-equation-by-three-different-approaches#disqus_thread">View Comments</a>
       <p><small><span class="blog_post_date">Updated October 07, 2018 at 01:15 PM</span></small>
       </small></p>
@@ -1023,282 +1267,6 @@ Not surprisingly, this answer looks the same as the previous ones. I think this 
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2018/10/07/Compressibility-factor-variation-from-the-van-der-Waals-equation-by-three-different-approaches#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="A-new-ode-integrator-function-in-scipy"></div>
-      <h2 class="blog_post_title"><a href="/blog/2018/09/04/A-new-ode-integrator-function-in-scipy/" rel="bookmark" title="Permanent Link to A new ode integrator function in scipy">A new ode integrator function in scipy</a></h2>
-      <p><small><span class="blog_post_date">Posted September 04, 2018 at 09:20 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/ode/'>ode</a>, <a href='/blog/category/scipy/'>scipy</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2018/09/04/A-new-ode-integrator-function-in-scipy#disqus_thread">View Comments</a>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-I learned recently about a new way to solve ODEs in scipy: <a href="https://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.solve_ivp.html">scipy.integrate.solve_ivp</a>. This new function is recommended instead of <code>scipy.integrate.odeint</code> for new code. This function caught my eye because it added functionality that was previously missing, and that I had written into my pycse package. That functionality is events.
-</p>
-
-<p>
-To explore how to use this new function, I will recreate an old <a href="http://kitchingroup.cheme.cmu.edu/blog/2013/01/28/Mimicking-ode-events-in-python/">blog post</a> where I used events to count the number of roots in a function. Spoiler alert: it may not be ready for production.
-</p>
-
-<p>
-The question at hand is how many roots are there in \(f(x) = x^3 + 6x^2 - 4x - 24\), and what are they. Now, I know there are three roots and that you can use <code>np.roots</code> for this, but that
-only works for polynomials. Here they are, so we know what we are looking for.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">import</span> numpy <span style="color: #0000FF;">as</span> np
-np.roots([1, 6, -4, -24])
-</pre>
-</div>
-
-<pre class="example">
-array([-6.,  2., -2.])
-
-</pre>
-
-<p>
-The point of this is to find a more general way to count roots in an interval. We do it by integrating the derivative of the function, and using an event function to  count when the function is equal to zero. First, we define the derivative:
-</p>
-
-<p>
-\(f'(x) = 3x^2 + 12x - 4\), and the value of our original function at some value that is the beginning of the range we want to consider, say \(f(-8) = -120\). Now, we have an ordinary differential equation that can be integrated. Our event function is simply, it is just the function value \(y\). In the next block, I include an optional t_eval arg so we can see the solution at more points.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">def</span> <span style="color: #006699;">fprime</span>(x, y):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> 3 * x**2 + 12 * x - 4
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">event</span>(x, y):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> y
-
-<span style="color: #0000FF;">import</span> numpy <span style="color: #0000FF;">as</span> np
-<span style="color: #0000FF;">from</span> scipy.integrate <span style="color: #0000FF;">import</span> solve_ivp
-<span style="color: #BA36A5;">sol</span> = solve_ivp(fprime, (-8, 4), np.array([-120]), t_eval=np.linspace(-8, 4, 10), events=[event])
-sol
-</pre>
-</div>
-
-<pre class="example">
- message: 'The solver successfully reached the interval end.'
-    nfev: 26
-    njev: 0
-     nlu: 0
-     sol: None
-  status: 0
- success: True
-       t: array([-8.        , -6.66666667, -5.33333333, -4.        , -2.66666667,
-      -1.33333333,  0.        ,  1.33333333,  2.66666667,  4.        ])
-t_events: [array([-6.])]
-       y: array([[-120.        ,  -26.96296296,   16.2962963 ,   24.        ,
-         10.37037037,  -10.37037037,  -24.        ,  -16.2962963 ,
-         26.96296296,  120.        ]])
-
-</pre>
-
-<div class="org-src-container">
-<pre class="src src-ipython">sol.t_events
-</pre>
-</div>
-
-<pre class="example">
-[array([-6.])]
-
-</pre>
-
-<p>
-Huh. That is not what I expected. There should be three values in sol.t_events, but there is only one. Looking at sol.y, you can see there are three sign changes, which means three zeros. The graph here confirms that.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython">%matplotlib inline
-<span style="color: #0000FF;">import</span> matplotlib.pyplot <span style="color: #0000FF;">as</span> plt
-plt.plot(sol.t, sol.y[0])
-</pre>
-</div>
-
-<pre class="example">
-[&lt;matplotlib.lines.Line2D at 0x151281d860&gt;]
-
-</pre>
-
-
-
-<p>
-<img src="/media/e56c3df20f7d52f874861f0041da6fd5-18185E.png"> 
-</p>
-
-<p>
-What appears to be happening is that the events are only called during the solver steps, which are <i>different</i> than the t_eval steps. It appears a workaround is to specify a max_step that can be taken by the solver to force the event functions to be evaluated more often. Adding this seems to create a new cryptic warning.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #BA36A5;">sol</span> = solve_ivp(fprime, (-8, 4), np.array([-120]), events=[event], max_step=1.0)
-sol
-</pre>
-</div>
-
-<pre class="example">
-/Users/jkitchin/anaconda/lib/python3.6/site-packages/scipy/integrate/_ivp/rk.py:145: RuntimeWarning: divide by zero encountered in double_scalars
-  max(1, SAFETY * error_norm ** (-1 / (order + 1))))
-
-
-</pre>
-
-<pre class="example">
- message: 'The solver successfully reached the interval end.'
-    nfev: 80
-    njev: 0
-     nlu: 0
-     sol: None
-  status: 0
- success: True
-       t: array([-8.        , -7.89454203, -6.89454203, -5.89454203, -4.89454203,
-      -3.89454203, -2.89454203, -1.89454203, -0.89454203,  0.10545797,
-       1.10545797,  2.10545797,  3.10545797,  4.        ])
-t_events: [array([-6., -2.,  2.])]
-       y: array([[-120.        , -110.49687882,  -38.94362768,    3.24237128,
-         22.06111806,   23.51261266,   13.59685508,   -1.68615468,
-        -16.33641662,  -24.35393074,  -19.73869704,    3.50928448,
-         51.39001383,  120.        ]])
-
-</pre>
-
-<div class="org-src-container">
-<pre class="src src-ipython">sol.t_events
-</pre>
-</div>
-
-<pre class="example">
-[array([-6., -2.,  2.])]
-
-</pre>
-
-<p>
-That is more like it. Here, I happen to know the answers, so we are safe setting a max_step of 1.0, but that feels awkward and unreliable. You don't want this max_step to be too small, because it probably makes for more computations. On the other hand, it can't be too large either because you might miss roots. It seems there is room for improvement on this.
-</p>
-
-<p>
-It also seems odd that the solve_ivp only returns the t_events, and not also the corresponding solution values. I guess in this case, we know the solution values are zero at t_events, but, supposing you instead were looking for a maximum value by getting a derivative that was equal to zero, you might end up getting stuck solving for it some how.
-</p>
-
-<p>
-Let's consider this parabola with a maximum at \(x=2\), where \(y=2\):
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #BA36A5;">x</span> = np.linspace(0, 4)
-plt.plot(x, 2 - (x - 2)**2)
-</pre>
-</div>
-
-<pre class="example">
-[&lt;matplotlib.lines.Line2D at 0x1512dad9e8&gt;]
-
-</pre>
-
-
-
-<p>
-<img src="/media/e56c3df20f7d52f874861f0041da6fd5-181K3p.png"> 
-</p>
-
-<p>
-We can find the maximum like this.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">def</span> <span style="color: #006699;">yprime</span>(x, y):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> -2  * (x - 2)
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">maxevent</span>(x, y):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> yprime(x, y)
-
-<span style="color: #BA36A5;">sol</span> = solve_ivp(yprime, (0, 4), np.array([-2]), events=[maxevent])
-sol
-</pre>
-</div>
-
-<pre class="example">
-/Users/jkitchin/anaconda/lib/python3.6/site-packages/scipy/integrate/_ivp/rk.py:145: RuntimeWarning: divide by zero encountered in double_scalars
-  max(1, SAFETY * error_norm ** (-1 / (order + 1))))
-
-
-</pre>
-
-<pre class="example">
- message: 'The solver successfully reached the interval end.'
-    nfev: 20
-    njev: 0
-     nlu: 0
-     sol: None
-  status: 0
- success: True
-       t: array([ 0.        ,  0.08706376,  0.95770136,  4.        ])
-t_events: [array([ 2.])]
-       y: array([[-2.        , -1.65932506,  0.91361355, -2.        ]])
-
-</pre>
-
-<p>
-Clearly, we found the maximum at x=2, but now what?  Re-solve the ODE and use t_eval with the t_events values? Use a fine t_eval array, and interpolate the solution? That doesn't seem smart. You could make the event terminal, so that it stops at the max, and then read off the last value, but this will not work if you want to count more than one maximum, for example.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #BA36A5;">maxevent.terminal</span> = <span style="color: #D0372D;">True</span>
-solve_ivp(yprime, (0, 4), (-2,), events=[maxevent])
-</pre>
-</div>
-
-<pre class="example">
-/Users/jkitchin/anaconda/lib/python3.6/site-packages/scipy/integrate/_ivp/rk.py:145: RuntimeWarning: divide by zero encountered in double_scalars
-  max(1, SAFETY * error_norm ** (-1 / (order + 1))))
-
-
-</pre>
-
-<pre class="example">
- message: 'A termination event occurred.'
-    nfev: 20
-    njev: 0
-     nlu: 0
-     sol: None
-  status: 1
- success: True
-       t: array([ 0.        ,  0.08706376,  0.95770136,  2.        ])
-t_events: [array([ 2.])]
-       y: array([[-2.        , -1.65932506,  0.91361355,  2.        ]])
-
-</pre>
-
-<p>
-Internet: am I missing something obvious here?
-</p>
-<p>Copyright (C) 2018 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2018/09/04/A-new-ode-integrator-function-in-scipy.org">org-mode source</a></p>
-<p>Org-mode version = 9.1.13</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2018/09/04/A-new-ode-integrator-function-in-scipy#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="/blog/category/ode/2">Next Page »</a>
 
           </div>
@@ -1338,11 +1306,11 @@ Internet: am I missing something obvious here?
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2019/09/22/Solving-differential-algebraic-equations-with-help-from-autograd/">Solving differential algebraic equations with help from autograd</a></li>
       <li><a href="/blog/2019/09/13/Sensitivity-analysis-with-odeint-and-autograd/">Sensitivity analysis with odeint and autograd</a></li>
       <li><a href="/blog/2019/07/08/New-publication-in-SoftwareX/">New publication in SoftwareX</a></li>
       <li><a href="/blog/2019/03/12/An-improvement-for-figures-in-ipython-+-scimax/">An improvement for figures in ipython + scimax</a></li>
       <li><a href="/blog/2019/02/12/Using-results-from-one-code-block-in-another-org-mode/">Using results from one code block in another org-mode</a></li>
-      <li><a href="/blog/2018/12/31/2018-in-a-nutshell-for-the-Kitchin-Research-Group/">2018 in a nutshell for the Kitchin Research Group</a></li>
     </ul>
   </section>
 
