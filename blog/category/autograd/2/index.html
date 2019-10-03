@@ -84,6 +84,164 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Constrained-optimization-with-Lagrange-multipliers-and-autograd"></div>
+      <h2 class="blog_post_title"><a href="/blog/2018/11/03/Constrained-optimization-with-Lagrange-multipliers-and-autograd/" rel="bookmark" title="Permanent Link to Constrained optimization with Lagrange multipliers and autograd">Constrained optimization with Lagrange multipliers and autograd</a></h2>
+      <p><small><span class="blog_post_date">Posted November 03, 2018 at 09:39 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/optimization/'>optimization</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2018/11/03/Constrained-optimization-with-Lagrange-multipliers-and-autograd#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+Constrained optimization is common in engineering problems solving. A prototypical example (from Greenberg, Advanced Engineering Mathematics, Ch 13.7) is to find the point on a plane that is closest to the origin. The plane is defined by the equation \(2x - y + z = 3\), and we seek to minimize \(x^2 + y^2 + z^2\) subject to the equality constraint defined by the plane. <code>scipy.optimize.minimize</code> provides a pretty convenient interface to solve a problem like this, ans shown here.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">import</span> numpy <span style="color: #0000FF;">as</span> np
+<span style="color: #0000FF;">from</span> scipy.optimize <span style="color: #0000FF;">import</span> minimize
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">objective</span>(X):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">x</span>, <span style="color: #BA36A5;">y</span>, <span style="color: #BA36A5;">z</span> = X
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> x**2 + y**2 + z**2
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">eq</span>(X):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">x</span>, <span style="color: #BA36A5;">y</span>, <span style="color: #BA36A5;">z</span> = X
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> 2 * x - y + z - 3
+
+<span style="color: #BA36A5;">sol</span> = minimize(objective, [1, -0.5, 0.5], constraints={<span style="color: #008000;">'type'</span>: <span style="color: #008000;">'eq'</span>, <span style="color: #008000;">'fun'</span>: eq})
+sol
+</pre>
+</div>
+
+<pre class="example">
+    fun: 1.5
+    jac: array([ 2.00000001, -0.99999999,  1.00000001])
+message: 'Optimization terminated successfully.'
+   nfev: 5
+    nit: 1
+   njev: 1
+ status: 0
+success: True
+      x: array([ 1. , -0.5,  0.5])
+
+</pre>
+
+<p>
+I like the minimize function a lot, although I am not crazy for how the constraints are provided. The alternative used to be that there was an argument for equality constraints and another for inequality constraints. Analogous to <code>scipy.integrate.solve_ivp</code> event functions, they could have also used function attributes.
+</p>
+
+<p>
+Sometimes, it might be desirable to go back to basics though, especially if you are unaware of the <code>minimize</code> function or perhaps suspect it is not working right and want an independent answer. Next we look at how to construct this constrained optimization problem using Lagrange multipliers. This converts the problem into an augmented unconstrained optimization problem we can use <code>fsolve</code> on. The gist of this method is we formulate a new problem:
+</p>
+
+<p>
+\(F(X) = f(X) - \lambda g(X)\)
+</p>
+
+<p>
+and then solve the simultaneous resulting equations:
+</p>
+
+<p>
+\(F_x(X) = F_y(X) = F_z(X) = g(X) = 0\) where \(F_x\) is the derivative of \(f*\) with respect to \(x\), and \(g(X)\) is the equality constraint written so it is equal to zero. Since we end up with four equations that equal zero, we can simply use fsolve to get the solution. Many <a href="http://kitchingroup.cheme.cmu.edu/blog/2013/02/03/Using-Lagrange-multipliers-in-optimization/">years ago</a> I used a finite difference approximation to the derivatives. Today we use autograd to get the desired derivatives. Here it is.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">import</span> autograd.numpy <span style="color: #0000FF;">as</span> np
+<span style="color: #0000FF;">from</span> autograd <span style="color: #0000FF;">import</span> grad
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">F</span>(L):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #036A07;">'Augmented Lagrange function'</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">x</span>, <span style="color: #BA36A5;">y</span>, <span style="color: #BA36A5;">z</span>, <span style="color: #BA36A5;">_lambda</span> = L
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> objective([x, y, z]) - _lambda * eq([x, y, z])
+
+<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">Gradients of the Lagrange function</span>
+<span style="color: #BA36A5;">dfdL</span> = grad(F, 0)
+
+<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">Find L that returns all zeros in this function.</span>
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">obj</span>(L):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">x</span>, <span style="color: #BA36A5;">y</span>, <span style="color: #BA36A5;">z</span>, <span style="color: #BA36A5;">_lambda</span> = L
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">dFdx</span>, <span style="color: #BA36A5;">dFdy</span>, <span style="color: #BA36A5;">dFdz</span>, <span style="color: #BA36A5;">dFdlam</span> = dfdL(L)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> [dFdx, dFdy, dFdz, eq([x, y, z])]
+
+<span style="color: #0000FF;">from</span> scipy.optimize <span style="color: #0000FF;">import</span> fsolve
+<span style="color: #BA36A5;">x</span>, <span style="color: #BA36A5;">y</span>, <span style="color: #BA36A5;">z</span>, <span style="color: #BA36A5;">_lam</span> = fsolve(obj, [0.0, 0.0, 0.0, 1.0])
+<span style="color: #0000FF;">print</span>(f<span style="color: #008000;">'The answer is at {x, y, z}'</span>)
+</pre>
+</div>
+
+<pre class="example">
+The answer is at (1.0, -0.5, 0.5)
+
+
+</pre>
+
+<p>
+That is the same answer as before. Note we have still relied on some black box solver inside of fsolve (instead of inside minimize), but it might be more clear what problem we are solving (e.g. finding zeros). It takes a bit more work to set this up, since we have to construct the augmented function, but autograd makes it pretty convenient to set up the final objective function we want to solve.
+</p>
+
+<p>
+How do we know we are at a minimum? We can check that the Hessian is positive definite in the original function we wanted to minimize. You can see here the array is positive definite, e.g. all the eigenvalues are positive. autograd makes this easy too.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">from</span> autograd <span style="color: #0000FF;">import</span> hessian
+<span style="color: #BA36A5;">h</span> = hessian(objective, 0)
+h(np.array([x, y, z]))
+</pre>
+</div>
+
+<pre class="example">
+array([[ 2.,  0.,  0.],
+       [ 0.,  2.,  0.],
+       [ 0.,  0.,  2.]])
+
+</pre>
+
+<p>
+In case it isn't evident from that structure that the eigenvalues are all positive, here we compute them:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython">np.linalg.eig(h(np.array([x, y, z])))[0]
+</pre>
+</div>
+
+<pre class="example">
+array([ 2.,  2.,  2.])
+
+</pre>
+
+<p>
+In summary, autograd continues to enable advanced engineering problems to be solved.
+</p>
+<p>Copyright (C) 2018 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2018/11/03/Constrained-optimization-with-Lagrange-multipliers-and-autograd.org">org-mode source</a></p>
+<p>Org-mode version = 9.1.14</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2018/11/03/Constrained-optimization-with-Lagrange-multipliers-and-autograd#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Solving-coupled-ODEs-with-a-neural-network-and-autograd"></div>
       <h2 class="blog_post_title"><a href="/blog/2018/11/02/Solving-coupled-ODEs-with-a-neural-network-and-autograd/" rel="bookmark" title="Permanent Link to Solving coupled ODEs with a neural network and autograd">Solving coupled ODEs with a neural network and autograd</a></h2>
       <p><small><span class="blog_post_date">Posted November 02, 2018 at 07:53 PM</span> | categories:
@@ -997,324 +1155,6 @@ This approach also required some manipulation, but it is a standard one and that
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2018/10/09/Compressibility-variation-from-an-implicit-equation-of-state#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Getting-derivatives-from-implicit-functions-with-autograd"></div>
-      <h2 class="blog_post_title"><a href="/blog/2018/10/08/Getting-derivatives-from-implicit-functions-with-autograd/" rel="bookmark" title="Permanent Link to Getting derivatives from implicit functions with autograd">Getting derivatives from implicit functions with autograd</a></h2>
-      <p><small><span class="blog_post_date">Posted October 08, 2018 at 07:53 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2018/10/08/Getting-derivatives-from-implicit-functions-with-autograd#disqus_thread">View Comments</a>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<div id="table-of-contents">
-<h2>Table of Contents</h2>
-<div id="text-table-of-contents">
-<ul>
-<li><a href="#org1e7bbe1">1. Example 1</a></li>
-<li><a href="#org30374e2">2. Example 2</a></li>
-<li><a href="#orgc49e13d">3. Example 3</a></li>
-<li><a href="#org452c660">4. Example 4</a></li>
-<li><a href="#org67383a5">5. Example 5</a></li>
-<li><a href="#org0081ece">6. Example 6</a></li>
-<li><a href="#orgedd1f4b">7. Example 7</a></li>
-<li><a href="#orgb2b9394">8. Conclusions</a></li>
-</ul>
-</div>
-</div>
-<p>
-If we have an implicit function: \(f(x, y(x)) = 0\), but we want to compute the derivative \(dy/dx\) we can use the chain rule to derive:
-</p>
-
-<p>
-\(df/dx + df/dy dy/dx = 0\)
-</p>
-
-<p>
-We can then solve for \(dy/dx\):
-</p>
-
-<p>
-\(dy/dx = -df/dx / df/dy\) to get the desired derivative. The interesting point of this blog post is that we can get the two derivatives on the right hand side of this equation using automatic differentiation of the function \(f(x, y)\)! There are a few examples of analytical approaches to derivatives from implicit functions <a href="https://www.math.ucdavis.edu/~kouba/CalcOneDIRECTORY/implicitdiffdirectory/ImplicitDiff.html">here</a>, and I wanted to explore them with autograd in this post.
-</p>
-
-<p>
-In the following examples, we will assume that \(y\) is a function of \(x\) and that \(x\) is independent. We will consider a series of implicit equations, compute \(dy/dx\) using autograd from the formula above, and compare them to the analytical results in the web page referenced above.
-</p>
-
-<p>
-The \(dy/dx\) functions generally depend on both \(x\), and \(y\). Technically, these are the derivatives along the curve \(y(x)\), but since we can evaluate them at any points, we will use some random points for \(x\) and \(y\) to test for equality between the analytical derivatives and the autograd derivatives. This isn't a rigorous proof of equality, but it is the only thing that makes sense to do for now. It is assumed that if these points are ok, all the others are too. That might be a broad claim, since we only sample \(x\) and \(y\) from 0 to 1 here but the approach is general. Here are the imports and the random test points for all the examples that follow.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">import</span> autograd.numpy <span style="color: #0000FF;">as</span> np
-<span style="color: #0000FF;">from</span> autograd <span style="color: #0000FF;">import</span> grad
-
-<span style="color: #BA36A5;">xr</span> = np.random.random(50)
-<span style="color: #BA36A5;">yr</span> = np.random.random(50)
-</pre>
-</div>
-
-
-<div id="outline-container-org1e7bbe1" class="outline-2">
-<h2 id="org1e7bbe1"><span class="section-number-2">1</span> Example 1</h2>
-<div class="outline-text-2" id="text-1">
-<p>
-\(x^3 + y^3 = 4\)
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">def</span> <span style="color: #006699;">f1</span>(x, y):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> x**3 + y**3 - 4
-
-<span style="color: #BA36A5;">D1x</span> = grad(f1, 0)
-<span style="color: #BA36A5;">D1y</span> = grad(f1, 1)
-
-<span style="color: #BA36A5;">dydx_1</span> = <span style="color: #0000FF;">lambda</span> x, y: -D1x(x, y) / D1y(x, y)
-<span style="color: #BA36A5;">dydx_1a</span> = <span style="color: #0000FF;">lambda</span> x, y: -x**2 / y**2
-
-np.allclose(dydx_1a(xr, yr),
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>[dydx_1(_xr, _yr) <span style="color: #0000FF;">for</span> _xr, _yr <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">zip</span>(xr, yr)])
-</pre>
-</div>
-
-<pre class="example">
-True
-
-</pre>
-
-<p>
-The output of True means the autograd results and the analytical results are "all close", i.e. within a tolerance the results are the same. The required derivatives of this are not that difficult to derive, but it is nice to see a simple example that "just works". A subtle point of the dydx function is that it is not <i>vectorized</i> which is why I used a list comprehension to evaluate all the points. It might be possible to make a pseudo-vectorized version with the np.vectorize decorator, but that is not of interest here.
-</p>
-</div>
-</div>
-
-<div id="outline-container-org30374e2" class="outline-2">
-<h2 id="org30374e2"><span class="section-number-2">2</span> Example 2</h2>
-<div class="outline-text-2" id="text-2">
-<p>
-\((x - y)^2 = x + y - 1\)
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">def</span> <span style="color: #006699;">f2</span>(x, y):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> (x - y)**2 - x - y + 1
-
-<span style="color: #BA36A5;">D2x</span> = grad(f2, 0)
-<span style="color: #BA36A5;">D2y</span> = grad(f2, 1)
-
-<span style="color: #BA36A5;">dydx_2</span> = <span style="color: #0000FF;">lambda</span> x, y: -D2x(x, y) / D2y(x, y)
-<span style="color: #BA36A5;">dydx2_a</span> = <span style="color: #0000FF;">lambda</span> x, y: (2 * y - 2 * x + 1) / (2 * y - 2 * x - 1)
-
-np.allclose(dydx2_a(xr, yr),
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   [dydx_2(_xr, _yr) <span style="color: #0000FF;">for</span> _xr, _yr <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">zip</span>(xr, yr)])
-</pre>
-</div>
-
-<pre class="example">
-True
-
-</pre>
-
-<p>
-This also works.
-</p>
-</div>
-</div>
-
-<div id="outline-container-orgc49e13d" class="outline-2">
-<h2 id="orgc49e13d"><span class="section-number-2">3</span> Example 3</h2>
-<div class="outline-text-2" id="text-3">
-<p>
-\(y = sin(3x + 4y)\)
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">def</span> <span style="color: #006699;">f3</span>(x, y):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> y - np.sin(3 * x + 4 * y)
-
-
-<span style="color: #BA36A5;">D3x</span> = grad(f3, 0)
-<span style="color: #BA36A5;">D3y</span> = grad(f3, 1)
-
-<span style="color: #BA36A5;">dydx_3</span> = <span style="color: #0000FF;">lambda</span> x, y: -D3x(x, y) / D3y(x, y)
-<span style="color: #BA36A5;">dydx3_a</span> = <span style="color: #0000FF;">lambda</span> x, y: (3 * np.cos(3 * x + 4 * y)) / (1 - 4 * np.cos(3 * x + 4 * y))
-
-np.allclose(dydx3_a(xr, yr),
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   [dydx_3(_xr, _yr) <span style="color: #0000FF;">for</span> _xr, _yr <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">zip</span>(xr, yr)])
-</pre>
-</div>
-
-<pre class="example">
-True
-
-</pre>
-
-<p>
-Check.
-</p>
-</div>
-</div>
-
-<div id="outline-container-org452c660" class="outline-2">
-<h2 id="org452c660"><span class="section-number-2">4</span> Example 4</h2>
-<div class="outline-text-2" id="text-4">
-<p>
-\(y = x^2 y^3 + x^3 y^2\)
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">def</span> <span style="color: #006699;">f4</span>(x, y):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> y - x**2 * y**3 - x**3 * y**2
-
-
-<span style="color: #BA36A5;">D4x</span> = grad(f4, 0)
-<span style="color: #BA36A5;">D4y</span> = grad(f4, 1)
-
-<span style="color: #BA36A5;">dydx_4</span> = <span style="color: #0000FF;">lambda</span> x, y: -D4x(x, y) / D4y(x, y)
-<span style="color: #BA36A5;">dydx4_a</span> = <span style="color: #0000FF;">lambda</span> x, y: (2 * x * y**3 + 3 * x**2 * y**2) / (1 - 3 * x**2 * y**2 - 2 * x**3 * y)
-
-np.allclose(dydx4_a(xr, yr),
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   [dydx_4(_xr, _yr) <span style="color: #0000FF;">for</span> _xr, _yr <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">zip</span>(xr, yr)])
-</pre>
-</div>
-
-<pre class="example">
-True
-
-</pre>
-</div>
-</div>
-
-<div id="outline-container-org67383a5" class="outline-2">
-<h2 id="org67383a5"><span class="section-number-2">5</span> Example 5</h2>
-<div class="outline-text-2" id="text-5">
-<p>
-\(e^{xy} = e^{4x} - e^{5y}\)
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">def</span> <span style="color: #006699;">f5</span>(x, y):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> np.exp(4 * x) - np.exp(5 * y) - np.exp(x * y)
-
-<span style="color: #BA36A5;">D5x</span> = grad(f5, 0)
-<span style="color: #BA36A5;">D5y</span> = grad(f5, 1)
-
-<span style="color: #BA36A5;">dydx_5</span> = <span style="color: #0000FF;">lambda</span> x, y: -D5x(x, y) / D5y(x, y)
-<span style="color: #BA36A5;">dydx5_a</span> = <span style="color: #0000FF;">lambda</span> x, y: (4 * np.exp(4 * x) - y * np.exp(x * y)) / (x * np.exp(x * y) + 5 * np.exp(5 * y))
-
-np.allclose(dydx5_a(xr, yr),
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   [dydx_5(_xr, _yr) <span style="color: #0000FF;">for</span> _xr, _yr <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">zip</span>(xr, yr)])
-</pre>
-</div>
-
-<pre class="example">
-True
-
-</pre>
-
-<p>
-Also check.
-</p>
-</div>
-</div>
-
-<div id="outline-container-org0081ece" class="outline-2">
-<h2 id="org0081ece"><span class="section-number-2">6</span> Example 6</h2>
-<div class="outline-text-2" id="text-6">
-<p>
-\(\cos^2 x + cos^2 y = cos(2x + 2y)\)
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">def</span> <span style="color: #006699;">f6</span>(x, y):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> np.cos(x)**2 + np.cos(y)**2 - np.cos(2 * x + 2 * y)
-
-<span style="color: #BA36A5;">D6x</span> = grad(f6, 0)
-<span style="color: #BA36A5;">D6y</span> = grad(f6, 1)
-
-<span style="color: #BA36A5;">dydx_6</span> = <span style="color: #0000FF;">lambda</span> x, y: -D6x(x, y) / D6y(x, y)
-<span style="color: #BA36A5;">dydx6_a</span> = <span style="color: #0000FF;">lambda</span> x, y: (np.cos(x) * np.sin(x) - np.sin(2 * x + 2 * y)) / (np.sin(2 * x + 2 * y) - np.cos(y) * np.sin(y))
-
-np.allclose(dydx6_a(xr, yr),
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   [dydx_6(_xr, _yr) <span style="color: #0000FF;">for</span> _xr, _yr <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">zip</span>(xr, yr)])
-</pre>
-</div>
-
-<pre class="example">
-True
-
-</pre>
-
-<p>
-Check.
-</p>
-</div>
-</div>
-
-<div id="outline-container-orgedd1f4b" class="outline-2">
-<h2 id="orgedd1f4b"><span class="section-number-2">7</span> Example 7</h2>
-<div class="outline-text-2" id="text-7">
-<p>
-\(x = 3 + \sqrt{x^2 + y^2}\)
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">def</span> <span style="color: #006699;">f7</span>(x, y):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> 3 + np.sqrt(x**2 + y**2) - x
-
-<span style="color: #BA36A5;">D7x</span> = grad(f7, 0)
-<span style="color: #BA36A5;">D7y</span> = grad(f7, 1)
-
-<span style="color: #BA36A5;">dydx_7</span> = <span style="color: #0000FF;">lambda</span> x, y: -D7x(x, y) / D7y(x, y)
-<span style="color: #BA36A5;">dydx7_a</span> = <span style="color: #0000FF;">lambda</span> x, y: (np.sqrt(x**2 + y**2) - x) / y
-
-np.allclose(dydx7_a(xr, yr),
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   [dydx_7(_xr, _yr) <span style="color: #0000FF;">for</span> _xr, _yr <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">zip</span>(xr, yr)])
-</pre>
-</div>
-
-<pre class="example">
-True
-
-</pre>
-</div>
-</div>
-
-
-<div id="outline-container-orgb2b9394" class="outline-2">
-<h2 id="orgb2b9394"><span class="section-number-2">8</span> Conclusions</h2>
-<div class="outline-text-2" id="text-8">
-<p>
-There are a handful of other examples at the website referenced in the beginning, but I am stopping here. After seven examples of quantitative agreement between the easy to derive autograd derivatives, and the easy to moderately difficult analytical derivatives, it seems like it is autograd for the win here. This technique has some important implications for engineering calculations that I will explore in a future post. Until then, this is yet another interesting thing we can do with automatic differentiation!
-</p>
-</div>
-</div>
-<p>Copyright (C) 2018 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2018/10/08/Getting-derivatives-from-implicit-functions-with-autograd.org">org-mode source</a></p>
-<p>Org-mode version = 9.1.13</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2018/10/08/Getting-derivatives-from-implicit-functions-with-autograd#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="/blog/category/autograd/1">« Previous Page</a>
   --  
  <a href="/blog/category/autograd/3">Next Page »</a>
@@ -1356,11 +1196,11 @@ There are a handful of other examples at the website referenced in the beginning
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2019/10/02/Using-autograd-to-plot-implicit-functions/">Using autograd to plot implicit functions</a></li>
       <li><a href="/blog/2019/09/22/Solving-differential-algebraic-equations-with-help-from-autograd/">Solving differential algebraic equations with help from autograd</a></li>
       <li><a href="/blog/2019/09/13/Sensitivity-analysis-with-odeint-and-autograd/">Sensitivity analysis with odeint and autograd</a></li>
       <li><a href="/blog/2019/07/08/New-publication-in-SoftwareX/">New publication in SoftwareX</a></li>
       <li><a href="/blog/2019/03/12/An-improvement-for-figures-in-ipython-+-scimax/">An improvement for figures in ipython + scimax</a></li>
-      <li><a href="/blog/2019/02/12/Using-results-from-one-code-block-in-another-org-mode/">Using results from one code block in another org-mode</a></li>
     </ul>
   </section>
 

@@ -84,6 +84,293 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Curve-fitting-to-get-overlapping-peak-areas"></div>
+      <h2 class="blog_post_title"><a href="/blog/2013/01/29/Curve-fitting-to-get-overlapping-peak-areas/" rel="bookmark" title="Permanent Link to Curve fitting to get overlapping peak areas">Curve fitting to get overlapping peak areas</a></h2>
+      <p><small><span class="blog_post_date">Posted January 29, 2013 at 09:00 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/data-analysis/'>data analysis</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2013/01/29/Curve-fitting-to-get-overlapping-peak-areas#disqus_thread">View Comments</a>
+      <p><small><span class="blog_post_date">Updated February 27, 2013 at 02:45 PM</span></small>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+
+<p>
+Today we examine an approach to fitting curves to overlapping peaks to deconvolute them so we can estimate the area under each curve. We have a text file that contains data from a gas chromatograph with two peaks that overlap. We want the area under each peak to estimate the gas composition. You will see how to read the text file in, parse it to get the data for plotting and analysis, and then how to fit it.
+</p>
+
+
+<p>
+A line like &ldquo;# of Points        9969&rdquo; tells us the number of points we have to read. The data starts after a line containing &ldquo;R.Time        Intensity&rdquo;. Here we read the number of points, and then get the data into arrays.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
+<span style="color: #8b0000;">import</span> matplotlib.pyplot <span style="color: #8b0000;">as</span> plt
+
+datafile = <span style="color: #228b22;">'data/gc-data-21.txt'</span>
+
+i = 0
+<span style="color: #8b0000;">with</span> <span style="color: #8b0000;">open</span>(datafile) <span style="color: #8b0000;">as</span> f:
+    lines = f.readlines()
+
+<span style="color: #8b0000;">for</span> i,line <span style="color: #8b0000;">in</span> <span style="color: #8b0000;">enumerate</span>(lines):
+    <span style="color: #8b0000;">if</span> <span style="color: #228b22;">'# of Points'</span> <span style="color: #8b0000;">in</span> line:
+        npoints = <span style="color: #8b0000;">int</span>(line.split()[-1])
+    <span style="color: #8b0000;">elif</span> <span style="color: #228b22;">'R.Time        Intensity'</span> <span style="color: #8b0000;">in</span> line:
+        i += 1
+        <span style="color: #8b0000;">break</span>
+
+<span style="color: #ff0000; font-weight: bold;"># now get the data</span>
+t, intensity = [], []
+<span style="color: #8b0000;">for</span> j <span style="color: #8b0000;">in</span> <span style="color: #8b0000;">range</span>(i, i + npoints):
+    fields = lines[j].split()
+    t += [<span style="color: #8b0000;">float</span>(fields[0])]
+    intensity += [<span style="color: #8b0000;">int</span>(fields[1])]
+
+t = np.array(t)
+intensity = np.array(intensity)
+
+<span style="color: #ff0000; font-weight: bold;"># now plot the data in the relevant time frame</span>
+plt.plot(t, intensity)
+plt.xlim([4, 6])
+plt.xlabel(<span style="color: #228b22;">'Time (s)'</span>)
+plt.ylabel(<span style="color: #228b22;">'Intensity (arb. units)'</span>)
+plt.savefig(<span style="color: #228b22;">'images/deconvolute-1.png'</span>)
+</pre>
+</div>
+
+<pre class="example">
+&gt;&gt;&gt; &gt;&gt;&gt; &gt;&gt;&gt; &gt;&gt;&gt; &gt;&gt;&gt; ... ... &gt;&gt;&gt; ... ... ... ... ... ... &gt;&gt;&gt; ... &gt;&gt;&gt; ... ... ... ... &gt;&gt;&gt; &gt;&gt;&gt; &gt;&gt;&gt; &gt;&gt;&gt; ... [&lt;matplotlib.lines.Line2D object at 0x04CE6CF0&gt;]
+(4, 6)
+&lt;matplotlib.text.Text object at 0x04BBB950&gt;
+&lt;matplotlib.text.Text object at 0x04BD0A10&gt;
+</pre>
+
+<p><img src="/img/./images/deconvolute-1.png"><p>
+
+<p>
+You can see there is a non-zero baseline. We will normalize that by the average between 4 and 4.4 seconds.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python">intensity -= np.mean(intensity[(t&gt; 4) &amp; (t &lt; 4.4)])
+plt.figure()
+plt.plot(t, intensity)
+plt.xlim([4, 6])
+plt.xlabel(<span style="color: #228b22;">'Time (s)'</span>)
+plt.ylabel(<span style="color: #228b22;">'Intensity (arb. units)'</span>)
+plt.savefig(<span style="color: #228b22;">'./images/deconvolute-2.png'</span>)
+</pre>
+</div>
+
+<pre class="example">
+&lt;matplotlib.figure.Figure object at 0x04CF7950&gt;
+[&lt;matplotlib.lines.Line2D object at 0x04DF5C30&gt;]
+(4, 6)
+&lt;matplotlib.text.Text object at 0x04DDB690&gt;
+&lt;matplotlib.text.Text object at 0x04DE3630&gt;
+</pre>
+
+<p><img src="/img/./images/deconvolute-2.png"><p>
+
+<p>
+The peaks are asymmetric, decaying gaussian functions. We define a function for this 
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">from</span> scipy.special <span style="color: #8b0000;">import</span> erf
+
+<span style="color: #8b0000;">def</span> <span style="color: #8b2323;">asym_peak</span>(t, pars):
+    <span style="color: #228b22;">'from Anal. Chem. 1994, 66, 1294-1301'</span>
+    a0 = pars[0]  <span style="color: #ff0000; font-weight: bold;"># peak area</span>
+    a1 = pars[1]  <span style="color: #ff0000; font-weight: bold;"># elution time</span>
+    a2 = pars[2]  <span style="color: #ff0000; font-weight: bold;"># width of gaussian</span>
+    a3 = pars[3]  <span style="color: #ff0000; font-weight: bold;"># exponential damping term</span>
+    f = (a0/2/a3*np.exp(a2**2/2.0/a3**2 + (a1 - t)/a3)
+         *(erf((t-a1)/(np.sqrt(2.0)*a2) - a2/np.sqrt(2.0)/a3) + 1.0))
+    <span style="color: #8b0000;">return</span> f
+</pre>
+</div>
+
+<p>
+To get two peaks, we simply add two peaks together.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">def</span> <span style="color: #8b2323;">two_peaks</span>(t, *pars):    
+    <span style="color: #228b22;">'function of two overlapping peaks'</span>
+    a10 = pars[0]  <span style="color: #ff0000; font-weight: bold;"># peak area</span>
+    a11 = pars[1]  <span style="color: #ff0000; font-weight: bold;"># elution time</span>
+    a12 = pars[2]  <span style="color: #ff0000; font-weight: bold;"># width of gaussian</span>
+    a13 = pars[3]  <span style="color: #ff0000; font-weight: bold;"># exponential damping term</span>
+    a20 = pars[4]  <span style="color: #ff0000; font-weight: bold;"># peak area</span>
+    a21 = pars[5]  <span style="color: #ff0000; font-weight: bold;"># elution time</span>
+    a22 = pars[6]  <span style="color: #ff0000; font-weight: bold;"># width of gaussian</span>
+    a23 = pars[7]  <span style="color: #ff0000; font-weight: bold;"># exponential damping term   </span>
+    p1 = asym_peak(t, [a10, a11, a12, a13])
+    p2 = asym_peak(t, [a20, a21, a22, a23])
+    <span style="color: #8b0000;">return</span> p1 + p2
+</pre>
+</div>
+
+<p>
+To show the function is close to reasonable, we plot the fitting function with an initial guess for each parameter. The fit is not good, but we have only guessed the parameters for now. 
+</p>
+
+
+<div class="org-src-container">
+
+<pre class="src src-python">parguess = (1500, 4.85, 0.05, 0.05, 5000, 5.1, 0.05, 0.1)
+plt.figure()
+plt.plot(t, intensity)
+plt.plot(t,two_peaks(t, *parguess),<span style="color: #228b22;">'g-'</span>)
+plt.xlim([4, 6])
+plt.xlabel(<span style="color: #228b22;">'Time (s)'</span>)
+plt.ylabel(<span style="color: #228b22;">'Intensity (arb. units)'</span>)
+plt.savefig(<span style="color: #228b22;">'images/deconvolution-3.png'</span>)
+</pre>
+</div>
+
+<pre class="example">
+&lt;matplotlib.figure.Figure object at 0x04FEF690&gt;
+[&lt;matplotlib.lines.Line2D object at 0x05049870&gt;]
+[&lt;matplotlib.lines.Line2D object at 0x04FEFA90&gt;]
+(4, 6)
+&lt;matplotlib.text.Text object at 0x0502E210&gt;
+&lt;matplotlib.text.Text object at 0x050362B0&gt;
+</pre>
+
+
+<p><img src="/img/./images/deconvolution-3.png"><p>
+
+<p>
+Next, we use nonlinear curve fitting from scipy.optimize.curve_fit
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">from</span> scipy.optimize <span style="color: #8b0000;">import</span> curve_fit
+
+popt, pcov = curve_fit(two_peaks, t, intensity, parguess)
+<span style="color: #8b0000;">print</span> popt
+
+plt.plot(t, two_peaks(t, *popt), <span style="color: #228b22;">'r-'</span>)
+plt.legend([<span style="color: #228b22;">'data'</span>, <span style="color: #228b22;">'initial guess'</span>,<span style="color: #228b22;">'final fit'</span>])
+
+plt.savefig(<span style="color: #228b22;">'images/deconvolution-4.png'</span>)
+</pre>
+</div>
+
+<pre class="example">
+&gt;&gt;&gt; &gt;&gt;&gt; [  1.31039283e+03   4.87474330e+00   5.55414785e-02   2.50610175e-02
+   5.32556821e+03   5.14121507e+00   4.68236129e-02   1.04105615e-01]
+&gt;&gt;&gt; [&lt;matplotlib.lines.Line2D object at 0x0505BA10&gt;]
+&lt;matplotlib.legend.Legend object at 0x05286270&gt;
+</pre>
+
+<p><img src="/img/./images/deconvolution-4.png"><p>
+
+<p>
+The fits are not perfect. The small peak is pretty good, but there is an unphysical tail on the larger peak, and a small mismatch at the peak. There is not much to do about that, it means the model peak we are using is not a good model for the peak. We will still integrate the areas though.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python">pars1 = popt[0:4]
+pars2 = popt[4:8]
+
+peak1 = asym_peak(t, pars1)
+peak2 = asym_peak(t, pars2)
+
+area1 = np.trapz(peak1, t)
+area2 = np.trapz(peak2, t)
+
+<span style="color: #8b0000;">print</span> <span style="color: #228b22;">'Area 1 = {0:1.2f}'</span>.format(area1)
+<span style="color: #8b0000;">print</span> <span style="color: #228b22;">'Area 2 = {0:1.2f}'</span>.format(area2)
+
+<span style="color: #8b0000;">print</span> <span style="color: #228b22;">'Area 1 is {0:1.2%} of the whole area'</span>.format(area1/(area1 + area2))
+<span style="color: #8b0000;">print</span> <span style="color: #228b22;">'Area 2 is {0:1.2%} of the whole area'</span>.format(area2/(area1 + area2))
+
+plt.figure()
+plt.plot(t, intensity)
+plt.plot(t, peak1, <span style="color: #228b22;">'r-'</span>)
+plt.plot(t, peak2, <span style="color: #228b22;">'g-'</span>)
+plt.xlim([4, 6])
+plt.xlabel(<span style="color: #228b22;">'Time (s)'</span>)
+plt.ylabel(<span style="color: #228b22;">'Intensity (arb. units)'</span>)
+plt.legend([<span style="color: #228b22;">'data'</span>, <span style="color: #228b22;">'peak 1'</span>, <span style="color: #228b22;">'peak 2'</span>])
+plt.savefig(<span style="color: #228b22;">'images/deconvolution-5.png'</span>)
+</pre>
+</div>
+
+<pre class="example">
+&gt;&gt;&gt; &gt;&gt;&gt; &gt;&gt;&gt; &gt;&gt;&gt; &gt;&gt;&gt; &gt;&gt;&gt; &gt;&gt;&gt; &gt;&gt;&gt; Area 1 = 1310.39
+Area 2 = 5325.57
+&gt;&gt;&gt; Area 1 is 19.75% of the whole area
+Area 2 is 80.25% of the whole area
+&gt;&gt;&gt; &lt;matplotlib.figure.Figure object at 0x05286ED0&gt;
+[&lt;matplotlib.lines.Line2D object at 0x053A5AB0&gt;]
+[&lt;matplotlib.lines.Line2D object at 0x05291D30&gt;]
+[&lt;matplotlib.lines.Line2D object at 0x053B9810&gt;]
+(4, 6)
+&lt;matplotlib.text.Text object at 0x0529C4B0&gt;
+&lt;matplotlib.text.Text object at 0x052A3450&gt;
+&lt;matplotlib.legend.Legend object at 0x053B9ED0&gt;
+</pre>
+
+<p><img src="/img/./images/deconvolution-5.png"><p>
+
+<p>
+This sample was air, and the first peak is oxygen, and the second peak is nitrogen. we come pretty close to the actual composition of air, although it is low on the oxygen content. To do better, one would have to use a calibration curve.
+</p>
+
+<p>
+In the end, the overlap of the peaks is pretty small, but it is still difficult to reliably and reproducibly deconvolute them. By using an algorithm like we have demonstrated here, it is possible at least to make the deconvolution reproducible.
+</p>
+
+<div id="outline-container-1" class="outline-2">
+<h2 id="sec-1"><span class="section-number-2">1</span> Notable differences from Matlab</h2>
+<div class="outline-text-2" id="text-1">
+<ol>
+<li>The order of arguments to np.trapz is reversed. 
+</li>
+<li>The order of arguments to the fitting function scipy.optimize.curve_fit is different than in Matlab.
+</li>
+<li>The scipy.optimize.curve_fit function expects a fitting function that has all parameters as arguments, where Matlab expects a vector of parameters.
+</li>
+</ol>
+</div>
+</div>
+<p>Copyright (C) 2013 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2013/01/29/Curve-fitting-to-get-overlapping-peak-areas.org">org-mode source</a><p>
+
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2013/01/29/Curve-fitting-to-get-overlapping-peak-areas#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Mimicking-ode-events-in-python"></div>
       <h2 class="blog_post_title"><a href="/blog/2013/01/28/Mimicking-ode-events-in-python/" rel="bookmark" title="Permanent Link to Mimicking ode events in python">Mimicking ode events in python</a></h2>
       <p><small><span class="blog_post_date">Posted January 28, 2013 at 09:00 AM</span> | categories:
@@ -394,7 +681,7 @@ This example seemed a little easier in Matlab, where the quad function seemed to
       <div id="Polynomials-in-python"></div>
       <h2 class="blog_post_title"><a href="/blog/2013/01/22/Polynomials-in-python/" rel="bookmark" title="Permanent Link to Polynomials in python">Polynomials in python</a></h2>
       <p><small><span class="blog_post_date">Posted January 22, 2013 at 09:00 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/polynomials/'>polynomials</a>, <a href='/blog/category/math/'>math</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/math/'>math</a>, <a href='/blog/category/polynomials/'>polynomials</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2013/01/22/Polynomials-in-python#disqus_thread">View Comments</a>
       <p><small><span class="blog_post_date">Updated February 27, 2013 at 02:53 PM</span></small>
       </small></p>
@@ -756,68 +1043,6 @@ There are many other options for formatting strings. See <a href="http://docs.py
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2013/01/21/Controlling-the-format-of-printed-variables#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Integrating-equations-in-python"></div>
-      <h2 class="blog_post_title"><a href="/blog/2013/01/20/Integrating-equations-in-python/" rel="bookmark" title="Permanent Link to Integrating equations in python">Integrating equations in python</a></h2>
-      <p><small><span class="blog_post_date">Posted January 20, 2013 at 09:00 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/python/'>python</a>, <a href='/blog/category/integration/'>integration</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2013/01/20/Integrating-equations-in-python#disqus_thread">View Comments</a>
-      <p><small><span class="blog_post_date">Updated February 27, 2013 at 02:54 PM</span></small>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-
-<p>
-A common need in engineering calculations is to integrate an equation over some range to determine the total change. For example, say we know the volumetric flow changes with time according to \(d\nu/dt = \alpha t\), where \(\alpha = 1\) L/min and we want to know how much liquid flows into a tank over 10 minutes if the volumetric flowrate is \(\nu_0 = 5\) L/min at \(t=0\). The answer to that question is the value of this integral: \(V = \int_0^{10} \nu_0 + \alpha t dt\). 
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #8b0000;">import</span> scipy
-<span style="color: #8b0000;">from</span> scipy.integrate <span style="color: #8b0000;">import</span> quad
-
-nu0 = 5     <span style="color: #ff0000; font-weight: bold;"># L/min</span>
-alpha = 1.0 <span style="color: #ff0000; font-weight: bold;"># L/min</span>
-<span style="color: #8b0000;">def</span> <span style="color: #8b2323;">integrand</span>(t):
-    <span style="color: #8b0000;">return</span> nu0 + alpha * t
-
-t0 = 0.0
-tfinal = 10.0
-V, estimated_error = quad(integrand, t0, tfinal)
-<span style="color: #8b0000;">print</span>(<span style="color: #228b22;">'{0:1.2f} L flowed into the tank over 10 minutes'</span>.format(V))
-</pre>
-</div>
-
-<pre class="example">
-100.00 L flowed into the tank over 10 minutes
-</pre>
-
-<p>
-That is all there is too it!</p>
-<p>Copyright (C) 2013 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2013/01/20/Integrating-equations-in-python.org">org-mode source</a><p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2013/01/20/Integrating-equations-in-python#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="../107">« Previous Page</a>
   --  
  <a href="../109">Next Page »</a>
@@ -859,11 +1084,11 @@ That is all there is too it!</p>
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2019/10/02/Using-autograd-to-plot-implicit-functions/">Using autograd to plot implicit functions</a></li>
       <li><a href="/blog/2019/09/22/Solving-differential-algebraic-equations-with-help-from-autograd/">Solving differential algebraic equations with help from autograd</a></li>
       <li><a href="/blog/2019/09/13/Sensitivity-analysis-with-odeint-and-autograd/">Sensitivity analysis with odeint and autograd</a></li>
       <li><a href="/blog/2019/07/08/New-publication-in-SoftwareX/">New publication in SoftwareX</a></li>
       <li><a href="/blog/2019/03/12/An-improvement-for-figures-in-ipython-+-scimax/">An improvement for figures in ipython + scimax</a></li>
-      <li><a href="/blog/2019/02/12/Using-results-from-one-code-block-in-another-org-mode/">Using results from one code block in another org-mode</a></li>
     </ul>
   </section>
 
