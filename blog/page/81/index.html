@@ -83,6 +83,145 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Running-Aspen-via-Python"></div>
+      <h2 class="blog_post_title"><a href="/blog/2013/06/14/Running-Aspen-via-Python/" rel="bookmark" title="Permanent Link to Running Aspen via Python">Running Aspen via Python</a></h2>
+      <p><small><span class="blog_post_date">Posted June 14, 2013 at 10:23 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/programming/'>programming</a></span> | tags: <a href='/blog/tag/aspen/'>aspen</a>
+        | <a href="http://jkitchin.github.io/blog/2013/06/14/Running-Aspen-via-Python#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+
+<p>
+Aspen is a process modeling tool that simulates industrial processes. It has a GUI for setting up the flowsheet, defining all the stream inputs and outputs, and for running the simulation. For single calculations it is pretty convenient. For many calculations, all the pointing and clicking to change properties can be tedious, and difficult to reproduce. Here we show how to use Python to automate Aspen using the COM interface.
+</p>
+
+<p>
+We have an Aspen flowsheet setup for a flash operation. The feed consists of 91.095 mol% water and 8.905 mol% ethanol at 100 degF and 50 psia. 48.7488 lbmol/hr of the mixture is fed to the flash tank which is at 150 degF and 20 psia. We want to know the composition of the VAPOR and LIQUID streams. The simulation has been run once.
+</p>
+
+<p><img src="/img/./images/flash-flowsheet.png"><p>
+
+<p>
+This is an example that just illustrates it is possible to access data from a simulation that has been run. You have to know quite a bit about the Aspen flowsheet before writing this code. Particularly, you need to open the Variable Explorer to find the "path" to the variables that you want, and to know what the units are of those variables are.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">import</span> os
+<span style="color: #8b0000;">import</span> win32com.client <span style="color: #8b0000;">as</span> win32
+aspen = win32.Dispatch(<span style="color: #228b22;">'Apwn.Document'</span>)
+
+aspen.InitFromArchive2(os.path.abspath(<span style="color: #228b22;">'data\Flash_Example.bkp'</span>))
+
+<span style="color: #ff0000; font-weight: bold;">#</span><span style="color: #ff0000; font-weight: bold;"># Input variables</span>
+feed_temp = aspen.Tree.FindNode(<span style="color: #228b22;">'\Data\Streams\FEED\Input\TEMP\MIXED'</span>).Value
+<span style="color: #8b0000;">print</span> <span style="color: #228b22;">'Feed temperature was {0} degF'</span>.format(feed_temp)
+
+ftemp = aspen.Tree.FindNode(<span style="color: #228b22;">'\Data\Blocks\FLASH\Input\TEMP'</span>).Value
+<span style="color: #8b0000;">print</span> <span style="color: #228b22;">'Flash temperature = {0}'</span>.format(ftemp)
+
+<span style="color: #ff0000; font-weight: bold;">#</span><span style="color: #ff0000; font-weight: bold;"># Output variables</span>
+eL_out = aspen.Tree.FindNode(<span style="color: #228b22;">"\Data\Streams\LIQUID\Output\MOLEFLOW\MIXED\ETHANOL"</span>).Value
+wL_out = aspen.Tree.FindNode(<span style="color: #228b22;">"\Data\Streams\LIQUID\Output\MOLEFLOW\MIXED\WATER"</span>).Value
+
+eV_out = aspen.Tree.FindNode(<span style="color: #228b22;">"\Data\Streams\VAPOR\Output\MOLEFLOW\MIXED\ETHANOL"</span>).Value
+wV_out = aspen.Tree.FindNode(<span style="color: #228b22;">"\Data\Streams\VAPOR\Output\MOLEFLOW\MIXED\WATER"</span>).Value
+
+tot = aspen.Tree.FindNode(<span style="color: #228b22;">"\Data\Streams\FEED\Input\TOTFLOW\MIXED"</span>).Value
+
+<span style="color: #8b0000;">print</span> <span style="color: #228b22;">'Ethanol vapor mol flow: {0} lbmol/hr'</span>.format(eV_out)
+<span style="color: #8b0000;">print</span> <span style="color: #228b22;">'Ethanol liquid mol flow: {0} lbmol/hr'</span>.format(eL_out)
+
+<span style="color: #8b0000;">print</span> <span style="color: #228b22;">'Water vapor mol flow: {0} lbmol/hr'</span>.format(wV_out)
+<span style="color: #8b0000;">print</span> <span style="color: #228b22;">'Water liquid mol flow: {0} lbmol/hr'</span>.format(wL_out)
+
+<span style="color: #8b0000;">print</span> <span style="color: #228b22;">'Total = {0}. Total in = {1}'</span>.format(eV_out + eL_out + wV_out + wL_out,
+                                           tot)
+
+aspen.Close()
+</pre>
+</div>
+
+<pre class="example">
+Feed temperature was 100.0 degF
+Flash temperature = 150.0
+Ethanol vapor mol flow: 3.89668323 lbmol/hr
+Ethanol liquid mol flow: 0.444397241 lbmol/hr
+Water vapor mol flow: 0.774592763 lbmol/hr
+Water liquid mol flow: 43.6331268 lbmol/hr
+Total = 48.748800034. Total in = 48.7488
+</pre>
+
+<p>
+It is nice that we can read data from a simulation, but it would be helpful if we could change variable values and to rerun the simulations. That is possible. We simply set the value of the variable, and tell Aspen to rerun. Here, we will change the temperature of the Flash tank and plot the composition of the outlet streams as a function of that temperature.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #8b0000;">import</span> os
+<span style="color: #8b0000;">import</span> numpy <span style="color: #8b0000;">as</span> np
+<span style="color: #8b0000;">import</span> matplotlib.pyplot <span style="color: #8b0000;">as</span> plt
+<span style="color: #8b0000;">import</span> win32com.client <span style="color: #8b0000;">as</span> win32
+
+aspen = win32.Dispatch(<span style="color: #228b22;">'Apwn.Document'</span>)
+aspen.InitFromArchive2(os.path.abspath(<span style="color: #228b22;">'data\Flash_Example.bkp'</span>))
+
+T = np.linspace(150, 200, 10)
+
+x_ethanol, y_ethanol = [], []
+
+<span style="color: #8b0000;">for</span> temperature <span style="color: #8b0000;">in</span> T:
+    aspen.Tree.FindNode(<span style="color: #228b22;">'\Data\Blocks\FLASH\Input\TEMP'</span>).Value = temperature
+    aspen.Engine.Run2()
+
+    x_ethanol.append(aspen.Tree.FindNode(<span style="color: #228b22;">'\Data\Streams\LIQUID\Output\MOLEFRAC\MIXED\ETHANOL'</span>).Value)
+    y_ethanol.append(aspen.Tree.FindNode(<span style="color: #228b22;">'\Data\Streams\VAPOR\Output\MOLEFRAC\MIXED\ETHANOL'</span>).Value)
+
+plt.plot(T, y_ethanol, T, x_ethanol)
+plt.legend([<span style="color: #228b22;">'vapor'</span>, <span style="color: #228b22;">'liquid'</span>])
+plt.xlabel(<span style="color: #228b22;">'Flash Temperature (degF)'</span>)
+plt.ylabel(<span style="color: #228b22;">'Ethanol mole fraction'</span>)
+plt.savefig(<span style="color: #228b22;">'images/aspen-water-ethanol-flash.png'</span>)
+aspen.Close()
+</pre>
+</div>
+
+<p><img src="/img/./images/aspen-water-ethanol-flash.png"><p>
+
+
+<p>
+It takes about 30 seconds to run the previous example. Unfortunately, the way it is written, if you want to change anything, you have to run all of the calculations over again. How to avoid that is moderately tricky, and will be the subject of another example.
+</p>
+
+<p>
+In summary, it seems possible to do a lot with Aspen automation via python. This can also be done with Matlab, Excel, and other programming languages where COM automation is possible. The COM interface is not especially well documented, and you have to do a lot of digging to figure out some things. It is not clear how committed Aspen is to maintaining or improving the COM interface (<a href="http://www.chejunkie.com/aspen-plus/aspen-plus-activex-automation-server/">http://www.chejunkie.com/aspen-plus/aspen-plus-activex-automation-server/</a>). Hopefully they can keep it alive for power users who do not want to program in Excel!
+</p>
+<p>Copyright (C) 2013 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2013/06/14/Running-Aspen-via-Python.org">org-mode source</a><p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2013/06/14/Running-Aspen-via-Python#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Reading-and-writing-pdf-metadata"></div>
       <h2 class="blog_post_title"><a href="/blog/2013/06/13/Reading-and-writing-pdf-metadata/" rel="bookmark" title="Permanent Link to Reading and writing pdf metadata">Reading and writing pdf metadata</a></h2>
       <p><small><span class="blog_post_date">Posted June 13, 2013 at 10:19 AM</span> | categories:
@@ -335,7 +474,7 @@ You can see here that apply pressure decreases the equilibrium volume, and incre
       <div id="Constrained-fits-to-data"></div>
       <h2 class="blog_post_title"><a href="/blog/2013/06/11/Constrained-fits-to-data/" rel="bookmark" title="Permanent Link to Constrained fits to data">Constrained fits to data</a></h2>
       <p><small><span class="blog_post_date">Posted June 11, 2013 at 07:39 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/optimization/'>optimization</a>, <a href='/blog/category/data-analysis/'>data analysis</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/data-analysis/'>data analysis</a>, <a href='/blog/category/optimization/'>optimization</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2013/06/11/Constrained-fits-to-data#disqus_thread">View Comments</a>
       <p><small><span class="blog_post_date">Updated June 12, 2013 at 08:31 AM</span></small>
       </small></p>
@@ -656,100 +795,6 @@ If you look carefully, there are two blue points in the red region, which means 
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2013/06/06/What-region-is-a-point-in#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Getting-a-dictionary-of-counts"></div>
-      <h2 class="blog_post_title"><a href="/blog/2013/05/29/Getting-a-dictionary-of-counts/" rel="bookmark" title="Permanent Link to Getting a dictionary of counts">Getting a dictionary of counts</a></h2>
-      <p><small><span class="blog_post_date">Posted May 29, 2013 at 08:18 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/programming/'>programming</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2013/05/29/Getting-a-dictionary-of-counts#disqus_thread">View Comments</a>
-      <p><small><span class="blog_post_date">Updated May 29, 2013 at 08:20 PM</span></small>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-I frequently want to take a list and get a dictionary of keys that have the count of each element in the list. Here is how I have typically done this countless times in the past. 
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python">L = [<span style="color: #228b22;">'a'</span>, <span style="color: #228b22;">'a'</span>, <span style="color: #228b22;">'b'</span>,<span style="color: #228b22;">'d'</span>, <span style="color: #228b22;">'e'</span>, <span style="color: #228b22;">'b'</span>, <span style="color: #228b22;">'e'</span>, <span style="color: #228b22;">'a'</span>]
-
-d = {}
-<span style="color: #8b0000;">for</span> el <span style="color: #8b0000;">in</span> L:
-    <span style="color: #8b0000;">if</span> el <span style="color: #8b0000;">in</span> d:
-        d[el] += 1
-    <span style="color: #8b0000;">else:</span>
-        d[el] = 1
-
-<span style="color: #8b0000;">print</span> d
-</pre>
-</div>
-
-<pre class="example">
-{'a': 3, 'b': 2, 'e': 2, 'd': 1}
-</pre>
-
-<p>
-That seems like too much code, and that there must be a list comprehension approach combined with a dictionary constructor. 
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python">L = [<span style="color: #228b22;">'a'</span>, <span style="color: #228b22;">'a'</span>, <span style="color: #228b22;">'b'</span>,<span style="color: #228b22;">'d'</span>, <span style="color: #228b22;">'e'</span>, <span style="color: #228b22;">'b'</span>, <span style="color: #228b22;">'e'</span>, <span style="color: #228b22;">'a'</span>]
-
-<span style="color: #8b0000;">print</span> dict((el,L.count(el)) <span style="color: #8b0000;">for</span> el <span style="color: #8b0000;">in</span> L)
-</pre>
-</div>
-
-<pre class="example">
-{'a': 3, 'b': 2, 'e': 2, 'd': 1}
-</pre>
-
-<p>
-Wow, that is a lot simpler! I suppose for large lists this might be slow, since count must look through the list for each element, whereas the longer code looks at each element once, and does one conditional analysis.
-</p>
-
-<p>
-Here is another example of much shorter and cleaner code. 
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #8b0000;">from</span> collections <span style="color: #8b0000;">import</span> Counter
-L = [<span style="color: #228b22;">'a'</span>, <span style="color: #228b22;">'a'</span>, <span style="color: #228b22;">'b'</span>,<span style="color: #228b22;">'d'</span>, <span style="color: #228b22;">'e'</span>, <span style="color: #228b22;">'b'</span>, <span style="color: #228b22;">'e'</span>, <span style="color: #228b22;">'a'</span>]
-<span style="color: #8b0000;">print</span> Counter(L)
-<span style="color: #8b0000;">print</span> Counter(L)[<span style="color: #228b22;">'a'</span>]
-</pre>
-</div>
-
-<pre class="example">
-Counter({'a': 3, 'b': 2, 'e': 2, 'd': 1})
-3
-</pre>
-<p>Copyright (C) 2013 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2013/05/29/Getting-a-dictionary-of-counts.org">org-mode source</a><p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2013/05/29/Getting-a-dictionary-of-counts#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="../80">« Previous Page</a>
   --  
  <a href="../82">Next Page »</a>
@@ -792,10 +837,10 @@ Counter({'a': 3, 'b': 2, 'e': 2, 'd': 1})
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
       <li><a href="/blog/2021/06/21/New-publication-Machine-learning-accelerated-geometry-optimization-in-molecular-simulation/">New publication "Machine-learning accelerated geometry optimization in molecular simulation"</a></li>
+      <li><a href="/blog/2021/03/07/New-publication-Semi-grand-Canonical-Monte-Carlo-Simulation-of-the-Acrolein-induced-Surface-Segregation-and-Aggregation-of-AgPd-with-Machine-Learning-Surrogate-Models/">New publication - Semi-grand Canonical Monte Carlo Simulation of the Acrolein induced Surface Segregation and Aggregation of AgPd with Machine Learning Surrogate Models</a></li>
       <li><a href="/blog/2020/07/09/New-publication-SingleNN-Modified-Behler-Parrinello-Neural-Network-with-Shared-Weights-for-Atomistic-Simulations-with-Transferability/">New publication SingleNN - Modified Behler–Parrinello Neural Network with Shared Weights for Atomistic Simulations with Transferability</a></li>
       <li><a href="/blog/2019/10/02/Using-autograd-to-plot-implicit-functions/">Using autograd to plot implicit functions</a></li>
       <li><a href="/blog/2019/09/22/Solving-differential-algebraic-equations-with-help-from-autograd/">Solving differential algebraic equations with help from autograd</a></li>
-      <li><a href="/blog/2019/09/13/Sensitivity-analysis-with-odeint-and-autograd/">Sensitivity analysis with odeint and autograd</a></li>
     </ul>
   </section>
 

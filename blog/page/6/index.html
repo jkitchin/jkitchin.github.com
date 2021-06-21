@@ -83,10 +83,234 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Making-it-easier-to-extend-the-export-of-org-mode-links-with-generic-functions"></div>
+      <h2 class="blog_post_title"><a href="/blog/2018/05/09/Making-it-easier-to-extend-the-export-of-org-mode-links-with-generic-functions/" rel="bookmark" title="Permanent Link to Making it easier to extend the export of org-mode links with generic functions">Making it easier to extend the export of org-mode links with generic functions</a></h2>
+      <p><small><span class="blog_post_date">Posted May 09, 2018 at 07:49 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
+        | <a href="http://jkitchin.github.io/blog/2018/05/09/Making-it-easier-to-extend-the-export-of-org-mode-links-with-generic-functions#disqus_thread">View Comments</a>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+I am a big fan of org-mode links. Lately, I have had a need to modify how some links are exported, e.g. defining new exports for different backends, or fine-tuning a particular backend. This can be difficult, depending on how the link was set up. Here is a typical setup I am used to using, where the different options for the backends are handled in a conditional statement in a single function. I will just use a link that just serves to illustrate the issues here. These links are just sytactic sugar for markup, they don't do anything else. We start with an example that just converts text to italic text for different backends like html or latex.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">italic-link-export</span> (path desc backend)
+  (<span style="color: #0000FF;">cond</span>
+   ((eq 'html backend)
+    (format <span style="color: #008000;">"&lt;em&gt;%s&lt;/em&gt;"</span> path))
+   ((eq 'latex backend)
+    (format <span style="color: #008000;">"\\textit{%s}"</span> path))
+   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">fall-through case for everything else</span>
+   (t
+    path)))
+
+(org-link-set-parameters <span style="color: #008000;">"italic"</span> <span style="color: #006FE0;">:export</span> 'italic-link-export)
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">:export</td>
+<td class="org-left">italic-link-export</td>
+</tr>
+</tbody>
+</table>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(org-export-string-as <span style="color: #008000;">"italic:text"</span> 'html t)
+</pre>
+</div>
+
+<pre class="example">
+&lt;p&gt;
+&lt;em&gt;text&lt;/em&gt;&lt;/p&gt;
+
+</pre>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(org-export-string-as <span style="color: #008000;">"italic:text"</span> 'latex t)
+</pre>
+</div>
+
+<pre class="example">
+\textit{text}
+
+</pre>
+
+<p>
+This falls through though to the default case.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">ox-md</span>)
+(org-export-string-as <span style="color: #008000;">"italic:text"</span> 'md t)
+</pre>
+</div>
+
+<pre class="example">
+
+# Table of Contents
+
+
+
+text
+
+
+</pre>
+
+<p>
+The point I want to make here is that this is not easy to extend as a user. You have to either modify the italic-link-export function, advise it, or monkey-patch it. None of these are especially nice.
+</p>
+
+<p>
+I could define italic-link-export in a way that it retrieves the function to use from an alist or hash-table using the backend, but then you have to do two things to modify the behavior: define a backend specific function <i>and</i> register it in the lookup variable. It is also possible to just look up a function by a derived symbol, e.g. using fboundp, and then using funcall to execute it. This looks something like this:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">a user definable function for exporting to latex</span>
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">italic-link-export-latex</span> (path desc backend)
+  (format <span style="color: #008000;">"\\textit{%s}"</span> path))
+
+<span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">generic export function that looks up functions or defaults to</span>
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">italic-link-exporter</span> (path desc backend)
+  <span style="color: #036A07;">"Run `</span><span style="color: #D0372D;">italic-link-export-BACKEND</span><span style="color: #036A07;">' if it exists, or return path."</span>
+  (<span style="color: #0000FF;">let</span> ((func (intern-soft (format <span style="color: #008000;">"italic-link-export-%s"</span> backend))))
+    (<span style="color: #0000FF;">if</span> (fboundp func)
+        (funcall func path desc backend)
+      path)))
+</pre>
+</div>
+
+<p>
+This has some indirection, but allows you to just define new functions to add new export backends, or replace single backend exports. It isn't bad, but there is room for improvement.
+</p>
+
+<p>
+In this <a href="https://github.com/jkitchin/org-ref/issues/492#issuecomment-387806180">comment</a> in org-ref, I saw a new opportunity to address this issue using generic functions in elisp! The idea is to define a generic function that handles the general export case, and then define additional functions for each specific backend based on the signature of the export function. I will switch to bold markup for this.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">cl-defgeneric</span> <span style="color: #006699;">bold-link-export</span> (path desc backend)
+ <span style="color: #036A07;">"Generic function to export a bold link."</span>
+ path)
+
+<span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">this one runs when the backend is equal to html</span>
+(<span style="color: #0000FF;">cl-defmethod</span> <span style="color: #006699;">bold-link-export</span> ((path t) (desc t) (backend (eql html)))
+ (format <span style="color: #008000;">"&lt;b&gt;%s&lt;/b&gt;"</span> path))
+
+<span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">this one runs when the backend is equal to latex</span>
+(<span style="color: #0000FF;">cl-defmethod</span> <span style="color: #006699;">bold-link-export</span> ((path t) (desc t) (backend (eql latex)))
+ (format <span style="color: #008000;">"\\textit{%s}"</span> path))
+
+(org-link-set-parameters <span style="color: #008000;">"bold"</span> <span style="color: #006FE0;">:export</span> 'bold-link-export)
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">:export</td>
+<td class="org-left">bold-link-export</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Here it is in action:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(org-export-string-as <span style="color: #008000;">"some bold:text"</span> 'html t)
+</pre>
+</div>
+
+<pre class="example">
+&lt;p&gt;
+some &lt;b&gt;text&lt;/b&gt;&lt;/p&gt;
+
+</pre>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(org-export-string-as <span style="color: #008000;">"some bold:text"</span> 'latex t)
+</pre>
+</div>
+
+<p>
+This uses the generic function.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">ox-md</span>)
+(org-export-string-as <span style="color: #008000;">"some bold:text"</span> 'md t)
+</pre>
+</div>
+
+<pre class="example">
+
+# Table of Contents
+
+
+
+some text
+
+
+</pre>
+
+<p>
+The syntax for defining the generic function is pretty similar to a regular function. The specific methods are a little different since they have to provide the specific "signature" that triggers each method. Here we only differentiate on the type of the backend. It is nice these are all separate functions though. It makes it trivial to add new ones, and less intrusive to replace in my opinion.
+</p>
+
+<p>
+Generic functions have many other potential applications to replace functions that use lots of conditions to control flow, with a fall-through option at the end. You can learn more about them here: <a href="https://www.gnu.org/software/emacs/manual/html_node/elisp/Generic-Functions.html">https://www.gnu.org/software/emacs/manual/html_node/elisp/Generic-Functions.html</a>. There is a lot more to them than I have illustrated here.
+</p>
+<p>Copyright (C) 2018 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2018/05/09/Making-it-easier-to-extend-the-export-of-org-mode-links-with-generic-functions.org">org-mode source</a></p>
+<p>Org-mode version = 9.1.13</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+  <div class="after_post"><a href="http://jkitchin.github.io/blog/2018/05/09/Making-it-easier-to-extend-the-export-of-org-mode-links-with-generic-functions#disqus_thread">Read and Post Comments</a></div>
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="New-publication-in-Nature-Catalysis"></div>
       <h2 class="blog_post_title"><a href="/blog/2018/04/16/New-publication-in-Nature-Catalysis/" rel="bookmark" title="Permanent Link to New publication in Nature Catalysis">New publication in Nature Catalysis</a></h2>
       <p><small><span class="blog_post_date">Posted April 16, 2018 at 12:53 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/news/'>news</a>, <a href='/blog/category/publication/'>publication</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/publication/'>publication</a>, <a href='/blog/category/news/'>news</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2018/04/16/New-publication-in-Nature-Catalysis#disqus_thread">View Comments</a>
       <p><small><span class="blog_post_date">Updated April 16, 2018 at 12:55 PM</span></small>
       </small></p>
@@ -151,7 +375,7 @@ You can see a read-only version of the paper here: <a href="https://rdcu.be/LGrM
       <div id="Caching-searches-using-biblio-and-only-seeing-new-results"></div>
       <h2 class="blog_post_title"><a href="/blog/2018/04/11/Caching-searches-using-biblio-and-only-seeing-new-results/" rel="bookmark" title="Permanent Link to Caching searches using biblio and only seeing new results">Caching searches using biblio and only seeing new results</a></h2>
       <p><small><span class="blog_post_date">Posted April 11, 2018 at 08:46 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/arxiv/'>arxiv</a>, <a href='/blog/category/elisp/'>elisp</a>, <a href='/blog/category/biblio/'>biblio</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/elisp/'>elisp</a>, <a href='/blog/category/biblio/'>biblio</a>, <a href='/blog/category/arxiv/'>arxiv</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2018/04/11/Caching-searches-using-biblio-and-only-seeing-new-results#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -442,7 +666,7 @@ Congratulations Zhitao!
       <div id="New-publication-in-Catalysis-Today"></div>
       <h2 class="blog_post_title"><a href="/blog/2018/04/01/New-publication-in-Catalysis-Today/" rel="bookmark" title="Permanent Link to New publication in Catalysis Today">New publication in Catalysis Today</a></h2>
       <p><small><span class="blog_post_date">Posted April 01, 2018 at 07:07 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/news/'>news</a>, <a href='/blog/category/publication/'>publication</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/publication/'>publication</a>, <a href='/blog/category/news/'>news</a></span> | tags: 
         | <a href="http://jkitchin.github.io/blog/2018/04/01/New-publication-in-Catalysis-Today#disqus_thread">View Comments</a>
       </small></p>
     </header>
@@ -495,90 +719,6 @@ In this paper we continue our exploration of using high-dimensional neural netwo
 
   <div class="after_post"><a href="http://jkitchin.github.io/blog/2018/04/01/New-publication-in-Catalysis-Today#disqus_thread">Read and Post Comments</a></div>
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="New-publication-in-Topics-in-Catalysis"></div>
-      <h2 class="blog_post_title"><a href="/blog/2018/01/27/New-publication-in-Topics-in-Catalysis/" rel="bookmark" title="Permanent Link to New publication in Topics in Catalysis">New publication in Topics in Catalysis</a></h2>
-      <p><small><span class="blog_post_date">Posted January 27, 2018 at 04:39 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/news/'>news</a>, <a href='/blog/category/publication/'>publication</a></span> | tags: 
-        | <a href="http://jkitchin.github.io/blog/2018/01/27/New-publication-in-Topics-in-Catalysis#disqus_thread">View Comments</a>
-      <p><small><span class="blog_post_date">Updated April 01, 2018 at 06:49 PM</span></small>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-Single atom alloys are alloys in the extreme dilute limit, where single atoms of a reactive metal are surrounded by comparatively unreactive metals. This makes the single reactive atoms like single atom sites where reactions can occur. These sites are interesting because they are metallic, but their electronic structure is different than the atoms in more concentrated alloys. This means there is the opportunity for different, perhaps better catalytic performance for the single atom alloys. In this paper, we studied the electronic structure and some representative reaction pathways on a series of single atom alloy surfaces.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-bibtex"><span style="color: #006699;">@article</span>{<span style="color: #D0372D;">Thirumalai2018</span>,
-  <span style="color: #BA36A5;">author</span> =       "Thirumalai, Hari and Kitchin, John R.",
-  <span style="color: #BA36A5;">title</span> =        "Investigating the Reactivity of Single Atom Alloys Using
-                  Density Functional Theory",
-  <span style="color: #BA36A5;">journal</span> =      "Topics in Catalysis",
-  <span style="color: #BA36A5;">year</span> =         "2018",
-  <span style="color: #BA36A5;">month</span> =        "Jan",
-  <span style="color: #BA36A5;">day</span> =          "25",
-  <span style="color: #BA36A5;">abstract</span> =     "Single atom alloys are gaining importance as atom-efficient
-                  catalysts which can be extremely selective and active towards
-                  the formation of desired products. They possess such desirable
-                  characteristics because of the presence of a highly reactive
-                  single atom in a less reactive host surface. In this work, we
-                  calculated the electronic structure of several representative
-                  single atom alloys. We examined single atom alloys of gold,
-                  silver and copper doped with single atoms of platinum,
-                  palladium, iridium, rhodium and nickel in the context of the
-                  d-band model of Hammer and N{\o}rskov. The reactivity of these
-                  alloys was probed through the dissociation of water and nitric
-                  oxide and the hydrogenation of acetylene to ethylene. We
-                  observed that these alloys exhibit a sharp peak in their atom
-                  projected d-band density of states, which we hypothesize could
-                  be the cause of high surface reactivity. We found that the
-                  d-band centers and d-band widths of these systems correlated
-                  linearly as with other alloys, but that the energy of
-                  adsorption of a hydrogen atom on these surfaces could not be
-                  correlated with the d-band center, or the average reactivity
-                  of the surface. Finally, the single atom alloys, with the
-                  exception of copper--palladium showed good catalytic behavior
-                  by activating the reactant molecules more strongly than the
-                  bulk atom behavior and showing favorable reaction pathways on
-                  the free energy diagrams for the reactions investigated.",
-  <span style="color: #BA36A5;">issn</span> =         "1572-9028",
-  <span style="color: #BA36A5;">doi</span> =          "<span style="color: #006DAF; text-decoration: underline;">10.1007/s11244-018-0899-0</span>",
-  <span style="color: #BA36A5;">url</span> =          "<span style="color: #006DAF; text-decoration: underline;">https://doi.org/10.1007/s11244-018-0899-0</span>"
-}
-</pre>
-</div>
-
-<p>
-<script type='text/javascript' src='https://d1bxh8uas1mnw7.cloudfront.net/assets/embed.js'></script>
-<div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1007/s11244-018-0899-0'></div>
-</p>
-<p>Copyright (C) 2018 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2018/01/27/New-publication-in-Topics-in-Catalysis.org">org-mode source</a></p>
-<p>Org-mode version = 9.1.6</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Tweet</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-  <div class="after_post"><a href="http://jkitchin.github.io/blog/2018/01/27/New-publication-in-Topics-in-Catalysis#disqus_thread">Read and Post Comments</a></div>
-  <hr class="interblog" />
  <a href="../5">« Previous Page</a>
   --  
  <a href="../7">Next Page »</a>
@@ -621,10 +761,10 @@ Single atom alloys are alloys in the extreme dilute limit, where single atoms of
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
       <li><a href="/blog/2021/06/21/New-publication-Machine-learning-accelerated-geometry-optimization-in-molecular-simulation/">New publication "Machine-learning accelerated geometry optimization in molecular simulation"</a></li>
+      <li><a href="/blog/2021/03/07/New-publication-Semi-grand-Canonical-Monte-Carlo-Simulation-of-the-Acrolein-induced-Surface-Segregation-and-Aggregation-of-AgPd-with-Machine-Learning-Surrogate-Models/">New publication - Semi-grand Canonical Monte Carlo Simulation of the Acrolein induced Surface Segregation and Aggregation of AgPd with Machine Learning Surrogate Models</a></li>
       <li><a href="/blog/2020/07/09/New-publication-SingleNN-Modified-Behler-Parrinello-Neural-Network-with-Shared-Weights-for-Atomistic-Simulations-with-Transferability/">New publication SingleNN - Modified Behler–Parrinello Neural Network with Shared Weights for Atomistic Simulations with Transferability</a></li>
       <li><a href="/blog/2019/10/02/Using-autograd-to-plot-implicit-functions/">Using autograd to plot implicit functions</a></li>
       <li><a href="/blog/2019/09/22/Solving-differential-algebraic-equations-with-help-from-autograd/">Solving differential algebraic equations with help from autograd</a></li>
-      <li><a href="/blog/2019/09/13/Sensitivity-analysis-with-odeint-and-autograd/">Sensitivity analysis with odeint and autograd</a></li>
     </ul>
   </section>
 
