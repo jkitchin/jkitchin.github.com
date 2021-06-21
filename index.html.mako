@@ -5,7 +5,7 @@
 Welcome to the Kitchin Group
 ============================
 
-Our group utilizes chemistry, catalysis and engineering to develop solutions to energy and environment related problems such as CO<sub>2</sub> capture, catalyis and chemical energy storage. We use experimental and computational methods in electrochemistry, sorbent development and electro/catalyst design.
+Our group utilizes data science and machine learning to solve problems in catalysis and engineering. Our current focuses include developing machine learned potentials for molecular simulations, and design of experiments for high-throughput experimentation.
 
 <a href="/blog/category/news/">News</a>
 ====

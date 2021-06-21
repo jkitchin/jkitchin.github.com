@@ -4,6 +4,7 @@ build:	${SOURCES}
 	blogofile build
 
 serve:
+	blogofile build
 	blogofile serve
 
 status:

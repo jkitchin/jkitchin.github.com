@@ -6,7 +6,7 @@ About us
 
 The Kitchin research group is run by Professor [John Kitchin](kitchin.html) in the Chemical Engineering Department at Carnegie Mellon University.
 
-Our group combines experimental and computational research to work on problems in electrochemistry, CO<sub>2</sub> capture, and catalytic materials design.
+Our group uses data science and machine learning to solve problems in catalysis and chemical engineering.
 
 I use this site to test concepts in using Python in engineering education and  materials modeling as well as in the integration of code and narrative text.
 
@@ -26,7 +26,6 @@ Parking: Park in the East Campus Garage. The following link contains a Google ma
 
 View [Carnegie Mellon University](http://maps.google.com/maps/ms?hl=en&ie=UTF8&msa=0&ll=40.4452,-79.941866&spn=0.006957,0.013733&t=h&msid=108165924109967550014.000467c27882aeba0e709&source=embed) in a larger map with directions to my office.
 
-<img src="media/group-2014-03.jpg">
 
 Current postdocs
 ----------------
@@ -35,24 +34,22 @@ Current postdocs
 
 Current PhD students
 --------------------
--    [Alex Hallenbeck](http://orcid.org/0000-0002-1085-6553) (expected graduation: May 2016)
--    [Zhongnan Xu](http://orcid.org/0000-0002-6930-2360) (expected graduation: May 2016)
--    [Jacob Boes](http://orcid.org/0000-0002-7303-7782) (expected graduation: May 2017)
+
+  - Jenny Zhan
+  - Yilin Yang
+  - Mingjie Liu
+  - Maya Bhat
 
 Current Master's students
 -------------------------
 
-- Chen Wang
-- Akshay Tharval
-- Teng Ma
-- Feiyang Geng
-- Devon Walker
-- Tianyu Gao
+   No positions available
+
 
 Current Undergraduates
 -----------------------
 
-  No positions available
+  - Chetan Chilkunda
 
 
 Former Group members
@@ -85,6 +82,24 @@ Former Group members
   - Venkatesh Naik (M.S. Dec. 2015)
   - Hari Thirumalai (M.S. Dec. 2015)
   - Siddharth Deshpande (M.S. Dec. 2015)
+  - Chen Wang (M.S. 2015-2016)
+  - Akshay Tharval (M.S. 2015-2016)
+  - Teng Ma (M.S. 2015-2016)
+  - Feiyang Geng (M.S. 2015-2016)
+  - Devon Walker (M.S. 2015-2016)
+  - Tianyu Gao (M.S. 2015-2016)
+  - [Alex Hallenbeck](http://orcid.org/0000-0002-1085-6553) (PhD)
+  - [Zhongnan Xu](http://orcid.org/0000-0002-6930-2360) (PhD)
+  - [Jacob Boes](http://orcid.org/0000-0002-7303-7782) (PhD 2017)
+  - Senhong Liu (M.S. 2018-2019)
+  - Dingqi Nai (M.S. 2018-2019)
+  - Siddarth Achar (M.S. 2108-2019)
+  - Qiong Wang (M.S. 2018-2019)
+  - Siddhant Lambor (M.S. 2018-2019). co-advised by Lynn Walker
+  - Gautham Swamina (M.S. 2018-2019). co-advised by Lynn Walker
+  - Ankit Gautam (M.S. 2019-2020)
+  - Dennis Loevlie (M.S. 2019-2020)
+
 
 
 </%self:filter>
