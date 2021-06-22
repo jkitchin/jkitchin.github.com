@@ -71,8 +71,8 @@ filters.markdown.extensions.headerid.enabled = True
 filters.markdown.extensions.tables.enabled = True
 
 # # disqus
-blog.disqus.enabled = True
-blog.disqus.name = "kitchinresearchgroup"
+# blog.disqus.enabled = True
+# blog.disqus.name = "kitchinresearchgroup"
 
 # # permalink setup
 blog.auto_permalink.enabled = True
