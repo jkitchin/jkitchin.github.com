@@ -1,5 +1,6 @@
 # These seem to be my publications. It looks like I use a make file to run this, and it generates the publications.html.mako template that gets built when I publish. Things seem to get pulled from scopus.
-
+import sys
+sys.path.insert(0, '/Users/jkitchin/Dropbox/python/scopus')
 from scopus.scopus_xml import *
 
 from scopus.utils import load_api_key
