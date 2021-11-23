@@ -102,6 +102,252 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="A-partial-symbolic-numeric-solver-in-emacs-lisp"></div>
+      <h2 class="blog_post_title"><a href="/blog/2017/05/21/A-partial-symbolic-numeric-solver-in-emacs-lisp/" rel="bookmark" title="Permanent Link to A partial symbolic numeric solver in emacs-lisp">A partial symbolic numeric solver in emacs-lisp</a></h2>
+      <p><small><span class="blog_post_date">Posted May 21, 2017 at 11:33 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/emacs-lisp/'>emacs-lisp</a>, <a href='/blog/category/math/'>math</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org18a4554">1. The Newton solver in emacs-lisp</a></li>
+</ul>
+</div>
+</div>
+<p>
+I have been exploring  ways to use emacs-lisp to express scientific ideas. In this post, we explore a partial symbolic numeric solver in Emacs-lisp. This involves some syntactic developments to more clearly identify something we want to solve for and to then generate the code required to solve it.
+</p>
+
+<p>
+In section <a href="#org18a4554">The Newton solver</a> you can find a simple implementation of a Newton solver in emacs-lisp. This function allows you to numerically solve equations that can be written in the form \(f(x) = 0\) for \(x\) given an initial guess. You write a function for \(f(x)\) and pass the function to the solver. This is a standard approach used in Python with fsolve, for example. Here is an example of solving a trivial problem: \(x - 4 = 0\) just to check that it works. We use a lambda function for \(f(x) = x - 4 = 0\). The answer is \(x=4\).
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(newton-f (<span style="color: #0000FF;">lambda</span> (x) (- x 4)) 2)
+</pre>
+</div>
+
+<p>
+That syntax is not too bad, but we have the whole lambda expression in there, and some repetition of what we want to solve for as an argument and in the function. It would be interesting if we could just have an expression that gets solved, e.g. <code>(newton-f (- x? 4) 2)</code> where <code>x?</code> indicates the thing to solve for.
+</p>
+
+<p>
+We can do that! We can take an expression, flatten it and find the variable names that end with ?. We should check that there is only one, but for now we don't. Here is an example that does that. I use a nested expression here just to illustrate that the code finds the <code>x?</code> variable correctly.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">dash</span>)
+
+(<span style="color: #0000FF;">let</span> ((body '((* (- x? 4) 1))))
+  (<span style="color: #0000FF;">loop</span> for item in (-flatten body)
+        if (<span style="color: #0000FF;">and</span> (symbolp item) (s-ends-with? <span style="color: #008000;">"?"</span> (symbol-name item)))
+        collect item))
+</pre>
+</div>
+
+<p>
+So, given an expression we can identify the unknown that should be the argument to a lambda function. So, we create a macro that takes that expression and constructs a function to solve it, then calls newton-f on it. The macro is syntactically useful here because we do not have to quote the expression. Here is that macro.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defmacro</span> <span style="color: #006699;">solve</span> (expression guess)
+  `(newton-f
+    (<span style="color: #0000FF;">lambda</span> ,(<span style="color: #0000FF;">loop</span> for item in (-flatten expression)
+                   if (<span style="color: #0000FF;">and</span> (symbolp item) (s-ends-with? <span style="color: #008000;">"?"</span> (symbol-name item)))
+                   collect item)
+      ,expression)
+    ,guess))
+</pre>
+</div>
+
+<p>
+I call this a partial symbolic solver because we do some introspection symbolically to identify what to solve for, and then construct the code required to solve it. Here is that trivial example (x? - 4 = 0). It just shows we can have some nesting and it still works. I am not so thrilled with the initial guess, but this is an iterative solver, so you either need an initial guess, or a solution range.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">solve</span> (* (- x? 4) 1) 3)
+</pre>
+</div>
+
+<p>
+Here is what that expands into:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(macroexpand '(solve (* (- x? 4) 1) 3))
+</pre>
+</div>
+
+<p>
+It expands into what we would have written in the first place. The benefit to us is less typing, and a simpler syntax. Both of those reduce the opportunity to make errors!
+</p>
+
+<p>
+A more realistic problem might be: Reactant A flows into a continuously stirred tank reactor at a rate of  \(F_{A0} = 1\) mol/min with a volumetric flow of \(v_0 = 1\) L/min.. The reactor achieves 50% conversion (\(X\)) of A to products. The reaction rate law is known to be \(-r_A = k C_A\) with \(k = 0.1\) 1/min. Estimate the volume of the reactor. If you have taken my class in reaction engineering, you know the following facts:
+</p>
+
+<ul class="org-ul">
+<li>The exit molar flow is defined by \(F_A = F_{A0} (1 - X)\)</li>
+<li>The exit concentration is \(C_A = F_A / v_0\)</li>
+<li>The mole balance is defined by \(0 = F_{A0} - F_A + r_A V\)</li>
+</ul>
+
+<p>
+That is all we need; we can solve for \(V\) from the last equation. This is simple enough you might do the algebra to get: \(V = \frac{F_{A0} - F_A}{-r_A}\) which can be simply evaluated. We use our solver here and compare it to the evaluation.
+</p>
+
+<p>
+Here is the solver:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let*</span> ((Fa0 1)
+       (X 0.5)
+       (Fa (* Fa0 (- 1 X)))
+       (k 0.1)
+       (v0 1)
+       (Ca (/ Fa v0))
+       (r (* k Ca))
+       (ra (* r -1)))
+  (<span style="color: #0000FF;">solve</span> (+ Fa0 (* Fa -1) (* ra V?)) 2))
+</pre>
+</div>
+
+<p>
+It is pretty hard to imagine doing something like this in Python! It would probably involve parsing a string.
+</p>
+
+<p>
+Here is the evaluation from our algebra:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let*</span> ((Fa0 1)
+       (X 0.5)
+       (Fa (* Fa0 (- 1 X)))
+       (k 0.1)
+       (v0 1)
+       (Ca (/ Fa v0))
+       (r (* k Ca))
+       (ra (* r -1)))
+  (/ (- Fa0 Fa) (* -1 ra)))
+</pre>
+</div>
+
+<p>
+Within the tolerance specified in <code>newton-f</code>, these are the same.
+</p>
+
+<p>
+This is just the tip of the iceberg though. You may have noticed that none of the variables in the let* had any descriptions. Sure, you could put some comments after them, but those are not really part of the code.
+</p>
+
+<p>
+Also, we had to define the variables in advance of the expression. That is a limitation of how computers work, they cannot evaluate undefined variables. It <i>constrains</i> how we can express the idea. What if we could instead specify the equation first, then the data? That way we are clear what we are trying to do at a higher level, and fill in the details later. Suppose we wanted a syntax like the block below instead. Here we emphasize the equation we are solving first, and then define the variables and quantities used in the equation, and finally the guess that we use to find the solution.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">solve1</span>
+ (eqn (+ Fa0 (* -1 Fa) (* ra V?)))
+ (data ((k 0.1 <span style="color: #008000;">"rate constant 1/min"</span>)
+        (Ca0 1.0 <span style="color: #008000;">"feed concentration"</span>)
+        (v0 1 <span style="color: #008000;">"volumetric flow L/min"</span>)
+        (Fa0 (* v0 Ca0) <span style="color: #008000;">"Inlet molar flow"</span>)
+        (X 0.5 <span style="color: #008000;">"Desired conversion"</span>)
+        (Fa (* Fa0 (- 1 X)) <span style="color: #008000;">"Exit molar flow"</span>)
+        (Ca (/ Fa v0) <span style="color: #008000;">"exit concentration"</span>)
+        (ra (* -1 k Ca) <span style="color: #008000;">"rate in the reactor"</span>)))
+ (guess 8))
+</pre>
+</div>
+
+<p>
+That is achievable with the solve1 macro below! It too has some limitations, mostly the order of the data block still has to be correct, e.g. you cannot use a variable before it is defined. It would take some serious macro-fu to sort these so that everything is defined in the right order! Still, it allows you to express an <i>executable</i> idea in the order we defined. The strings in this syntax for documenting the variables are ignored, but they could be used in the macro to print useful information or something else you could imagine. You could also make them mandatory to encourage documentation.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defmacro</span> <span style="color: #006699;">solve1</span> (<span style="color: #6434A3;">&amp;rest</span> body)
+  (<span style="color: #0000FF;">let</span> ((expression (second (assoc 'eqn body)))
+        (data (<span style="color: #0000FF;">loop</span> for d in (second (assoc 'data body))
+                    collect (list (first d) (second d))))
+        (guess (second (assoc 'guess body))))
+    `(<span style="color: #0000FF;">let*</span> ,data
+       (newton-f
+        (<span style="color: #0000FF;">lambda</span> ,(<span style="color: #0000FF;">loop</span> for item in (-flatten expression)
+                       if (<span style="color: #0000FF;">and</span> (symbolp item) (s-ends-with? <span style="color: #008000;">"?"</span> (symbol-name item)))
+                       collect item)
+          ,expression)
+        ,guess))))
+</pre>
+</div>
+
+<p>
+To summarize, lisp macros allow us to rewrite the syntax of code before it is evaluated. This gives us the opportunity to inspect it, and generate new code, e.g. functions with arguments based on the contents of expressions, to save us typing. It also allows us to define ideas in a near arbitrary order that make sense to us, and then rearrange them so they make sense to the computer. See, for example,  <a href="http://kitchingroup.cheme.cmu.edu/blog/2017/03/22/A-better-defun-for-emacs-lisp/">this post</a> for an example of changing how functions are defined.
+</p>
+
+<p>
+This seems to be heading in the domain specific language direction. I think it would be very helpful in engineering problem solving to build up tools like this. They could start out simple for new students to use. They never need to see the macro parts of this, just to learn how to use them for problem solving. These beginner tools would be limited in what they could do to minimize how much lisp is required to be learned so students can focus on the problem solving. Eventually they might outgrow them, and in the process transition to having the full lisp language at their disposal for problem solving.
+</p>
+
+
+<div id="outline-container-org18a4554" class="outline-2">
+<h2 id="org18a4554"><a id="ID-53A5F60F-F929-43BB-AD9D-167D6EBEB8EB"></a><span class="section-number-2">1</span> The Newton solver in emacs-lisp</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+This is an emacs-lisp implementation of Newton's method. It is a simple implementation for a single variable. The tolerance and step-size are hard-coded for this post because we focus on the partial symbolic solver, not the best solver methods.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">See https://en.wikipedia.org/wiki/Newton%27s_method for the method</span>
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">newton-f</span> (func x0)
+  <span style="color: #036A07;">"Solve the equation FUNC(x)=0 using Newton's method.</span>
+<span style="color: #036A07;">X0 is an initial guess."</span>
+  (<span style="color: #0000FF;">let*</span> ((tolerance 1e-6)
+         (x x0)
+         (dx 1e-6)
+         fx fpx)
+    (<span style="color: #0000FF;">while</span> (&gt; (abs (funcall func x)) tolerance)
+      (<span style="color: #0000FF;">setq</span> fx (funcall func x)
+            fpx (/ (- (funcall func (+ x dx)) (funcall func (- x dx))) (* 2 dx))
+            x (- x (/ fx fpx))))
+    x))
+</pre>
+</div>
+</div>
+</div>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/05/21/A-partial-symbolic-numeric-solver-in-emacs-lisp.org">org-mode source</a></p>
+<p>Org-mode version = 9.0.5</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+
+<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2017/05/21/A-partial-symbolic-numeric-solver-in-emacs-lisp">Discuss on Twitter</a>
+
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="A-new-and-improved-Emacs-gnuplot-DSL"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/05/05/A-new-and-improved-Emacs-gnuplot-DSL/" rel="bookmark" title="Permanent Link to A new and improved Emacs gnuplot DSL">A new and improved Emacs gnuplot DSL</a></h2>
       <p><small><span class="blog_post_date">Posted May 05, 2017 at 10:26 AM</span> | categories:
@@ -1064,7 +1310,7 @@ Pretty cool! Clearly there is still a lot to do to make this practical. The impl
       <div id="A-callable-plist-data-structure-for-Emacs"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/04/16/A-callable-plist-data-structure-for-Emacs/" rel="bookmark" title="Permanent Link to A callable plist data structure for Emacs">A callable plist data structure for Emacs</a></h2>
       <p><small><span class="blog_post_date">Posted April 16, 2017 at 04:44 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/macro/'>macro</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/elisp/'>elisp</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/elisp/'>elisp</a>, <a href='/blog/category/macro/'>macro</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
       <p><small><span class="blog_post_date">Updated February 04, 2018 at 05:06 PM</span></small>
       </small></p>
     </header>
@@ -1552,95 +1798,6 @@ Obviously that is just an alternate syntax for the let statement, but it lets yo
 <a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2017/04/16/A-callable-plist-data-structure-for-Emacs">Discuss on Twitter</a>
 
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="A-new-org-mode-exporter-to-Word-for-scimax"></div>
-      <h2 class="blog_post_title"><a href="/blog/2017/04/15/A-new-org-mode-exporter-to-Word-for-scimax/" rel="bookmark" title="Permanent Link to A new org-mode exporter to Word for scimax">A new org-mode exporter to Word for scimax</a></h2>
-      <p><small><span class="blog_post_date">Posted April 15, 2017 at 04:19 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/export/'>export</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
-      <p><small><span class="blog_post_date">Updated April 15, 2017 at 04:21 PM</span></small>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-I am continuing to chip away to getting a reasonable export behavior for org-mode to MS Word. I have previously made some progress with Pandoc <a href="http://kitchingroup.cheme.cmu.edu/blog/2015/01/29/Export-org-mode-to-docx-with-citations-via-pandoc/">here</a> and <a href="http://kitchingroup.cheme.cmu.edu/blog/2015/06/11/ox-pandoc-org-mode-+-org-ref-to-docx-with-bibliographies/">here</a>, but those solutions never stuck with me. So here is another go. Here I leverage Pandoc again, but use a path through LaTeX to get citations without modifying the org-ref cite link syntax. The code for this can be found here: <a href="https://github.com/jkitchin/scimax/blob/master/ox-word.el">https://github.com/jkitchin/scimax/blob/master/ox-word.el</a>. The gist is you use org-ref like you always do, and you specify the bibliography style for Pandoc like this:
-</p>
-
-<p>
-<img src="/media/date-15-04-2017-time-16-06-53.png">
-</p>
-
-<p>
-You can download other csl files at <a href="https://www.zotero.org/styles">https://www.zotero.org/styles</a>. Then you can simply export the org-doc to a Word document with the key-binding C-c C-e w p.
-</p>
-
-<p>
-Here is an example document to illustrate the exporter. I have written about data sharing in catalysis <a class='org-ref-reference' href="#kitchin-2015-examp">kitchin-2015-examp</a> and surface science <a class='org-ref-reference' href="#kitchin-2015-data-surfac-scien">kitchin-2015-data-surfac-scien</a>.
-</p>
-
-<p>
-Here is an example source block.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython">%matplotlib inline
-<span style="color: #0000FF;">import</span> matplotlib.pyplot <span style="color: #0000FF;">as</span> plt
-
-plt.plot([1, 2, 3, 4, 5, 6])
-</pre>
-</div>
-
-<p>
-<img src="/media/ob-ipython-b8591826ba9e316738705d03264316a5.png">
-</p>
-
-<p>
-See Ref. <a href="#fig:line">fig:line</a> for example. These do not work. That might require additional pre-processing to replace them with numbers.
-</p>
-
-<p>
-Here is the Word document that is generated: <a href="/media/2017-04-15.docx">2017-04-15.docx</a>
-</p>
-
-<p>
-As a penultimate result it might be ok. The references are reasonably formatted, but not compatible with Endnote, or other bibliography manager software. There are still some issues with Figure numbering and cross-references, but it is not too bad. The main benefit of this seems to be that one source generates HTML and the Word document.
-</p>
-
-<p>
-
-<h1 class='org-ref-bib-h1'>Bibliography</h1>
-<ul class='org-ref-bib'><li><a id="kitchin-2015-examp">[kitchin-2015-examp] Kitchin, Examples of Effective Data Sharing in Scientific Publishing, <i>ACS Catalysis</i>, <b>5(6)</b>, 3894-3899 (2015). <a href=" https://doi.org/10.1021/acscatal.5b00538 ">link</a>. <a href="https://doi.org/10.1021/acscatal.5b00538">doi</a>.</a></li>
-<li><a id="kitchin-2015-data-surfac-scien">[kitchin-2015-data-surfac-scien] "John Kitchin", Data Sharing in Surface Science, <i>"Surface Science "</i>, <b>647</b>, 103-107 (2016). <a href="http://www.sciencedirect.com/science/article/pii/S0039602815001326">link</a>. <a href="https://doi.org/10.1016/j.susc.2015.05.007">doi</a>.</a></li>
-</ul>
-</p>
-<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2017/04/15/A-new-org-mode-exporter-to-Word-for-scimax.org">org-mode source</a></p>
-<p>Org-mode version = 9.0.5</p>
-
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-
-<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2017/04/15/A-new-org-mode-exporter-to-Word-for-scimax">Discuss on Twitter</a>
-
-  <hr class="interblog" />
  <a href="../12">« Previous Page</a>
   --  
  <a href="../14">Next Page »</a>
@@ -1682,11 +1839,11 @@ As a penultimate result it might be ok. The references are reasonably formatted,
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2021/11/23/pycse-YouTube-Channel/">pycse YouTube Channel</a></li>
       <li><a href="/blog/2021/06/29/Youtube-live-streamed-research-talks/">Youtube live-streamed research talks</a></li>
       <li><a href="/blog/2021/06/21/New-publication-Machine-learning-accelerated-geometry-optimization-in-molecular-simulation/">New publication "Machine-learning accelerated geometry optimization in molecular simulation"</a></li>
       <li><a href="/blog/2021/03/07/New-publication-Semi-grand-Canonical-Monte-Carlo-Simulation-of-the-Acrolein-induced-Surface-Segregation-and-Aggregation-of-AgPd-with-Machine-Learning-Surrogate-Models/">New publication - Semi-grand Canonical Monte Carlo Simulation of the Acrolein induced Surface Segregation and Aggregation of AgPd with Machine Learning Surrogate Models</a></li>
       <li><a href="/blog/2020/07/09/New-publication-SingleNN-Modified-Behler-Parrinello-Neural-Network-with-Shared-Weights-for-Atomistic-Simulations-with-Transferability/">New publication SingleNN - Modified Behler–Parrinello Neural Network with Shared Weights for Atomistic Simulations with Transferability</a></li>
-      <li><a href="/blog/2020/03/10/New-publication-Parallelized-Screening-of-Characterized-and-DFT-Modelled-Bimetallic-Colloidal-Co-Catalysts-for-Photocatalytic-Hydrogen-Evolution/">New publication - Parallelized Screening of Characterized and DFT-Modelled Bimetallic Colloidal Co-Catalysts for Photocatalytic Hydrogen Evolution</a></li>
     </ul>
   </section>
 
