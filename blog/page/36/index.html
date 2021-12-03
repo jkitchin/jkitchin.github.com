@@ -102,10 +102,225 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Running-scientific-instruments-in-Emacs-and-recording-the-results"></div>
+      <h2 class="blog_post_title"><a href="/blog/2015/07/25/Running-scientific-instruments-in-Emacs-and-recording-the-results/" rel="bookmark" title="Permanent Link to Running scientific instruments in Emacs and recording the results">Running scientific instruments in Emacs and recording the results</a></h2>
+      <p><small><span class="blog_post_date">Posted July 25, 2015 at 10:04 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/notebook/'>notebook</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+
+<p>
+Today we look at running a scientific instrument via http requests from Emacs and org-mode. We will use a Gamry Ref600 potentiostat because Gamry has very nicely provide a COM interface we can access via Python. This will be only a proof of concept to see what it is like. We will not consider any issues of security, etc&#x2026;, only what is it like to do it.
+</p>
+
+<p>
+The setup will look like this: we will run a flask web app that uses python to control the instrument via http requests. Why? Because I want to run the instrument from my Mac ;) and so far there are only Windows drivers for the instrument. So, we run the flask app on the Windows machine, and I run it from here on my Mac by sending requests. Flask takes care of converting requests to action using Python. You can see the <a href="#sec-2">Flask app here</a>.
+</p>
+
+<p>
+Let's see what is online:
+</p>
+<div class="org-src-container">
+
+<pre class="src src-sh">curl jkitchin-win.cheme.cmu.edu:5000/pstats
+</pre>
+</div>
+
+<pre class="example">
+(u'REF600-13089',)
+</pre>
+
+<p>
+We have one potentiostat online with serial number 13089. I have a dummy cell connected to it which has a little resistor on it. So we can run a cyclic voltammogram and it should be a straight line. We have to know a bit about what is returned. We will get a json file back, and it will have the data in it. The data will be a list of lists. The data we want is in columns 1 and 3 (python indexing). Obviously you need some prior knowledge of what data comes back to use this. That would come from reading some documentation.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #0000FF;">import</span> requests
+<span style="color: #0000FF;">import</span> numpy <span style="color: #0000FF;">as</span> np
+<span style="color: #0000FF;">import</span> matplotlib.pyplot <span style="color: #0000FF;">as</span> plt
+
+<span style="color: #BA36A5;">resp</span> = requests.get(<span style="color: #008000;">'http://jkitchin-win.cheme.cmu.edu:5000/cv?endv=0.25&amp;startv=-0.25'</span>)
+
+<span style="color: #BA36A5;">dj</span> = resp.json()
+<span style="color: #BA36A5;">data</span> = np.array(dj[<span style="color: #008000;">'data'</span>])
+
+plt.plot(data[:, 1], data[:, 3])
+plt.xlabel(<span style="color: #008000;">'Voltage (V)'</span>)
+plt.ylabel(<span style="color: #008000;">'Current (A)'</span>)
+plt.tight_layout()
+plt.savefig(<span style="color: #008000;">'cv-1.png'</span>)
+</pre>
+</div>
+
+<p>
+<img src="/media/2015-07-25-Running-scientific-instruments-in-Emacs-and-recording-the-results/cv-1.png"> 
+Well, there you have it. Possibly the first Gamry Ref600 to ever have been driven from a Mac ;) Let me be more explicit about that; I could <i>also</i> run this from Linux, an iPad, etc&#x2026; You could do this in a browser, or in an IPython notebook, or in Matlab, among many other possibilities. You could write a script in perl, shell, ruby, emacs-lisp, or any other language that supports http requests.
+</p>
+
+<p>
+I am not sure why the graph is not perfectly linear, maybe there is some capacitive charging that starts out. The resistance based on the current at 0.2V is about 2000 ohms, which is in good agreement with what is listed on the board the dummy cell is on.
+</p>
+
+<div id="outline-container-sec-1" class="outline-2">
+<h2 id="sec-1"><span class="section-number-2">1</span> Summary thoughts</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+There are a host of interesting issues one eventually has to consider here including security, but also error management and debugging. I hacked something like an http api here by running flask on the windows machine running the instrument. That is a layer of abstraction on an abstraction to start with. I think later instruments are likely to run these webservers themselves on small dedicated computers, e.g. via a Raspberry pi or Arduino chipset. It is not obvious how sophisticated you can make this with respect to triggering different instruments, etc&#x2026;
+</p>
+
+<p>
+In running this, my "notebook" was blocked while the experiment ran. It is possible to run things asynchronously, and sometimes that would make sense. In the example here, we have provided a very limited set of functions to "run" the potentiostat. It was only a proof of concept to get a sense for what it is like. In practice a fuller set of functions would be implemented. Another point to consider is how the data comes back from the potentiostat. We used json here because it is convenient, but we could just as well send files, and other sorts of data too.
+</p>
+
+<p>
+This lays out the possibility to walk up to an instrument with an electronic notebook, setup and run the experiment, capture the results in the notebook and take it back to the office for analysis. Pretty cool.
+</p>
+</div>
+</div>
+
+<div id="outline-container-sec-2" class="outline-2">
+<h2 id="sec-2"><a id="ID-5EB72A19-B9D3-4ABA-975F-61ACE16E0D87" name="ID-5EB72A19-B9D3-4ABA-975F-61ACE16E0D87"></a><span class="section-number-2">2</span> Flask app</h2>
+<div class="outline-text-2" id="text-2">
+
+<p>
+So, here is my flask app. We setup a few routes using get requests to do things like get a list of the potentiostats online, and to run a cyclic voltamogram. As a side note, after this post is over, I am turning off the app, so you won't be able to repeat the codes ;) This is not a beautiful, secure or error tolerant code. It works enough for a proof of concept of simple experiments.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-python"><span style="color: #0000FF;">from</span> flask <span style="color: #0000FF;">import</span> Flask, request, jsonify
+<span style="color: #0000FF;">import</span> time
+
+<span style="color: #BA36A5;">app</span> = Flask(<span style="color: #006FE0;">__name__</span>)
+
+<span style="color: #6434A3;">@app.route</span>(<span style="color: #008000;">'/'</span>)
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">hello_world</span>():
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> <span style="color: #008000;">'Hello World!'</span>
+
+<span style="color: #6434A3;">@app.route</span>(<span style="color: #008000;">'/pstats'</span>)
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">get_pstats</span>():
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">import</span> win32com.client <span style="color: #0000FF;">as</span> client
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">devices</span> = client.Dispatch(<span style="color: #008000;">'GamryCOM.GamryDeviceList'</span>)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">result</span> = <span style="color: #006FE0;">str</span>(devices.EnumSections())
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> result
+
+<span style="color: #6434A3;">@app.route</span>(<span style="color: #008000;">'/close_pstat'</span>)
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">close</span>():
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">import</span> win32com.client <span style="color: #0000FF;">as</span> client
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">devicelist</span> = client.Dispatch(<span style="color: #008000;">'GamryCOM.GamryDeviceList'</span>)
+
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">x</span> = devicelist.EnumSections()[0]
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">pstat</span> = client.Dispatch(<span style="color: #008000;">'GamryCOM.GamryPstat'</span>)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   pstat.Init(x)
+
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   pstat.Close()
+
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">run_ramp</span>(Sinit,  <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">start value</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>    Sfinal, <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">end value</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>    ScanRate=1,
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>    SampleRate=0.01,
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>    CtrlMode=1,  <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">GamryCOM.PstatMode</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>    fname=<span style="color: #D0372D;">None</span>):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #036A07;">'''We assume the first device is the one you want.</span>
+<span style="color: #036A07;">    '''</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">import</span> win32com.client <span style="color: #0000FF;">as</span> client
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">import</span> numpy <span style="color: #0000FF;">as</span> np
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">devicelist</span> = client.Dispatch(<span style="color: #008000;">'GamryCOM.GamryDeviceList'</span>)
+
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">x</span> = devicelist.EnumSections()[0]
+
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">pstat</span> = client.Dispatch(<span style="color: #008000;">'GamryCOM.GamryPstat'</span>)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   pstat.Init(x)
+
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   pstat.Open()
+
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">dtaqcpiv</span>=client.Dispatch(<span style="color: #008000;">'GamryCOM.GamryDtaqCpiv'</span>)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   dtaqcpiv.Init(pstat)
+
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">sigramp</span>=client.Dispatch(<span style="color: #008000;">'GamryCOM.GamrySignalRamp'</span>)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   sigramp.Init(pstat, Sinit, Sfinal, ScanRate, SampleRate, CtrlMode)
+
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   pstat.SetSignal(sigramp)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   pstat.SetCell(1) <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">1 == GamryCOM.CellOn</span>
+
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">try</span>:
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   dtaqcpiv.Run(<span style="color: #D0372D;">True</span>)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">except</span> <span style="color: #6434A3;">Exception</span> <span style="color: #0000FF;">as</span> e:
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   pstat.Close()
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">raise</span>
+
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">NOTE:  The comtypes example in this same directory illustrates the use of com</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">notification events.  The comtypes package is recommended as an alternative</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">to win32com.</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   time.sleep(2) <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">just wait sufficiently long for the acquisition to complete.</span>
+
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">acquired_points</span> = []
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">count</span> = 1
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">while</span> count &gt; 0:
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">count</span>, <span style="color: #BA36A5;">points</span> = dtaqcpiv.Cook(10)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">The columns exposed by GamryDtaq.Cook vary by dtaq and are</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">documented in the Toolkit Reference Manual.</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   acquired_points.extend(<span style="color: #006FE0;">zip</span>(*points))
+
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">acquired_points</span> = np.array(acquired_points)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">if</span> fname <span style="color: #0000FF;">is</span> <span style="color: #0000FF;">not</span> <span style="color: #D0372D;">None</span>:
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   np.savetxt(fname, acquired_points)
+
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   pstat.Close()
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> jsonify({<span style="color: #008000;">'data'</span>: acquired_points.tolist()})
+
+<span style="color: #6434A3;">@app.route</span>(<span style="color: #008000;">'/cv'</span>)
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">run_cv</span>():
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">result</span> = <span style="color: #006FE0;">str</span>(request.values)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">startv</span> = <span style="color: #006FE0;">float</span>(request.values.get(<span style="color: #008000;">'startv'</span>, -0.1))
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">endv</span> = <span style="color: #006FE0;">float</span>(request.values.get(<span style="color: #008000;">'endv'</span>, 0.1))
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">scanrate</span> = <span style="color: #006FE0;">float</span>(request.values.get(<span style="color: #008000;">'scanrate'</span>, 1.0))
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">samplerate</span> = <span style="color: #006FE0;">float</span>(request.values.get(<span style="color: #008000;">'samplerate'</span>, 0.01))
+
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">data</span> = run_ramp(startv, endv, scanrate, samplerate)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> data
+
+
+<span style="color: #0000FF;">if</span> <span style="color: #006FE0;">__name__</span> == <span style="color: #008000;">'__main__'</span>:
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   app.run(host=<span style="color: #008000;">'jkitchin-win.cheme.cmu.edu'</span>, port=5000, debug=<span style="color: #D0372D;">True</span>)
+</pre>
+</div>
+</div>
+</div>
+<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/07/25/Running-scientific-instruments-in-Emacs-and-recording-the-results.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+
+<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2015/07/25/Running-scientific-instruments-in-Emacs-and-recording-the-results">Discuss on Twitter</a>
+
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Indexing-text-in-screenshots-so-they-are-searchable"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/07/24/Indexing-text-in-screenshots-so-they-are-searchable/" rel="bookmark" title="Permanent Link to Indexing text in screenshots so they are searchable">Indexing text in screenshots so they are searchable</a></h2>
       <p><small><span class="blog_post_date">Posted July 24, 2015 at 07:43 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/image/'>image</a>, <a href='/blog/category/search/'>search</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/search/'>search</a>, <a href='/blog/category/image/'>image</a></span> | tags: 
       </small></p>
     </header>
     <div class="post_prose">
@@ -304,7 +519,7 @@ The beauty of the screenshot is that it is what you saw at the time, and it capt
       <div id="A-sudo-org-link-and-sh-block"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/07/17/A-sudo-org-link-and-sh-block/" rel="bookmark" title="Permanent Link to A sudo org-link and sh block">A sudo org-link and sh block</a></h2>
       <p><small><span class="blog_post_date">Posted July 17, 2015 at 12:42 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/babel/'>babel</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/babel/'>babel</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
       </small></p>
     </header>
     <div class="post_prose">
@@ -614,7 +829,7 @@ my-dnd-func
       <div id="Acronym-minor-mode-for-Emacs"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/07/09/Acronym-minor-mode-for-Emacs/" rel="bookmark" title="Permanent Link to Acronym minor mode for Emacs">Acronym minor mode for Emacs</a></h2>
       <p><small><span class="blog_post_date">Posted July 09, 2015 at 08:04 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/tooltip/'>tooltip</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/video/'>video</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/tooltip/'>tooltip</a>, <a href='/blog/category/video/'>video</a></span> | tags: 
       </small></p>
     </header>
     <div class="post_prose">
@@ -718,311 +933,6 @@ There it is. Now any time we have an acronym like EMACS we can mouse over it, or
 <a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2015/07/09/Acronym-minor-mode-for-Emacs">Discuss on Twitter</a>
 
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Indexing-headlines-in-org-files-with-swish-e-with-laser-sharp-results"></div>
-      <h2 class="blog_post_title"><a href="/blog/2015/07/06/Indexing-headlines-in-org-files-with-swish-e-with-laser-sharp-results/" rel="bookmark" title="Permanent Link to Indexing headlines in org files with swish-e with laser-sharp results">Indexing headlines in org files with swish-e with laser-sharp results</a></h2>
-      <p><small><span class="blog_post_date">Posted July 06, 2015 at 11:04 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/swishe/'>swishe</a></span> | tags: 
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-
-<p>
-So far, it looks like swish-e is able to do some pretty focused searches on specific content types. However, the return results are not actually that sharp; in the way we have been using swish-e, it can only tell us the document path that matches, not where in the document the match is. To fix that, we need a new approach to what a "document" is, and a new approach to indexing. We will finally use the "-s prog" option in swish-e which runs an external program that prints stuff to stdout for swish-e to index. We will treat each headline in an org file as a "document" but rather than have the path to the file, we will put an org-mode link there that will take us right to the point of interest.
-</p>
-
-<p>
-You can see this in action here: <a href="https://www.youtube.com/watch?v=bTwXtEb5Ng8">https://www.youtube.com/watch?v=bTwXtEb5Ng8</a> 
-</p>
-
-<p>
-Basically, we need a program to output chunks like this for each headline in an org-file:
-</p>
-<pre class="example">
-Path-Name: [[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/ase-db.org") (goto-char 1))]]
-Content-Length: 247
-Document-Type: XML*
-
-&lt;headline&gt;&lt;title&gt;Using the ase database module&lt;/title&gt;&lt;properties&gt;&lt;FILE&gt;/Users/jkitchin/blogofile-jkitchin.github.com/_blog/ase-db.org&lt;/FILE&gt;&lt;BLOCKED&gt;&lt;/BLOCKED&gt;&lt;categories&gt;python, ase&lt;/categories&gt;&lt;CATEGORY&gt;ase-db&lt;/CATEGORY&gt;&lt;/properties&gt;&lt;/headline&gt;
-</pre>
-
-<p>
-Then we need to tell swish-e to run the program and index its output. Here is the program to do that.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">:<span style="color: #8D8D84;">;</span><span style="color: #8D8D84; font-style: italic;">exec emacs -batch -l $0 "$@"</span>
-(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">org</span>)
-(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">xml</span>)
-(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">cl</span>)
-
-(add-to-list 'load-path <span style="color: #008000;">"~/Dropbox/kitchingroup/jmax/elpa/f-20140828.716"</span>)
-(add-to-list 'load-path <span style="color: #008000;">"~/Dropbox/kitchingroup/jmax/elpa/s-20140910.334"</span>)
-(add-to-list 'load-path <span style="color: #008000;">"~/Dropbox/kitchingroup/jmax/elpa/dash-20141201.2206"</span>)
-(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">f</span>)
-
-(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">print-tag</span> (name attrs <span style="color: #6434A3;">&amp;optional</span> closingp)
-  <span style="color: #036A07;">"Print an xml tag with symbol NAME and ATTRS (a cons list of (attribute . value)).</span>
-<span style="color: #036A07;">if CLOSINGP print the closing tag instead."</span>
-  (format
-   <span style="color: #008000;">"&lt;%s%s%s&gt;"</span>
-   (<span style="color: #0000FF;">if</span> closingp <span style="color: #008000;">"/"</span> <span style="color: #008000;">""</span>)
-   name
-   (<span style="color: #0000FF;">if</span> (<span style="color: #0000FF;">and</span> attrs (not closingp))
-       (concat
-        <span style="color: #008000;">" "</span>
-        (mapconcat
-         (<span style="color: #0000FF;">lambda</span> (x)
-           (format <span style="color: #008000;">"%s=\"%s\""</span>
-                   (car x)
-                   (xml-escape-string (cdr x))))
-         attrs
-         <span style="color: #008000;">" "</span>))
-     <span style="color: #008000;">""</span>)))
-
-(<span style="color: #0000FF;">defmacro</span> <span style="color: #006699;">tag</span> (name attributes <span style="color: #6434A3;">&amp;rest</span> body)
-  <span style="color: #036A07;">"macro to create an xml tag with NAME, ATTRIBUTES. BODY is executed in the tag."</span>
-  `(format <span style="color: #008000;">"%s%s%s"</span>
-           (print-tag ,name ,attributes nil)
-           (concat
-            ,@body)
-           (print-tag ,name nil t)))
-
-(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">headline-xml</span> (headline)
-  <span style="color: #036A07;">"Return xml representation of an element HEADLINE."</span>
-  (<span style="color: #0000FF;">let</span> ((title (org-element-property <span style="color: #006FE0;">:title</span> headline))
-        (properties (<span style="color: #0000FF;">save-excursion</span>
-                      (goto-char
-                       (org-element-property <span style="color: #006FE0;">:begin</span> headline))
-                      (org-entry-properties))))
-    (tag 'headline ()
-         (tag 'title () (xml-escape-string (mapconcat 'identity title <span style="color: #008000;">" "</span>)))
-         (<span style="color: #0000FF;">when</span> properties
-           (tag 'properties ()
-                (mapconcat
-                 'identity
-                 (<span style="color: #0000FF;">loop</span> for (p . v) in properties
-                       collect (tag p () (xml-escape-string v)))
-                 <span style="color: #008000;">""</span>))))))
-
-(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">headline-document</span> (headline)
-  <span style="color: #036A07;">"Return the headline \"document\" for swish-e to index."</span>
-  (<span style="color: #0000FF;">let</span> ((xml (replace-regexp-in-string
-              <span style="color: #008000;">"[</span><span style="color: #008000;">^</span><span style="color: #008000;">[:ascii:]]"</span> <span style="color: #008000;">""</span>
-              (headline-xml headline))))
-    (format <span style="color: #008000;">"Path-Name: [[elisp:(progn (find-file \"%s\") (goto-char %s) (show-children))][link]]</span>
-<span style="color: #008000;">Content-Length: %s</span>
-<span style="color: #008000;">Document-Type: XML*</span>
-
-<span style="color: #008000;">%s"</span> (buffer-file-name)
-(org-element-property <span style="color: #006FE0;">:begin</span> headline)
-(length xml)
-xml)))
-
-(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">process-file</span> (fname)
-  <span style="color: #036A07;">"Print the `</span><span style="color: #D0372D;">headline-document</span><span style="color: #036A07;">' for each headline in FNAME."</span>
-  (<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect fname)
-    (mapconcat 'identity
-               (org-element-map (org-element-parse-buffer)
-                   'headline
-                 (<span style="color: #0000FF;">lambda</span> (headline)
-                   (princ (headline-document headline))))
-               <span style="color: #008000;">""</span>)))
-
-<span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Here is the main work in the script.</span>
-(<span style="color: #0000FF;">loop</span> for dir in '(<span style="color: #008000;">"/Users/jkitchin/blogofile-jkitchin.github.com/_blog"</span>)
-      do
-      (<span style="color: #0000FF;">loop</span> for fname in (f-entries
-                          dir
-                          (<span style="color: #0000FF;">lambda</span> (x)
-                            (string=  <span style="color: #008000;">"org"</span>  (file-name-extension x)))
-                          t)
-            do (<span style="color: #0000FF;">ignore-errors</span>
-                 (princ (process-file fname)))))
-</pre>
-</div>
-
-<p>
-Now we need a configuration file:
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-text"># Example configuration file
-
-# where to save the index
-IndexFile /Users/jkitchin/blogofile-jkitchin.github.com/_blog/index-org-headlines.swish-e
-
-# index all tags for searching
-UndefinedMetaTags auto
-UndefinedXMLAttributes auto
-</pre>
-</div>
-
-
-<p>
-And we run the indexer, I did this in an actual shell. For some reason, it was not possible to run here. The output is pretty useful though, as it tells you what MetaNames are searchable.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-sh">swish-e -c swish-org-headlines.conf -S prog -i ./swish-org-headlines.el
-</pre>
-</div>
-
-<pre class="example">
-10:17 $ swish-e -c swish-org-headlines.conf -S prog -i ./swish-org-headlines.el
-Indexing Data Source: "External-Program"
-Indexing "./swish-org-headlines.el"
-External Program found: ./swish-org-headlines.el
-**Adding automatic MetaName 'headline' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/writing-exams-in-orgmode.org") (goto-char 18) (show-children))][link]]'
-**Adding automatic MetaName 'title' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/writing-exams-in-orgmode.org") (goto-char 18) (show-children))][link]]'
-**Adding automatic MetaName 'properties' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/writing-exams-in-orgmode.org") (goto-char 18) (show-children))][link]]'
-**Adding automatic MetaName 'file' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/writing-exams-in-orgmode.org") (goto-char 18) (show-children))][link]]'
-**Adding automatic MetaName 'blocked' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/writing-exams-in-orgmode.org") (goto-char 18) (show-children))][link]]'
-**Adding automatic MetaName 'categories' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/writing-exams-in-orgmode.org") (goto-char 18) (show-children))][link]]'
-**Adding automatic MetaName 'date' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/writing-exams-in-orgmode.org") (goto-char 18) (show-children))][link]]'
-**Adding automatic MetaName 'updated' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/writing-exams-in-orgmode.org") (goto-char 18) (show-children))][link]]'
-**Adding automatic MetaName 'category' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/writing-exams-in-orgmode.org") (goto-char 18) (show-children))][link]]'
-**Adding automatic MetaName 'points' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/writing-exams-in-orgmode.org") (goto-char 1391) (show-children))][link]]'
-**Adding automatic MetaName 'tags' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/why-org-mode.org") (goto-char 25) (show-children))][link]]'
-**Adding automatic MetaName 'alltags' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/why-org-mode.org") (goto-char 25) (show-children))][link]]'
-**Adding automatic MetaName 'todo' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/why-org-mode.org") (goto-char 1733) (show-children))][link]]'
-**Adding automatic MetaName 'closed' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/why-org-mode.org") (goto-char 1733) (show-children))][link]]'
-**Adding automatic MetaName 'timestamp_ia' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/pdfsync.org") (goto-char 28) (show-children))][link]]'
-**Adding automatic MetaName 'id' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/org-to-docx-pandoc.org") (goto-char 5056) (show-children))][link]]'
-**Adding automatic MetaName 'custom_id' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/org-db.org") (goto-char 1311) (show-children))][link]]'
-**Adding automatic MetaName 'calculation' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/org-db.org") (goto-char 1311) (show-children))][link]]'
-**Adding automatic MetaName 'volume' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/org-db.org") (goto-char 1311) (show-children))][link]]'
-**Adding automatic MetaName 'total_energy' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/org-db.org") (goto-char 1311) (show-children))][link]]'
-**Adding automatic MetaName 'stress' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/org-db.org") (goto-char 1311) (show-children))][link]]'
-**Adding automatic MetaName 'priority' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 15327) (show-children))][link]]'
-**Adding automatic MetaName 'export_title' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 506769) (show-children))][link]]'
-**Adding automatic MetaName 'export_author' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 506769) (show-children))][link]]'
-**Adding automatic MetaName 'export_file_name' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 506769) (show-children))][link]]'
-**Adding automatic MetaName 'export_date' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 506769) (show-children))][link]]'
-**Adding automatic MetaName 'scheduled' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 516502) (show-children))][link]]'
-**Adding automatic MetaName 'deadline' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 516502) (show-children))][link]]'
-**Adding automatic MetaName 'votes' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 532031) (show-children))][link]]'
-**Adding automatic MetaName 'timestamp' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 571125) (show-children))][link]]'
-**Adding automatic MetaName 'clock' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 21059) (show-children))][link]]'
-**Adding automatic MetaName 'level' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 46582) (show-children))][link]]'
-**Adding automatic MetaName 'correct' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 46582) (show-children))][link]]'
-**Adding automatic MetaName 'permalink' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 61814) (show-children))][link]]'
-**Adding automatic MetaName 'hint' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 340534) (show-children))][link]]'
-**Adding automatic MetaName 'answer' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 355206) (show-children))][link]]'
-**Adding automatic MetaName 'correct-answer' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 377210) (show-children))][link]]'
-**Adding automatic MetaName 'post_filename' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 415454) (show-children))][link]]'
-**Adding automatic MetaName 'ordered' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 423900) (show-children))][link]]'
-**Adding automatic MetaName 'grade' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/add-subheadings-to-headings.org") (goto-char 2822) (show-children))][link]]'
-**Adding automatic MetaName ':export_file_name:' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/add-properties-to-headings.org") (goto-char 2) (show-children))][link]]'
-**Adding automatic MetaName 'firstname' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/org-contacts/referee-contacts.org") (goto-char 155) (show-children))][link]]'
-**Adding automatic MetaName 'lastname' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/org-contacts/referee-contacts.org") (goto-char 155) (show-children))][link]]'
-**Adding automatic MetaName 'email' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/org-contacts/referee-contacts.org") (goto-char 155) (show-children))][link]]'
-**Adding automatic MetaName 'affiliation' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/org-contacts/referee-contacts.org") (goto-char 155) (show-children))][link]]'
-**Adding automatic MetaName 'lettergrade' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/org-report/Slim-Shady-HW1.org") (goto-char 29) (show-children))][link]]'
-**Adding automatic MetaName 'difficulty' found in file '[[elisp:(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/problem-selection/problem-selection.org") (goto-char 1) (show-children))][link]]'
-Removing very common words...
-no words removed.
-Writing main index...
-Sorting words ...
-Sorting 6,044 words alphabetically
-Writing header ...
-Writing index entries ...
-  Writing word text: Complete
-  Writing word hash: Complete
-  Writing word data: Complete
-6,044 unique words indexed.
-4 properties sorted.
-5,084 files indexed.  1,760,249 total bytes.  368,569 total words.
-Elapsed time: 00:00:37 CPU time: 00:00:01
-Indexing done!
-</pre>
-
-
-<p>
-Ok, now for the proof in the approach!
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-sh">swish-e -f index-org-headlines.swish-e -w <span style="color: #BA36A5;">headline</span>=generating
-</pre>
-</div>
-
-<p>
-1000 <a href="(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/separate-bib.org") (goto-char 1) (show-children))">link</a> "separate-bib.org") (goto-char 1) (show-children))][link]]" 393
-1000 <a href="(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 158456) (show-children))">link</a> "blog-2014.org") (goto-char 158456) (show-children))][link]]" 229
-1000 <a href="(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 272383) (show-children))">link</a> "blog-2014.org") (goto-char 272383) (show-children))][link]]" 400
-1000 <a href="(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 158456) (show-children))">link</a> "blog-2014.org") (goto-char 158456) (show-children))][link]]" 229
-1000 <a href="(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 448965) (show-children))">link</a> "blog.org") (goto-char 448965) (show-children))][link]]" 389
-1000 <a href="(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/org-db.org") (goto-char 575) (show-children))">link</a> "org-db.org") (goto-char 575) (show-children))][link]]" 204
-1000 <a href="(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/org-db.org") (goto-char 575) (show-children))">link</a> "org-db.org") (goto-char 575) (show-children))][link]]" 204
-1000 <a href="(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/separate-bib.org") (goto-char 1) (show-children))">link</a> "separate-bib.org") (goto-char 1) (show-children))][link]]" 393
-1000 <a href="(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 272383) (show-children))">link</a> "blog-2014.org") (goto-char 272383) (show-children))][link]]" 400
-.
-</p>
-
-
-<div class="org-src-container">
-
-<pre class="src src-sh">swish-e -f index-org-headlines.swish-e -w <span style="color: #BA36A5;">todo</span>=TODO
-</pre>
-</div>
-
-<p>
-1000 <a href="(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 16933) (show-children))">link</a> "blog.org") (goto-char 16933) (show-children))][link]]" 342
-1000 <a href="(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 61231) (show-children))">link</a> "blog-2014.org") (goto-char 61231) (show-children))][link]]" 207
-1000 <a href="(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 60802) (show-children))">link</a> "blog-2014.org") (goto-char 60802) (show-children))][link]]" 274
-1000 <a href="(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 60289) (show-children))">link</a> "blog-2014.org") (goto-char 60289) (show-children))][link]]" 207
-1000 <a href="(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 61568) (show-children))">link</a> "blog-2014.org") (goto-char 61568) (show-children))][link]]" 246
-1000 <a href="(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 61231) (show-children))">link</a> "blog-2014.org") (goto-char 61231) (show-children))][link]]" 207
-1000 <a href="(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 60802) (show-children))">link</a> "blog-2014.org") (goto-char 60802) (show-children))][link]]" 274
-1000 <a href="(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 60289) (show-children))">link</a> "blog-2014.org") (goto-char 60289) (show-children))][link]]" 207
-1000 <a href="(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 632875) (show-children))">link</a> "blog.org") (goto-char 632875) (show-children))][link]]" 266
-1000 <a href="(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 529123) (show-children))">link</a> "blog.org") (goto-char 529123) (show-children))][link]]" 202
-1000 <a href="(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 529087) (show-children))">link</a> "blog.org") (goto-char 529087) (show-children))][link]]" 206
-1000 <a href="(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 518108) (show-children))">link</a> "blog.org") (goto-char 518108) (show-children))][link]]" 280
-1000 <a href="(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog.org") (goto-char 30559) (show-children))">link</a> "blog.org") (goto-char 30559) (show-children))][link]]" 337
-1000 <a href="(progn (find-file "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/blog-2014.org") (goto-char 61568) (show-children))">link</a> "blog-2014.org") (goto-char 61568) (show-children))][link]]" 246
-.
-</p>
-
-
-<div id="outline-container-sec-1" class="outline-2">
-<h2 id="sec-1"><span class="section-number-2">1</span> Summary thoughts</h2>
-<div class="outline-text-2" id="text-1">
-<p>
-This could be super useful for a lot of different elements: headlines, src-blocks, links, tables, paragraphs are the main ones that come to mind. You could have pretty focused searches that go straight to the matches!</p>
-</div>
-</div>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/07/06/Indexing-headlines-in-org-files-with-swish-e-with-laser-sharp-results.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-
-<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2015/07/06/Indexing-headlines-in-org-files-with-swish-e-with-laser-sharp-results">Discuss on Twitter</a>
-
-  <hr class="interblog" />
  <a href="../35">« Previous Page</a>
   --  
  <a href="../37">Next Page »</a>
@@ -1064,11 +974,11 @@ This could be super useful for a lot of different elements: headlines, src-block
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2021/12/03/New-publication-Accelerated-Optimization-of-Pure-Metal-and-Ligand-Compositions-for-Light-driven-Hydrogen-Production/">New publication - Accelerated Optimization of Pure Metal and Ligand Compositions for Light-driven Hydrogen Production</a></li>
       <li><a href="/blog/2021/12/02/New-publication-Ligand-Enhanced-Activity-of-in-Situ-Formed-Nanoparticles-for-Photocatalytic-Hydrogen-Evolution/">New publication - Ligand Enhanced Activity of in Situ Formed Nanoparticles for Photocatalytic Hydrogen Evolution</a></li>
       <li><a href="/blog/2021/11/30/New-publication-Uncertainty-quantification-in-machine-learning-and-nonlinear-least-squares-regression-models/">New publication - Uncertainty quantification in machine learning and nonlinear least squares regression models</a></li>
       <li><a href="/blog/2021/11/23/pycse-YouTube-Channel/">pycse YouTube Channel</a></li>
       <li><a href="/blog/2021/06/29/Youtube-live-streamed-research-talks/">Youtube live-streamed research talks</a></li>
-      <li><a href="/blog/2021/06/21/New-publication-Machine-learning-accelerated-geometry-optimization-in-molecular-simulation/">New publication "Machine-learning accelerated geometry optimization in molecular simulation"</a></li>
     </ul>
   </section>
 
