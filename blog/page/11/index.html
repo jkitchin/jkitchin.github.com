@@ -102,10 +102,191 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Forces-by-automatic-differentiation-in-molecular-simulation"></div>
+      <h2 class="blog_post_title"><a href="/blog/2017/11/14/Forces-by-automatic-differentiation-in-molecular-simulation/" rel="bookmark" title="Permanent Link to Forces by automatic differentiation in molecular simulation">Forces by automatic differentiation in molecular simulation</a></h2>
+      <p><small><span class="blog_post_date">Posted November 14, 2017 at 09:06 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/simulation/'>simulation</a>, <a href='/blog/category/autograd/'>autograd</a></span> | tags: 
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+In molecular simulation we often use a potential to compute the total energy of a system. For example, we might use something simple like a <a href="https://en.wikipedia.org/wiki/Lennard-Jones_potential">Lennard-Jones</a> potential. If we have a potential function, e.g. \(E = V(R)\) where \(R\) are the positions of the atoms, then we know the forces on the atoms are defined by \(f = -\frac{dV}{dR}\). For simple functions, you can derive the derivative pretty easily, but these functions quickly get complicated. In this post, we consider <a href="https://en.wikipedia.org/wiki/Automatic_differentiation">automatic differentiation</a> as implemented by <a href="https://github.com/HIPS/autograd">autograd</a>. This is neither symbolic nor numerical differentiation. The gist is that the program uses the chain rule to evaluate derivatives. Here we do not delve into how it is done, we just see how it might help us in molecular simulation.
+</p>
+
+<p>
+For reference, here is a result from the LennardJones calculator in ASE.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="org610d524"><span style="color: #0000FF;">from</span> ase.calculators.lj <span style="color: #0000FF;">import</span> LennardJones
+<span style="color: #0000FF;">from</span> ase.cluster.icosahedron <span style="color: #0000FF;">import</span> Icosahedron
+
+<span style="color: #BA36A5;">atoms</span> = Icosahedron(<span style="color: #008000;">'Ar'</span>, noshells=2, latticeconstant=3)
+atoms.set_calculator(LennardJones())
+
+atoms.rattle(0.5)
+<span style="color: #0000FF;">print</span>(<span style="color: #008000;">'LJ: '</span>, atoms.get_potential_energy())
+</pre>
+</div>
+
+<pre class="example">
+('LJ: ', -3.3553466825679812)
+
+</pre>
+
+<p>
+First, we define a function for the Lennard-Jones potential. I adapted the code <a href="https://wiki.fysik.dtu.dk/ase/_modules/ase/calculators/lj.html#LennardJones">here</a> to implement a function that calculates the Lennard-Jones energy for a cluster of atoms with no periodic boundary conditions. <i>Instead</i> of using numpy directly, we import it from the autograd package which puts thin wrappers around the functions to enable the derivative calculations. 
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="org022fb09"><span style="color: #0000FF;">import</span> autograd.numpy <span style="color: #0000FF;">as</span> np
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">energy</span>(positions):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #036A07;">"Compute the energy of a Lennard-Jones system."</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">natoms</span> = <span style="color: #006FE0;">len</span>(positions)
+
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">sigma</span> = 1.0
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">epsilon</span> = 1.0
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">rc</span> = 3 * sigma
+
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">e0</span> = 4 * epsilon * ((sigma / rc)**12 - (sigma / rc)**6)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">energy</span> = 0.0
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">for</span> a1 <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">range</span>(natoms):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">for</span> j <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">range</span>(a1 + 1, natoms):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">r2</span> = np.<span style="color: #006FE0;">sum</span>((positions[a1] - positions[j])**2)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">if</span> r2 &lt;= rc**2:
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">c6</span> = (sigma**2 / r2)**3
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">energy</span> -= e0 
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">c12</span> = c6**2
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">energy</span> += 4 * epsilon * (c12 - c6)
+
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> energy
+</pre>
+</div>
+
+<p>
+Here is our function in action, and it produces the same result as the ASE calculator. So far there is nothing new.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="org4bd1401"><span style="color: #0000FF;">print</span>(<span style="color: #008000;">'our func: '</span>, energy(atoms.positions))
+</pre>
+</div>
+
+<pre class="example">
+('our func: ', -3.3553466825679803)
+
+</pre>
+
+<p>
+Now, we look at the forces from the ASE calculator. If you look at the ASE <a href="https://wiki.fysik.dtu.dk/ase/_modules/ase/calculators/lj.html#LennardJones">code</a> you will see that the formula for forces was analytically derived and accumulated in the loop.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="org6dc5318">np.set_printoptions(precision=3, suppress=<span style="color: #D0372D;">True</span>)
+<span style="color: #0000FF;">print</span>(atoms.get_forces())
+</pre>
+</div>
+
+<pre class="example">
+[[ 0.545  1.667  0.721]
+ [-0.068  0.002  0.121]
+ [-0.18   0.018 -0.121]
+ [ 0.902 -0.874 -0.083]
+ [ 0.901 -0.937 -1.815]
+ [ 0.243 -0.19   0.063]
+ [-0.952 -1.776 -0.404]
+ [-0.562  1.822  1.178]
+ [-0.235  0.231  0.081]
+ [-0.023  0.204 -0.294]
+ [ 0.221 -0.342 -0.425]
+ [-5.385 -6.017  1.236]
+ [ 4.593  6.193 -0.258]]
+
+</pre>
+
+<p>
+Now we look at how to use autograd for this purpose. We want an element-wise gradient of the total energy with respect to the positions. autograd returns functions, so we wrap it in another function so we can take the negative of that function.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="org2210bf9"><span style="color: #0000FF;">from</span> autograd <span style="color: #0000FF;">import</span> elementwise_grad
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">forces</span>(pos):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">dEdR</span> = elementwise_grad(energy)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> -dEdR(pos)
+
+<span style="color: #0000FF;">print</span>(forces(atoms.positions))
+</pre>
+</div>
+
+<pre class="example">
+[[ 0.545  1.667  0.721]
+ [-0.068  0.002  0.121]
+ [-0.18   0.018 -0.121]
+ [ 0.902 -0.874 -0.083]
+ [ 0.901 -0.937 -1.815]
+ [ 0.243 -0.19   0.063]
+ [-0.952 -1.776 -0.404]
+ [-0.562  1.822  1.178]
+ [-0.235  0.231  0.081]
+ [-0.023  0.204 -0.294]
+ [ 0.221 -0.342 -0.425]
+ [-5.385 -6.017  1.236]
+ [ 4.593  6.193 -0.258]]
+
+</pre>
+
+<p>
+Here we show the results are the same from both approaches.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="orgc41aef4"><span style="color: #0000FF;">print</span>(np.allclose(atoms.get_forces(), forces(atoms.positions)))
+</pre>
+</div>
+
+<pre class="example">
+True
+
+</pre>
+
+<p>
+Wow. We got forces without deriving a derivative, or using numerical finite differences, across loops, and conditionals. That is pretty awesome. You can easily modify the potential function now, without the need to rederive the force derivatives! This is an idea worth exploring further. In principle, it should be possible to include periodic boundary conditions and use autograd to compute stresses too. Maybe that will be a future post.
+</p>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/11/14/Forces-by-automatic-differentiation-in-molecular-simulation.org">org-mode source</a></p>
+<p>Org-mode version = 9.1.2</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+
+<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2017/11/14/Forces-by-automatic-differentiation-in-molecular-simulation">Discuss on Twitter</a>
+
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="New-publication-in-J-Phys-Chem-Lett"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/09/25/New-publication-in-J-Phys-Chem-Lett/" rel="bookmark" title="Permanent Link to New publication in J. Phys. Chem. Lett.">New publication in J. Phys. Chem. Lett.</a></h2>
       <p><small><span class="blog_post_date">Posted September 25, 2017 at 08:24 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/news/'>news</a>, <a href='/blog/category/publication/'>publication</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/publication/'>publication</a>, <a href='/blog/category/news/'>news</a></span> | tags: 
       <p><small><span class="blog_post_date">Updated September 26, 2017 at 07:16 AM</span></small>
       </small></p>
     </header>
@@ -172,7 +353,7 @@ DFT calculations are extensively used to predict the chemical properties of meta
       <div id="Finding-similar-bibtex-entries"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/09/16/Finding-similar-bibtex-entries/" rel="bookmark" title="Permanent Link to Finding similar bibtex entries">Finding similar bibtex entries</a></h2>
       <p><small><span class="blog_post_date">Posted September 16, 2017 at 10:00 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/bibtex/'>bibtex</a>, <a href='/blog/category/similarity/'>similarity</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/similarity/'>similarity</a>, <a href='/blog/category/bibtex/'>bibtex</a></span> | tags: 
       </small></p>
     </header>
     <div class="post_prose">
@@ -406,7 +587,7 @@ This could have a number of other applications. Given some reference content, yo
       <div id="New-publication-in-Journal-of-Physics-Condensed-Matter"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/08/06/New-publication-in-Journal-of-Physics-Condensed-Matter/" rel="bookmark" title="Permanent Link to New publication in Journal of Physics Condensed Matter">New publication in Journal of Physics Condensed Matter</a></h2>
       <p><small><span class="blog_post_date">Posted August 06, 2017 at 11:04 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/news/'>news</a>, <a href='/blog/category/publication/'>publication</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/publication/'>publication</a>, <a href='/blog/category/news/'>news</a></span> | tags: 
       <p><small><span class="blog_post_date">Updated August 06, 2017 at 11:05 AM</span></small>
       </small></p>
     </header>
@@ -493,7 +674,7 @@ The Atomic Simulation Environment is a powerful python library for setting up, r
       <div id="New-publication-in-Crystal-Growth-Design"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/08/05/New-publication-in-Crystal-Growth-Design/" rel="bookmark" title="Permanent Link to New publication in Crystal Growth & Design">New publication in Crystal Growth & Design</a></h2>
       <p><small><span class="blog_post_date">Posted August 05, 2017 at 01:11 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/news/'>news</a>, <a href='/blog/category/publication/'>publication</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/publication/'>publication</a>, <a href='/blog/category/news/'>news</a></span> | tags: 
       <p><small><span class="blog_post_date">Updated August 05, 2017 at 01:16 PM</span></small>
       </small></p>
     </header>
@@ -548,531 +729,6 @@ Usually, metal oxides grow in a single, most stable crystal structure at a parti
 <a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2017/08/05/New-publication-in-Crystal-Growth-Design">Discuss on Twitter</a>
 
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Overloading-mathematical-operators-in-elisp"></div>
-      <h2 class="blog_post_title"><a href="/blog/2017/07/23/Overloading-mathematical-operators-in-elisp/" rel="bookmark" title="Permanent Link to Overloading mathematical operators in elisp">Overloading mathematical operators in elisp</a></h2>
-      <p><small><span class="blog_post_date">Posted July 23, 2017 at 02:13 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/elisp/'>elisp</a></span> | tags: 
-      <p><small><span class="blog_post_date">Updated July 23, 2017 at 04:03 PM</span></small>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<div id="table-of-contents">
-<h2>Table of Contents</h2>
-<div id="text-table-of-contents">
-<ul>
-<li><a href="#orgccfe3c4">1. Addendum</a></li>
-</ul>
-</div>
-</div>
-<p>
-In Python I am used to some simple idioms like this:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-python"><span style="color: #0000FF;">print</span>([1, 2, 3] * 2)
-<span style="color: #0000FF;">print</span>(<span style="color: #008000;">"ab"</span> * 3)
-</pre>
-</div>
-
-<p>
-[1, 2, 3, 1, 2, 3]
-ababab
-</p>
-
-<p>
-There is even such fanciness as defining operators for objects, as long as they have the appropriate dunder methods defined:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-python"><span style="color: #0000FF;">class</span> <span style="color: #6434A3;">Point</span>:
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">def</span> <span style="color: #006699;">__init__</span>(<span style="color: #0000FF;">self</span>, x, y):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">self</span>.x = x
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">self</span>.y = y
-
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">def</span> <span style="color: #006699;">__str__</span>(<span style="color: #0000FF;">self</span>):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> <span style="color: #008000;">"Point ({}, {})"</span>.<span style="color: #006FE0;">format</span>(<span style="color: #0000FF;">self</span>.x, <span style="color: #0000FF;">self</span>.y)
-
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">def</span> <span style="color: #006699;">__mul__</span>(<span style="color: #0000FF;">self</span>, a):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> Point(<span style="color: #0000FF;">self</span>.x * a, <span style="color: #0000FF;">self</span>.y * a)
-
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">def</span> <span style="color: #006699;">__rmul__</span>(<span style="color: #0000FF;">self</span>, a):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> Point(<span style="color: #0000FF;">self</span>.x * a, <span style="color: #0000FF;">self</span>.y * a)
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   
-<span style="color: #BA36A5;">p</span> = Point(1, 1)
-<span style="color: #0000FF;">print</span>(p * 2)
-<span style="color: #0000FF;">print</span>(3 * p)
-</pre>
-</div>
-
-<p>
-Point (2, 2)
-Point (3, 3)
-</p>
-
-<p>
-Out of the box, these things are not possible in elisp. Operators like  * in elisp only take numbers or markers. We have a few options to change this. The worst option is to simply redefine these functions. That is bad because it is not reversible. We could define new functions that have the behavior we want, but then we lose the semantic meaning of "*" that we were aiming for. A better option is to <a href="https://www.gnu.org/software/emacs/manual/html_node/elisp/Advising-Functions.html">advise</a> these functions. This is reversible, because you can later unadvise them. Today we look at some strategies to do this.
-</p>
-
-<p>
-We will use "around" advise because it will let us bypass the original intent of the function when we want to, or use it when we do. First, we create a function that will be the advice and add it to the * function. This first draft won't actually change the behavior of *; if all the args are numbers or markers it will simply use the original function as before.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">dash</span>)
-
-(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">*--*-around</span> (orig-fun <span style="color: #6434A3;">&amp;rest</span> args)
-  <span style="color: #036A07;">"if every arg is a number do *, else do something else."</span>
-  (<span style="color: #0000FF;">cond</span>
-   ((-every? (<span style="color: #0000FF;">lambda</span> (x) (<span style="color: #0000FF;">or</span> (numberp x) (markerp x))) args)
-    (apply orig-fun args))))
-
-(advice-add '* <span style="color: #006FE0;">:around</span> #'*--*-around)
-</pre>
-</div>
-
-<p>
-Let's just confirm
-</p>
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(* 1 2 3)
-</pre>
-</div>
-
-<pre class="example">
-6
-
-</pre>
-
-<p>
-Now, we can start modifying our function to handle some other cases. Let's do the list and string first. The * function is variadic, but in these cases it makes sense to limit to two arguments. We need two cases for each type since we can write (* 2 list) or (* list 2). We also should create a fall-through case that raises an error to alert us we can't multiply things.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">*--*-around</span> (orig-fun <span style="color: #6434A3;">&amp;rest</span> args)
-  <span style="color: #036A07;">"if every arg is a number do *, else do something else."</span>
-  (<span style="color: #0000FF;">cond</span>
-   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">The original behavior</span>
-   ((-every? (<span style="color: #0000FF;">lambda</span> (x) (<span style="color: #0000FF;">or</span> (numberp x) (markerp x))) args)
-    (apply orig-fun args))
-
-   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">create repeated copies of list</span>
-   ((<span style="color: #0000FF;">and</span> (listp (first args))
-         (integerp (second args))
-         (= 2 (length args)))
-    (<span style="color: #0000FF;">loop</span> for i from 0 below (second args) append (copy-list (first args))))
-
-   ((<span style="color: #0000FF;">and</span> (integerp (first args))
-         (listp (second args))
-         (= 2 (length args)))
-    (<span style="color: #0000FF;">loop</span> for i from 0 below (first args) append (copy-list (second args))))
-
-   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Make repeated string</span>
-   ((<span style="color: #0000FF;">and</span> (stringp (first args))
-         (integerp (second args))
-         (= 2 (length args)))
-    (<span style="color: #0000FF;">loop</span> for i from 0 below (second args) concat (first args)))
-
-   ((<span style="color: #0000FF;">and</span> (integerp (first args))
-         (stringp (second args))
-         (= 2 (length args)))
-    (<span style="color: #0000FF;">loop</span> for i from 0 below (first args) concat (second args)))
-
-   (t
-    (<span style="color: #ff0000; font-weight: bold;">error</span> <span style="color: #008000;">"You cannot * %s"</span> args))))
-</pre>
-</div>
-
-<pre class="example">
-*--*-around
-
-</pre>
-
-<p>
-Here is the new advice in action. 
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(list
- (* '(a b) 2)
- (* 2 '(c d))
- (* 2 <span style="color: #008000;">"ab"</span>)
- (* <span style="color: #008000;">"cd"</span> 2))
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-left" />
-
-<col  class="org-left" />
-
-<col  class="org-left" />
-
-<col  class="org-left" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-left">(a b a b)</td>
-<td class="org-left">(c d c d)</td>
-<td class="org-left">abab</td>
-<td class="org-left">cdcd</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-That captures the spirit of overloading * for lists and strings. What about that object example? We have to make some assumptions here. Python looks for an uses a dunder <span class="underline"><span class="underline">mul</span></span> method. We will assume a double dash method (&#x2013;mul&#x2013;) in a similar spirit. We have to modify the advice one final time. We just add a condition to check if one of the arguments is an eieio-object, and then call the &#x2013;mul&#x2013; function on the arguments.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">*--*-around</span> (orig-fun <span style="color: #6434A3;">&amp;rest</span> args)
-  <span style="color: #036A07;">"if every arg is a number do *, else do something else."</span>
-  (<span style="color: #0000FF;">cond</span>
-   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">The original behavior</span>
-   ((-every? (<span style="color: #0000FF;">lambda</span> (x) (<span style="color: #0000FF;">or</span> (numberp x) (markerp x))) args)
-    (apply orig-fun args))
-
-   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">create repeated copies of list</span>
-   ((<span style="color: #0000FF;">and</span> (listp (first args))
-         (integerp (second args))
-         (= 2 (length args)))
-    (<span style="color: #0000FF;">loop</span> for i from 0 below (second args) append (copy-list (first args))))
-
-   ((<span style="color: #0000FF;">and</span> (integerp (first args))
-         (listp (second args))
-         (= 2 (length args)))
-    (<span style="color: #0000FF;">loop</span> for i from 0 below (first args) append (copy-list (second args))))
-
-   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Make repeated string</span>
-   ((<span style="color: #0000FF;">and</span> (stringp (first args))
-         (integerp (second args))
-         (= 2 (length args)))
-    (<span style="color: #0000FF;">loop</span> for i from 0 below (second args) concat (first args)))
-
-   ((<span style="color: #0000FF;">and</span> (integerp (first args))
-         (stringp (second args))
-         (= 2 (length args)))
-    (<span style="color: #0000FF;">loop</span> for i from 0 below (first args) concat (second args)))
-
-   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Handle object</span>
-   ((<span style="color: #0000FF;">or</span> (<span style="color: #0000FF;">and</span> (eieio-object-p (first args))
-             (numberp (second args)))
-        (<span style="color: #0000FF;">and</span> (numberp (first args))
-             (eieio-object-p (second args))))
-    (apply '--mul-- args))
-
-   (t
-    (<span style="color: #ff0000; font-weight: bold;">error</span> <span style="color: #008000;">"You cannot * %s"</span> args))))
-</pre>
-</div>
-
-<pre class="example">
-*--*-around
-
-</pre>
-
-<p>
-Now, we can define a class and the &#x2013;mul&#x2013; function and show that our overloaded * function works. Note we can define two signatures of &#x2013;mul&#x2013; so it is not necessary to define an &#x2013;rmul&#x2013; in this case as it was with Python (although we still create two functions in the end).
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">eieio</span>)
-
-(<span style="color: #0000FF;">defclass</span> <span style="color: #6434A3;">Point</span> ()
-  ((x <span style="color: #006FE0;">:initarg</span> <span style="color: #006FE0;">:x</span>)
-   (y <span style="color: #006FE0;">:initarg</span> <span style="color: #006FE0;">:y</span>)))
-
-(<span style="color: #0000FF;">cl-defmethod</span> <span style="color: #006699;">--mul--</span> ((p Point) a)
-  (Point <span style="color: #006FE0;">:x</span> (* (<span style="color: #0000FF;">oref</span> p <span style="color: #006FE0;">:x</span>) a) <span style="color: #006FE0;">:y</span> (* (<span style="color: #0000FF;">oref</span> p <span style="color: #006FE0;">:y</span>) a)))
-
-(<span style="color: #0000FF;">cl-defmethod</span> <span style="color: #006699;">--mul--</span> (a (p Point))
-  (Point <span style="color: #006FE0;">:x</span> (* (<span style="color: #0000FF;">oref</span> p <span style="color: #006FE0;">:x</span>) a) <span style="color: #006FE0;">:y</span> (* (<span style="color: #0000FF;">oref</span> p <span style="color: #006FE0;">:y</span>) a)))
-
-(<span style="color: #0000FF;">cl-defmethod</span> <span style="color: #006699;">--str--</span> ((p Point))
-  (format <span style="color: #008000;">"Point (%s, %s)"</span> (<span style="color: #0000FF;">oref</span> p <span style="color: #006FE0;">:x</span>) (<span style="color: #0000FF;">oref</span> p <span style="color: #006FE0;">:y</span>)))
-
-(<span style="color: #0000FF;">let</span> ((P (Point <span style="color: #006FE0;">:x</span> 1 <span style="color: #006FE0;">:y</span> 1)))
-  (list
-   (--str-- (* P 2))
-   (--str-- (* 3 P))))
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-left" />
-
-<col  class="org-left" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-left">Point (2, 2)</td>
-<td class="org-left">Point (3, 3)</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-That is pretty awesome. Before going on, here is how you remove the advice:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(advice-remove '* '*--*-around)
-</pre>
-</div>
-
-<p>
-This example has been pretty instructive. You have to handle overloading for all the intrinsic types. We did lists and strings here; you might also consider vectors. For objects, it looks like we can at least try using a generic method like &#x2013;mul&#x2013;. One detail I neglected to consider here is that * is natively variadic. For these special cases, we did not implement variadic versions. This isn't a feature of Python which uses infix notation, so every call is with two arguments. In some cases it might make sense to support variadic args, but that seems like a generally challenging thing to do. While (* "a" 2 3) might be expected to create a string of "aaaaaa", (* "a" 2 '(3)) doesn't make sense at all.
-</p>
-
-<p>
-It would be straightforward to extend this to other operators like '+ to concatenate strings, lists and vectors, or '- to remove chars or elements, including extensions to objects using double-dash functions like &#x2013;add&#x2013;, &#x2013;subtract&#x2013;, etc. Another nice idea might be to advise print to use &#x2013;str&#x2013; on objects.
-</p>
-
-<p>
-On the surface this looks useful so far. Python defines <i>a lot</i> of dunder methods that cover all kinds of scenarios including logical comparisons, bit shifting, mod, incrementing operators, casting, comparisons, right/left operations, indexing and assignment, length and others. That would be a lot of advices. This approach is moderately tedious to expand though; you have to keep adding conditional cases. 
-</p>
-
-<p>
-An alternative to the big conditional statement used in the advice might be the use of a <a href="https://www.gnu.org/software/emacs/manual/html_node/elisp/Generic-Functions.html">generic function</a>. With this approach we define a generic function that just does multiplication by default. Then we define specific cases with specific signatures that are used for lists, strings, objects, etc. That is basically all our conditional above was doing, matching signatures and executing a chunk of code accordingly.
-</p>
-
-<p>
-Here is our default case that does the original behavior. We still use advice to apply the function.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">cl-defgeneric</span> <span style="color: #006699;">generic-multiply</span> (orig-fun <span style="color: #6434A3;">&amp;rest</span> args)
-  <span style="color: #036A07;">"Generic multiply for when no specific case exists."</span>
-  (apply orig-fun args))
-
-(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">*--*-around-generic</span> (orig-fun <span style="color: #6434A3;">&amp;rest</span> args)
-  (apply 'generic-multiply orig-fun args))
-
-(advice-add '* <span style="color: #006FE0;">:around</span> #'*--*-around-generic)
-</pre>
-</div>
-
-<p>
-That should just work as usual for regular multiplication.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(* 1 2 3 4)
-</pre>
-</div>
-
-<pre class="example">
-24
-
-</pre>
-
-<p>
-Sure enough it does. Now, we can define a specific method for a string. We need a specialized method for each signature, e.g. pre and post multiplication.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">cl-defmethod</span> <span style="color: #006699;">generic-multiply</span> ((orig-fun subr) (s string) (n integer))
-  (<span style="color: #0000FF;">loop</span> for i from 0 below n concat s))
-
-(<span style="color: #0000FF;">cl-defmethod</span> <span style="color: #006699;">generic-multiply</span> ((orig-fun subr) (n integer) (s string))
-  (<span style="color: #0000FF;">loop</span> for i from 0 below n concat s))
-
-(list
- (* <span style="color: #008000;">"Ac"</span> 2)
- (* 2 <span style="color: #008000;">"Ad"</span>))
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-left" />
-
-<col  class="org-left" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-left">AcAc</td>
-<td class="org-left">AdAd</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-That works fine, and we did not have to modify our original advice function at all! Next the  list:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">cl-defmethod</span> <span style="color: #006699;">generic-multiply</span> ((orig-fun subr) (L list) (n integer))
-  (<span style="color: #0000FF;">loop</span> for i from 0 below n append (copy-list L)))
-
-(<span style="color: #0000FF;">cl-defmethod</span> <span style="color: #006699;">generic-multiply</span> ((orig-fun subr) (n integer) (L list))
-  (<span style="color: #0000FF;">loop</span> for i from 0 below n append (copy-list L)))
-
-(list (* '(1 2) 2)
-      (* 2 '(3 4)))
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-right" />
-
-<col  class="org-right" />
-
-<col  class="org-right" />
-
-<col  class="org-right" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-right">1</td>
-<td class="org-right">2</td>
-<td class="org-right">1</td>
-<td class="org-right">2</td>
-</tr>
-
-<tr>
-<td class="org-right">3</td>
-<td class="org-right">4</td>
-<td class="org-right">3</td>
-<td class="org-right">4</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-That also works fine. Last, our class example. This should work on all objects I think (unless there is some way to make classes that do not inherit the default superclass).
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">cl-defmethod</span> <span style="color: #006699;">generic-multiply</span> ((orig-fun subr) (n integer) (obj eieio-default-superclass))
-  (--mul-- n obj))
-
-(<span style="color: #0000FF;">cl-defmethod</span> <span style="color: #006699;">generic-multiply</span> ((orig-fun subr) (obj eieio-default-superclass) (n integer))
-  (--mul-- n obj))
-
-(<span style="color: #0000FF;">let</span> ((P (Point <span style="color: #006FE0;">:x</span> 1 <span style="color: #006FE0;">:y</span> 1)))
-  (list
-   (--str-- (* P 2))
-   (--str-- (* 3 P))))
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-left" />
-
-<col  class="org-left" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-left">Point (2, 2)</td>
-<td class="org-left">Point (3, 3)</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-This is a much better approach to extending the multiplication operator! If I continue this path in the future I would probably take this one.  This could be useful to make elisp more like some more popular contemporary languages like Python, as well as to add linear algebra like notation or mathematical operations on objects in elisp. It kind of feels like these operations ought to be generic functions to start with to make this kind of overloading easier from the beginning.  Functions like "*" are currently defined in the C source code though, maybe for performance reasons. It is not obvious what the consequences of making them generic might be.
-</p>
-
-<div id="outline-container-orgccfe3c4" class="outline-2">
-<h2 id="orgccfe3c4"><span class="section-number-2">1</span> Addendum</h2>
-<div class="outline-text-2" id="text-1">
-<p>
-Christopher Wellons <a href="http://disq.us/p/1kr76r9">pointed out</a> an important limitation of advice: they don't work on byte-compiled functions. Let's see what he means. Here is a simple function that will just multiply a Point object by an integer:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">to-be-bytten</span> (p1 n)
-  (* p1 n))
-</pre>
-</div>
-
-<pre class="example">
-to-be-bytten
-
-</pre>
-
-<p>
-Here it is in action, and here it works fine.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(to-be-bytten (Point <span style="color: #006FE0;">:x</span> 1 <span style="color: #006FE0;">:y</span> 1) 2)
-</pre>
-</div>
-
-<pre class="example">
-[eieio-class-tag--Point 2 2]
-
-</pre>
-
-<p>
-Now, let's byte-compile that function and try it again:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(byte-compile 'to-be-bytten)
-
-(<span style="color: #0000FF;">condition-case</span> err
-    (to-be-bytten (Point <span style="color: #006FE0;">:x</span> 1 <span style="color: #006FE0;">:y</span> 1) 2)
-  ((<span style="color: #ff0000; font-weight: bold;">error</span> r)
-   (message <span style="color: #008000;">"Doh! Christopher was right. It did not work...\n%s"</span> err)))
-</pre>
-</div>
-
-<pre class="example">
-Doh! Christopher was right. It did not work...
-(wrong-type-argument number-or-marker-p [eieio-class-tag--Point 1 1])
-
-</pre>
-
-<p>
-So the advice is pretty limited since most of the functions in Emacs core are likely to be byte-compiled, and it might mean you have to redefine * completely, or define some new function that looks like it. Too bad, the advice was pretty easy! 
-</p>
-</div>
-</div>
-<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2017/07/23/Overloading-mathematical-operators-in-elisp.org">org-mode source</a></p>
-<p>Org-mode version = 9.0.7</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-
-<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2017/07/23/Overloading-mathematical-operators-in-elisp">Discuss on Twitter</a>
-
-  <hr class="interblog" />
  <a href="../10">« Previous Page</a>
   --  
  <a href="../12">Next Page »</a>
@@ -1114,11 +770,11 @@ So the advice is pretty limited since most of the functions in Emacs core are li
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2021/12/22/2021-in-a-nutshell/">2021 in a nutshell</a></li>
       <li><a href="/blog/2021/12/18/New-publication-Origin-of-the-Stokes-Einstein-Deviation-in-Liquid-Al-Si/">New publication - Origin of the Stokes-Einstein Deviation in Liquid Al-Si</a></li>
       <li><a href="/blog/2021/12/03/New-publication-Accelerated-Optimization-of-Pure-Metal-and-Ligand-Compositions-for-Light-driven-Hydrogen-Production/">New publication - Accelerated Optimization of Pure Metal and Ligand Compositions for Light-driven Hydrogen Production</a></li>
       <li><a href="/blog/2021/12/02/New-publication-Ligand-Enhanced-Activity-of-in-Situ-Formed-Nanoparticles-for-Photocatalytic-Hydrogen-Evolution/">New publication - Ligand Enhanced Activity of in Situ Formed Nanoparticles for Photocatalytic Hydrogen Evolution</a></li>
       <li><a href="/blog/2021/11/30/New-publication-Uncertainty-quantification-in-machine-learning-and-nonlinear-least-squares-regression-models/">New publication - Uncertainty quantification in machine learning and nonlinear least squares regression models</a></li>
-      <li><a href="/blog/2021/11/23/pycse-YouTube-Channel/">pycse YouTube Channel</a></li>
     </ul>
   </section>
 
