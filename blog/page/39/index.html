@@ -102,6 +102,245 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Getting-Emacs-to-read-to-me"></div>
+      <h2 class="blog_post_title"><a href="/blog/2015/06/29/Getting-Emacs-to-read-to-me/" rel="bookmark" title="Permanent Link to Getting Emacs to read to me">Getting Emacs to read to me</a></h2>
+      <p><small><span class="blog_post_date">Posted June 29, 2015 at 02:56 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+
+<p>
+I thought it would be interesting to have Emacs read text on the screen. Why? Sometimes I get tired of reading ;) Seriously though, this has applications in accessibility, learning to read, translation, taking a break from looking at the screen, reading emails out loud, fun and games, etc&#x2026; Seems like a worthwhile endeavor!
+</p>
+
+<p>
+You may want to see this video: <a href="https://www.youtube.com/watch?v=8bgS8yDSkXw">https://www.youtube.com/watch?v=8bgS8yDSkXw</a> to hear how it works.
+</p>
+
+<p>
+On a Mac, it turns out to be easy to get a voice with a little applescript:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(do-applescript <span style="color: #008000;">"say \"Hello John\" using \"Victoria\""</span>)
+</pre>
+</div>
+
+<p>
+Interesting idea to integrate some feedback into Emacs-lisp functions! at least if you are on a Mac. All we need are some interactive functions that grab text, and pass them to the applescript with an appropriate amount of escaping any quotes and backslashes.
+</p>
+
+<p>
+Here is a function to speak the word at point, or selected region, or the text passed to the function:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">words-voice</span> <span style="color: #008000;">"Vicki"</span>
+  <span style="color: #036A07;">"Mac voice to use for speaking."</span>)
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">words-speak</span> (<span style="color: #6434A3;">&amp;optional</span> text)
+  <span style="color: #036A07;">"Speak word at point or region. Mac only."</span>
+  (<span style="color: #0000FF;">interactive</span>)
+  (<span style="color: #0000FF;">unless</span> text
+    (<span style="color: #0000FF;">setq</span> text (<span style="color: #0000FF;">if</span> (use-region-p)
+                   (buffer-substring
+                    (region-beginning) (region-end))
+                 (thing-at-point 'word))))
+  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">escape some special applescript chars</span>
+  (<span style="color: #0000FF;">setq</span> text (replace-regexp-in-string <span style="color: #008000;">"\\\\"</span> <span style="color: #008000;">"\\\\\\\\"</span> text))
+  (<span style="color: #0000FF;">setq</span> text (replace-regexp-in-string <span style="color: #008000;">"\""</span> <span style="color: #008000;">"\\\\\""</span> text))
+  (do-applescript
+   (format
+    <span style="color: #008000;">"say \"%s\" using \"%s\""</span>
+    text
+    words-voice)))
+</pre>
+</div>
+
+<pre class="example">
+words-speak
+</pre>
+
+<p>
+Now we can write:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(words-speak <span style="color: #008000;">"Hello John"</span>)
+</pre>
+</div>
+
+<p>
+One reason I wrote this is to read org-files to me. So, now we write some functions to read words, sentences and paragraphs. These are all syntactic units in Emacs. We write code to enable us to read the next or previous units with the prefix args. Finally,  we bind the commands to some keys and a hydra for fun.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">setq</span> sentence-end-double-space nil)
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">mac-say-word</span> (<span style="color: #6434A3;">&amp;optional</span> arg)
+  <span style="color: #036A07;">"Speak word at point. With ARG, go forward ARG words."</span>
+  (<span style="color: #0000FF;">interactive</span> <span style="color: #008000;">"P"</span>)
+  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">arg can be (4), 4, "-", or -1. we handle these like this.</span>
+  (<span style="color: #0000FF;">let</span> ((newarg))
+    (<span style="color: #0000FF;">when</span> arg
+      (<span style="color: #0000FF;">setq</span> newarg (<span style="color: #0000FF;">cond</span>
+                    ((listp arg)
+                     (round (log (car arg) 4)))
+                    ((<span style="color: #0000FF;">and</span> (stringp arg) (string= <span style="color: #008000;">"-"</span> arg))
+                     ((&lt; 0 arg) arg)
+                     -1)
+                    (t arg)))
+      (forward-word newarg))
+    (<span style="color: #0000FF;">when</span> (thing-at-point 'word)
+      (words-speak (thing-at-point 'word)))))
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">mac-say-sentence</span> (<span style="color: #6434A3;">&amp;optional</span> arg)
+  <span style="color: #036A07;">"Speak sentence at point. With ARG, go forward ARG sentences."</span>
+  (<span style="color: #0000FF;">interactive</span> <span style="color: #008000;">"P"</span>)
+  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">arg can be (4), 4, "-", or -1. we handle these like this.</span>
+  (<span style="color: #0000FF;">let</span> ((newarg))
+    (<span style="color: #0000FF;">when</span> arg
+      (<span style="color: #0000FF;">setq</span> newarg (<span style="color: #0000FF;">cond</span>
+                    ((listp arg)
+                     (round (log (car arg) 4)))
+                    ((<span style="color: #0000FF;">and</span> (stringp arg) (string= <span style="color: #008000;">"-"</span> arg))
+                     ((&lt; 0 arg) arg)
+                     -1)
+                    (t arg)))
+      (forward-sentence newarg)
+      (<span style="color: #0000FF;">when</span> (&lt; 0 newarg) (forward-word)))
+    (<span style="color: #0000FF;">when</span> (thing-at-point 'sentence)
+      (words-speak (thing-at-point 'sentence)))))
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">mac-say-paragraph</span> (<span style="color: #6434A3;">&amp;optional</span> arg)
+  <span style="color: #036A07;">"Speak paragraph at point. With ARG, go forward ARG paragraphs."</span>
+  (<span style="color: #0000FF;">interactive</span> <span style="color: #008000;">"P"</span>)
+  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">arg can be (4), 4, "-", or -1. we handle these like this.</span>
+  (<span style="color: #0000FF;">let</span> ((newarg))
+    (<span style="color: #0000FF;">when</span> arg
+      (<span style="color: #0000FF;">setq</span> newarg (<span style="color: #0000FF;">cond</span>
+                    ((listp arg)
+                     (round (log (car arg) 4)))
+                    ((<span style="color: #0000FF;">and</span> (stringp arg) (string= <span style="color: #008000;">"-"</span> arg))
+                     ((&lt; 0 arg) arg)
+                     -1)
+                    (t arg)))
+      (forward-paragraph newarg)
+      (<span style="color: #0000FF;">when</span> (&lt; 0 newarg) (forward-word)))
+    (<span style="color: #0000FF;">when</span> (thing-at-point 'paragraph)
+      (words-speak (thing-at-point 'paragraph)))))
+</pre>
+</div>
+
+<pre class="example">
+mac-say-paragraph
+</pre>
+
+<p>
+Now for some key-bindings. I will make a hydra that allows repeating commands, and a keymap for more direct function calls.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defhydra</span> mac-speak (<span style="color: #006FE0;">:color</span> red)
+  <span style="color: #008000;">"word speak"</span>
+  (<span style="color: #008000;">"w"</span> (<span style="color: #0000FF;">progn</span> (mac-say-word) (forward-word)) <span style="color: #008000;">"Next word"</span>)
+  (<span style="color: #008000;">"W"</span> (mac-say-word -1) <span style="color: #008000;">"Previous word"</span>)
+  (<span style="color: #008000;">"s"</span> (<span style="color: #0000FF;">progn</span> (mac-say-sentence) (forward-sentence)(forward-word)) <span style="color: #008000;">"Next sentence"</span>)
+  (<span style="color: #008000;">"S"</span> (mac-say-sentence -1) <span style="color: #008000;">"Previous sentence"</span>)
+  (<span style="color: #008000;">"p"</span> (<span style="color: #0000FF;">progn</span> (mac-say-paragraph) (forward-paragraph)) <span style="color: #008000;">"Next paragraph"</span>)
+  (<span style="color: #008000;">"P"</span> (mac-say-paragraph -1) <span style="color: #008000;">"Previous paragraph"</span>))
+
+(define-prefix-command 'mac-speak-keymap)
+(define-key mac-speak-keymap (vector ?w) 'mac-say-word)
+(define-key mac-speak-keymap (vector ?s) 'mac-say-sentence)
+(define-key mac-speak-keymap (vector ?p) 'mac-say-paragraph)
+(define-key mac-speak-keymap (vector ?h) 'mac-speak/body)
+(global-set-key (kbd <span style="color: #008000;">"\C-xr"</span>) 'mac-speak-keymap)
+</pre>
+</div>
+
+<pre class="example">
+mac-speak-keymap
+</pre>
+
+<p>
+Now, I can navigate text and have my Mac read it to me. It isn't quite like hearing a real person read it, but it is not too bad either. When you need a break from reading, this might be a nice tool!
+</p>
+<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/06/29/Getting-Emacs-to-read-to-me.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+
+<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2015/06/29/Getting-Emacs-to-read-to-me">Discuss on Twitter</a>
+
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
+      <div id="New-NSF-Grant-funded"></div>
+      <h2 class="blog_post_title"><a href="/blog/2015/06/28/New-NSF-Grant-funded/" rel="bookmark" title="Permanent Link to New NSF Grant funded">New NSF Grant funded</a></h2>
+      <p><small><span class="blog_post_date">Posted June 28, 2015 at 12:50 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/news/'>news</a></span> | tags: 
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+
+<p>
+We had a new grant funded by NSF: UNS:Modeling Bulk Composition Dependent Alloy Surface Properties Under Reaction Conditions.
+</p>
+
+<p>
+Thanks NSF! Read more at <a href="http://www.nsf.gov/awardsearch/showAward?AWD_ID=1506770">http://www.nsf.gov/awardsearch/showAward?AWD_ID=1506770</a> 
+</p>
+<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/06/28/New-NSF-Grant-funded.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+
+<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2015/06/28/New-NSF-Grant-funded">Discuss on Twitter</a>
+
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Serializing-an-Atoms-object-in-xml"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/06/28/Serializing-an-Atoms-object-in-xml/" rel="bookmark" title="Permanent Link to Serializing an Atoms object in xml">Serializing an Atoms object in xml</a></h2>
       <p><small><span class="blog_post_date">Posted June 28, 2015 at 12:26 PM</span> | categories:
@@ -450,7 +689,7 @@ See <a href="http://cms.mpi.univie.ac.at/vasp/vasp/KPOINTS_file.html">http://cms
       <div id="Integrating-swish-e-and-Emacs"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/06/25/Integrating-swish-e-and-Emacs/" rel="bookmark" title="Permanent Link to Integrating swish-e and Emacs">Integrating swish-e and Emacs</a></h2>
       <p><small><span class="blog_post_date">Posted June 25, 2015 at 10:37 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
       <p><small><span class="blog_post_date">Updated June 25, 2015 at 11:10 AM</span></small>
       </small></p>
     </header>
@@ -650,322 +889,6 @@ Now I can run M-x helm-swish-e and enter "efrc AND computing infrastructure" to 
 <a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2015/06/25/Integrating-swish-e-and-Emacs">Discuss on Twitter</a>
 
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Conditional-hydra-menus"></div>
-      <h2 class="blog_post_title"><a href="/blog/2015/06/24/Conditional-hydra-menus/" rel="bookmark" title="Permanent Link to Conditional hydra menus">Conditional hydra menus</a></h2>
-      <p><small><span class="blog_post_date">Posted June 24, 2015 at 07:31 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/hydra/'>hydra</a></span> | tags: 
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-
-<p>
-Usually the <a href="https://github.com/abo-abo/hydra">hydra</a> menu is hard coded in the defhydra macro. Sometimes, you would like conditional options, that is, depending on some condition we get different options <i>when we run the hydra</i> and not when it was defined. This is an open <a href="https://github.com/abo-abo/hydra/issues/86">issue</a> in hydra. Here we explore a way to achieve that. The idea is to construct the code for the hydra, then eval it, and run the hydra. In this example we make the conditional menu depend on whether we are on an even or odd numbered line. I use the `' syntax for defining the list of code. ` is a variation of ' (quote) that enables you to use the , operator to evaluate that element while in data mode. So, here is our first idea:
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">my-hydra-1</span> ()
-  (<span style="color: #0000FF;">interactive</span>)
-  (eval
-   `(<span style="color: #0000FF;">defhydra</span> my-hydra-1 (<span style="color: #006FE0;">:color</span> blue) <span style="color: #008000;">"My hydra"</span>
-      ,(<span style="color: #0000FF;">if</span> (evenp (line-number-at-pos))
-           '(<span style="color: #008000;">"e"</span> (message-box <span style="color: #008000;">"Even line"</span>) <span style="color: #008000;">"Even"</span>)
-         '(<span style="color: #008000;">"o"</span> (message-box <span style="color: #008000;">"Odd line"</span>) <span style="color: #008000;">"Odd"</span>))
-      ,(<span style="color: #0000FF;">when</span> t '(<span style="color: #008000;">"a"</span> (message-box <span style="color: #008000;">"always true"</span>) <span style="color: #008000;">"always"</span>))
-      <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">This does not work. you must return a legitimate hydra menu item</span>
-      <span style="color: #8D8D84;">;;      </span><span style="color: #8D8D84; font-style: italic;">,(when nil '("n" (message-box "never") "never"))</span>
-      ))
-  (my-hydra-1/body))
-
-(my-hydra-1)
-(my-hydra-1)
-</pre>
-</div>
-
-<pre class="example">
-my-hydra
-</pre>
-
-<p>
-As long as it is not expensive to compute the conditionals, this seems like an easy enough way to get conditional options in a hydra. One limitation of the previous approach is our menu conditionals must return a hydra menu, and not nil. Here is an alternative approach to writing the function that solves the issue of the nil return in the last function. Here we build up the code list using append. It might seem like a macro should be used here, but I have not figured out how to get the macro to run the conditionals at the run-time. Note, we cannot use funcall on the defhydra because that is a macro.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">my-hydra-2</span> ()
-  (<span style="color: #0000FF;">interactive</span>)
-  (<span style="color: #0000FF;">let</span> ((conditionals '((<span style="color: #0000FF;">if</span> (evenp (line-number-at-pos))
-                            '(<span style="color: #008000;">"e"</span> (message-box <span style="color: #008000;">"Even second"</span>) <span style="color: #008000;">"Even"</span>)
-                          '(<span style="color: #008000;">"o"</span> (message-box <span style="color: #008000;">"Odd second"</span>) <span style="color: #008000;">"Odd"</span>))
-                        (<span style="color: #0000FF;">when</span> t '(<span style="color: #008000;">"a"</span> (message-box <span style="color: #008000;">"always true"</span>) <span style="color: #008000;">"always"</span>))
-                        (<span style="color: #0000FF;">when</span> nil '(<span style="color: #008000;">"n"</span> (message-box <span style="color: #008000;">"never"</span>) <span style="color: #008000;">"never"</span>)))))
-    (eval
-     (append
-      '(defhydra my-hydra-2 (<span style="color: #006FE0;">:color</span> blue) <span style="color: #008000;">"My hydra"</span>)
-      (<span style="color: #0000FF;">loop</span> for cond in conditionals
-            with result = (eval cond)
-            if (eval cond)
-            collect (eval cond))))
-    (my-hydra-2/body)))
-
-(my-hydra-2)
-(my-hydra-2)
-</pre>
-</div>
-
-<p>
-That works too. Let us try another type of syntax where the conditional statements have a cons cell with a conditional statement, and a hydra menu option for when the statement is true. This is functionally similar to our first method, but has some advantages in brevity and less quoting. We add a conditional hint here too (at some expense of additional quoting).
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">my-hydra-3</span> ()
-  (<span style="color: #0000FF;">interactive</span>)
-  (<span style="color: #0000FF;">let</span> ((conditionals
-         `(((evenp (line-number-at-pos)) . (<span style="color: #008000;">"e"</span> (message-box <span style="color: #008000;">"Even second"</span>) ,(format <span style="color: #008000;">"Even: %s"</span> (line-number-at-pos))))
-           ((oddp (line-number-at-pos)) . (<span style="color: #008000;">"o"</span> (message-box <span style="color: #008000;">"Odd second"</span>) ,(format <span style="color: #008000;">"Odd: %s"</span> (line-number-at-pos))))
-           (t . (<span style="color: #008000;">"a"</span> (message-box <span style="color: #008000;">"always true"</span>) <span style="color: #008000;">"always"</span>))
-           (nil . (<span style="color: #008000;">"n"</span> (message-box <span style="color: #008000;">"never"</span>) <span style="color: #008000;">"never"</span>)))))
-    (eval
-     (append
-      '(defhydra my-hydra-3 (<span style="color: #006FE0;">:color</span> blue) <span style="color: #008000;">"My hydra"</span>)
-      (<span style="color: #0000FF;">loop</span> for cond in conditionals
-            if (eval (car  cond))
-            collect (cdr cond))))
-    (my-hydra-3/body)))
-
-(my-hydra-3)
-(my-hydra-3)
-</pre>
-</div>
-
-<p>
-I cannot figure out how to abstract this much further. There is a little redundancy in names, e.g. in the defhydra and at the end, but it is not too bad, which would usually be handled by a macro. I tried some defmacros to try this, but I could not figure out how to get the conditionals to expand at the right times, which is at run time, and not at macro expansion time. I need a macro that generates a function that has the call to defhydra in it! Maybe next year ;)
-</p>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/06/24/Conditional-hydra-menus.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-
-<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2015/06/24/Conditional-hydra-menus">Discuss on Twitter</a>
-
-  <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Clickable-org-contacts-in-text-files"></div>
-      <h2 class="blog_post_title"><a href="/blog/2015/06/22/Clickable-org-contacts-in-text-files/" rel="bookmark" title="Permanent Link to Clickable org-contacts in text files">Clickable org-contacts in text files</a></h2>
-      <p><small><span class="blog_post_date">Posted June 22, 2015 at 01:07 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/contacts/'>contacts</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-
-<p>
-Continuing my adventures with clickable text (See <a href="http://kitchingroup.cheme.cmu.edu/blog/2015/06/21/Clickable-email-addresses-in-emacs/">clickable email addresses</a> and <a href="http://kitchingroup.cheme.cmu.edu/blog/2015/03/18/Clickable-links-for-Twitter-handles-in-Emacs/">clickable twitter handles</a> ), here we consider how to get clickable names that are also in my org-contacts database. The goal is to have these names highlighted and clickable so that when I click on them I get a hydra menu of actions, e.g. to open the contact, email them, etc&#x2026; We will again use button-lock to do the action. We will construct a fairly large regexp to match all the names in the org-contacts database. This turns out to be very easy using the regexp-opt function.
-</p>
-
-<p>
-First, I formalize the code I used last time to get text around the point that has a text-property. We will use that to get the text that has been highlighted by button-lock.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">get-surrounding-text-with-property</span> (property)
-  <span style="color: #036A07;">"Return text surrounding point with the text-property PROPERTY."</span>
-  (<span style="color: #0000FF;">let</span> ((start) (end))
-    (<span style="color: #0000FF;">when</span> (get-text-property (point) property)
-      (<span style="color: #0000FF;">save-excursion</span>
-        (<span style="color: #0000FF;">while</span> (get-text-property (point) property)
-          (backward-char))
-        (forward-char)
-        (<span style="color: #0000FF;">setq</span> start (point))
-        (<span style="color: #0000FF;">while</span> (get-text-property (point) property)
-          (forward-char))
-        (<span style="color: #0000FF;">setq</span> end (point)))
-      (buffer-substring start end))))
-</pre>
-</div>
-
-<pre class="example">
-get-surrounding-text-with-property
-</pre>
-
-<p>
-I want to use nicknames that are defined in my org-contacts database. We first try to return an assoc lookup, then the slower approach of looping through the entries to find a matching nickname.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">get-contact-from-name-or-nickname</span> (name-or-nickname)
-  <span style="color: #036A07;">"Return a contact from the org-contacts database for NAME-OR-NICKNAME."</span>
-  (<span style="color: #0000FF;">or</span>
-   (assoc name-or-nickname (org-contacts-db))
-   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">no assoc, so now we have to find a nickname</span>
-   (<span style="color: #0000FF;">catch</span> '<span style="color: #D0372D;">contact</span>
-     (<span style="color: #0000FF;">dolist</span> (contact (org-contacts-db))
-       (<span style="color: #0000FF;">when</span> (-contains? (s-split <span style="color: #008000;">","</span> (<span style="color: #0000FF;">or</span> (cdr (assoc <span style="color: #008000;">"NICKNAMES"</span> (caddr contact))) <span style="color: #008000;">" "</span>)) name-or-nickname)
-         (<span style="color: #0000FF;">throw</span> '<span style="color: #D0372D;">contact</span> contact))))))
-</pre>
-</div>
-
-<pre class="example">
-get-contact-from-name-or-nickname
-</pre>
-
-<p>
-Now, let us write a hydra function that will be our menu of actions. For some reason, when you click on a highlighted text the mouse moves to the end of the text, so in our hydra function we move back a char, and then get the info. Basically, we get the name, then get the contact, and extract what we need from there. Here we provide functionality to open a contact, email a contact or open the url of the contact (if it exists). I also want a conditional hydra, which doesn't seem to be an option yet, so we we roll our own here. Basically, we construct the code for a hydra, and only add a menu option to open the url if we find one in the contact. We will have to eval the code returned from this function to get the hydra body, and then call the body function in the action function for the highlighted text.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">conditional-hydra-actions</span> ()
-  <span style="color: #036A07;">"Construct code to create a hydra with conditional options."</span>
-  (<span style="color: #0000FF;">let</span> ((code  '(defhydra org-contacts (<span style="color: #006FE0;">:color</span> blue)
-                  <span style="color: #008000;">"Org contacts"</span>)))
-    (<span style="color: #0000FF;">setq</span> code
-          (append
-           code
-           '((<span style="color: #008000;">"o"</span> (<span style="color: #0000FF;">progn</span>
-                    (backward-char)
-                    (<span style="color: #0000FF;">let*</span> ((name (get-surrounding-text-with-property 'org-contact))
-                           (contact (get-contact-from-name-or-nickname name))
-                           (contact-marker (nth 1 contact)))
-                      (switch-to-buffer (marker-buffer contact-marker))
-                      (goto-char (marker-position contact-marker))
-                      (show-subtree)))
-              <span style="color: #008000;">"Open contact"</span>))))
-
-    (<span style="color: #0000FF;">setq</span> code
-          (append
-           code '((<span style="color: #008000;">"e"</span> (<span style="color: #0000FF;">progn</span>
-                         (backward-char)
-                         (<span style="color: #0000FF;">let*</span> ((name (get-surrounding-text-with-property 'org-contact))
-                                (contact (get-contact-from-name-or-nickname name))
-                                (email (cdr (assoc <span style="color: #008000;">"EMAIL"</span> (caddr contact))))))
-                         (mu4e~compose-mail email))
-                   <span style="color: #008000;">"Email contact"</span>))))
-
-    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">conditional menu for opening a URL</span>
-    (<span style="color: #0000FF;">let*</span> ((name (get-surrounding-text-with-property 'org-contact))
-           (contact (assoc name (org-contacts-db)))
-           (url (cdr (assoc <span style="color: #008000;">"URL"</span> (caddr contact)))))
-      (<span style="color: #0000FF;">when</span> url
-        (<span style="color: #0000FF;">setq</span> code
-              (append
-               code '((<span style="color: #008000;">"w"</span> (<span style="color: #0000FF;">progn</span>
-                             (backward-char)
-                             (<span style="color: #0000FF;">let*</span> ((name (get-surrounding-text-with-property 'org-contact))
-                                    (contact (get-contact-from-name-or-nickname name))
-                                    (url (cdr (assoc <span style="color: #008000;">"URL"</span> (caddr contact)))))
-                               (<span style="color: #0000FF;">if</span> url
-                                   (browse-url url)
-                                 (message <span style="color: #008000;">"No url found."</span>))))
-                       <span style="color: #008000;">"Open in browser"</span>))))))
-    code))
-</pre>
-</div>
-
-<pre class="example">
-conditional-hydra-actions
-</pre>
-
-<p>
-I also want to have nicknames in this list, because sometimes I don't use the full names in my contact database. These are stored in a comma-separated property called NICKNAMES in entries that have them. A subtle point here is that it complicates looking up the contact in the database. Normally, I can get this by a simple assoc lookup. For the nicknames, that will fail, so we need a back up method. Now, the highlighting code. You can make the regexp by passing a list of strings to match to regexp-opt. We get our list of strings from:
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(append
- (mapcar 'car (org-contacts-db))
- (<span style="color: #0000FF;">let</span> ((nicknames '()))
-   (<span style="color: #0000FF;">dolist</span> (contact (org-contacts-db))
-     (<span style="color: #0000FF;">when</span> (assoc <span style="color: #008000;">"NICKNAMES"</span> (caddr contact))
-       (<span style="color: #0000FF;">setq</span> nicknames
-             (append nicknames (s-split <span style="color: #008000;">","</span> (cdr (assoc <span style="color: #008000;">"NICKNAMES"</span> (caddr contact))))))))
-   nicknames))
-</pre>
-</div>
-
-<p>
-I am not going to show them here to protect my contacts ;). Now, we create the function that highlights the contacts. and add it as a hook function to text-mode-hook.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">highlight-org-contacts</span> ()
-  (button-lock-set-button
-   (regexp-opt
-    (append
-     (mapcar 'car (org-contacts-db))
-     (<span style="color: #0000FF;">let</span> ((nicknames '()))
-       (<span style="color: #0000FF;">dolist</span> (contact (org-contacts-db))
-         (<span style="color: #0000FF;">when</span> (assoc <span style="color: #008000;">"NICKNAMES"</span> (caddr contact))
-           (<span style="color: #0000FF;">setq</span> nicknames
-                 (append
-                  nicknames
-                  (s-split <span style="color: #008000;">","</span> (cdr (assoc <span style="color: #008000;">"NICKNAMES"</span> (caddr contact))))))))
-       nicknames)))
-   (<span style="color: #0000FF;">lambda</span> ()
-     (<span style="color: #0000FF;">interactive</span>)
-     (eval (conditional-hydra-actions))
-     (org-contacts/body))
-   <span style="color: #006FE0;">:face</span> '((<span style="color: #006FE0;">:background</span> <span style="color: #008000;">"MistyRose1"</span>)
-           (<span style="color: #006FE0;">:underline</span> t))
-   <span style="color: #006FE0;">:help-echo</span> (format <span style="color: #008000;">"An org contact"</span>)
-   <span style="color: #006FE0;">:keyboard-binding</span> (kbd <span style="color: #008000;">"RET"</span>)
-   <span style="color: #006FE0;">:additional-property</span> 'org-contact))
-
-(add-hook 'text-mode-hook 'highlight-org-contacts)
-</pre>
-</div>
-
-<p>
-That does it. Now, whenever I open a text-based file, the names that are in my contacts are highlighted and actionable. This should be useful for meeting notes, etc&#x2026;
-</p>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/06/22/Clickable-org-contacts-in-text-files.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-
-<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2015/06/22/Clickable-org-contacts-in-text-files">Discuss on Twitter</a>
-
-  <hr class="interblog" />
  <a href="../38">« Previous Page</a>
   --  
  <a href="../40">Next Page »</a>
@@ -1007,11 +930,11 @@ That does it. Now, whenever I open a text-based file, the names that are in my c
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2022/01/11/Launching-Point-Breeze-Publishing/">Launching Point Breeze Publishing</a></li>
+      <li><a href="/blog/2022/01/11/Launching-Point-Breeze-Publishing-LLC/">Launching Point Breeze Publishing, LLC</a></li>
       <li><a href="/blog/2021/12/22/2021-in-a-nutshell/">2021 in a nutshell</a></li>
       <li><a href="/blog/2021/12/18/New-publication-Origin-of-the-Stokes-Einstein-Deviation-in-Liquid-Al-Si/">New publication - Origin of the Stokes-Einstein Deviation in Liquid Al-Si</a></li>
       <li><a href="/blog/2021/12/03/New-publication-Accelerated-Optimization-of-Pure-Metal-and-Ligand-Compositions-for-Light-driven-Hydrogen-Production/">New publication - Accelerated Optimization of Pure Metal and Ligand Compositions for Light-driven Hydrogen Production</a></li>
-      <li><a href="/blog/2021/12/02/New-publication-Ligand-Enhanced-Activity-of-in-Situ-Formed-Nanoparticles-for-Photocatalytic-Hydrogen-Evolution/">New publication - Ligand Enhanced Activity of in Situ Formed Nanoparticles for Photocatalytic Hydrogen Evolution</a></li>
-      <li><a href="/blog/2021/11/30/New-publication-Uncertainty-quantification-in-machine-learning-and-nonlinear-least-squares-regression-models/">New publication - Uncertainty quantification in machine learning and nonlinear least squares regression models</a></li>
     </ul>
   </section>
 
@@ -1039,7 +962,7 @@ That does it. Now, whenever I open a text-based file, the names that are in my c
     </div>
     <div class="grid_4" id="credits">
       <p>
-        Copyright 2021
+        Copyright 2022
         John Kitchin
       </p>
       <p>

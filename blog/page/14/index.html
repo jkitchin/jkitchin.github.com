@@ -102,6 +102,682 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Adding-keymaps-to-src-blocks-via-org-font-lock-hook"></div>
+      <h2 class="blog_post_title"><a href="/blog/2017/06/10/Adding-keymaps-to-src-blocks-via-org-font-lock-hook/" rel="bookmark" title="Permanent Link to Adding keymaps to src blocks via org-font-lock-hook">Adding keymaps to src blocks via org-font-lock-hook</a></h2>
+      <p><small><span class="blog_post_date">Posted June 10, 2017 at 03:27 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+      <p><small><span class="blog_post_date">Updated June 12, 2017 at 11:28 AM</span></small>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org49daca5">1. Update</a></li>
+<li><a href="#org004cb53">2. Update #2</a></li>
+</ul>
+</div>
+</div>
+<p>
+I had an idea to use custom keymaps in src-blocks. For example, you could then use lispy directly in your org-files without entering org-special-edit, or the elpy key-bindings in python blocks. There are other solutions I have seen, e.g. polymode, that claim to do this. You might guess that if they worked, I would not be writing this! There was some nice discussion about this idea on the org-mode mailing list, and Nicolas Goaziou pointed out this might be accomplished with the org-font-lock-hook.
+</p>
+
+<p>
+You can check out the video here:
+</p>
+<iframe width="560" height="315" src="https://www.youtube.com/embed/a2jHqB1qWiY" frameborder="0" allowfullscreen></iframe>
+
+<p>
+It was relatively easy to figure out how to do this. Keymaps can be added to regions during font-lock, so I just had to hook into the org-mode font lock system with a function to find the src blocks and add the keymap as a text-property. That took three steps:
+</p>
+
+<ol class="org-ol">
+<li>Define the keymaps to use. I use an a-list of (language . map) for this.</li>
+<li>Define the font-lock function. This will add the keymap properties to src-blocks.</li>
+<li>Define a minor mode to toggle this feature on and off.</li>
+</ol>
+
+<p>
+Here is the definition of the keymaps. Generally I just copy the mode-map I want and then add some things to them. For example sometimes it is still a good idea to jump into the org-special-edit mode. For example, if you try to use a command in a Python block to send the buffer to the repl while in org-mode you are sure to get an error! You might also want to add the C-c C-e export command if you use that a lot. An alternative approach, of course, is to copy the org-map and add additional bindings to it. The choice is up to you.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">lispy</span>)
+(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">elpy</span>)
+
+(<span style="color: #0000FF;">setq</span> scimax-src-block-keymaps
+      `((<span style="color: #008000;">"ipython"</span> . ,(<span style="color: #0000FF;">let</span> ((map (make-composed-keymap
+                                  `(,elpy-mode-map ,python-mode-map ,pyvenv-mode-map)
+                                  org-mode-map)))
+                        <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">In org-mode I define RET so we f</span>
+                        (define-key map (kbd <span style="color: #008000;">"&lt;return&gt;"</span>) 'newline)
+                        (define-key map (kbd <span style="color: #008000;">"C-c C-c"</span>) 'org-ctrl-c-ctrl-c)
+                        map))
+        (<span style="color: #008000;">"python"</span> . ,(<span style="color: #0000FF;">let</span> ((map (make-composed-keymap
+                                 `(,elpy-mode-map ,python-mode-map ,pyvenv-mode-map)
+                                 org-mode-map)))
+                       <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">In org-mode I define RET so we f</span>
+                       (define-key map (kbd <span style="color: #008000;">"&lt;return&gt;"</span>) 'newline)
+                       (define-key map (kbd <span style="color: #008000;">"C-c C-c"</span>) 'org-ctrl-c-ctrl-c)
+                       map))
+        (<span style="color: #008000;">"emacs-lisp"</span> . ,(<span style="color: #0000FF;">let</span> ((map (make-composed-keymap `(,lispy-mode-map
+                                                            ,emacs-lisp-mode-map
+                                                            ,outline-minor-mode-map)
+                                                          org-mode-map)))
+                           (define-key map (kbd <span style="color: #008000;">"C-c C-c"</span>) 'org-ctrl-c-ctrl-c)
+                           map))))
+</pre>
+</div>
+
+<p>
+Next we define the function that will apply the keymap to each src block. The keymaps are only applied when they are defined in the variable above. This function is derived from org-fontify-meta-lines-and-blocks-1.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">scimax-add-keymap-to-src-blocks</span> (limit)
+  <span style="color: #036A07;">"Add keymaps to src-blocks defined in `</span><span style="color: #D0372D;">scimax-src-block-keymaps</span><span style="color: #036A07;">'."</span>
+  (<span style="color: #0000FF;">let</span> ((case-fold-search t)
+        lang)
+    (<span style="color: #0000FF;">while</span> (re-search-forward org-babel-src-block-regexp limit t)
+      (<span style="color: #0000FF;">let</span> ((lang (match-string 2))
+            (beg (match-beginning 0))
+            (end (match-end 0)))
+        (<span style="color: #0000FF;">if</span> (assoc (org-no-properties lang) scimax-src-block-keymaps)
+            (<span style="color: #0000FF;">progn</span>
+              (add-text-properties
+               beg end `(local-map ,(cdr (assoc
+                                          (org-no-properties lang)
+                                          scimax-src-block-keymaps))))
+              (add-text-properties
+               beg end `(cursor-sensor-functions
+                         ((<span style="color: #0000FF;">lambda</span> (win prev-pos sym)
+                            <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">This simulates a mouse click and makes a menu change</span>
+                            (org-mouse-down-mouse nil)))))))))))
+</pre>
+</div>
+
+<p>
+Here we create an advice to trick any functions that need to know the major mode. We only apply the spoof if we are in org-mode and in a src block though. Otherwise we call the original function. So far lispy&#x2013;eval is the only function I have needed it for. This might be a general strategy though to do other things like narrow to the src-block, or even go into special edit mode temporarily if there are commands that require it.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">scimax-spoof-mode</span> (orig-func <span style="color: #6434A3;">&amp;rest</span> args)
+  <span style="color: #036A07;">"Advice function to spoof commands in org-mode src blocks.</span>
+<span style="color: #036A07;">It is for commands that depend on the major mode. One example is</span>
+<span style="color: #036A07;">`</span><span style="color: #D0372D;">lispy--eval</span><span style="color: #036A07;">'."</span>
+  (<span style="color: #0000FF;">if</span> (org-in-src-block-p)
+      (<span style="color: #0000FF;">let</span> ((major-mode (intern (format <span style="color: #008000;">"%s-mode"</span> (first (org-babel-get-src-block-info))))))
+        (apply orig-func args))
+    (apply orig-func args)))
+</pre>
+</div>
+
+<p>
+We define a minor mode so we can toggle this on and off. Here we add the function to the org-font-lock-hook and advise the lispy&#x2013;eval function. I had to add the font-lock-function to the end of the org-font-lock hook for some reason, and also add local-map as an extra-managed property so it would be removed when we toggle it off.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">define-minor-mode</span> <span style="color: #006699;">scimax-src-keymap-mode</span>
+  <span style="color: #036A07;">"Minor mode to add mode keymaps to src-blocks."</span>
+  <span style="color: #006FE0;">:init-value</span> nil
+  (<span style="color: #0000FF;">if</span> scimax-src-keymap-mode
+      (<span style="color: #0000FF;">progn</span>
+        (add-hook 'org-font-lock-hook #'scimax-add-keymap-to-src-blocks t)
+        (add-to-list 'font-lock-extra-managed-props 'local-map)
+        (add-to-list 'font-lock-extra-managed-props 'cursor-sensor-functions)
+        (advice-add 'lispy--eval <span style="color: #006FE0;">:around</span> 'scimax-spoof-mode)
+        (cursor-sensor-mode +1))
+    (remove-hook 'org-font-lock-hook #'scimax-add-keymap-to-src-blocks)
+    (advice-remove 'lispy--eval 'scimax-spoof-mode)
+    (cursor-sensor-mode -1))
+  (font-lock-fontify-buffer))
+
+(add-hook 'org-mode-hook (<span style="color: #0000FF;">lambda</span> ()
+                           (scimax-src-keymap-mode +1)))
+</pre>
+</div>
+
+<p>
+That is it! I am pretty sure this is a good idea. It helps a lot when you are writing a lot of short code blocks and near equal amounts of text (like in this blog post). It also helps write the code since many things like indentation, parentheses, etc. are automatically handled. That is what I used to go into special-edit mode all the time for!
+</p>
+
+<p>
+I have not used this long enough to know if it causes any other surprises. If you try it and find any, leave a comment!
+</p>
+
+<div id="outline-container-org49daca5" class="outline-2">
+<h2 id="org49daca5"><span class="section-number-2">1</span> Update</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+It turns out you can have the best of all the worlds by combining keymaps. The make-composed-keymap creates a new keymap that combines a keymaps and falls through to a parent keymap. So here we use that to combine several keymaps, falling through to org-mode. The only subtlety I have come across is that I remapped &lt;return&gt; in orgmode to scimax/org-return, and not all modes define it, so I redefine it in some places to just be newline. Also to keep C-c C-c for executing the block, I add that back too.
+</p>
+
+<p>
+I use a few maps here, and some of them seem to just add menus that are only active when your cursor is in the block. Pretty handy!
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">setq</span> scimax-src-block-keymaps
+      `((<span style="color: #008000;">"ipython"</span> . ,(<span style="color: #0000FF;">let</span> ((map (make-composed-keymap
+                                  `(,elpy-mode-map ,python-mode-map ,pyvenv-mode-map)
+                                  org-mode-map)))
+                        <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">In org-mode I define RET so we f</span>
+                        (define-key map (kbd <span style="color: #008000;">"&lt;return&gt;"</span>) 'newline)
+                        (define-key map (kbd <span style="color: #008000;">"C-c C-c"</span>) 'org-ctrl-c-ctrl-c)
+                        map))
+        (<span style="color: #008000;">"python"</span> . ,(<span style="color: #0000FF;">let</span> ((map (make-composed-keymap
+                                 `(,elpy-mode-map ,python-mode-map ,pyvenv-mode-map)
+                                 org-mode-map)))
+                       <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">In org-mode I define RET so we f</span>
+                       (define-key map (kbd <span style="color: #008000;">"&lt;return&gt;"</span>) 'newline)
+                       (define-key map (kbd <span style="color: #008000;">"C-c C-c"</span>) 'org-ctrl-c-ctrl-c)
+                       map))
+        (<span style="color: #008000;">"emacs-lisp"</span> . ,(<span style="color: #0000FF;">let</span> ((map (make-composed-keymap `(,lispy-mode-map
+                                                            ,emacs-lisp-mode-map
+                                                            ,outline-minor-mode-map)
+                                                          org-mode-map)))
+                           (define-key map (kbd <span style="color: #008000;">"C-c C-c"</span>) 'org-ctrl-c-ctrl-c)
+                           map))))
+</pre>
+</div>
+</div>
+</div>
+<div id="outline-container-org004cb53" class="outline-2">
+<h2 id="org004cb53"><span class="section-number-2">2</span> Update #2</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+The previous version had some issues where it would only add a keymap to the first block. The code in this post now addresses that and uses cursor-sensor-functions to make sure we change key map on entering and leaving blocks. That might mean you need an emacs of at least version 25 to use this. I guess it will work with an earlier version, but the cursor-sensor-functions might get ignored. You might have to comment out the cursor-sensor-mode line
+</p>
+
+<p>
+Thanks to those brave people alpha-testing this and helping refine the idea!
+</p>
+</div>
+</div>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/06/10/Adding-keymaps-to-src-blocks-via-org-font-lock-hook.org">org-mode source</a></p>
+<p>Org-mode version = 9.0.7</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+
+<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2017/06/10/Adding-keymaps-to-src-blocks-via-org-font-lock-hook">Discuss on Twitter</a>
+
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
+      <div id="Org-mode-and-ipython-enhancements-in-scimax"></div>
+      <h2 class="blog_post_title"><a href="/blog/2017/05/26/Org-mode-and-ipython-enhancements-in-scimax/" rel="bookmark" title="Permanent Link to Org-mode and ipython enhancements in scimax">Org-mode and ipython enhancements in scimax</a></h2>
+      <p><small><span class="blog_post_date">Posted May 26, 2017 at 04:54 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/ipython/'>ipython</a></span> | tags: 
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org696d7c2">1. Some convenience functions</a></li>
+<li><a href="#orgef414e8">2. ob-ipython-inspect works</a></li>
+<li><a href="#orgd62ef75">3. Getting selective output from Ipython</a></li>
+<li><a href="#org5cac271">4. Where was that error?</a></li>
+<li><a href="#org3ebd0a8">5. Asynchronous Ipython</a></li>
+</ul>
+</div>
+</div>
+<p>
+We have made some improvements to using Ipython in org-mode in the past including:
+</p>
+
+<ol class="org-ol">
+<li><a href="http://kitchingroup.cheme.cmu.edu/blog/2017/01/29/ob-ipython-and-inline-figures-in-org-mode/">Inline figures</a></li>
+<li><a href="http://kitchingroup.cheme.cmu.edu/blog/2017/01/21/Exporting-org-mode-to-Jupyter-notebooks/">Export to Jupyter notebooks</a></li>
+</ol>
+
+<p>
+Today I will talk about a few new features and improvements I have introduced to scimax for using org-mode and Ipython together.
+</p>
+
+<p>
+The video for this post might be more obvious than the post:
+</p>
+<iframe width="560" height="315" src="https://www.youtube.com/embed/dMira3QsUdg" frameborder="0" allowfullscreen></iframe>
+
+<div id="outline-container-org696d7c2" class="outline-2">
+<h2 id="org696d7c2"><span class="section-number-2">1</span> Some convenience functions</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+There are a few nice shortcuts in the Jupyter notebook. Now we have some convenient commands in scimax to mimic those. My favorites are adding cells above or below the current cell. You can insert a new src block above the current one with (M-x <code>org-babel-insert-block</code>). You can use a prefix arg to insert it below the current block.
+</p>
+
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">code</span>
+</pre>
+</div>
+
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">below</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">some code</span>
+</pre>
+</div>
+
+<p>
+I am particularly fond of splitting a large block into two smaller blocks. Use (M-x <code>org-babel-split-src-block</code>) to do that and leave the point in the upper block. Use a prefix arg to leave the point in the lower block.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">lots of code in large block</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">Even more code</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">The end of the long block</span>
+</pre>
+</div>
+
+<p>
+You can execute all the blocks up to the current point with (M-x <code>org-babel-execute-to-point</code>).
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgef414e8" class="outline-2">
+<h2 id="orgef414e8"><span class="section-number-2">2</span> ob-ipython-inspect works</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+In the original ob-ipython I found that ob-ipython-inspect did not work unless you were in special edit mode. That is too inconvenient. I modified a few functions to work directly from the org-buffer. I bind this to M-. in org-mode.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython">%matplotlib inline
+<span style="color: #0000FF;">import</span> numpy <span style="color: #0000FF;">as</span> np
+
+<span style="color: #0000FF;">import</span> matplotlib.pyplot <span style="color: #0000FF;">as</span> plt
+
+<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">Compute areas and colors</span>
+<span style="color: #BA36A5;">N</span> = 150
+<span style="color: #BA36A5;">r</span> = 2 * np.random.rand(N)
+<span style="color: #BA36A5;">theta</span> = 2 * np.pi * np.random.rand(N)
+<span style="color: #BA36A5;">area</span> = 200 * r**2
+<span style="color: #BA36A5;">colors</span> = theta
+
+<span style="color: #BA36A5;">ax</span> = plt.subplot(111, projection=<span style="color: #008000;">'polar'</span>)
+<span style="color: #BA36A5;">c</span> = ax.scatter(theta, r, c=colors, s=area, cmap=<span style="color: #008000;">'hsv'</span>, alpha=0.75)
+</pre>
+</div>
+
+<p>
+
+</p>
+
+<p>
+&lt;matplotlib.figure.Figure at 0x114ded710&gt;
+<img src="/media/ob-ipython-1758dfdd7a96829c50791c7cc9a39f3a.png"> 
+</p>
+</div>
+</div>
+
+
+
+<div id="outline-container-orgd62ef75" class="outline-2">
+<h2 id="orgd62ef75"><span class="section-number-2">3</span> Getting selective output from Ipython</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+Out of the box Ipython returns a lot of results. This block, for example returns a plain text, image and latex result as output.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">from</span> sympy <span style="color: #0000FF;">import</span> *
+<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">commenting out init_printing() results in no output</span>
+init_printing()
+
+var(<span style="color: #008000;">'x y'</span>)
+x**2 + y
+</pre>
+</div>
+
+<p>
+
+</p>
+
+<p>
+ 2
+x  + y
+<img src="/media/ob-ipython-da6fb3a34919a4f694cfaae45b6f0868.png"> 
+</p>
+
+
+<p>
+We can select which one we want with a new header argument :ob-ipython-results. For this block you can give it the value of text/plain, text/latex or image/png.
+</p>
+
+
+<div class="org-src-container">
+<pre class="src src-ipython">var(<span style="color: #008000;">'x y'</span>)
+x**2 + y
+</pre>
+</div>
+
+<p>
+ 2
+x  + y
+</p>
+
+<p>
+Or to get the image:
+</p>
+
+
+<div class="org-src-container">
+<pre class="src src-ipython">var(<span style="color: #008000;">'x y'</span>)
+x**2 + y
+</pre>
+</div>
+
+<p>
+<img src="/media/ob-ipython-da6fb3a34919a4f694cfaae45b6f0868.png"> 
+</p>
+
+
+<p>
+This shows up with <a href="https://emacs.stackexchange.com/questions/33005/python-org-mode-babel-output-column-headers-misaligned/33016#33016">pandas too</a>. This block creates a table of data and then shows the first 5 rows. Ipython returns both plain text and html here.
+</p>
+
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">import</span> pandas <span style="color: #0000FF;">as</span> pd
+<span style="color: #0000FF;">import</span> numpy <span style="color: #0000FF;">as</span> np
+<span style="color: #0000FF;">import</span> datetime <span style="color: #0000FF;">as</span> dt
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">makeSim</span>(nHosps, nPatients):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">df</span> = pd.DataFrame()
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">df</span>[<span style="color: #008000;">'patientid'</span>] = <span style="color: #006FE0;">range</span>(nPatients)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">df</span>[<span style="color: #008000;">'hospid'</span>] = np.random.randint(0, nHosps, nPatients)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">df</span>[<span style="color: #008000;">'sex'</span>] = np.random.randint(0, 2, nPatients)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">df</span>[<span style="color: #008000;">'age'</span>] = np.random.normal(65,18, nPatients)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">df</span>[<span style="color: #008000;">'race'</span>] = np.random.randint(0, 4, nPatients)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">df</span>[<span style="color: #008000;">'cptCode'</span>] = np.random.randint(1, 100, nPatients)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">df</span>[<span style="color: #008000;">'rdm30d'</span>] = np.random.uniform(0, 1, nPatients) &lt; 0.1
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">df</span>[<span style="color: #008000;">'mort30d'</span>] = np.random.uniform(0, 1, nPatients) &lt; 0.2
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">df</span>[<span style="color: #008000;">'los'</span>] = np.random.normal(8, 2, nPatients)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> df
+
+<span style="color: #BA36A5;">discharges</span> = makeSim(50, 10000)
+discharges.head()
+</pre>
+</div>
+
+<p>
+
+</p>
+
+<p>
+   patientid  hospid  sex        age  race  cptCode rdm30d mort30d        los
+0          0      10    1  64.311947     0        8  False   False   8.036793
+1          1       6    0  82.951484     1       73   True   False   7.996024
+2          2      27    1  53.064501     3       95  False   False   9.015144
+3          3      37    0  64.799128     0       93  False   False  10.099032
+4          4      46    0  99.111394     2       25  False   False  11.711427
+</p>
+<div>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>patientid</th>
+      <th>hospid</th>
+      <th>sex</th>
+      <th>age</th>
+      <th>race</th>
+      <th>cptCode</th>
+      <th>rdm30d</th>
+      <th>mort30d</th>
+      <th>los</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0</th>
+      <td>0</td>
+      <td>10</td>
+      <td>1</td>
+      <td>64.311947</td>
+      <td>0</td>
+      <td>8</td>
+      <td>False</td>
+      <td>False</td>
+      <td>8.036793</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>1</td>
+      <td>6</td>
+      <td>0</td>
+      <td>82.951484</td>
+      <td>1</td>
+      <td>73</td>
+      <td>True</td>
+      <td>False</td>
+      <td>7.996024</td>
+    </tr>
+    <tr>
+      <th>2</th>
+      <td>2</td>
+      <td>27</td>
+      <td>1</td>
+      <td>53.064501</td>
+      <td>3</td>
+      <td>95</td>
+      <td>False</td>
+      <td>False</td>
+      <td>9.015144</td>
+    </tr>
+    <tr>
+      <th>3</th>
+      <td>3</td>
+      <td>37</td>
+      <td>0</td>
+      <td>64.799128</td>
+      <td>0</td>
+      <td>93</td>
+      <td>False</td>
+      <td>False</td>
+      <td>10.099032</td>
+    </tr>
+    <tr>
+      <th>4</th>
+      <td>4</td>
+      <td>46</td>
+      <td>0</td>
+      <td>99.111394</td>
+      <td>2</td>
+      <td>25</td>
+      <td>False</td>
+      <td>False</td>
+      <td>11.711427</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+
+<p>
+We can use the header to select only the plain text output!
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">import</span> pandas <span style="color: #0000FF;">as</span> pd
+<span style="color: #0000FF;">import</span> numpy <span style="color: #0000FF;">as</span> np
+<span style="color: #0000FF;">import</span> datetime <span style="color: #0000FF;">as</span> dt
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">makeSim</span>(nHosps, nPatients):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">df</span> = pd.DataFrame()
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">df</span>[<span style="color: #008000;">'patientid'</span>] = <span style="color: #006FE0;">range</span>(nPatients)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">df</span>[<span style="color: #008000;">'hospid'</span>] = np.random.randint(0, nHosps, nPatients)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">df</span>[<span style="color: #008000;">'sex'</span>] = np.random.randint(0, 2, nPatients)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">df</span>[<span style="color: #008000;">'age'</span>] = np.random.normal(65,18, nPatients)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">df</span>[<span style="color: #008000;">'race'</span>] = np.random.randint(0, 4, nPatients)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">df</span>[<span style="color: #008000;">'cptCode'</span>] = np.random.randint(1, 100, nPatients)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">df</span>[<span style="color: #008000;">'rdm30d'</span>] = np.random.uniform(0, 1, nPatients) &lt; 0.1
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">df</span>[<span style="color: #008000;">'mort30d'</span>] = np.random.uniform(0, 1, nPatients) &lt; 0.2
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">df</span>[<span style="color: #008000;">'los'</span>] = np.random.normal(8, 2, nPatients)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> df
+
+<span style="color: #BA36A5;">discharges</span> = makeSim(50, 10000)
+discharges.head()
+</pre>
+</div>
+
+<p>
+   patientid  hospid  sex        age  race  cptCode rdm30d mort30d        los
+0          0      21    0  73.633836     1       38  False   False   7.144019
+1          1      16    1  67.518804     3       23  False   False   3.340534
+2          2      15    0  44.139033     0        8  False   False   9.258706
+3          3      29    1  45.510276     2        5  False   False  10.590245
+4          4       7    0  52.974924     2        4  False    True   5.811064
+</p>
+</div>
+</div>
+
+<div id="outline-container-org5cac271" class="outline-2">
+<h2 id="org5cac271"><span class="section-number-2">4</span> Where was that error?</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+A somewhat annoying feature of running cells in org-mode is when there is an exception there has not been a good way to jump to the line that caused the error to edit it. The lines in the src block are not numbered, so in a large block it can be tedious to find the line. In scimax, when you get an exception it will number the lines in the src block, and when you press q in the exception traceback buffer it will jump to the line in the block where the error occurred.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">print</span>(1)
+<span style="color: #8D8D84;">#</span><span style="color: #8D8D84; font-style: italic;">raise Exception('Here')</span>
+<span style="color: #0000FF;">print</span>(2)
+</pre>
+</div>
+
+<p>
+1
+2
+</p>
+
+
+
+<p>
+If you don't like the numbers add this to your init file:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">setq</span> ob-ipython-number-on-exception nil)
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org3ebd0a8" class="outline-2">
+<h2 id="org3ebd0a8"><span class="section-number-2">5</span> Asynchronous Ipython</h2>
+<div class="outline-text-2" id="text-5">
+<p>
+I have made a few improvements to the asynchronous workflow in Ipython. We now have a calculation queue, so you can use C-c C-c to execute several blocks in a row, and they will run asynchronously in the order you ran them. While they are running you can continue using Emacs, e.g. writing that paper, reading email, checking RSS feeds, tetris, &#x2026; This also lets you run all the blocks up to the current point (M-x <code>org-babel-execute-ipython-buffer-to-point-async</code>) or the whole buffer (of Ipython) blocks asynchronously (M-x <code>org-babel-execute-ipython-buffer-async</code>).
+</p>
+
+<p>
+To turn this on by default put this in your init file:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">setq</span> org-babel-async-ipython t)
+</pre>
+</div>
+
+<p>
+This requires all src blocks to have a name, and running the block will give it a name if you have not named the block. By default we use human-readable names. While the block is running, there will be a link indicating it is running. You can click on the link to cancel it. Running subsequent blocks will queue them to be run when the first block is done.
+</p>
+
+<p>
+Here is an example:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="orgb3ddac3"><span style="color: #0000FF;">import</span> time
+time.sleep(5)
+<span style="color: #BA36A5;">a</span> = 5
+<span style="color: #0000FF;">print</span>(<span style="color: #008000;">'done'</span>)
+</pre>
+</div>
+
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="org5b7e30b"><span style="color: #0000FF;">print</span>(3 * a)
+</pre>
+</div>
+
+<p>
+15
+</p>
+
+
+
+
+<p>
+Occasionally you will run into an issue. You can clear the queue with <code>org-babel-async-ipython-clear-queue</code>.</p>
+</div>
+</div>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/05/26/Org-mode-and-ipython-enhancements-in-scimax.org">org-mode source</a></p>
+<p>Org-mode version = 9.0.5</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+
+<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2017/05/26/Org-mode-and-ipython-enhancements-in-scimax">Discuss on Twitter</a>
+
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="A-partial-symbolic-numeric-solver-in-emacs-lisp"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/05/21/A-partial-symbolic-numeric-solver-in-emacs-lisp/" rel="bookmark" title="Permanent Link to A partial symbolic numeric solver in emacs-lisp">A partial symbolic numeric solver in emacs-lisp</a></h2>
       <p><small><span class="blog_post_date">Posted May 21, 2017 at 11:33 AM</span> | categories:
@@ -1076,728 +1752,6 @@ This has the benefit of a little cleaner injection of variables and selective ex
 <a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2017/05/04/An-emacs-lisp-dsl-for-gnuplot">Discuss on Twitter</a>
 
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Emulating-Sparql-queries-in-emacs-lisp-with-pattern-matching"></div>
-      <h2 class="blog_post_title"><a href="/blog/2017/04/30/Emulating-Sparql-queries-in-emacs-lisp-with-pattern-matching/" rel="bookmark" title="Permanent Link to Emulating Sparql queries in emacs-lisp with pattern matching">Emulating Sparql queries in emacs-lisp with pattern matching</a></h2>
-      <p><small><span class="blog_post_date">Posted April 30, 2017 at 01:46 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/lisp/'>lisp</a></span> | tags: 
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-Sqarql is a query language for RDF triples. A triple is a data structure that consists of a (subject predicate object). Sparql lets you query the triples to extract data from them. I have been interested in using these to augment the <a href="http://kitchingroup.cheme.cmu.edu/blog/2017/01/03/Find-stuff-in-org-mode-anywhere/">SQL databases I generate</a> from my org-files to be able to infer relationships between subjects and objects. For example, I could encode relationships into the contact database I use, and then infer new information that is not encoded explicitly. So far though I haven't found a good Sparql database that I can easily integrate into Emacs (or even play around with). I am reading On Lisp these days and chapters 18 and 19 talk about destructuring and pattern matching, and I realized these can be used to implement something like Sparql queries on simple lisp data structures. In this post I explore what it looks like and how to do it.
-</p>
-
-<p>
-Let's consider a small database of triples that codify relationships between two people. For example, we can codify that Ann is Bob's mother with (Bob mother Ann). Here is our little database.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">setq</span> triples '((Bob mother Ann)
-                (Bill father Bob)
-                (Lucy mother Jane)
-                (Bob wife Jane)))
-</pre>
-</div>
-
-<p>
-We can filter out facts from the database with a -filter. Here we filter out triples about Bob. Emacs has nice pattern matching in the pcase macro (see <a href="http://www.wilfred.me.uk/blog/2017/03/19/pattern-matching-in-emacs-lisp/">http://www.wilfred.me.uk/blog/2017/03/19/pattern-matching-in-emacs-lisp/</a> and <a href="http://newartisans.com/2016/01/pattern-matching-with-pcase/">http://newartisans.com/2016/01/pattern-matching-with-pcase/</a> for example). It turns out this is an amazing way to solve this problem. Here we look at triples with the pattern that they start with Bob.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(-filter (<span style="color: #0000FF;">lambda</span> (triple) (<span style="color: #0000FF;">pcase</span> triple (`(Bob ,_ ,_) t))) triples)
-</pre>
-</div>
-
-<p>
-And here we get all the mothers.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(-filter (<span style="color: #0000FF;">lambda</span> (triple) (<span style="color: #0000FF;">pcase</span> triple (`(,_ mother ,_) t))) triples)
-</pre>
-</div>
-
-<p>
-We can infer some facts about these people from the database by using some "rules". For example, there is not an entry that tells us directly who Bill's grandmother is. If we assume that the mother of a person's father is their grandmother, then we can infer Bill's grandmother is Ann. In this post, we examine how to write code that can find that answer. We will use pattern matching on pairs of triples to do it.
-</p>
-
-<p>
-We can enumerate pairs of triples, and use pattern matching to find the pair of triples that meet the criteria we specify. The criteria we want to match is (in pseudo-sparql):
-</p>
-
-<pre class="example">
-(Bill father ?dad) (?dad mother ?grandmother)
-</pre>
-
-<p>
-In other words, we want to find a triple that contains Bill as the subject, father as the predication, and then his father will be the object, and then find another triple that matches a predicate of mother with the subject equal to the father object we found in the first triple, and the object of the second triple will be Bill's grandmother. We enumerate pairs of triples for the comparison. Here is a way to do that. It is not a very efficient way to do it; it would be better to first filter out the triples that match (Bill father <i>something</i>) and then filter out the triples that match (<i>anything</i> mother <i>any other thing</i>) <i>and</i> then consider the pairs of those triples. I will save that for another day; efficiency is not the point today ;)
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">loop</span> for i below (length triples)
-      append
-      (<span style="color: #0000FF;">loop</span>
-       for j below (length triples)
-       if (not (= i j))
-       collect
-       (list (nth i triples) (nth j triples))))
-</pre>
-</div>
-
-<p>
-You can see the pair that matches is the fourth one down (actually the first one matches too, but not exactly in the order of the pattern we specified). Next, we use pcase for the pattern matching. This amazing macro allows you to specify a pattern in terms of reusable variables so we can specify that the same value exists in multiple places. We will use this pattern (in pcase syntax):
-</p>
-
-<pre class="example">
-`((Bill father ,dad) (,dad mother ,grandmother))
-</pre>
-
-<p>
-That means match a list that has the first element of (Bill father <i>something</i>) and store the value of <i>something</i> in the variable dad. The second element of the list must match (<i>something</i> mother <i>another thing</i>) and store the value of <i>another thing</i> in the variable grandmother. The two variables dad and grandmother are then available in the body of the pcase statement. Here is the code to loop over the triples and return the result when we find a match.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">catch</span> '<span style="color: #D0372D;">result</span>
-  (<span style="color: #0000FF;">loop</span> for i below (length triples)
-        do
-        (<span style="color: #0000FF;">loop</span>
-         for j below (length triples)
-         if (not (= i j))
-         collect
-         (<span style="color: #0000FF;">pcase</span> (list (nth i triples) (nth j triples))
-           (`((Bill father ,dad) (,dad mother ,grandmother))
-            (<span style="color: #0000FF;">throw</span> '<span style="color: #D0372D;">result</span> (format <span style="color: #008000;">"Bill's dad is %s and his grandmother is %s"</span> dad grandmother)))))))
-</pre>
-</div>
-
-<p>
-Not bad. It would be worthwhile to encapsulate that into a macro perhaps, so you could just write something like this:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">select</span> (dad grandmother) from triples where `((Bill father ,dad) (,dad mother ,grandmother)))
-</pre>
-</div>
-
-<p>
-For fun I implemented a limited version of this below. It is fairly limited, and lightly tested. The biggest limitation is we hard-coded the search over pairs of triples. This version searches by brute force too, because I don't know how to build in filtering yet. It is another exercise for another day to remove these limitations. Here I just want to try out the macro with the syntactic sugar of "from" and "where" (which are totally ignored) as well at the backquoted query.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defmacro</span> <span style="color: #006699;">select</span> (<span style="color: #6434A3;">&amp;rest</span> args)
-  (<span style="color: #0000FF;">let</span> ((values (first args))
-        (db (third args))
-        (query (fifth args)))
-    `<span style="color: #D0372D;">(catch </span>'<span style="color: #D0372D;">result</span>
-       (<span style="color: #0000FF;">loop</span> for i below (length ,db)
-             do
-             (<span style="color: #0000FF;">loop</span>
-              for j below (length ,db)
-              if (not (= i j))
-              do
-              (<span style="color: #0000FF;">pcase</span> (list (nth i triples) (nth j triples))
-                (,query
-                 (<span style="color: #0000FF;">throw</span> '<span style="color: #D0372D;">result</span> (list ,@values)))))))))
-</pre>
-</div>
-
-<p>
-Here is a fun way to write the query that finds the grandmother of the person named Bill with variable capture.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">select</span> (person dad grandmother) from triples
-        where `((,(<span style="color: #0000FF;">and</span> person (<span style="color: #0000FF;">let</span> Bill person)) father ,dad) (,dad mother ,grandmother)))
-</pre>
-</div>
-
-<p>
-We can see the grandmother is Ann, as we found before.
-</p>
-
-<p>
-Let's have a look at the macro expansion. Clearly our macro hides a lot of work from us!
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(macroexpand '(select (person dad grandmother) from triples
-        where `((,(<span style="color: #0000FF;">and</span> person (<span style="color: #0000FF;">let</span> Bill person)) father ,dad) (,dad mother ,grandmother))))
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-left" />
-
-<col  class="org-left" />
-
-<col  class="org-left" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-left">Bill</td>
-<td class="org-left">Bob</td>
-<td class="org-left">Ann</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-How about another example query. Who is Lucy's dad? The most direct query would be `(Lucy father ,dad), but a) that fact is not in the database, and b) our select macro won't search a single query anyway. So, let's examine how to find the answer by inference.
-</p>
-
-<p>
-Let's assume that Lucy's dad is also the husband of her mother. Let's also assume that we can infer that if we know Jane is the wife of Bob, then Bob is the husband of Jane, and so we can infer from our database that Bob is Lucy's dad. This results in a query on a pair of triples that matches a pattern like:
-</p>
-
-<pre class="example">
-(Lucy mother ?mom) (?dad wife ?mom)
-</pre>
-
-<p>
-Here is that query in our select macro.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">select</span> (person mom dad) from triples
-        where `((,(<span style="color: #0000FF;">and</span> person (<span style="color: #0000FF;">let</span> Lucy person)) mother ,mom) (,dad wife ,mom)))
-</pre>
-</div>
-
-<p>
-Pretty cool! Clearly there is still a lot to do to make this practical. The implementation I used here wouldn't scale well with large numbers of triples, and its limited to a single kind of query. Chapters 18 and 19 in On Lisp address the query limitation (and they are not even limited to triples) and a different syntax style that is more Sparql like. When I get through them, I will probably add a new post on it. There are a lot of interesting problems to solve here including what to do if there are multiple matches, or inconsistent data? The Sparql select command allows you to group, order and limit the results which would be increasingly useful with larger triple stores. That would definitely add a lot of code to the macro!
-</p>
-<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2017/04/30/Emulating-Sparql-queries-in-emacs-lisp-with-pattern-matching.org">org-mode source</a></p>
-<p>Org-mode version = 9.0.5</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-
-<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2017/04/30/Emulating-Sparql-queries-in-emacs-lisp-with-pattern-matching">Discuss on Twitter</a>
-
-  <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="A-callable-plist-data-structure-for-Emacs"></div>
-      <h2 class="blog_post_title"><a href="/blog/2017/04/16/A-callable-plist-data-structure-for-Emacs/" rel="bookmark" title="Permanent Link to A callable plist data structure for Emacs">A callable plist data structure for Emacs</a></h2>
-      <p><small><span class="blog_post_date">Posted April 16, 2017 at 04:44 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/macro/'>macro</a>, <a href='/blog/category/elisp/'>elisp</a></span> | tags: 
-      <p><small><span class="blog_post_date">Updated February 04, 2018 at 05:06 PM</span></small>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<div id="table-of-contents">
-<h2>Table of Contents</h2>
-<div id="text-table-of-contents">
-<ul>
-<li><a href="#orgb831a3d">1. An update <span class="timestamp-wrapper"><span class="timestamp">&lt;2017-04-21 Fri&gt;</span></span></a></li>
-</ul>
-</div>
-</div>
-<p>
-Emacs lisp has a few data structures that store key-value pairs. Here are some canonical examples of these data structures and the way to get data out of them.
-</p>
-
-<ul class="org-ul">
-<li>a-lists</li>
-</ul>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((data '((key1 . 4)
-              (key2 . <span style="color: #008000;">"tree"</span>))))
-  (cdr (assoc 'key2 data)))
-</pre>
-</div>
-
-<pre class="example">
-tree
-
-</pre>
-
-<ul class="org-ul">
-<li>p-lists</li>
-</ul>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((data '(<span style="color: #006FE0;">:key1</span> 4 <span style="color: #006FE0;">:key2</span> <span style="color: #008000;">"tree"</span>)))
-  (plist-get data <span style="color: #006FE0;">:key2</span>))
-</pre>
-</div>
-
-<pre class="example">
-tree
-
-</pre>
-
-<ul class="org-ul">
-<li>A hash table</li>
-</ul>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((data #s(hash-table data (key1 4 key2 <span style="color: #008000;">"tree"</span>))))
-  (gethash 'key2 data))
-</pre>
-</div>
-
-<pre class="example">
-tree
-
-</pre>
-
-<p>
-Each of these uses some function to get data out of them. I have been learning about closures today, and realized a way you can make a "callable" data structure using them. In a closure, the data is stored as part of a function. We will use a <a href="http://letoverlambda.com">"let over lambda"</a> with a defalias in a lexical environment to achieve this. I will wrap a p-list with this approach, but it could work with any of the examples above. We will make the function have a few behaviors that allow us to see the whole data structure with no args, to get a value with one arg that is a key, and to set a value if there are more than two args add them as key-val pairs to the data structure. This block binds the function to the symbol "d" which is then a callable function.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((data '(<span style="color: #006FE0;">:key1</span> 4 <span style="color: #006FE0;">:key2</span> <span style="color: #008000;">"tree"</span>)))
-  (<span style="color: #0000FF;">defalias</span> '<span style="color: #006699;">d</span>
-    (<span style="color: #0000FF;">lambda</span> (<span style="color: #6434A3;">&amp;rest</span> key-vals)
-      (<span style="color: #0000FF;">cond</span>
-       <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">no args, return data</span>
-       ((= 0 (length key-vals))
-        data)
-       <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">just a key, get val</span>
-       ((= 1 (length key-vals))
-        (plist-get data (car key-vals)))
-       (t
-        (<span style="color: #0000FF;">loop</span> for key in (-slice key-vals 0 nil 2)
-              for val in (-slice key-vals 1 nil 2)
-              do
-              (plist-put data key val))
-        data)))))
-</pre>
-</div>
-
-<pre class="example">
-d
-
-</pre>
-
-<p>
-Now we can use it like to get some data out:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(d <span style="color: #006FE0;">:key2</span>)
-</pre>
-</div>
-
-<pre class="example">
-tree
-
-</pre>
-
-<p>
-And add new values like:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(d <span style="color: #006FE0;">:key3</span> <span style="color: #008000;">"oak"</span>)
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-left" />
-
-<col  class="org-right" />
-
-<col  class="org-left" />
-
-<col  class="org-left" />
-
-<col  class="org-left" />
-
-<col  class="org-left" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-left">:key1</td>
-<td class="org-right">4</td>
-<td class="org-left">:key2</td>
-<td class="org-left">tree</td>
-<td class="org-left">:key3</td>
-<td class="org-left">oak</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-You can update a value with this too:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(d <span style="color: #006FE0;">:key3</span> <span style="color: #008000;">"pine"</span>)
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-left" />
-
-<col  class="org-right" />
-
-<col  class="org-left" />
-
-<col  class="org-left" />
-
-<col  class="org-left" />
-
-<col  class="org-left" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-left">:key1</td>
-<td class="org-right">4</td>
-<td class="org-left">:key2</td>
-<td class="org-left">tree</td>
-<td class="org-left">:key3</td>
-<td class="org-left">pine</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-or add multiple values like this:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(d <span style="color: #006FE0;">:key4</span> 0 <span style="color: #006FE0;">:key5</span> 9)
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-left" />
-
-<col  class="org-right" />
-
-<col  class="org-left" />
-
-<col  class="org-left" />
-
-<col  class="org-left" />
-
-<col  class="org-left" />
-
-<col  class="org-left" />
-
-<col  class="org-right" />
-
-<col  class="org-left" />
-
-<col  class="org-right" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-left">:key1</td>
-<td class="org-right">4</td>
-<td class="org-left">:key2</td>
-<td class="org-left">tree</td>
-<td class="org-left">:key3</td>
-<td class="org-left">pine</td>
-<td class="org-left">:key4</td>
-<td class="org-right">0</td>
-<td class="org-left">:key5</td>
-<td class="org-right">9</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-And see the whole plist with no args:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(d)
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-left" />
-
-<col  class="org-right" />
-
-<col  class="org-left" />
-
-<col  class="org-left" />
-
-<col  class="org-left" />
-
-<col  class="org-left" />
-
-<col  class="org-left" />
-
-<col  class="org-right" />
-
-<col  class="org-left" />
-
-<col  class="org-right" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-left">:key1</td>
-<td class="org-right">4</td>
-<td class="org-left">:key2</td>
-<td class="org-left">tree</td>
-<td class="org-left">:key3</td>
-<td class="org-left">pine</td>
-<td class="org-left">:key4</td>
-<td class="org-right">0</td>
-<td class="org-left">:key5</td>
-<td class="org-right">9</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-Pretty nice! It seems like there ought to be a macro to facilitate creating those. Here is one.
-This macro basically expands to the same code as above, but for fun I add a default value option.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defmacro</span> <span style="color: #006699;">default-dict</span> (var <span style="color: #6434A3;">&amp;optional</span> default <span style="color: #6434A3;">&amp;rest</span> key-vals)
-  <span style="color: #036A07;">"Bind a callable plist to VAR that contains KEY-VALS."</span>
-  (<span style="color: #0000FF;">let</span> ()
-    `<span style="color: #D0372D;">(let ((data </span>',key-vals))
-       (<span style="color: #0000FF;">defalias</span> ',var
-         (<span style="color: #0000FF;">lambda</span> (<span style="color: #6434A3;">&amp;rest</span> key-vals)
-           (message <span style="color: #008000;">"%s"</span> key-vals)
-           (<span style="color: #0000FF;">cond</span>
-            <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">no args, return data</span>
-            ((= 0 (length key-vals))
-             data)
-            <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">just a key, get val</span>
-            ((= 1 (length key-vals))
-             (<span style="color: #0000FF;">or</span>  (plist-get data (car key-vals)) ,default))
-            (t
-             (<span style="color: #0000FF;">loop</span> for key in (-slice key-vals 0 nil 2)
-                   for val in (-slice key-vals 1 nil 2)
-                   do
-                   (plist-put data key val))
-             data)))))))
-</pre>
-</div>
-
-<p>
-Here is an instance of it.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(default-dict d2 <span style="color: #008000;">"None"</span> <span style="color: #006FE0;">:key1</span> 4 <span style="color: #006FE0;">:key2</span> <span style="color: #008000;">"tree"</span>)
-</pre>
-</div>
-
-<pre class="example">
-d2
-
-</pre>
-
-<p>
-And here it is in use.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(d2 <span style="color: #006FE0;">:key1</span>)
-</pre>
-</div>
-
-<pre class="example">
-4
-
-</pre>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(d2 <span style="color: #006FE0;">:new-key</span>)
-</pre>
-</div>
-
-<pre class="example">
-None
-
-</pre>
-
-<p>
-Not bad. If you come from Python, you might find this style of data structure to be more similar to what you are used to seeing. It sure seems less verbose than the usual plist boilerplate I have used before.
-</p>
-
-<div id="outline-container-orgb831a3d" class="outline-2">
-<h2 id="orgb831a3d"><span class="section-number-2">1</span> An update <span class="timestamp-wrapper"><span class="timestamp">&lt;2017-04-21 Fri&gt;</span></span></h2>
-<div class="outline-text-2" id="text-1">
-<p>
-One (perhaps undesirable even) feature of the approach above is that it creates a function in the global namespace. This might have unintended consequences with name clashes or shadowing, and if you later use the same variable name for a plist, you would change the function behavior. Here we consider a way to limit the scope of where these functions exist and work. The labels macro provides one way to do this, we just create temporary functions that only exist within a scope. There is a lot of backticking and comma operators in this, and it took quite a few iterations to get it working!
-</p>
-
-<p>
-This macro creates temporary functions for each keyword that return the value in the plist.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defmacro</span> <span style="color: #006699;">with-dict</span> (key-vals <span style="color: #6434A3;">&amp;rest</span> body)
-  <span style="color: #036A07;">"A context-manager for a plist where each key is a callable</span>
-<span style="color: #036A07;">function that returns the value."</span>
-  (<span style="color: #0000FF;">declare</span> (indent 1))
-  (<span style="color: #0000FF;">let*</span> ((g (<span style="color: #0000FF;">if</span> (symbolp key-vals)
-                (symbol-value key-vals)
-              key-vals))
-         (keys (-slice g 0 nil 2)))
-    `(<span style="color: #0000FF;">labels</span> ,(<span style="color: #0000FF;">loop</span> for key in keys
-                    collect
-                    (list key '() `<span style="color: #D0372D;">(plist-get </span>',g  ,key)))
-       ,@body)))
-</pre>
-</div>
-
-<pre class="example">
-with-dict
-
-</pre>
-
-<p>
-Here is how we use it:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(with-dict (<span style="color: #006FE0;">:a</span> 1 <span style="color: #006FE0;">:b</span> 'some-symbol <span style="color: #006FE0;">:c</span> 3)
-  (<span style="color: #006FE0;">:b</span>))
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-left" />
-
-<col  class="org-left" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-left">quote</td>
-<td class="org-left">some-symbol</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-We can also use it with variables that hold mappings like this.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((d '(<span style="color: #006FE0;">:key1</span> 1 <span style="color: #006FE0;">:key2</span> some-other-symbol <span style="color: #006FE0;">:key3</span> 3)))
-  (with-dict d
-    (format <span style="color: #008000;">"We got %s"</span> (<span style="color: #006FE0;">:key2</span>))))
-</pre>
-</div>
-
-<pre class="example">
-We got some-other-symbol
-
-</pre>
-
-<p>
-That is pretty interesting! In case that looks similar to a context manager in Python, now you know where Python got that idea ;)
-</p>
-
-<p>
-Another related idea is to let-bind the values to variables within a scope. We can't use the keywords directly here, so I use some hackery to strip off the colon so it is a regular symbol. That is not quite as nice I guess since you have to remember to remove the : from the symbols in the body of your code.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defmacro</span> <span style="color: #006699;">with-plist-vals</span> (plist <span style="color: #6434A3;">&amp;rest</span> body)
-  <span style="color: #036A07;">"Bind the values of a plist to variables with the name of the keys."</span>
-  (<span style="color: #0000FF;">declare</span> (indent 1))
-  `(<span style="color: #0000FF;">let</span> ,(<span style="color: #0000FF;">loop</span> for key in (-slice plist 0 nil 2)
-               for val in (-slice plist 1 nil 2)
-               collect (list (intern
-                              (substring (symbol-name key) 1))
-                             val))
-     ,@body))
-</pre>
-</div>
-
-<pre class="example">
-with-plist-vals
-
-</pre>
-
-<p>
-Here is an example usage.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(with-plist-vals (<span style="color: #006FE0;">:a</span> 4 <span style="color: #006FE0;">:b</span> 6)
- (* 2 a))
-</pre>
-</div>
-
-<pre class="example">
-8
-
-</pre>
-
-<p>
-Obviously that is just an alternate syntax for the let statement, but it lets you leverage the plist syntax for multiple purposes.</p>
-</div>
-</div>
-<p>Copyright (C) 2018 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2017/04/16/A-callable-plist-data-structure-for-Emacs.org">org-mode source</a></p>
-<p>Org-mode version = 9.1.6</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-
-<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2017/04/16/A-callable-plist-data-structure-for-Emacs">Discuss on Twitter</a>
-
-  <hr class="interblog" />
  <a href="../13">« Previous Page</a>
   --  
  <a href="../15">Next Page »</a>
@@ -1839,11 +1793,11 @@ Obviously that is just an alternate syntax for the let statement, but it lets yo
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2022/01/11/Launching-Point-Breeze-Publishing/">Launching Point Breeze Publishing</a></li>
+      <li><a href="/blog/2022/01/11/Launching-Point-Breeze-Publishing-LLC/">Launching Point Breeze Publishing, LLC</a></li>
       <li><a href="/blog/2021/12/22/2021-in-a-nutshell/">2021 in a nutshell</a></li>
       <li><a href="/blog/2021/12/18/New-publication-Origin-of-the-Stokes-Einstein-Deviation-in-Liquid-Al-Si/">New publication - Origin of the Stokes-Einstein Deviation in Liquid Al-Si</a></li>
       <li><a href="/blog/2021/12/03/New-publication-Accelerated-Optimization-of-Pure-Metal-and-Ligand-Compositions-for-Light-driven-Hydrogen-Production/">New publication - Accelerated Optimization of Pure Metal and Ligand Compositions for Light-driven Hydrogen Production</a></li>
-      <li><a href="/blog/2021/12/02/New-publication-Ligand-Enhanced-Activity-of-in-Situ-Formed-Nanoparticles-for-Photocatalytic-Hydrogen-Evolution/">New publication - Ligand Enhanced Activity of in Situ Formed Nanoparticles for Photocatalytic Hydrogen Evolution</a></li>
-      <li><a href="/blog/2021/11/30/New-publication-Uncertainty-quantification-in-machine-learning-and-nonlinear-least-squares-regression-models/">New publication - Uncertainty quantification in machine learning and nonlinear least squares regression models</a></li>
     </ul>
   </section>
 
@@ -1871,7 +1825,7 @@ Obviously that is just an alternate syntax for the let statement, but it lets yo
     </div>
     <div class="grid_4" id="credits">
       <p>
-        Copyright 2021
+        Copyright 2022
         John Kitchin
       </p>
       <p>

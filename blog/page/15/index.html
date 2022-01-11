@@ -102,10 +102,732 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Emulating-Sparql-queries-in-emacs-lisp-with-pattern-matching"></div>
+      <h2 class="blog_post_title"><a href="/blog/2017/04/30/Emulating-Sparql-queries-in-emacs-lisp-with-pattern-matching/" rel="bookmark" title="Permanent Link to Emulating Sparql queries in emacs-lisp with pattern matching">Emulating Sparql queries in emacs-lisp with pattern matching</a></h2>
+      <p><small><span class="blog_post_date">Posted April 30, 2017 at 01:46 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/lisp/'>lisp</a></span> | tags: 
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+Sqarql is a query language for RDF triples. A triple is a data structure that consists of a (subject predicate object). Sparql lets you query the triples to extract data from them. I have been interested in using these to augment the <a href="http://kitchingroup.cheme.cmu.edu/blog/2017/01/03/Find-stuff-in-org-mode-anywhere/">SQL databases I generate</a> from my org-files to be able to infer relationships between subjects and objects. For example, I could encode relationships into the contact database I use, and then infer new information that is not encoded explicitly. So far though I haven't found a good Sparql database that I can easily integrate into Emacs (or even play around with). I am reading On Lisp these days and chapters 18 and 19 talk about destructuring and pattern matching, and I realized these can be used to implement something like Sparql queries on simple lisp data structures. In this post I explore what it looks like and how to do it.
+</p>
+
+<p>
+Let's consider a small database of triples that codify relationships between two people. For example, we can codify that Ann is Bob's mother with (Bob mother Ann). Here is our little database.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">setq</span> triples '((Bob mother Ann)
+                (Bill father Bob)
+                (Lucy mother Jane)
+                (Bob wife Jane)))
+</pre>
+</div>
+
+<p>
+We can filter out facts from the database with a -filter. Here we filter out triples about Bob. Emacs has nice pattern matching in the pcase macro (see <a href="http://www.wilfred.me.uk/blog/2017/03/19/pattern-matching-in-emacs-lisp/">http://www.wilfred.me.uk/blog/2017/03/19/pattern-matching-in-emacs-lisp/</a> and <a href="http://newartisans.com/2016/01/pattern-matching-with-pcase/">http://newartisans.com/2016/01/pattern-matching-with-pcase/</a> for example). It turns out this is an amazing way to solve this problem. Here we look at triples with the pattern that they start with Bob.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(-filter (<span style="color: #0000FF;">lambda</span> (triple) (<span style="color: #0000FF;">pcase</span> triple (`(Bob ,_ ,_) t))) triples)
+</pre>
+</div>
+
+<p>
+And here we get all the mothers.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(-filter (<span style="color: #0000FF;">lambda</span> (triple) (<span style="color: #0000FF;">pcase</span> triple (`(,_ mother ,_) t))) triples)
+</pre>
+</div>
+
+<p>
+We can infer some facts about these people from the database by using some "rules". For example, there is not an entry that tells us directly who Bill's grandmother is. If we assume that the mother of a person's father is their grandmother, then we can infer Bill's grandmother is Ann. In this post, we examine how to write code that can find that answer. We will use pattern matching on pairs of triples to do it.
+</p>
+
+<p>
+We can enumerate pairs of triples, and use pattern matching to find the pair of triples that meet the criteria we specify. The criteria we want to match is (in pseudo-sparql):
+</p>
+
+<pre class="example">
+(Bill father ?dad) (?dad mother ?grandmother)
+</pre>
+
+<p>
+In other words, we want to find a triple that contains Bill as the subject, father as the predication, and then his father will be the object, and then find another triple that matches a predicate of mother with the subject equal to the father object we found in the first triple, and the object of the second triple will be Bill's grandmother. We enumerate pairs of triples for the comparison. Here is a way to do that. It is not a very efficient way to do it; it would be better to first filter out the triples that match (Bill father <i>something</i>) and then filter out the triples that match (<i>anything</i> mother <i>any other thing</i>) <i>and</i> then consider the pairs of those triples. I will save that for another day; efficiency is not the point today ;)
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">loop</span> for i below (length triples)
+      append
+      (<span style="color: #0000FF;">loop</span>
+       for j below (length triples)
+       if (not (= i j))
+       collect
+       (list (nth i triples) (nth j triples))))
+</pre>
+</div>
+
+<p>
+You can see the pair that matches is the fourth one down (actually the first one matches too, but not exactly in the order of the pattern we specified). Next, we use pcase for the pattern matching. This amazing macro allows you to specify a pattern in terms of reusable variables so we can specify that the same value exists in multiple places. We will use this pattern (in pcase syntax):
+</p>
+
+<pre class="example">
+`((Bill father ,dad) (,dad mother ,grandmother))
+</pre>
+
+<p>
+That means match a list that has the first element of (Bill father <i>something</i>) and store the value of <i>something</i> in the variable dad. The second element of the list must match (<i>something</i> mother <i>another thing</i>) and store the value of <i>another thing</i> in the variable grandmother. The two variables dad and grandmother are then available in the body of the pcase statement. Here is the code to loop over the triples and return the result when we find a match.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">catch</span> '<span style="color: #D0372D;">result</span>
+  (<span style="color: #0000FF;">loop</span> for i below (length triples)
+        do
+        (<span style="color: #0000FF;">loop</span>
+         for j below (length triples)
+         if (not (= i j))
+         collect
+         (<span style="color: #0000FF;">pcase</span> (list (nth i triples) (nth j triples))
+           (`((Bill father ,dad) (,dad mother ,grandmother))
+            (<span style="color: #0000FF;">throw</span> '<span style="color: #D0372D;">result</span> (format <span style="color: #008000;">"Bill's dad is %s and his grandmother is %s"</span> dad grandmother)))))))
+</pre>
+</div>
+
+<p>
+Not bad. It would be worthwhile to encapsulate that into a macro perhaps, so you could just write something like this:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">select</span> (dad grandmother) from triples where `((Bill father ,dad) (,dad mother ,grandmother)))
+</pre>
+</div>
+
+<p>
+For fun I implemented a limited version of this below. It is fairly limited, and lightly tested. The biggest limitation is we hard-coded the search over pairs of triples. This version searches by brute force too, because I don't know how to build in filtering yet. It is another exercise for another day to remove these limitations. Here I just want to try out the macro with the syntactic sugar of "from" and "where" (which are totally ignored) as well at the backquoted query.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defmacro</span> <span style="color: #006699;">select</span> (<span style="color: #6434A3;">&amp;rest</span> args)
+  (<span style="color: #0000FF;">let</span> ((values (first args))
+        (db (third args))
+        (query (fifth args)))
+    `<span style="color: #D0372D;">(catch </span>'<span style="color: #D0372D;">result</span>
+       (<span style="color: #0000FF;">loop</span> for i below (length ,db)
+             do
+             (<span style="color: #0000FF;">loop</span>
+              for j below (length ,db)
+              if (not (= i j))
+              do
+              (<span style="color: #0000FF;">pcase</span> (list (nth i triples) (nth j triples))
+                (,query
+                 (<span style="color: #0000FF;">throw</span> '<span style="color: #D0372D;">result</span> (list ,@values)))))))))
+</pre>
+</div>
+
+<p>
+Here is a fun way to write the query that finds the grandmother of the person named Bill with variable capture.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">select</span> (person dad grandmother) from triples
+        where `((,(<span style="color: #0000FF;">and</span> person (<span style="color: #0000FF;">let</span> Bill person)) father ,dad) (,dad mother ,grandmother)))
+</pre>
+</div>
+
+<p>
+We can see the grandmother is Ann, as we found before.
+</p>
+
+<p>
+Let's have a look at the macro expansion. Clearly our macro hides a lot of work from us!
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(macroexpand '(select (person dad grandmother) from triples
+        where `((,(<span style="color: #0000FF;">and</span> person (<span style="color: #0000FF;">let</span> Bill person)) father ,dad) (,dad mother ,grandmother))))
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">Bill</td>
+<td class="org-left">Bob</td>
+<td class="org-left">Ann</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+How about another example query. Who is Lucy's dad? The most direct query would be `(Lucy father ,dad), but a) that fact is not in the database, and b) our select macro won't search a single query anyway. So, let's examine how to find the answer by inference.
+</p>
+
+<p>
+Let's assume that Lucy's dad is also the husband of her mother. Let's also assume that we can infer that if we know Jane is the wife of Bob, then Bob is the husband of Jane, and so we can infer from our database that Bob is Lucy's dad. This results in a query on a pair of triples that matches a pattern like:
+</p>
+
+<pre class="example">
+(Lucy mother ?mom) (?dad wife ?mom)
+</pre>
+
+<p>
+Here is that query in our select macro.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">select</span> (person mom dad) from triples
+        where `((,(<span style="color: #0000FF;">and</span> person (<span style="color: #0000FF;">let</span> Lucy person)) mother ,mom) (,dad wife ,mom)))
+</pre>
+</div>
+
+<p>
+Pretty cool! Clearly there is still a lot to do to make this practical. The implementation I used here wouldn't scale well with large numbers of triples, and its limited to a single kind of query. Chapters 18 and 19 in On Lisp address the query limitation (and they are not even limited to triples) and a different syntax style that is more Sparql like. When I get through them, I will probably add a new post on it. There are a lot of interesting problems to solve here including what to do if there are multiple matches, or inconsistent data? The Sparql select command allows you to group, order and limit the results which would be increasingly useful with larger triple stores. That would definitely add a lot of code to the macro!
+</p>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/04/30/Emulating-Sparql-queries-in-emacs-lisp-with-pattern-matching.org">org-mode source</a></p>
+<p>Org-mode version = 9.0.5</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+
+<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2017/04/30/Emulating-Sparql-queries-in-emacs-lisp-with-pattern-matching">Discuss on Twitter</a>
+
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
+      <div id="A-callable-plist-data-structure-for-Emacs"></div>
+      <h2 class="blog_post_title"><a href="/blog/2017/04/16/A-callable-plist-data-structure-for-Emacs/" rel="bookmark" title="Permanent Link to A callable plist data structure for Emacs">A callable plist data structure for Emacs</a></h2>
+      <p><small><span class="blog_post_date">Posted April 16, 2017 at 04:44 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/macro/'>macro</a>, <a href='/blog/category/elisp/'>elisp</a></span> | tags: 
+      <p><small><span class="blog_post_date">Updated February 04, 2018 at 05:06 PM</span></small>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#orgb831a3d">1. An update <span class="timestamp-wrapper"><span class="timestamp">&lt;2017-04-21 Fri&gt;</span></span></a></li>
+</ul>
+</div>
+</div>
+<p>
+Emacs lisp has a few data structures that store key-value pairs. Here are some canonical examples of these data structures and the way to get data out of them.
+</p>
+
+<ul class="org-ul">
+<li>a-lists</li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((data '((key1 . 4)
+              (key2 . <span style="color: #008000;">"tree"</span>))))
+  (cdr (assoc 'key2 data)))
+</pre>
+</div>
+
+<pre class="example">
+tree
+
+</pre>
+
+<ul class="org-ul">
+<li>p-lists</li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((data '(<span style="color: #006FE0;">:key1</span> 4 <span style="color: #006FE0;">:key2</span> <span style="color: #008000;">"tree"</span>)))
+  (plist-get data <span style="color: #006FE0;">:key2</span>))
+</pre>
+</div>
+
+<pre class="example">
+tree
+
+</pre>
+
+<ul class="org-ul">
+<li>A hash table</li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((data #s(hash-table data (key1 4 key2 <span style="color: #008000;">"tree"</span>))))
+  (gethash 'key2 data))
+</pre>
+</div>
+
+<pre class="example">
+tree
+
+</pre>
+
+<p>
+Each of these uses some function to get data out of them. I have been learning about closures today, and realized a way you can make a "callable" data structure using them. In a closure, the data is stored as part of a function. We will use a <a href="http://letoverlambda.com">"let over lambda"</a> with a defalias in a lexical environment to achieve this. I will wrap a p-list with this approach, but it could work with any of the examples above. We will make the function have a few behaviors that allow us to see the whole data structure with no args, to get a value with one arg that is a key, and to set a value if there are more than two args add them as key-val pairs to the data structure. This block binds the function to the symbol "d" which is then a callable function.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((data '(<span style="color: #006FE0;">:key1</span> 4 <span style="color: #006FE0;">:key2</span> <span style="color: #008000;">"tree"</span>)))
+  (<span style="color: #0000FF;">defalias</span> '<span style="color: #006699;">d</span>
+    (<span style="color: #0000FF;">lambda</span> (<span style="color: #6434A3;">&amp;rest</span> key-vals)
+      (<span style="color: #0000FF;">cond</span>
+       <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">no args, return data</span>
+       ((= 0 (length key-vals))
+        data)
+       <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">just a key, get val</span>
+       ((= 1 (length key-vals))
+        (plist-get data (car key-vals)))
+       (t
+        (<span style="color: #0000FF;">loop</span> for key in (-slice key-vals 0 nil 2)
+              for val in (-slice key-vals 1 nil 2)
+              do
+              (plist-put data key val))
+        data)))))
+</pre>
+</div>
+
+<pre class="example">
+d
+
+</pre>
+
+<p>
+Now we can use it like to get some data out:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(d <span style="color: #006FE0;">:key2</span>)
+</pre>
+</div>
+
+<pre class="example">
+tree
+
+</pre>
+
+<p>
+And add new values like:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(d <span style="color: #006FE0;">:key3</span> <span style="color: #008000;">"oak"</span>)
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-right" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">:key1</td>
+<td class="org-right">4</td>
+<td class="org-left">:key2</td>
+<td class="org-left">tree</td>
+<td class="org-left">:key3</td>
+<td class="org-left">oak</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+You can update a value with this too:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(d <span style="color: #006FE0;">:key3</span> <span style="color: #008000;">"pine"</span>)
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-right" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">:key1</td>
+<td class="org-right">4</td>
+<td class="org-left">:key2</td>
+<td class="org-left">tree</td>
+<td class="org-left">:key3</td>
+<td class="org-left">pine</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+or add multiple values like this:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(d <span style="color: #006FE0;">:key4</span> 0 <span style="color: #006FE0;">:key5</span> 9)
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-right" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-right" />
+
+<col  class="org-left" />
+
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">:key1</td>
+<td class="org-right">4</td>
+<td class="org-left">:key2</td>
+<td class="org-left">tree</td>
+<td class="org-left">:key3</td>
+<td class="org-left">pine</td>
+<td class="org-left">:key4</td>
+<td class="org-right">0</td>
+<td class="org-left">:key5</td>
+<td class="org-right">9</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+And see the whole plist with no args:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(d)
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-right" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-right" />
+
+<col  class="org-left" />
+
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">:key1</td>
+<td class="org-right">4</td>
+<td class="org-left">:key2</td>
+<td class="org-left">tree</td>
+<td class="org-left">:key3</td>
+<td class="org-left">pine</td>
+<td class="org-left">:key4</td>
+<td class="org-right">0</td>
+<td class="org-left">:key5</td>
+<td class="org-right">9</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Pretty nice! It seems like there ought to be a macro to facilitate creating those. Here is one.
+This macro basically expands to the same code as above, but for fun I add a default value option.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defmacro</span> <span style="color: #006699;">default-dict</span> (var <span style="color: #6434A3;">&amp;optional</span> default <span style="color: #6434A3;">&amp;rest</span> key-vals)
+  <span style="color: #036A07;">"Bind a callable plist to VAR that contains KEY-VALS."</span>
+  (<span style="color: #0000FF;">let</span> ()
+    `<span style="color: #D0372D;">(let ((data </span>',key-vals))
+       (<span style="color: #0000FF;">defalias</span> ',var
+         (<span style="color: #0000FF;">lambda</span> (<span style="color: #6434A3;">&amp;rest</span> key-vals)
+           (message <span style="color: #008000;">"%s"</span> key-vals)
+           (<span style="color: #0000FF;">cond</span>
+            <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">no args, return data</span>
+            ((= 0 (length key-vals))
+             data)
+            <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">just a key, get val</span>
+            ((= 1 (length key-vals))
+             (<span style="color: #0000FF;">or</span>  (plist-get data (car key-vals)) ,default))
+            (t
+             (<span style="color: #0000FF;">loop</span> for key in (-slice key-vals 0 nil 2)
+                   for val in (-slice key-vals 1 nil 2)
+                   do
+                   (plist-put data key val))
+             data)))))))
+</pre>
+</div>
+
+<p>
+Here is an instance of it.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(default-dict d2 <span style="color: #008000;">"None"</span> <span style="color: #006FE0;">:key1</span> 4 <span style="color: #006FE0;">:key2</span> <span style="color: #008000;">"tree"</span>)
+</pre>
+</div>
+
+<pre class="example">
+d2
+
+</pre>
+
+<p>
+And here it is in use.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(d2 <span style="color: #006FE0;">:key1</span>)
+</pre>
+</div>
+
+<pre class="example">
+4
+
+</pre>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(d2 <span style="color: #006FE0;">:new-key</span>)
+</pre>
+</div>
+
+<pre class="example">
+None
+
+</pre>
+
+<p>
+Not bad. If you come from Python, you might find this style of data structure to be more similar to what you are used to seeing. It sure seems less verbose than the usual plist boilerplate I have used before.
+</p>
+
+<div id="outline-container-orgb831a3d" class="outline-2">
+<h2 id="orgb831a3d"><span class="section-number-2">1</span> An update <span class="timestamp-wrapper"><span class="timestamp">&lt;2017-04-21 Fri&gt;</span></span></h2>
+<div class="outline-text-2" id="text-1">
+<p>
+One (perhaps undesirable even) feature of the approach above is that it creates a function in the global namespace. This might have unintended consequences with name clashes or shadowing, and if you later use the same variable name for a plist, you would change the function behavior. Here we consider a way to limit the scope of where these functions exist and work. The labels macro provides one way to do this, we just create temporary functions that only exist within a scope. There is a lot of backticking and comma operators in this, and it took quite a few iterations to get it working!
+</p>
+
+<p>
+This macro creates temporary functions for each keyword that return the value in the plist.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defmacro</span> <span style="color: #006699;">with-dict</span> (key-vals <span style="color: #6434A3;">&amp;rest</span> body)
+  <span style="color: #036A07;">"A context-manager for a plist where each key is a callable</span>
+<span style="color: #036A07;">function that returns the value."</span>
+  (<span style="color: #0000FF;">declare</span> (indent 1))
+  (<span style="color: #0000FF;">let*</span> ((g (<span style="color: #0000FF;">if</span> (symbolp key-vals)
+                (symbol-value key-vals)
+              key-vals))
+         (keys (-slice g 0 nil 2)))
+    `(<span style="color: #0000FF;">labels</span> ,(<span style="color: #0000FF;">loop</span> for key in keys
+                    collect
+                    (list key '() `<span style="color: #D0372D;">(plist-get </span>',g  ,key)))
+       ,@body)))
+</pre>
+</div>
+
+<pre class="example">
+with-dict
+
+</pre>
+
+<p>
+Here is how we use it:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(with-dict (<span style="color: #006FE0;">:a</span> 1 <span style="color: #006FE0;">:b</span> 'some-symbol <span style="color: #006FE0;">:c</span> 3)
+  (<span style="color: #006FE0;">:b</span>))
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">quote</td>
+<td class="org-left">some-symbol</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+We can also use it with variables that hold mappings like this.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((d '(<span style="color: #006FE0;">:key1</span> 1 <span style="color: #006FE0;">:key2</span> some-other-symbol <span style="color: #006FE0;">:key3</span> 3)))
+  (with-dict d
+    (format <span style="color: #008000;">"We got %s"</span> (<span style="color: #006FE0;">:key2</span>))))
+</pre>
+</div>
+
+<pre class="example">
+We got some-other-symbol
+
+</pre>
+
+<p>
+That is pretty interesting! In case that looks similar to a context manager in Python, now you know where Python got that idea ;)
+</p>
+
+<p>
+Another related idea is to let-bind the values to variables within a scope. We can't use the keywords directly here, so I use some hackery to strip off the colon so it is a regular symbol. That is not quite as nice I guess since you have to remember to remove the : from the symbols in the body of your code.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defmacro</span> <span style="color: #006699;">with-plist-vals</span> (plist <span style="color: #6434A3;">&amp;rest</span> body)
+  <span style="color: #036A07;">"Bind the values of a plist to variables with the name of the keys."</span>
+  (<span style="color: #0000FF;">declare</span> (indent 1))
+  `(<span style="color: #0000FF;">let</span> ,(<span style="color: #0000FF;">loop</span> for key in (-slice plist 0 nil 2)
+               for val in (-slice plist 1 nil 2)
+               collect (list (intern
+                              (substring (symbol-name key) 1))
+                             val))
+     ,@body))
+</pre>
+</div>
+
+<pre class="example">
+with-plist-vals
+
+</pre>
+
+<p>
+Here is an example usage.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(with-plist-vals (<span style="color: #006FE0;">:a</span> 4 <span style="color: #006FE0;">:b</span> 6)
+ (* 2 a))
+</pre>
+</div>
+
+<pre class="example">
+8
+
+</pre>
+
+<p>
+Obviously that is just an alternate syntax for the let statement, but it lets you leverage the plist syntax for multiple purposes.</p>
+</div>
+</div>
+<p>Copyright (C) 2018 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/04/16/A-callable-plist-data-structure-for-Emacs.org">org-mode source</a></p>
+<p>Org-mode version = 9.1.6</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+
+<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2017/04/16/A-callable-plist-data-structure-for-Emacs">Discuss on Twitter</a>
+
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="A-new-org-mode-exporter-to-Word-for-scimax"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/04/15/A-new-org-mode-exporter-to-Word-for-scimax/" rel="bookmark" title="Permanent Link to A new org-mode exporter to Word for scimax">A new org-mode exporter to Word for scimax</a></h2>
       <p><small><span class="blog_post_date">Posted April 15, 2017 at 04:19 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/export/'>export</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/export/'>export</a></span> | tags: 
       <p><small><span class="blog_post_date">Updated April 15, 2017 at 04:21 PM</span></small>
       </small></p>
     </header>
@@ -194,7 +916,7 @@ As a penultimate result it might be ok. The references are reasonably formatted,
       <div id="Autoformatting-ordinal-numbers-and-fractions-in-orgmode"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/04/11/Autoformatting-ordinal-numbers-and-fractions-in-orgmode/" rel="bookmark" title="Permanent Link to Autoformatting ordinal numbers and fractions in orgmode">Autoformatting ordinal numbers and fractions in orgmode</a></h2>
       <p><small><span class="blog_post_date">Posted April 11, 2017 at 03:05 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
       </small></p>
     </header>
     <div class="post_prose">
@@ -306,7 +1028,7 @@ This is now a feature in scimax. This marks the 500<sup>th</sup> blog post! That
       <div id="A-better-return-in-org-mode"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/04/09/A-better-return-in-org-mode/" rel="bookmark" title="Permanent Link to A better return in org-mode">A better return in org-mode</a></h2>
       <p><small><span class="blog_post_date">Posted April 09, 2017 at 10:56 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
       <p><small><span class="blog_post_date">Updated April 20, 2017 at 09:19 AM</span></small>
       </small></p>
     </header>
@@ -472,538 +1194,6 @@ With some content
 <a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2017/04/09/A-better-return-in-org-mode">Discuss on Twitter</a>
 
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Object-oriented-font-locking-in-emacs-lisp"></div>
-      <h2 class="blog_post_title"><a href="/blog/2017/04/07/Object-oriented-font-locking-in-emacs-lisp/" rel="bookmark" title="Permanent Link to Object-oriented font-locking in emacs-lisp">Object-oriented font-locking in emacs-lisp</a></h2>
-      <p><small><span class="blog_post_date">Posted April 07, 2017 at 03:00 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/fontlock/'>fontlock</a></span> | tags: 
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<div id="table-of-contents">
-<h2>Table of Contents</h2>
-<div id="text-table-of-contents">
-<ul>
-<li><a href="#orga752041">1. Font-locking the elements</a></li>
-<li><a href="#org4b6ed31">2. Summary</a></li>
-</ul>
-</div>
-</div>
-<p>
-I have been interested in functional text for a long time. With functional text you can read it, but also interact with it <a class='org-ref-reference' href="#kitchin-2015-examp">kitchin-2015-examp</a>. Lately I have been thinking about how to use some features of object-oriented programming to functional text. The premise is to use an object hierarchy to encapsulate some knowledge, and provide <i>functionality</i> on the objects. We can use inheritance to customize some of this knowledge and functionality.
-</p>
-
-<p>
-The example I will work out here is to provide functional text for chemical elements. The goal is to define some objects that represent elements, and construct font-lock rules from the objects to make the text functional in Emacs. Functional here means it stands out so we know there is something special about it, it has a tooltip to get some information (like what type of element it is, and its atomic mass), and it is clickable to get more functionality.
-</p>
-
-<p>
-This post will make a lot more sense in this video: <a href="https://www.youtube.com/watch?v=IWxCj5cr8rY">https://www.youtube.com/watch?v=IWxCj5cr8rY</a>
-</p>
-
-<iframe width="560" height="315" src="https://www.youtube.com/embed/IWxCj5cr8rY" frameborder="0" allowfullscreen></iframe>
-
-<p>
-First, we create a base class of an Element. I use an instance tracker for this to make book keeping easy later. The base class will have a name, synonyms for the name, and a default face to color it. We define a few methods to get an atomic mass and search google for the element. Finally, we provide a function to generate a tooltip, and a font-lock rule.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">atomic-masses</span> '((<span style="color: #008000;">"Hydrogen"</span> . 1.008)
-                        (<span style="color: #008000;">"Argon"</span> . 39.948)
-                        (<span style="color: #008000;">"Sodium"</span> . 22.989)
-                        (<span style="color: #008000;">"Palladium"</span> . 106.42))
-  <span style="color: #036A07;">"a-list of atomic masses."</span>)
-
-(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">elements</span> '() <span style="color: #036A07;">"List of known elements"</span>)
-(<span style="color: #0000FF;">setq</span> elements '()) <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">this is to start over</span>
-
-(<span style="color: #0000FF;">defclass</span> <span style="color: #6434A3;">element</span> (eieio-instance-tracker)
-  ((tracking-symbol <span style="color: #006FE0;">:initform</span> elements
-                    <span style="color: #006FE0;">:documentation</span> <span style="color: #036A07;">"Variable that holds all class instances."</span>)
-   (name <span style="color: #006FE0;">:initarg</span> <span style="color: #006FE0;">:name</span>
-         <span style="color: #006FE0;">:documentation</span> <span style="color: #036A07;">"The name of the element"</span>)
-   (synonyms <span style="color: #006FE0;">:initarg</span> <span style="color: #006FE0;">:synonyms</span> <span style="color: #006FE0;">:initform</span> '()
-             <span style="color: #006FE0;">:documentation</span> <span style="color: #036A07;">"List of regular expressions that match the element."</span>)
-   (face <span style="color: #006FE0;">:initarg</span> <span style="color: #006FE0;">:face</span> <span style="color: #006FE0;">:initform</span> 'font-lock-type-face
-         <span style="color: #006FE0;">:documentation</span> <span style="color: #036A07;">"The face to use with font-lock."</span>))
-  <span style="color: #036A07;">"Base class for a chemical element."</span>)
-
-(<span style="color: #0000FF;">defmethod</span> <span style="color: #006699;">element-atomic-mass</span> ((x element))
-  <span style="color: #036A07;">"Return atomic mass from `</span><span style="color: #D0372D;">atomic-masses</span><span style="color: #036A07;">'."</span>
-  (cdr (assoc (<span style="color: #0000FF;">oref</span> x <span style="color: #006FE0;">:name</span>) atomic-masses)))
-
-(<span style="color: #0000FF;">defmethod</span> <span style="color: #006699;">element-help-echo</span> ((x element))
-  <span style="color: #036A07;">"A tooltip for the element.</span>
-<span style="color: #036A07;">It will look like class (inherited classes) mass=atomic-mass"</span>
-  (format <span style="color: #008000;">"%s %s: mass=%s"</span>
-          (eieio-object-class x)
-          (mapcar 'eieio-class-name (eieio-class-parents (eieio-object-class x)))
-          (<span style="color: #0000FF;">or</span> (element-atomic-mass x) <span style="color: #008000;">"unknown"</span>)))
-
-(<span style="color: #0000FF;">defmethod</span> <span style="color: #006699;">element-search</span> ((x element))
-  <span style="color: #036A07;">"Search google for the element"</span>
-  (google-this-string nil (<span style="color: #0000FF;">oref</span> x <span style="color: #006FE0;">:name</span>) t))
-
-(<span style="color: #0000FF;">defmethod</span> <span style="color: #006699;">element-font-lock-rule</span> ((x element))
-  <span style="color: #036A07;">"Return font-lock rule for the element."</span>
-  (<span style="color: #0000FF;">let</span> ((map (make-sparse-keymap)))
-    (define-key map [mouse-1]
-      (<span style="color: #0000FF;">lambda</span> ()
-        <span style="color: #036A07;">"Construct the object and run `</span><span style="color: #D0372D;">element-search</span><span style="color: #036A07;">' on it."</span>
-        (<span style="color: #0000FF;">interactive</span>)
-        (element-search
-         (eieio-instance-tracker-find
-          (get-text-property (point) 'element-name)
-          <span style="color: #006FE0;">:name</span> 'elements))))
-
-    (list
-     <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Construct the pattern to match</span>
-     (rx-to-string `(: bow
-                       (<span style="color: #0000FF;">or</span>  ,(<span style="color: #0000FF;">oref</span> x <span style="color: #006FE0;">:name</span>)
-                            ,@(<span style="color: #0000FF;">loop</span> for sy in (<span style="color: #0000FF;">oref</span> x <span style="color: #006FE0;">:synonyms</span>)
-                                    collect `(regexp ,sy)))
-                       eow))
-     0  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">font-lock the whole match</span>
-     <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">These are the properties to put on the matches</span>
-     `(<span style="color: #0000FF;">quote</span> (face ,(<span style="color: #0000FF;">oref</span> x <span style="color: #006FE0;">:face</span>)
-                   element-name ,(<span style="color: #0000FF;">oref</span> x <span style="color: #006FE0;">:name</span>)
-                   local-map ,map
-                   mouse-face 'highlight
-                   help-echo ,(element-help-echo x))))))
-</pre>
-</div>
-
-<p>
-Now, we can define some sub-classes. These are families of elements. For a metal, we change the face. For noble gases, we override the help-echo function, and for alkali metals we override the search function. The point is that we can customize the behavior for different classes.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defclass</span> <span style="color: #6434A3;">metal</span> (element)
-  ((face <span style="color: #006FE0;">:initform</span> '(<span style="color: #006FE0;">:foreground</span> <span style="color: #008000;">"orange"</span> <span style="color: #006FE0;">:underline</span> t)))
-  <span style="color: #036A07;">"Metal"</span>)
-
-(<span style="color: #0000FF;">defclass</span> <span style="color: #6434A3;">noble-gas</span> (element)
-  ()
-  <span style="color: #036A07;">"A noble gas"</span>)
-
-(<span style="color: #0000FF;">defmethod</span> <span style="color: #006699;">element-help-echo</span> ((x noble-gas))
-  <span style="color: #036A07;">"I am not a common element."</span>)
-
-(<span style="color: #0000FF;">defclass</span> <span style="color: #6434A3;">alkali</span> (element metal)
-  ()
-  <span style="color: #036A07;">"Alkali metal"</span>)
-
-(<span style="color: #0000FF;">defmethod</span> <span style="color: #006699;">element-search</span> ((x alkali))
-  (<span style="color: #0000FF;">let</span> ((visible-bell t))
-    (beep)
-    (message <span style="color: #008000;">"You clicked on an alkali metal: %s."</span> (<span style="color: #0000FF;">oref</span> x <span style="color: #006FE0;">:name</span>))))
-</pre>
-</div>
-
-<p>
-Now we can define some elements. These are all instances of each class. For some, we define synonyms, and alternate appearances. Note the synonyms are regular expressions.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(element <span style="color: #006FE0;">:name</span> <span style="color: #008000;">"Hydrogen"</span> <span style="color: #006FE0;">:synonyms</span> '(<span style="color: #008000;">"H"</span> <span style="color: #008000;">"[hH]ydrogen"</span>))
-
-(noble-gas <span style="color: #006FE0;">:name</span> <span style="color: #008000;">"Argon"</span> <span style="color: #006FE0;">:synonyms</span> '(<span style="color: #008000;">"Ar"</span>))
-
-(alkali <span style="color: #006FE0;">:name</span> <span style="color: #008000;">"Sodium"</span> <span style="color: #006FE0;">:synonyms</span> '(<span style="color: #008000;">"Na"</span> <span style="color: #008000;">"[nN]atrium"</span>))
-(alkali <span style="color: #006FE0;">:name</span> <span style="color: #008000;">"Potassium"</span> <span style="color: #006FE0;">:synonyms</span> '(<span style="color: #008000;">"K"</span>) <span style="color: #006FE0;">:face</span> '(<span style="color: #006FE0;">:foreground</span> <span style="color: #008000;">"red"</span>))
-
-(metal <span style="color: #006FE0;">:name</span> <span style="color: #008000;">"Palladium"</span>)
-</pre>
-</div>
-
-<p>
-The instance tracker shows us the defined objects.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">elements
-</pre>
-</div>
-
-<div id="outline-container-orga752041" class="outline-2">
-<h2 id="orga752041"><span class="section-number-2">1</span> Font-locking the elements</h2>
-<div class="outline-text-2" id="text-1">
-<p>
-Here we generate font-lock rules from the set of objects. Each object will return its font-lock rule, so we just map over each object to get the list of rules.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(font-lock-add-keywords
- nil
- (mapcar 'element-font-lock-rule elements))
-
-(font-lock-fontify-buffer)
-</pre>
-</div>
-
-
-<p>
-Now any time we have Palladium or Hydrogen it will be highlighted.  And Sodium and Argon.
-</p>
-
-<p>
-Here are some synonyms: hydrogen H Natrium natrium.
-</p>
-
-<p>
-Potassium has a different color than Na.
-</p>
-</div>
-</div>
-
-<div id="outline-container-org4b6ed31" class="outline-2">
-<h2 id="org4b6ed31"><span class="section-number-2">2</span> Summary</h2>
-<div class="outline-text-2" id="text-2">
-<p>
-This seems like a pretty useful way to encapsulate functionality for functional text. Clearly most of the work should go in the base class, and the inheritance model, so you do not have to repeat things unnecessarily. Some features are missing, like conveniently adding synonyms and regenerating the font-lock rules. It is also the case that we do not persist these objects. They could be written to disk so that they can be reloaded later.
-</p>
-
-<p>
-The actions you can use on a highlighted word are pretty limited in this implementation. It would be nice if you got a menu of options that was user extendable and dynamic. Either a popup menu, or a hydra would be fine.
-</p>
-</div>
-</div>
-<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2017/04/07/Object-oriented-font-locking-in-emacs-lisp.org">org-mode source</a></p>
-<p>Org-mode version = 9.0.5</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-
-<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2017/04/07/Object-oriented-font-locking-in-emacs-lisp">Discuss on Twitter</a>
-
-  <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="A-better-defun-for-emacs-lisp"></div>
-      <h2 class="blog_post_title"><a href="/blog/2017/03/22/A-better-defun-for-emacs-lisp/" rel="bookmark" title="Permanent Link to A better defun for emacs-lisp">A better defun for emacs-lisp</a></h2>
-      <p><small><span class="blog_post_date">Posted March 22, 2017 at 04:30 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/macro/'>macro</a>, <a href='/blog/category/elisp/'>elisp</a></span> | tags: 
-      <p><small><span class="blog_post_date">Updated October 15, 2017 at 01:57 PM</span></small>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<div id="table-of-contents">
-<h2>Table of Contents</h2>
-<div id="text-table-of-contents">
-<ul>
-<li><a href="#org20fd352">1. Summary</a></li>
-</ul>
-</div>
-</div>
-<p>
-I have been thinking of better ways to write code that is more likely to have decent docstrings that are up to date, and maybe that enable automatic validation. One strategy is to keep documentation and code together, and by together I mean <i>close together</i>. The closer the better.  I made some interesting progress in the <a href="http://kitchingroup.cheme.cmu.edu/blog/2017/03/19/A-Hy-macro-for-defining-functions-with-docstrings-on-each-argument/">last post</a>, where I used a macro to let me put argument specific documentation in the same place that the argument is defined. Here I expand the idea to also provide argument default values, and validation code where the argument is defined inside the function, in addition to generating docstrings. This post is written in Emacs-lisp, mostly because I am more familiar with the macro language. The idea should apply to other lisps too.
-</p>
-
-<p>
-Let's consider this prototypical, vanilla function definition, usage, and docstring.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">f1</span> (arg1 arg2)
-  <span style="color: #036A07;">"Add two numbers."</span>
-  (+ arg1 arg2))
-
-<span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">usage</span>
-(f1 3 4)
-</pre>
-</div>
-
-<pre class="example">
-7
-
-</pre>
-
-<p>
-Here is what the help looks like from emacs.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(describe-function 'f1)
-</pre>
-</div>
-
-<pre class="example">
-f1 is a Lisp function.
-
-(f1 ARG1 ARG2)
-
-For more information check the manuals.
-
-Add two numbers.
-
-</pre>
-
-<p>
-It is clear I was lazy in writing the docstring; it does not even mention the arguments. There is also no validation of the arguments so if you pass a string and a number, you will get an error. There are no defaults either, so you have to provide both arguments. It seems like there could be significant room for improvement. Of course, I could bite the bullet and write a better function like this one:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">f1a</span> (arg1 <span style="color: #6434A3;">&amp;optional</span> arg2)
-  <span style="color: #036A07;">"Add ARG1 and ARG2 together.</span>
-<span style="color: #036A07;">ARG1 and  ARG2 should both be numbers."</span>
-  (<span style="color: #0000FF;">when</span> (null arg2) (<span style="color: #0000FF;">setq</span> arg2 2))
-  (<span style="color: #0000FF;">unless</span> (<span style="color: #0000FF;">and</span> (numberp arg1) (numberp arg2)) (<span style="color: #ff0000; font-weight: bold;">error</span> <span style="color: #008000;">"arg1 and arg2 should both be numbers"</span>))
-  (+ arg1 arg2))
-
-(list (f1a 3 4) (f1a 3))
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-right" />
-
-<col  class="org-right" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-right">7</td>
-<td class="org-right">5</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-Yes, I could do that, but it is tedious to do it all the time. And it still leaves something to be desired for me. The docstring does not say what the default value is for example, and that is hard-coded in the code, i.e. not introspectible until you look at the code.  Next we consider an alternative way to write the function. Compare that to this function definition, usage and documentation. The function definition is a little more verbose. Providing documentation, defaults and validation code in any form would make it that way no matter what.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(defn f2 ((arg1 <span style="color: #008000;">"A number"</span> <span style="color: #006FE0;">:validate</span> numberp)
-          (arg2 <span style="color: #008000;">"A number"</span> <span style="color: #006FE0;">:validate</span> numberp <span style="color: #006FE0;">:default</span> 2))
-  <span style="color: #008000;">"Add the arguments."</span>
-  (+ arg1 arg2))
-
-<span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">usage</span>
-(list (f2 3 4) (f2 3))
-</pre>
-</div>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-
-<colgroup>
-<col  class="org-right" />
-
-<col  class="org-right" />
-</colgroup>
-<tbody>
-<tr>
-<td class="org-right">7</td>
-<td class="org-right">5</td>
-</tr>
-</tbody>
-</table>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(describe-function 'f2)
-</pre>
-</div>
-
-<pre class="example">
-f2 is a Lisp function.
-
-(f2 ARG1 &amp;optional ARG2)
-
-For more information check the manuals.
-
-Add the arguments.
-ARG1 : A number (valid = numberp)
-ARG2 : A number (default = 2) (valid = numberp)
-
-</pre>
-
-<p>
-The documentation is built up from the information in the function definition, in a form that is mostly consistent with emacs-lisp documentation standards. <code>defn</code> is not a regular emacs-lisp function; it is a macro I developed to generate the function code. It turned out to be long, but the gist of it is that before defining the function I loop through the arguments and collect the docstrings, along with any information about default values and/or validation functions. Then I build up the list of arguments to put in the function. Then if any default values are set, I generate some code to set those values if they are not set in the function call, and finally a similar block of validation code. At the end, I construct the defun and return it. You can check out the code if you want here: <a href="https://github.com/jkitchin/scimax/blob/master/scimax-macros.el">https://github.com/jkitchin/scimax/blob/master/scimax-macros.el</a>.
-</p>
-
-<p>
-Let's take a look at what this code expands to.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(macroexpand-1
- '(defn f2 ((arg1 <span style="color: #008000;">"A number"</span> <span style="color: #006FE0;">:validate</span> numberp)
-            (arg2 <span style="color: #008000;">"A number"</span> <span style="color: #006FE0;">:validate</span> numberp <span style="color: #006FE0;">:default</span> 2))
-    <span style="color: #008000;">"Add the arguments."</span>
-    (+ arg1 arg2)))
-</pre>
-</div>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">f2</span>
-    (arg1 <span style="color: #6434A3;">&amp;optional</span> arg2)
-  <span style="color: #036A07;">"Add the arguments.\nARG1 : A number (valid = numberp)\nARG2 : A number (default = 2) (valid = numberp)\n"</span>
-  (<span style="color: #0000FF;">progn</span>
-    (<span style="color: #0000FF;">when</span>
-        (null arg2)
-      (<span style="color: #0000FF;">setq</span> arg2 2)))
-  (<span style="color: #0000FF;">progn</span>
-    (<span style="color: #0000FF;">unless</span>
-        (funcall 'numberp arg1)
-      (<span style="color: #ff0000; font-weight: bold;">error</span> <span style="color: #008000;">"In (%s %s) Expected %s to pass %S. Got %S"</span> <span style="color: #008000;">"f2"</span> <span style="color: #008000;">"(arg1 &amp;optional arg2)"</span> <span style="color: #008000;">"arg1"</span> 'numberp arg1))
-    (<span style="color: #0000FF;">unless</span>
-        (funcall 'numberp arg2)
-      (<span style="color: #ff0000; font-weight: bold;">error</span> <span style="color: #008000;">"In (%s %s) Expected %s to pass %S. Got %S"</span> <span style="color: #008000;">"f2"</span> <span style="color: #008000;">"(arg1 &amp;optional arg2)"</span> <span style="color: #008000;">"arg2"</span> 'numberp arg2)))
-  (+ arg1 arg2))
-</pre>
-</div>
-
-<p>
-You can see it expands to a regular defun, with a generated docstring, generated default settings code block, and generated validation code. Pretty nice.
-</p>
-
-<p>
-Let's see what happens with a function that fails the validation. We should get an error. Here we capture the error so we can see it in the post.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">condition-case</span> err
-    (f2 <span style="color: #008000;">"oak"</span>)
-  (<span style="color: #ff0000; font-weight: bold;">error</span>
-   (error-message-string err)))
-</pre>
-</div>
-
-<pre class="example">
-In (f2 (arg1 &amp;optional arg2)) Expected arg1 to pass numberp. Got "oak"
-
-</pre>
-
-<p>
-So we even get a useful error message when the wrong type of argument is provided. Compare that to the error message from the original version of this function. It tells us we got the wrong type, but not which argument.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">condition-case</span> err
-    (f1 <span style="color: #008000;">"oak"</span> 4)
-  (<span style="color: #ff0000; font-weight: bold;">error</span>
-   (error-message-string err)))
-</pre>
-</div>
-
-<pre class="example">
-Wrong type argument: number-or-marker-p, "oak"
-
-</pre>
-
-<p>
-One last example to check out the &amp;rest argument, with validation that every arg is a number.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(defn f4 ((rarg <span style="color: #006FE0;">:rest</span>
-                <span style="color: #006FE0;">:validate</span> (<span style="color: #0000FF;">lambda</span> (x)
-                            (-all-p 'identity (mapcar 'numberp x)))))
-  <span style="color: #008000;">"multiply all the arguments."</span>
-  (apply '* rarg))
-
-(f4 1 2 3)
-</pre>
-</div>
-
-<pre class="example">
-6
-
-</pre>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">condition-case</span> err
-    (f4 <span style="color: #008000;">"oak"</span> 4)
-  (<span style="color: #ff0000; font-weight: bold;">error</span>
-   (error-message-string err)))
-</pre>
-</div>
-
-<pre class="example">
-In (f4 (&amp;rest rarg)) Expected rarg to pass (lambda (x) (-all-p (quote identity) (mapcar (quote numberp) x))). Got ("oak" 4)
-
-</pre>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(describe-function 'f4)
-</pre>
-</div>
-
-<pre class="example">
-f4 is a Lisp function.
-
-(f4 &amp;rest RARG)
-
-For more information check the manuals.
-
-multiply all the arguments.
-RARG : No documentation
-
-</pre>
-
-<p>
-That looks ok too.
-</p>
-
-<div id="outline-container-org20fd352" class="outline-2">
-<h2 id="org20fd352"><span class="section-number-2">1</span> Summary</h2>
-<div class="outline-text-2" id="text-1">
-<p>
-The motivation for this was to help me write better code with better documentation. Better code in the sense that it can provide run-time validation, with better feedback, and automatic documentation, including that there is none if that is the case. It is basically compatible with the regular defun, but enhances what kind of documentation is possible with less work on my part. I think it will make it easier to keep documentation in sync, since the argument documentation would be kept near the argument, and you can build in validation if you want to.
-</p>
-
-<p>
-It is no news to lispers that macros are good for this kind of application.</p>
-</div>
-</div>
-<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2017/03/22/A-better-defun-for-emacs-lisp.org">org-mode source</a></p>
-<p>Org-mode version = 9.0.7</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-
-<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2017/03/22/A-better-defun-for-emacs-lisp">Discuss on Twitter</a>
-
-  <hr class="interblog" />
  <a href="../14">« Previous Page</a>
   --  
  <a href="../16">Next Page »</a>
@@ -1045,11 +1235,11 @@ It is no news to lispers that macros are good for this kind of application.</p>
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2022/01/11/Launching-Point-Breeze-Publishing/">Launching Point Breeze Publishing</a></li>
+      <li><a href="/blog/2022/01/11/Launching-Point-Breeze-Publishing-LLC/">Launching Point Breeze Publishing, LLC</a></li>
       <li><a href="/blog/2021/12/22/2021-in-a-nutshell/">2021 in a nutshell</a></li>
       <li><a href="/blog/2021/12/18/New-publication-Origin-of-the-Stokes-Einstein-Deviation-in-Liquid-Al-Si/">New publication - Origin of the Stokes-Einstein Deviation in Liquid Al-Si</a></li>
       <li><a href="/blog/2021/12/03/New-publication-Accelerated-Optimization-of-Pure-Metal-and-Ligand-Compositions-for-Light-driven-Hydrogen-Production/">New publication - Accelerated Optimization of Pure Metal and Ligand Compositions for Light-driven Hydrogen Production</a></li>
-      <li><a href="/blog/2021/12/02/New-publication-Ligand-Enhanced-Activity-of-in-Situ-Formed-Nanoparticles-for-Photocatalytic-Hydrogen-Evolution/">New publication - Ligand Enhanced Activity of in Situ Formed Nanoparticles for Photocatalytic Hydrogen Evolution</a></li>
-      <li><a href="/blog/2021/11/30/New-publication-Uncertainty-quantification-in-machine-learning-and-nonlinear-least-squares-regression-models/">New publication - Uncertainty quantification in machine learning and nonlinear least squares regression models</a></li>
     </ul>
   </section>
 
@@ -1077,7 +1267,7 @@ It is no news to lispers that macros are good for this kind of application.</p>
     </div>
     <div class="grid_4" id="credits">
       <p>
-        Copyright 2021
+        Copyright 2022
         John Kitchin
       </p>
       <p>
