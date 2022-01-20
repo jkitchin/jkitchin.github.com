@@ -102,6 +102,203 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Getting-Emacs-to-read-to-me"></div>
+      <h2 class="blog_post_title"><a href="/blog/2015/06/29/Getting-Emacs-to-read-to-me/" rel="bookmark" title="Permanent Link to Getting Emacs to read to me">Getting Emacs to read to me</a></h2>
+      <p><small><span class="blog_post_date">Posted June 29, 2015 at 02:56 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+
+<p>
+I thought it would be interesting to have Emacs read text on the screen. Why? Sometimes I get tired of reading ;) Seriously though, this has applications in accessibility, learning to read, translation, taking a break from looking at the screen, reading emails out loud, fun and games, etc&#x2026; Seems like a worthwhile endeavor!
+</p>
+
+<p>
+You may want to see this video: <a href="https://www.youtube.com/watch?v=8bgS8yDSkXw">https://www.youtube.com/watch?v=8bgS8yDSkXw</a> to hear how it works.
+</p>
+
+<p>
+On a Mac, it turns out to be easy to get a voice with a little applescript:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(do-applescript <span style="color: #008000;">"say \"Hello John\" using \"Victoria\""</span>)
+</pre>
+</div>
+
+<p>
+Interesting idea to integrate some feedback into Emacs-lisp functions! at least if you are on a Mac. All we need are some interactive functions that grab text, and pass them to the applescript with an appropriate amount of escaping any quotes and backslashes.
+</p>
+
+<p>
+Here is a function to speak the word at point, or selected region, or the text passed to the function:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defvar</span> <span style="color: #BA36A5;">words-voice</span> <span style="color: #008000;">"Vicki"</span>
+  <span style="color: #036A07;">"Mac voice to use for speaking."</span>)
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">words-speak</span> (<span style="color: #6434A3;">&amp;optional</span> text)
+  <span style="color: #036A07;">"Speak word at point or region. Mac only."</span>
+  (<span style="color: #0000FF;">interactive</span>)
+  (<span style="color: #0000FF;">unless</span> text
+    (<span style="color: #0000FF;">setq</span> text (<span style="color: #0000FF;">if</span> (use-region-p)
+                   (buffer-substring
+                    (region-beginning) (region-end))
+                 (thing-at-point 'word))))
+  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">escape some special applescript chars</span>
+  (<span style="color: #0000FF;">setq</span> text (replace-regexp-in-string <span style="color: #008000;">"\\\\"</span> <span style="color: #008000;">"\\\\\\\\"</span> text))
+  (<span style="color: #0000FF;">setq</span> text (replace-regexp-in-string <span style="color: #008000;">"\""</span> <span style="color: #008000;">"\\\\\""</span> text))
+  (do-applescript
+   (format
+    <span style="color: #008000;">"say \"%s\" using \"%s\""</span>
+    text
+    words-voice)))
+</pre>
+</div>
+
+<pre class="example">
+words-speak
+</pre>
+
+<p>
+Now we can write:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(words-speak <span style="color: #008000;">"Hello John"</span>)
+</pre>
+</div>
+
+<p>
+One reason I wrote this is to read org-files to me. So, now we write some functions to read words, sentences and paragraphs. These are all syntactic units in Emacs. We write code to enable us to read the next or previous units with the prefix args. Finally,  we bind the commands to some keys and a hydra for fun.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">setq</span> sentence-end-double-space nil)
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">mac-say-word</span> (<span style="color: #6434A3;">&amp;optional</span> arg)
+  <span style="color: #036A07;">"Speak word at point. With ARG, go forward ARG words."</span>
+  (<span style="color: #0000FF;">interactive</span> <span style="color: #008000;">"P"</span>)
+  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">arg can be (4), 4, "-", or -1. we handle these like this.</span>
+  (<span style="color: #0000FF;">let</span> ((newarg))
+    (<span style="color: #0000FF;">when</span> arg
+      (<span style="color: #0000FF;">setq</span> newarg (<span style="color: #0000FF;">cond</span>
+                    ((listp arg)
+                     (round (log (car arg) 4)))
+                    ((<span style="color: #0000FF;">and</span> (stringp arg) (string= <span style="color: #008000;">"-"</span> arg))
+                     ((&lt; 0 arg) arg)
+                     -1)
+                    (t arg)))
+      (forward-word newarg))
+    (<span style="color: #0000FF;">when</span> (thing-at-point 'word)
+      (words-speak (thing-at-point 'word)))))
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">mac-say-sentence</span> (<span style="color: #6434A3;">&amp;optional</span> arg)
+  <span style="color: #036A07;">"Speak sentence at point. With ARG, go forward ARG sentences."</span>
+  (<span style="color: #0000FF;">interactive</span> <span style="color: #008000;">"P"</span>)
+  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">arg can be (4), 4, "-", or -1. we handle these like this.</span>
+  (<span style="color: #0000FF;">let</span> ((newarg))
+    (<span style="color: #0000FF;">when</span> arg
+      (<span style="color: #0000FF;">setq</span> newarg (<span style="color: #0000FF;">cond</span>
+                    ((listp arg)
+                     (round (log (car arg) 4)))
+                    ((<span style="color: #0000FF;">and</span> (stringp arg) (string= <span style="color: #008000;">"-"</span> arg))
+                     ((&lt; 0 arg) arg)
+                     -1)
+                    (t arg)))
+      (forward-sentence newarg)
+      (<span style="color: #0000FF;">when</span> (&lt; 0 newarg) (forward-word)))
+    (<span style="color: #0000FF;">when</span> (thing-at-point 'sentence)
+      (words-speak (thing-at-point 'sentence)))))
+
+(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">mac-say-paragraph</span> (<span style="color: #6434A3;">&amp;optional</span> arg)
+  <span style="color: #036A07;">"Speak paragraph at point. With ARG, go forward ARG paragraphs."</span>
+  (<span style="color: #0000FF;">interactive</span> <span style="color: #008000;">"P"</span>)
+  <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">arg can be (4), 4, "-", or -1. we handle these like this.</span>
+  (<span style="color: #0000FF;">let</span> ((newarg))
+    (<span style="color: #0000FF;">when</span> arg
+      (<span style="color: #0000FF;">setq</span> newarg (<span style="color: #0000FF;">cond</span>
+                    ((listp arg)
+                     (round (log (car arg) 4)))
+                    ((<span style="color: #0000FF;">and</span> (stringp arg) (string= <span style="color: #008000;">"-"</span> arg))
+                     ((&lt; 0 arg) arg)
+                     -1)
+                    (t arg)))
+      (forward-paragraph newarg)
+      (<span style="color: #0000FF;">when</span> (&lt; 0 newarg) (forward-word)))
+    (<span style="color: #0000FF;">when</span> (thing-at-point 'paragraph)
+      (words-speak (thing-at-point 'paragraph)))))
+</pre>
+</div>
+
+<pre class="example">
+mac-say-paragraph
+</pre>
+
+<p>
+Now for some key-bindings. I will make a hydra that allows repeating commands, and a keymap for more direct function calls.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defhydra</span> mac-speak (<span style="color: #006FE0;">:color</span> red)
+  <span style="color: #008000;">"word speak"</span>
+  (<span style="color: #008000;">"w"</span> (<span style="color: #0000FF;">progn</span> (mac-say-word) (forward-word)) <span style="color: #008000;">"Next word"</span>)
+  (<span style="color: #008000;">"W"</span> (mac-say-word -1) <span style="color: #008000;">"Previous word"</span>)
+  (<span style="color: #008000;">"s"</span> (<span style="color: #0000FF;">progn</span> (mac-say-sentence) (forward-sentence)(forward-word)) <span style="color: #008000;">"Next sentence"</span>)
+  (<span style="color: #008000;">"S"</span> (mac-say-sentence -1) <span style="color: #008000;">"Previous sentence"</span>)
+  (<span style="color: #008000;">"p"</span> (<span style="color: #0000FF;">progn</span> (mac-say-paragraph) (forward-paragraph)) <span style="color: #008000;">"Next paragraph"</span>)
+  (<span style="color: #008000;">"P"</span> (mac-say-paragraph -1) <span style="color: #008000;">"Previous paragraph"</span>))
+
+(define-prefix-command 'mac-speak-keymap)
+(define-key mac-speak-keymap (vector ?w) 'mac-say-word)
+(define-key mac-speak-keymap (vector ?s) 'mac-say-sentence)
+(define-key mac-speak-keymap (vector ?p) 'mac-say-paragraph)
+(define-key mac-speak-keymap (vector ?h) 'mac-speak/body)
+(global-set-key (kbd <span style="color: #008000;">"\C-xr"</span>) 'mac-speak-keymap)
+</pre>
+</div>
+
+<pre class="example">
+mac-speak-keymap
+</pre>
+
+<p>
+Now, I can navigate text and have my Mac read it to me. It isn't quite like hearing a real person read it, but it is not too bad either. When you need a break from reading, this might be a nice tool!
+</p>
+<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/06/29/Getting-Emacs-to-read-to-me.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+
+<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2015/06/29/Getting-Emacs-to-read-to-me">Discuss on Twitter</a>
+
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="New-NSF-Grant-funded"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/06/28/New-NSF-Grant-funded/" rel="bookmark" title="Permanent Link to New NSF Grant funded">New NSF Grant funded</a></h2>
       <p><small><span class="blog_post_date">Posted June 28, 2015 at 12:50 PM</span> | categories:
@@ -692,125 +889,6 @@ Now I can run M-x helm-swish-e and enter "efrc AND computing infrastructure" to 
 <a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2015/06/25/Integrating-swish-e-and-Emacs">Discuss on Twitter</a>
 
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Conditional-hydra-menus"></div>
-      <h2 class="blog_post_title"><a href="/blog/2015/06/24/Conditional-hydra-menus/" rel="bookmark" title="Permanent Link to Conditional hydra menus">Conditional hydra menus</a></h2>
-      <p><small><span class="blog_post_date">Posted June 24, 2015 at 07:31 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/hydra/'>hydra</a></span> | tags: 
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-
-<p>
-Usually the <a href="https://github.com/abo-abo/hydra">hydra</a> menu is hard coded in the defhydra macro. Sometimes, you would like conditional options, that is, depending on some condition we get different options <i>when we run the hydra</i> and not when it was defined. This is an open <a href="https://github.com/abo-abo/hydra/issues/86">issue</a> in hydra. Here we explore a way to achieve that. The idea is to construct the code for the hydra, then eval it, and run the hydra. In this example we make the conditional menu depend on whether we are on an even or odd numbered line. I use the `' syntax for defining the list of code. ` is a variation of ' (quote) that enables you to use the , operator to evaluate that element while in data mode. So, here is our first idea:
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">my-hydra-1</span> ()
-  (<span style="color: #0000FF;">interactive</span>)
-  (eval
-   `(<span style="color: #0000FF;">defhydra</span> my-hydra-1 (<span style="color: #006FE0;">:color</span> blue) <span style="color: #008000;">"My hydra"</span>
-      ,(<span style="color: #0000FF;">if</span> (evenp (line-number-at-pos))
-           '(<span style="color: #008000;">"e"</span> (message-box <span style="color: #008000;">"Even line"</span>) <span style="color: #008000;">"Even"</span>)
-         '(<span style="color: #008000;">"o"</span> (message-box <span style="color: #008000;">"Odd line"</span>) <span style="color: #008000;">"Odd"</span>))
-      ,(<span style="color: #0000FF;">when</span> t '(<span style="color: #008000;">"a"</span> (message-box <span style="color: #008000;">"always true"</span>) <span style="color: #008000;">"always"</span>))
-      <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">This does not work. you must return a legitimate hydra menu item</span>
-      <span style="color: #8D8D84;">;;      </span><span style="color: #8D8D84; font-style: italic;">,(when nil '("n" (message-box "never") "never"))</span>
-      ))
-  (my-hydra-1/body))
-
-(my-hydra-1)
-(my-hydra-1)
-</pre>
-</div>
-
-<pre class="example">
-my-hydra
-</pre>
-
-<p>
-As long as it is not expensive to compute the conditionals, this seems like an easy enough way to get conditional options in a hydra. One limitation of the previous approach is our menu conditionals must return a hydra menu, and not nil. Here is an alternative approach to writing the function that solves the issue of the nil return in the last function. Here we build up the code list using append. It might seem like a macro should be used here, but I have not figured out how to get the macro to run the conditionals at the run-time. Note, we cannot use funcall on the defhydra because that is a macro.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">my-hydra-2</span> ()
-  (<span style="color: #0000FF;">interactive</span>)
-  (<span style="color: #0000FF;">let</span> ((conditionals '((<span style="color: #0000FF;">if</span> (evenp (line-number-at-pos))
-                            '(<span style="color: #008000;">"e"</span> (message-box <span style="color: #008000;">"Even second"</span>) <span style="color: #008000;">"Even"</span>)
-                          '(<span style="color: #008000;">"o"</span> (message-box <span style="color: #008000;">"Odd second"</span>) <span style="color: #008000;">"Odd"</span>))
-                        (<span style="color: #0000FF;">when</span> t '(<span style="color: #008000;">"a"</span> (message-box <span style="color: #008000;">"always true"</span>) <span style="color: #008000;">"always"</span>))
-                        (<span style="color: #0000FF;">when</span> nil '(<span style="color: #008000;">"n"</span> (message-box <span style="color: #008000;">"never"</span>) <span style="color: #008000;">"never"</span>)))))
-    (eval
-     (append
-      '(defhydra my-hydra-2 (<span style="color: #006FE0;">:color</span> blue) <span style="color: #008000;">"My hydra"</span>)
-      (<span style="color: #0000FF;">loop</span> for cond in conditionals
-            with result = (eval cond)
-            if (eval cond)
-            collect (eval cond))))
-    (my-hydra-2/body)))
-
-(my-hydra-2)
-(my-hydra-2)
-</pre>
-</div>
-
-<p>
-That works too. Let us try another type of syntax where the conditional statements have a cons cell with a conditional statement, and a hydra menu option for when the statement is true. This is functionally similar to our first method, but has some advantages in brevity and less quoting. We add a conditional hint here too (at some expense of additional quoting).
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">my-hydra-3</span> ()
-  (<span style="color: #0000FF;">interactive</span>)
-  (<span style="color: #0000FF;">let</span> ((conditionals
-         `(((evenp (line-number-at-pos)) . (<span style="color: #008000;">"e"</span> (message-box <span style="color: #008000;">"Even second"</span>) ,(format <span style="color: #008000;">"Even: %s"</span> (line-number-at-pos))))
-           ((oddp (line-number-at-pos)) . (<span style="color: #008000;">"o"</span> (message-box <span style="color: #008000;">"Odd second"</span>) ,(format <span style="color: #008000;">"Odd: %s"</span> (line-number-at-pos))))
-           (t . (<span style="color: #008000;">"a"</span> (message-box <span style="color: #008000;">"always true"</span>) <span style="color: #008000;">"always"</span>))
-           (nil . (<span style="color: #008000;">"n"</span> (message-box <span style="color: #008000;">"never"</span>) <span style="color: #008000;">"never"</span>)))))
-    (eval
-     (append
-      '(defhydra my-hydra-3 (<span style="color: #006FE0;">:color</span> blue) <span style="color: #008000;">"My hydra"</span>)
-      (<span style="color: #0000FF;">loop</span> for cond in conditionals
-            if (eval (car  cond))
-            collect (cdr cond))))
-    (my-hydra-3/body)))
-
-(my-hydra-3)
-(my-hydra-3)
-</pre>
-</div>
-
-<p>
-I cannot figure out how to abstract this much further. There is a little redundancy in names, e.g. in the defhydra and at the end, but it is not too bad, which would usually be handled by a macro. I tried some defmacros to try this, but I could not figure out how to get the conditionals to expand at the right times, which is at run time, and not at macro expansion time. I need a macro that generates a function that has the call to defhydra in it! Maybe next year ;)
-</p>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/06/24/Conditional-hydra-menus.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-
-<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2015/06/24/Conditional-hydra-menus">Discuss on Twitter</a>
-
-  <hr class="interblog" />
  <a href="../38">« Previous Page</a>
   --  
  <a href="../40">Next Page »</a>
@@ -852,11 +930,11 @@ I cannot figure out how to abstract this much further. There is a little redunda
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2022/01/20/New-publication-on-segregation-in-ternary-alloy-surfaces/">New publication on segregation in ternary alloy surfaces</a></li>
       <li><a href="/blog/2022/01/11/Launching-Point-Breeze-Publishing/">Launching Point Breeze Publishing</a></li>
       <li><a href="/blog/2021/12/22/2021-in-a-nutshell/">2021 in a nutshell</a></li>
       <li><a href="/blog/2021/12/18/New-publication-Origin-of-the-Stokes-Einstein-Deviation-in-Liquid-Al-Si/">New publication - Origin of the Stokes-Einstein Deviation in Liquid Al-Si</a></li>
       <li><a href="/blog/2021/12/03/New-publication-Accelerated-Optimization-of-Pure-Metal-and-Ligand-Compositions-for-Light-driven-Hydrogen-Production/">New publication - Accelerated Optimization of Pure Metal and Ligand Compositions for Light-driven Hydrogen Production</a></li>
-      <li><a href="/blog/2021/12/02/New-publication-Ligand-Enhanced-Activity-of-in-Situ-Formed-Nanoparticles-for-Photocatalytic-Hydrogen-Evolution/">New publication - Ligand Enhanced Activity of in Situ Formed Nanoparticles for Photocatalytic Hydrogen Evolution</a></li>
     </ul>
   </section>
 

@@ -102,6 +102,159 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Solving-BVPs-with-a-neural-network-and-autograd"></div>
+      <h2 class="blog_post_title"><a href="/blog/2017/11/27/Solving-BVPs-with-a-neural-network-and-autograd/" rel="bookmark" title="Permanent Link to Solving BVPs with a neural network and autograd">Solving BVPs with a neural network and autograd</a></h2>
+      <p><small><span class="blog_post_date">Posted November 27, 2017 at 07:59 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/bvp/'>bvp</a></span> | tags: 
+      <p><small><span class="blog_post_date">Updated November 27, 2017 at 08:00 PM</span></small>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+In this <a href="http://kitchingroup.cheme.cmu.edu/blog/2013/03/11/Solving-the-Blasius-equation/">post</a> we solved a boundary value problem by discretizing it, and approximating the derivatives by finite differences. Here I explore using a neural network to approximate the unknown function, autograd to get the required derivatives, and using autograd to train the neural network to satisfy the differential equations. We will look at the Blasius equation again.
+</p>
+
+\begin{eqnarray}
+f''' + \frac{1}{2} f f'' &=& 0 \\
+f(0) &=& 0 \\
+f'(0) &=& 0 \\
+f'(\infty) &=& 1
+\end{eqnarray}
+
+<p>
+Here I setup a simple neural network
+</p>
+<div class="org-src-container">
+<pre class="src src-python"><span style="color: #0000FF;">import</span> autograd.numpy <span style="color: #0000FF;">as</span> np
+<span style="color: #0000FF;">from</span> autograd <span style="color: #0000FF;">import</span> grad, elementwise_grad
+<span style="color: #0000FF;">import</span> autograd.numpy.random <span style="color: #0000FF;">as</span> npr
+<span style="color: #0000FF;">from</span> autograd.misc.optimizers <span style="color: #0000FF;">import</span> adam
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">init_random_params</span>(scale, layer_sizes, rs=npr.RandomState(0)):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #036A07;">"""Build a list of (weights, biases) tuples, one for each layer."""</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> [(rs.randn(insize, outsize) * scale,   <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">weight matrix</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>rs.randn(outsize) * scale)           <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">bias vector</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">for</span> insize, outsize <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">zip</span>(layer_sizes[:-1], layer_sizes[1:])]
+
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">swish</span>(x):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #036A07;">"see https://arxiv.org/pdf/1710.05941.pdf"</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> x / (1.0 + np.exp(-x))
+
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">f</span>(params, inputs):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #036A07;">"Neural network functions"</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">for</span> W, b <span style="color: #0000FF;">in</span> params:
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">outputs</span> = np.dot(inputs, W) + b
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">inputs</span> = swish(outputs)    
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> outputs
+
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   
+<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">Here is our initial guess of params:</span>
+<span style="color: #BA36A5;">params</span> = init_random_params(0.1, layer_sizes=[1, 8, 1])
+
+<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">Derivatives</span>
+<span style="color: #BA36A5;">fp</span> = elementwise_grad(f, 1)
+<span style="color: #BA36A5;">fpp</span> = elementwise_grad(fp, 1)
+<span style="color: #BA36A5;">fppp</span> = elementwise_grad(fpp, 1)
+
+<span style="color: #BA36A5;">eta</span> = np.linspace(0, 6).reshape((-1, 1))
+
+<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">This is the function we seek to minimize</span>
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">objective</span>(params, step):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">These should all be zero at the solution</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">f''' + 0.5 f'' f = 0</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">zeq</span> = fppp(params, eta) + 0.5 * f(params, eta) * fpp(params, eta) 
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">bc0</span> = f(params, 0.0)  <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">equal to zero at solution</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">bc1</span> = fp(params, 0.0)  <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">equal to zero at solution</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">bc2</span> = fp(params, 6.0) - 1.0 <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">this is the one at "infinity"</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> np.mean(zeq**2) + bc0**2 + bc1**2 + bc2**2
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">callback</span>(params, step, g):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">if</span> step % 1000 == 0:
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">print</span>(<span style="color: #008000;">"Iteration {0:3d} objective {1}"</span>.<span style="color: #006FE0;">format</span>(step,
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> objective(params, step)))
+
+<span style="color: #BA36A5;">params</span> = adam(grad(objective), params,
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> step_size=0.001, num_iters=10000, callback=callback) 
+
+<span style="color: #0000FF;">print</span>(<span style="color: #008000;">'f(0) = {}'</span>.<span style="color: #006FE0;">format</span>(f(params, 0.0)))
+<span style="color: #0000FF;">print</span>(<span style="color: #008000;">'fp(0) = {}'</span>.<span style="color: #006FE0;">format</span>(fp(params, 0.0)))
+<span style="color: #0000FF;">print</span>(<span style="color: #008000;">'fp(6) = {}'</span>.<span style="color: #006FE0;">format</span>(fp(params, 6.0)))
+<span style="color: #0000FF;">print</span>(<span style="color: #008000;">'fpp(0) = {}'</span>.<span style="color: #006FE0;">format</span>(fpp(params, 0.0)))
+
+<span style="color: #0000FF;">import</span> matplotlib.pyplot <span style="color: #0000FF;">as</span> plt
+plt.plot(eta, f(params, eta))
+plt.xlabel(<span style="color: #008000;">'$\eta$'</span>)
+plt.ylabel(<span style="color: #008000;">'$f(\eta)$'</span>)
+plt.xlim([0, 6])
+plt.ylim([0, 4.5])
+plt.savefig(<span style="color: #008000;">'nn-blasius.png'</span>)
+</pre>
+</div>
+
+<p>
+Iteration   0 objective 1.11472535
+Iteration 1000 objective 0.00049768
+Iteration 2000 objective 0.0004579
+Iteration 3000 objective 0.00041697
+Iteration 4000 objective 0.00037408
+Iteration 5000 objective 0.00033705
+Iteration 6000 objective 0.00031016
+Iteration 7000 objective 0.00029197
+Iteration 8000 objective 0.00027585
+Iteration 9000 objective 0.00024616
+f(0) = -0.00014613
+fp(0) = 0.0003518041251639459
+fp(6) = 0.999518061473252
+fpp(0) = 0.3263370503702663
+</p>
+
+<p>
+<img src="/media/nn-blasius.png"> 
+I think it is worth discussing what we accomplished here. You can see we have arrived at an approximate solution to our differential equation and the boundary conditions. The boundary conditions seem pretty closely met, and the figure is approximately the same as the previous post. Even better, our solution is <i>an actual function</i> and not a numeric solution that has to be interpolated. We can evaluate it any where we want, including its derivatives!
+</p>
+
+<p>
+We did not, however, have to convert the ODE into a system of first-order differential equations, and we did <i>not</i> have to approximate the derivatives with finite differences.
+</p>
+
+<p>
+Note, however, that with finite differences we got <code>f''(0)=0.3325</code>. This <a href="https://www.calpoly.edu/~kshollen/ME347/Handouts/Blasius.pdf">site</a> reports <code>f''(0)=0.3321</code>. We get close to that here with <code>f''(0) = 0.3263</code>. We could probably get closer to this with more training to reduce the objective function further, or with a finer grid. It is evident that even after 9000 steps, it is still decreasing. Getting accurate derivatives is a stringent test for this, as they are measures of the function curvature.
+</p>
+
+<p>
+It is hard to tell how broadly useful this is; I have not tried it beyond this example. In the past, I have found solving BVPs to be pretty sensitive to the initial guesses of the solution. Here we made almost no guess at all, and still got a solution. I find that pretty remarkable.
+</p>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/11/27/Solving-BVPs-with-a-neural-network-and-autograd.org">org-mode source</a></p>
+<p>Org-mode version = 9.1.2</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+
+<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2017/11/27/Solving-BVPs-with-a-neural-network-and-autograd">Discuss on Twitter</a>
+
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="More-auto-differentiation-goodness-for-science-and-engineering"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/11/22/More-auto-differentiation-goodness-for-science-and-engineering/" rel="bookmark" title="Permanent Link to More auto-differentiation goodness for science and engineering">More auto-differentiation goodness for science and engineering</a></h2>
       <p><small><span class="blog_post_date">Posted November 22, 2017 at 03:52 PM</span> | categories:
@@ -1200,316 +1353,6 @@ Now you know the secret of a neural network, it is just a nonlinear model. Witho
 <a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2017/11/18/Neural-networks-for-regression-with-autograd">Discuss on Twitter</a>
 
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Using-autograd-in-nonlinear-regression"></div>
-      <h2 class="blog_post_title"><a href="/blog/2017/11/17/Using-autograd-in-nonlinear-regression/" rel="bookmark" title="Permanent Link to Using autograd in nonlinear regression">Using autograd in nonlinear regression</a></h2>
-      <p><small><span class="blog_post_date">Posted November 17, 2017 at 07:49 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/regression/'>regression</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-Table <a href="#raw-data">raw-data</a> contains the energy as a function of volume for some solid material from a set of density functional theory calculations. Our goal is to fit the Murnaghan equation of state to this data. The model is moderately nonlinear. I have previously done this with the standard nonlinear regression functions in scipy, so today we will use autograd along with a builtin optimizer to minimize an objective function to achieve the same thing. 
-</p>
-
-<p>
-The basic idea is we define an objective function, in this case the summed squared errors between predicted values from the model and known values from our data. The objective function takes two arguments: the model parameters, and the "step". This function signature is a consequence of the built in optimizer we use; it expects that signature (it is useful for batch training, but we will not use that here).  We use autograd to create a gradient of the objective function which the adam optimizer will use to vary the parameters with the goal of minimizing the objective function.
-</p>
-
-<p>
-The adam optimizer function takes as one argument a callback function, which we call <code>summary</code> to print out intermediate results during the convergence. We run the optimizer in a loop because the optimizer runs a fixed number of steps on each call. We check if the objective function is sufficiently small, and if it is we break out. 
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython" id="org7bbe046"><span style="color: #0000FF;">import</span> autograd.numpy <span style="color: #0000FF;">as</span> np
-<span style="color: #0000FF;">from</span> autograd <span style="color: #0000FF;">import</span> grad
-<span style="color: #0000FF;">from</span> autograd.misc.optimizers <span style="color: #0000FF;">import</span> adam
-
-np.set_printoptions(precision=3, suppress=<span style="color: #D0372D;">True</span>)
-
-<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">input data</span>
-<span style="color: #BA36A5;">Vinput</span> = np.array([row[0] <span style="color: #0000FF;">for</span> row <span style="color: #0000FF;">in</span> data]) 
-<span style="color: #BA36A5;">Eknown</span> = np.array([row[1] <span style="color: #0000FF;">for</span> row <span style="color: #0000FF;">in</span> data])
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">Murnaghan</span>(pars, vol):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #036A07;">'''</span>
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span><span style="color: #036A07;">   given a vector of parameters and volumes, return a vector of energies.</span>
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span><span style="color: #036A07;">   equation From PRB 28,5480 (1983)</span>
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span><span style="color: #036A07;">   '''</span>
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">E0</span>, <span style="color: #BA36A5;">B0</span>, <span style="color: #BA36A5;">BP</span>, <span style="color: #BA36A5;">V0</span> = pars
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">E</span> = E0 + B0 * vol / BP * (((V0 / vol)**BP) / (BP - 1.0) + 1.0) - V0 * B0 / (BP - 1.)
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> E
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">objective</span>(pars, step):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #036A07;">"This is what we want to minimize by varying the pars."</span>
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">predicted</span> = Murnaghan(pars, Vinput)
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">Note Eknown is not defined in this function scope</span>
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">errors</span> = Eknown - predicted
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> np.<span style="color: #006FE0;">sum</span>(errors**2)
-
-<span style="color: #BA36A5;">objective_grad</span> = grad(objective)
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">summary</span>(pars, step, gradient):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">Note i, N are not defined in this function scope</span>
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">if</span> step % N == 0: 
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">print</span>(<span style="color: #008000;">'step {0:5d}: {1:1.3e}'</span>.<span style="color: #006FE0;">format</span>(i * N + step, 
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>objective(pars, step)))
-
-<span style="color: #BA36A5;">pars</span> = np.array([-400, 0.5, 2, 210]) <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">The initial guess</span>
-<span style="color: #BA36A5;">N</span> = 200 <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">num of steps to take on each optimization</span>
-<span style="color: #BA36A5;">learning_rate</span> = 0.001
-<span style="color: #0000FF;">for</span> i <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">range</span>(100):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">pars</span> = adam(objective_grad, pars, step_size=learning_rate, 
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   num_iters=N, callback=summary)
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">SSE</span> = objective(pars, <span style="color: #D0372D;">None</span>)
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">if</span> SSE &lt; 0.00002:
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">print</span>(<span style="color: #008000;">'Tolerance met.'</span>, SSE)
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">break</span>
-<span style="color: #0000FF;">print</span>(pars)
-</pre>
-</div>
-
-<pre class="example">
-step     0: 3.127e+02
-step   200: 1.138e+02
-step   400: 2.011e+01
-step   600: 1.384e+00
-step   800: 1.753e-01
-step  1000: 2.044e-03
-step  1200: 1.640e-03
-step  1400: 1.311e-03
-step  1600: 1.024e-03
-step  1800: 7.765e-04
-step  2000: 5.698e-04
-step  2200: 4.025e-04
-step  2400: 2.724e-04
-step  2600: 1.762e-04
-step  2800: 1.095e-04
-step  3000: 6.656e-05
-step  3200: 3.871e-05
-step  3400: 2.359e-05
-('Tolerance met.', 1.5768901008364176e-05)
-[-400.029    0.004    4.032  211.847]
-
-</pre>
-
-<p>
-There are some subtleties in the code above. One is the variables that are used kind of all over the place, which is noted in a few places. Those could get tricky to keep track of. Another is the variable I called learning_rate. I borrowed that terminology from the machine learning community. It is the <code>step_size</code> in this implementation of the optimizer. If you make it too large, the objective function doesn't converge, but if you set it too small, it will take a long time to converge. Note that it took at about 3400 steps of "training". This is a lot more than is typically required by something like <code>pycse.nlinfit</code>. This isn't the typical application for this approach to regression. More on that another day.
-</p>
-
-<p>
-As with any fit, it is wise to check it out at least graphically. Here is the fit and data.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython" id="org0d237fb">%matplotlib inline
-<span style="color: #0000FF;">import</span> matplotlib
-matplotlib.rc(<span style="color: #008000;">'axes.formatter'</span>, useoffset=<span style="color: #D0372D;">False</span>)
-<span style="color: #0000FF;">import</span> matplotlib.pyplot <span style="color: #0000FF;">as</span> plt
-
-plt.plot(Vinput, Eknown, <span style="color: #008000;">'ko'</span>, label=<span style="color: #008000;">'known'</span>)
-
-<span style="color: #BA36A5;">vinterp</span> = np.linspace(Vinput.<span style="color: #006FE0;">min</span>(), Vinput.<span style="color: #006FE0;">max</span>(), 200)
-
-plt.plot(vinterp, Murnaghan(pars, vinterp), <span style="color: #008000;">'r-'</span>, label=<span style="color: #008000;">'predicted'</span>)
-plt.xlabel(<span style="color: #008000;">'Vol'</span>)
-plt.ylabel(<span style="color: #008000;">'E'</span>)
-</pre>
-</div>
-
-<p>
-<img src="/media/ob-ipython-f106274e2be904c3f20c4c20ec425ebd.png"> 
-</p>
-
-<p>
-The fit looks pretty good.
-</p>
-
-
-<table id="org71d3fa4" border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-<caption class="t-above"><span class="table-number">Table 1:</span> Volume-Energy data for a solid state system.</caption>
-
-<colgroup>
-<col  class="org-right" />
-
-<col  class="org-right" />
-</colgroup>
-<thead>
-<tr>
-<th scope="col" class="org-right">volume</th>
-<th scope="col" class="org-right">energy</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td class="org-right">324.85990899</td>
-<td class="org-right">-399.9731688470</td>
-</tr>
-
-<tr>
-<td class="org-right">253.43999457</td>
-<td class="org-right">-400.0172393178</td>
-</tr>
-
-<tr>
-<td class="org-right">234.03826687</td>
-<td class="org-right">-400.0256270548</td>
-</tr>
-
-<tr>
-<td class="org-right">231.12159387</td>
-<td class="org-right">-400.0265690700</td>
-</tr>
-
-<tr>
-<td class="org-right">228.40609504</td>
-<td class="org-right">-400.0273551120</td>
-</tr>
-
-<tr>
-<td class="org-right">225.86490337</td>
-<td class="org-right">-400.0280030862</td>
-</tr>
-
-<tr>
-<td class="org-right">223.47556626</td>
-<td class="org-right">-400.0285313450</td>
-</tr>
-
-<tr>
-<td class="org-right">221.21992353</td>
-<td class="org-right">-400.0289534593</td>
-</tr>
-
-<tr>
-<td class="org-right">219.08319566</td>
-<td class="org-right">-400.0292800709</td>
-</tr>
-
-<tr>
-<td class="org-right">217.05369547</td>
-<td class="org-right">-400.0295224970</td>
-</tr>
-
-<tr>
-<td class="org-right">215.12089909</td>
-<td class="org-right">-400.0296863867</td>
-</tr>
-
-<tr>
-<td class="org-right">213.27525144</td>
-<td class="org-right">-400.0297809256</td>
-</tr>
-
-<tr>
-<td class="org-right">211.51060823</td>
-<td class="org-right">-400.0298110000</td>
-</tr>
-
-<tr>
-<td class="org-right">203.66743321</td>
-<td class="org-right">-400.0291665573</td>
-</tr>
-
-<tr>
-<td class="org-right">197.07888649</td>
-<td class="org-right">-400.0275017142</td>
-</tr>
-
-<tr>
-<td class="org-right">191.39717952</td>
-<td class="org-right">-400.0250998136</td>
-</tr>
-
-<tr>
-<td class="org-right">186.40163591</td>
-<td class="org-right">-400.0221371852</td>
-</tr>
-
-<tr>
-<td class="org-right">181.94435510</td>
-<td class="org-right">-400.0187369863</td>
-</tr>
-
-<tr>
-<td class="org-right">177.92077043</td>
-<td class="org-right">-400.0149820198</td>
-</tr>
-
-<tr>
-<td class="org-right">174.25380090</td>
-<td class="org-right">-400.0109367042</td>
-</tr>
-
-<tr>
-<td class="org-right">170.88582166</td>
-<td class="org-right">-400.0066495100</td>
-</tr>
-
-<tr>
-<td class="org-right">167.76711189</td>
-<td class="org-right">-400.0021478258</td>
-</tr>
-
-<tr>
-<td class="org-right">164.87096104</td>
-<td class="org-right">-399.9974753449</td>
-</tr>
-
-<tr>
-<td class="org-right">159.62553397</td>
-<td class="org-right">-399.9876885136</td>
-</tr>
-
-<tr>
-<td class="org-right">154.97005460</td>
-<td class="org-right">-399.9774175487</td>
-</tr>
-
-<tr>
-<td class="org-right">150.78475335</td>
-<td class="org-right">-399.9667603369</td>
-</tr>
-
-<tr>
-<td class="org-right">146.97722201</td>
-<td class="org-right">-399.9557686286</td>
-</tr>
-
-<tr>
-<td class="org-right">143.49380641</td>
-<td class="org-right">-399.9445262604</td>
-</tr>
-</tbody>
-</table>
-<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2017/11/17/Using-autograd-in-nonlinear-regression.org">org-mode source</a></p>
-<p>Org-mode version = 9.1.2</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-
-<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2017/11/17/Using-autograd-in-nonlinear-regression">Discuss on Twitter</a>
-
-  <hr class="interblog" />
  <a href="../9">« Previous Page</a>
   --  
  <a href="../11">Next Page »</a>
@@ -1551,11 +1394,11 @@ The fit looks pretty good.
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2022/01/20/New-publication-on-segregation-in-ternary-alloy-surfaces/">New publication on segregation in ternary alloy surfaces</a></li>
       <li><a href="/blog/2022/01/11/Launching-Point-Breeze-Publishing/">Launching Point Breeze Publishing</a></li>
       <li><a href="/blog/2021/12/22/2021-in-a-nutshell/">2021 in a nutshell</a></li>
       <li><a href="/blog/2021/12/18/New-publication-Origin-of-the-Stokes-Einstein-Deviation-in-Liquid-Al-Si/">New publication - Origin of the Stokes-Einstein Deviation in Liquid Al-Si</a></li>
       <li><a href="/blog/2021/12/03/New-publication-Accelerated-Optimization-of-Pure-Metal-and-Ligand-Compositions-for-Light-driven-Hydrogen-Production/">New publication - Accelerated Optimization of Pure Metal and Ligand Compositions for Light-driven Hydrogen Production</a></li>
-      <li><a href="/blog/2021/12/02/New-publication-Ligand-Enhanced-Activity-of-in-Situ-Formed-Nanoparticles-for-Photocatalytic-Hydrogen-Evolution/">New publication - Ligand Enhanced Activity of in Situ Formed Nanoparticles for Photocatalytic Hydrogen Evolution</a></li>
     </ul>
   </section>
 
