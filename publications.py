@@ -1,4 +1,7 @@
-# These seem to be my publications. It looks like I use a make file to run this, and it generates the publications.html.mako template that gets built when I publish. Things seem to get pulled from scopus.
+# These seem to be my publications. It looks like I use a make file to run this,
+# and it generates the publications.html.mako template that gets built when I
+# publish. Things seem to get pulled from scopus. It also seems to be important
+# to be on the vpn.
 import sys
 sys.path.insert(0, '/Users/jkitchin/Dropbox/python/scopus')
 from scopus.scopus_xml import *
@@ -15,6 +18,7 @@ resp = requests.get("http://api.elsevier.com/content/search/scopus?query=AU-ID(7
                              'X-ELS-APIKey': MY_API_KEY})
 
 results = resp.json()
+print(MY_API_KEY, results)
 
 data = [r['eid'] for r in
         results['search-results']["entry"] if str(r['prism:aggregationType']) == 'Journal']
