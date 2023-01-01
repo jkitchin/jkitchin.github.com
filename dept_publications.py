@@ -1,7 +1,14 @@
+import sys
+sys.path.insert(0, '/Users/jkitchin/Dropbox/python/scopus')
+
 from scopus.scopus_xml import *
 from scopus.scopus_search import ScopusSearch
 from scopus.scopus_api import ScopusAbstract
 import urllib
+
+from scopus.utils import load_api_key
+MY_API_KEY = load_api_key()
+
 for YEAR in [#'2005',
              #'2006',
              #'2007',
@@ -18,7 +25,8 @@ for YEAR in [#'2005',
 #        '2018'
 #        '2019',
 #        '2020'
-        '2021'
+#        '2021'
+        '2022'
 ]:
 
     # this query includes Neil Donahue

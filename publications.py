@@ -8,7 +8,7 @@ from scopus.scopus_xml import *
 
 from scopus.utils import load_api_key
 MY_API_KEY = load_api_key()
-
+print(MY_API_KEY)
 
 import requests
 import json, sys
