@@ -102,6 +102,223 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Modeling-a-Cu-dimer-by-EMT-nonlinear-regression-and-neural-networks"></div>
+      <h2 class="blog_post_title"><a href="/blog/2017/03/18/Modeling-a-Cu-dimer-by-EMT-nonlinear-regression-and-neural-networks/" rel="bookmark" title="Permanent Link to Modeling a Cu dimer by EMT, nonlinear regression and neural networks">Modeling a Cu dimer by EMT, nonlinear regression and neural networks</a></h2>
+      <p><small><span class="blog_post_date">Posted March 18, 2017 at 03:47 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/python/'>python</a>, <a href='/blog/category/molecular-simulation/'>molecular-simulation</a>, <a href='/blog/category/machine-learning/'>machine-learning</a>, <a href='/blog/category/neural-network/'>neural-network</a></span> | tags: 
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+In this post we consider a Cu<sub>2</sub> dimer and how its energy varies with the separation of the atoms. We assume we have a way to calculate this, but that it is expensive, and that we want to create a simpler model that is as accurate, but cheaper to run. A simple way to do that is to regress a physical model, but we will illustrate some challenges with that. We then show a neural network can be used as an accurate regression function without needing to know more about the physics.
+</p>
+
+<p>
+We will use an <a href="https://wiki.fysik.dtu.dk/ase/ase/calculators/emt.html">effective medium theory</a> calculator to demonstrate this. The calculations are not expected to be very accurate or relevant to any experimental data, but they are fast, and will illustrate several useful points that are independent of that. We will take as our energy zero the energy of two atoms at a large separation, in this case about 10 angstroms. Here we plot the energy as a function of the distance between the two atoms, which is the only degree of freedom that matters in this example.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">import</span> numpy <span style="color: #0000FF;">as</span> np
+%matplotlib inline
+<span style="color: #0000FF;">import</span> matplotlib.pyplot <span style="color: #0000FF;">as</span> plt
+
+<span style="color: #0000FF;">from</span> ase.calculators.emt <span style="color: #0000FF;">import</span> EMT
+<span style="color: #0000FF;">from</span> ase <span style="color: #0000FF;">import</span> Atoms
+
+<span style="color: #BA36A5;">atoms</span> = Atoms(<span style="color: #008000;">'Cu2'</span>,[[0, 0, 0], [10, 0, 0]], pbc=[<span style="color: #D0372D;">False</span>, <span style="color: #D0372D;">False</span>, <span style="color: #D0372D;">False</span>])
+atoms.set_calculator(EMT())
+
+<span style="color: #BA36A5;">e0</span> = atoms.get_potential_energy()
+
+<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">Array of bond lengths to get the energy for</span>
+<span style="color: #BA36A5;">d</span> = np.linspace(1.7, 3, 30)
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">get_e</span>(distance):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">a</span> = atoms.copy()
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   a[1]<span style="color: #BA36A5;">.x</span> = distance
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   a.set_calculator(EMT())
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">e</span> = a.get_potential_energy()
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> e
+
+<span style="color: #BA36A5;">e</span> = np.array([get_e(dist) <span style="color: #0000FF;">for</span> dist <span style="color: #0000FF;">in</span> d])
+<span style="color: #BA36A5;">e</span> -=  e0  <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">set the energy zero</span>
+
+plt.plot(d, e, <span style="color: #008000;">'bo '</span>)
+plt.xlabel(<span style="color: #008000;">'d (&#197;)'</span>)
+plt.ylabel(<span style="color: #008000;">'energy (eV)'</span>)
+</pre>
+</div>
+
+<p>
+<img src="/media/ob-ipython-82aeda9421056689d5212f9033da900a.png"> 
+</p>
+
+
+<p>
+We see there is a minimum, and the energy is asymmetric about the minimum. We have no functional form for the energy here, just the data in the plot. So to get another energy, we have to run another calculation. If that was expensive, we might prefer an analytical equation to evaluate instead.  We will get an analytical form by fitting a function to the data. A classic one is the <a href="https://en.wikipedia.org/wiki/Buckingham_potential">Buckingham potential</a>: \(E = A \exp(-B r) - \frac{C}{r^6}\). Here we perform the regression.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">def</span> <span style="color: #006699;">model</span>(r, A, B, C):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> A * np.exp(-B * r) - C / r**6
+
+<span style="color: #0000FF;">from</span> pycse <span style="color: #0000FF;">import</span> nlinfit
+<span style="color: #0000FF;">import</span> pprint
+
+<span style="color: #BA36A5;">p0</span> = [-80, 1, 1]
+<span style="color: #BA36A5;">p</span>, <span style="color: #BA36A5;">pint</span>, <span style="color: #BA36A5;">se</span> = nlinfit(model, d, e, p0, 0.05)
+<span style="color: #0000FF;">print</span>(<span style="color: #008000;">'Parameters = '</span>, p)
+<span style="color: #0000FF;">print</span>(<span style="color: #008000;">'Confidence intervals = '</span>)
+pprint.pprint(pint)
+plt.plot(d, e, <span style="color: #008000;">'bo '</span>, label=<span style="color: #008000;">'calculations'</span>)
+
+<span style="color: #BA36A5;">x</span> = np.linspace(<span style="color: #006FE0;">min</span>(d), <span style="color: #006FE0;">max</span>(d))
+plt.plot(x, model(x, *p), label=<span style="color: #008000;">'fit'</span>)
+plt.legend(loc=<span style="color: #008000;">'best'</span>)
+plt.xlabel(<span style="color: #008000;">'d (&#197;)'</span>)
+plt.ylabel(<span style="color: #008000;">'energy (eV)'</span>)
+</pre>
+</div>
+
+<p>
+Parameters =  [ -83.21072545    1.18663393 -266.15259507]
+Confidence intervals =
+array([[ -93.47624687,  -72.94520404],
+       [   1.14158438,    1.23168348],
+       [-280.92915682, -251.37603331]])
+<img src="/media/ob-ipython-a05811588d06f090a2462ba9f48dccb3.png"> 
+</p>
+
+<p>
+That fit is ok, but not great. We would be better off with a spline for this simple system! The trouble is how do we get anything better? If we had a better equation to fit to we might get better results.  While one might come up with one for this dimer, how would you extend it to more complex systems, even just a trimer? There have been decades of research dedicated to that, and we are not smarter than those researchers so, it is time for a new approach.
+</p>
+
+<p>
+We will use a Neural Network regressor. The input will be \(d\) and we want to regress a function to predict the energy.
+</p>
+
+<p>
+There are a couple of important points to make here.
+</p>
+
+<ol class="org-ol">
+<li>This is just another kind of regression.</li>
+<li>We need a lot more data to do the regression. Here we use 300 data points.</li>
+<li>We need to specify a network architecture. Here we use one hidden layer with 10 neurons, and the tanh activation function on each neuron. The last layer is just the output layer. I do not claim this is any kind of optimal architecture. It is just one that works to illustrate the idea.</li>
+</ol>
+
+<p>
+Here is the code that uses a neural network regressor, which is lightly adapted from <a href="http://scikit-neuralnetwork.readthedocs.io/en/latest/guide_model.html">http://scikit-neuralnetwork.readthedocs.io/en/latest/guide_model.html</a>.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">from</span> sknn.mlp <span style="color: #0000FF;">import</span> Regressor, Layer
+
+<span style="color: #BA36A5;">D</span> = np.linspace(1.7, 3, 300)
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">get_e</span>(distance):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">a</span> = atoms.copy()
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   a[1]<span style="color: #BA36A5;">.x</span> = distance
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   a.set_calculator(EMT())
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">e</span> = a.get_potential_energy()
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> e
+
+<span style="color: #BA36A5;">E</span> = np.array([get_e(dist) <span style="color: #0000FF;">for</span> dist <span style="color: #0000FF;">in</span> D])
+<span style="color: #BA36A5;">E</span> -=  e0  <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">set the energy zero</span>
+
+<span style="color: #BA36A5;">X_train</span> = np.row_stack(np.array(D))
+
+<span style="color: #BA36A5;">N</span> = 10
+<span style="color: #BA36A5;">nn</span> = Regressor(layers=[Layer(<span style="color: #008000;">"Tanh"</span>, units=N),
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>  Layer(<span style="color: #008000;">'Linear'</span>)])
+nn.fit(X_train, E)
+
+<span style="color: #BA36A5;">dfit</span> = np.linspace(<span style="color: #006FE0;">min</span>(d), <span style="color: #006FE0;">max</span>(d))
+
+<span style="color: #BA36A5;">efit</span> = nn.predict(np.row_stack(dfit))
+
+plt.plot(d, e, <span style="color: #008000;">'bo '</span>)
+plt.plot(dfit, efit)
+plt.legend([<span style="color: #008000;">'calculations'</span>, <span style="color: #008000;">'neural network'</span>])
+plt.xlabel(<span style="color: #008000;">'d (&#197;)'</span>)
+plt.ylabel(<span style="color: #008000;">'energy (eV)'</span>)
+</pre>
+</div>
+
+<p>
+<img src="/media/ob-ipython-025c1b30f565c5806510804582e91242.png"> 
+</p>
+
+<p>
+This fit looks pretty good, better than we got for the Buckingham potential. Well, it probably should look better, we have many more parameters that were fitted! It is not perfect, but it could be systematically improved by increasing the number of hidden layers, and neurons in each layer. I am being a little loose here by relying on a visual assessment of the fit. To systematically improve it you would need a quantitative analysis of the errors. I also note though, that if I run the block above several times in succession, I get different fits each time. I suppose that is due to some random numbers used to initialize the fit, but sometimes the fit is about as good as the result you see above, and sometimes it is terrible.
+</p>
+
+<p>
+Ok, what is the point after all? We developed a neural network that pretty accurately captures the energy of a Cu dimer <i>with no knowledge</i> of the physics involved. Now, EMT is not that expensive, but suppose this required 300 DFT calculations at 1 minute or more a piece? That is five hours just to get the data! With this neural network, we can quickly compute energies. For example, this shows we get about 10000 energy calculations in just 287 ms.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython">%%timeit
+
+<span style="color: #BA36A5;">dfit</span> = np.linspace(<span style="color: #006FE0;">min</span>(d), <span style="color: #006FE0;">max</span>(d), 10000)
+<span style="color: #BA36A5;">efit</span> = nn.predict(np.row_stack(dfit))
+</pre>
+</div>
+
+<p>
+1 loop, best of 3: 287 ms per loop
+</p>
+
+<p>
+Compare that to the time it took to compute the 300 energies with EMT
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython">%%timeit
+<span style="color: #BA36A5;">E</span> = np.array([get_e(dist) <span style="color: #0000FF;">for</span> dist <span style="color: #0000FF;">in</span> D])
+</pre>
+</div>
+
+<p>
+1 loop, best of 3: 230 ms per loop
+</p>
+
+<p>
+The neural network is a lot faster than the way we get the EMT energies!
+</p>
+
+<p>
+It is true in this case we could have used a spline, or interpolating function and it would likely be even better than this Neural Network. We are aiming to get more complicated soon though. For a trimer, we will have three dimensions to worry about, and that can still be worked out in a similar fashion I think. Past that, it becomes too hard to reduce the dimensions, and this approach breaks down. Then we have to try something else. We will get to that in another post.
+</p>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/03/18/Modeling-a-Cu-dimer-by-EMT,-nonlinear-regression-and-neural-networks.org">org-mode source</a></p>
+<p>Org-mode version = 9.0.5</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+
+<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2017/03/18/Modeling-a-Cu-dimer-by-EMT-nonlinear-regression-and-neural-networks">Discuss on Twitter</a>
+
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="New-publication-in-Calphad"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/02/05/New-publication-in-Calphad/" rel="bookmark" title="Permanent Link to New publication in Calphad">New publication in Calphad</a></h2>
       <p><small><span class="blog_post_date">Posted February 05, 2017 at 12:28 PM</span> | categories:
@@ -441,269 +658,6 @@ org-babel-execute:ipython
 <a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2017/01/29/ob-ipython-and-inline-figures-in-org-mode">Discuss on Twitter</a>
 
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Exporting-org-mode-to-Jupyter-notebooks"></div>
-      <h2 class="blog_post_title"><a href="/blog/2017/01/21/Exporting-org-mode-to-Jupyter-notebooks/" rel="bookmark" title="Permanent Link to Exporting org-mode to Jupyter notebooks">Exporting org-mode to Jupyter notebooks</a></h2>
-      <p><small><span class="blog_post_date">Posted January 21, 2017 at 07:51 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/python/'>python</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/jupyter/'>jupyter</a></span> | tags: 
-      <p><small><span class="blog_post_date">Updated January 25, 2017 at 08:50 AM</span></small>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<div id="table-of-contents">
-<h2>Table of Contents</h2>
-<div id="text-table-of-contents">
-<ul>
-<li><a href="#orge344b68">1. Solve a nonlinear problem</a></li>
-<li><a href="#orgdcea869">2. Benefits of export to ipynb</a></li>
-<li><a href="#org26076b0">3. Limitations</a></li>
-<li><a href="#orgfe4c8f7">4. Summary</a></li>
-</ul>
-</div>
-</div>
-<p>
-I am going to use Jupyter notebooks to teach from this semester. I really dislike preparing notebooks though. A browser is a really poor editor, and I really dislike Markdown. Notebooks do not seem to have any real structure in them, e.g. the collapsible outline that I am used to in org-mode, so for long notebooks, it is difficult to get a sense for the structure. I am anticipating spending up to 80 hours preparing notebooks this semester, so today I worked out some code to export org-mode to an ipython notebook! 
-</p>
-
-<p>
-This will let me use the power tools I am accustomed to for the creation of IPython notebooks for my students, and perhaps others who do not use org-mode. 
-</p>
-
-<p>
-Jupyter notebooks are just json files, so all we need to do is generate it from an org document. The basic strategy was to build up a lisp data structure that represents the notebook and then just convert that data structure to json. I split the document up into sequential markdown and code cells, and then encode those in the format required for the notebook (json).
-</p>
-
-<p>
-So, here is an example of what can be easily written in org-mode, posted to this blog, and exported to an IPython notebook, all from one org-document.
-</p>
-
-<p>
-Check out the notebook:  <a href="/media/exporting-orgmode-to-ipynb.ipynb">exporting-orgmode-to-ipynb.ipynb</a> . 
-</p>
-
-<div id="outline-container-orge344b68" class="outline-2">
-<h2 id="orge344b68"><span class="section-number-2">1</span> Solve a nonlinear problem</h2>
-<div class="outline-text-2" id="text-1">
-<p>
-Consider the equation \(x^2 = 4\). Find a solution to it in Python using a nonlinear solver. 
-</p>
-
-<p>
-To do that, we need to define an objective function that will be equal to zero at the solution. Here is the function:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">def</span> <span style="color: #006699;">objective</span>(x):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> x**2 - 4
-</pre>
-</div>
-
-<p>
-Next, we use fsolve with an initial guess. We get fsolve from <a href="https://docs.scipy.org/doc/scipy-0.18.1/reference/generated/scipy.optimize.fsolve.html#scipy.optimize.fsolve">scipy.optimize</a>.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">from</span> scipy.optimize <span style="color: #0000FF;">import</span> fsolve
-
-<span style="color: #BA36A5;">ans</span> = fsolve(objective, 3)
-<span style="color: #0000FF;">print</span>(ans)
-</pre>
-</div>
-
-<pre class="example">
-[ 2.]
-</pre>
-
-<p>
-That should have been an obvious answer. The answer is in brackets because fsolve returns an array. In the next block we will unpack the solution into the answer using the comma operator. Also, we can see that using a different guess leads to a different answer. There are, of course, two answers: \(x = \pm 2\)
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython">ans, = fsolve(objective, -3)
-<span style="color: #0000FF;">print</span>(ans)
-</pre>
-</div>
-
-<pre class="example">
--2.0
-</pre>
-
-<p>
-Now you see we get a float answer!
-</p>
-
-<p>
-Here are some other ways to get a float:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #BA36A5;">ans</span> = fsolve(objective, -3)
-
-<span style="color: #0000FF;">print</span>(<span style="color: #006FE0;">float</span>(ans))
-<span style="color: #0000FF;">print</span>(ans[0])
-</pre>
-</div>
-
-<pre class="example">
--2.0000000000000084
--2.0
-</pre>
-
-<p>
-It is worth noting from the first result that fsolve is iterative and stops when it reaches zero within a tolerance. That is why it is not exactly -2.
-</p>
-</div>
-</div>
-
-<div id="outline-container-orgdcea869" class="outline-2">
-<h2 id="orgdcea869"><span class="section-number-2">2</span> Benefits of export to ipynb</h2>
-<div class="outline-text-2" id="text-2">
-<ol class="org-ol">
-<li>I can use org-mode</li>
-<li>And emacs</li>
-<li>and ipynb for teaching.</li>
-</ol>
-
-<p>
-The export supports org-markup: <b>bold</b>, <i>italic</i>, <span class="underline">underlined</span>, and ~~strike~~.
-</p>
-
-<p>
-We can use tables:
-</p>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-<caption class="t-above"><span class="table-number">Table 1:</span> A table of squares.</caption>
-
-<colgroup>
-<col  class="org-right" />
-
-<col  class="org-right" />
-</colgroup>
-<thead>
-<tr>
-<th scope="col" class="org-right">x</th>
-<th scope="col" class="org-right">y</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td class="org-right">1</td>
-<td class="org-right">2</td>
-</tr>
-
-<tr>
-<td class="org-right">2</td>
-<td class="org-right">4</td>
-</tr>
-
-<tr>
-<td class="org-right">3</td>
-<td class="org-right">9</td>
-</tr>
-
-<tr>
-<td class="org-right">4</td>
-<td class="org-right">16</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-We can make plots.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">import</span> numpy <span style="color: #0000FF;">as</span> np
-
-<span style="color: #BA36A5;">t</span> = np.linspace(0, 2 * np.pi)
-
-<span style="color: #BA36A5;">x</span> = np.cos(t)
-<span style="color: #BA36A5;">y</span> = np.sin(t)
-
-<span style="color: #0000FF;">import</span> matplotlib.pyplot <span style="color: #0000FF;">as</span> plt
-plt.plot(x, y)
-plt.axis(<span style="color: #008000;">'equal'</span>)
-plt.xlabel(<span style="color: #008000;">'x'</span>)
-plt.ylabel(<span style="color: #008000;">'y'</span>)
-plt.savefig(<span style="color: #008000;">'circle.png'</span>)
-</pre>
-</div>
-
-<p>
-<img src="/media/circle.png"> 
-</p>
-
-<p>
-Even include HTML:
-&lt;font color="red"&gt;Pay special attention to the axis labels!&lt;/font&gt;
-</p>
-</div>
-</div>
-
-
-<div id="outline-container-org26076b0" class="outline-2">
-<h2 id="org26076b0"><span class="section-number-2">3</span> Limitations</h2>
-<div class="outline-text-2" id="text-3">
-<ul class="org-ul">
-<li>Only supports iPython blocks</li>
-<li>Does not do inline images in results</li>
-<li>Will not support src-block variables</li>
-<li>Currently only supports vanilla output results</li>
-</ul>
-</div>
-</div>
-
-
-<div id="outline-container-orgfe4c8f7" class="outline-2">
-<h2 id="orgfe4c8f7"><span class="section-number-2">4</span> Summary</h2>
-<div class="outline-text-2" id="text-4">
-<p>
-The code that does this is here: <a href="/media/ox-ipynb.el">ox-ipynb.el</a> . After I use it a while I will put it in scimax. There are some tricks in it to fix up some markdown export of latex fragments and links with no descriptions.
-</p>
-
-<p>
-I just run this command in Emacs to get the notebook. Even it renders reasonably in the notebook.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(export-ipynb-buffer)
-</pre>
-</div>
-
-<p>
-Overall, this looks extremely promising to develop lecture notes and assignments in org-mode, but export them to Ipython notebooks for the students.
-</p>
-</div>
-</div>
-<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2017/01/21/Exporting-org-mode-to-Jupyter-notebooks.org">org-mode source</a></p>
-<p>Org-mode version = 9.0.3</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-
-<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2017/01/21/Exporting-org-mode-to-Jupyter-notebooks">Discuss on Twitter</a>
-
-  <hr class="interblog" />
  <a href="../17">« Previous Page</a>
   --  
  <a href="../19">Next Page »</a>
@@ -745,11 +699,11 @@ Overall, this looks extremely promising to develop lecture notes and assignments
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2023/02/17/Update-on-finding-the-minimum-distance-from-a-point-to-a-curve/">Update on finding the minimum distance from a point to a curve</a></li>
       <li><a href="/blog/2023/02/01/Caching-expensive-function-calls-so-you-don-t-have-to-rerun-them/">Caching expensive function calls so you don't have to rerun them</a></li>
       <li><a href="/blog/2023/01/01/2022-in-a-nutshell/">2022 in a nutshell</a></li>
       <li><a href="/blog/2022/09/29/New-publication-Identifying-limitations-in-screening-high-throughput-photocatalytic-bimetallic-nanoparticles-with-machine-learned-hydrogen-adsorptions/">New publication - Identifying limitations in screening high-throughput photocatalytic bimetallic nanoparticles with machine-learned hydrogen adsorptions</a></li>
       <li><a href="/blog/2022/09/12/New-publication-Neural-network-embeddings-based-similarity-search-method-for-atomistic-systems/">New publication - Neural network embeddings based similarity search method for atomistic systems</a></li>
-      <li><a href="/blog/2022/03/07/New-publication-Evaluation-of-the-Degree-of-Rate-Control-via-Automatic-Differentiation/">New publication - Evaluation of the Degree of Rate Control via Automatic Differentiation</a></li>
     </ul>
   </section>
 
