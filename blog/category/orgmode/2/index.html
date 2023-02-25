@@ -102,10 +102,232 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Adding-keymaps-to-src-blocks-via-org-font-lock-hook"></div>
+      <h2 class="blog_post_title"><a href="/blog/2017/06/10/Adding-keymaps-to-src-blocks-via-org-font-lock-hook/" rel="bookmark" title="Permanent Link to Adding keymaps to src blocks via org-font-lock-hook">Adding keymaps to src blocks via org-font-lock-hook</a></h2>
+      <p><small><span class="blog_post_date">Posted June 10, 2017 at 03:27 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
+      <p><small><span class="blog_post_date">Updated June 12, 2017 at 11:28 AM</span></small>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org49daca5">1. Update</a></li>
+<li><a href="#org004cb53">2. Update #2</a></li>
+</ul>
+</div>
+</div>
+<p>
+I had an idea to use custom keymaps in src-blocks. For example, you could then use lispy directly in your org-files without entering org-special-edit, or the elpy key-bindings in python blocks. There are other solutions I have seen, e.g. polymode, that claim to do this. You might guess that if they worked, I would not be writing this! There was some nice discussion about this idea on the org-mode mailing list, and Nicolas Goaziou pointed out this might be accomplished with the org-font-lock-hook.
+</p>
+
+<p>
+You can check out the video here:
+</p>
+<iframe width="560" height="315" src="https://www.youtube.com/embed/a2jHqB1qWiY" frameborder="0" allowfullscreen></iframe>
+
+<p>
+It was relatively easy to figure out how to do this. Keymaps can be added to regions during font-lock, so I just had to hook into the org-mode font lock system with a function to find the src blocks and add the keymap as a text-property. That took three steps:
+</p>
+
+<ol class="org-ol">
+<li>Define the keymaps to use. I use an a-list of (language . map) for this.</li>
+<li>Define the font-lock function. This will add the keymap properties to src-blocks.</li>
+<li>Define a minor mode to toggle this feature on and off.</li>
+</ol>
+
+<p>
+Here is the definition of the keymaps. Generally I just copy the mode-map I want and then add some things to them. For example sometimes it is still a good idea to jump into the org-special-edit mode. For example, if you try to use a command in a Python block to send the buffer to the repl while in org-mode you are sure to get an error! You might also want to add the C-c C-e export command if you use that a lot. An alternative approach, of course, is to copy the org-map and add additional bindings to it. The choice is up to you.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">lispy</span>)
+(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">elpy</span>)
+
+(<span style="color: #0000FF;">setq</span> scimax-src-block-keymaps
+      `((<span style="color: #008000;">"ipython"</span> . ,(<span style="color: #0000FF;">let</span> ((map (make-composed-keymap
+                                  `(,elpy-mode-map ,python-mode-map ,pyvenv-mode-map)
+                                  org-mode-map)))
+                        <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">In org-mode I define RET so we f</span>
+                        (define-key map (kbd <span style="color: #008000;">"&lt;return&gt;"</span>) 'newline)
+                        (define-key map (kbd <span style="color: #008000;">"C-c C-c"</span>) 'org-ctrl-c-ctrl-c)
+                        map))
+        (<span style="color: #008000;">"python"</span> . ,(<span style="color: #0000FF;">let</span> ((map (make-composed-keymap
+                                 `(,elpy-mode-map ,python-mode-map ,pyvenv-mode-map)
+                                 org-mode-map)))
+                       <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">In org-mode I define RET so we f</span>
+                       (define-key map (kbd <span style="color: #008000;">"&lt;return&gt;"</span>) 'newline)
+                       (define-key map (kbd <span style="color: #008000;">"C-c C-c"</span>) 'org-ctrl-c-ctrl-c)
+                       map))
+        (<span style="color: #008000;">"emacs-lisp"</span> . ,(<span style="color: #0000FF;">let</span> ((map (make-composed-keymap `(,lispy-mode-map
+                                                            ,emacs-lisp-mode-map
+                                                            ,outline-minor-mode-map)
+                                                          org-mode-map)))
+                           (define-key map (kbd <span style="color: #008000;">"C-c C-c"</span>) 'org-ctrl-c-ctrl-c)
+                           map))))
+</pre>
+</div>
+
+<p>
+Next we define the function that will apply the keymap to each src block. The keymaps are only applied when they are defined in the variable above. This function is derived from org-fontify-meta-lines-and-blocks-1.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">scimax-add-keymap-to-src-blocks</span> (limit)
+  <span style="color: #036A07;">"Add keymaps to src-blocks defined in `</span><span style="color: #D0372D;">scimax-src-block-keymaps</span><span style="color: #036A07;">'."</span>
+  (<span style="color: #0000FF;">let</span> ((case-fold-search t)
+        lang)
+    (<span style="color: #0000FF;">while</span> (re-search-forward org-babel-src-block-regexp limit t)
+      (<span style="color: #0000FF;">let</span> ((lang (match-string 2))
+            (beg (match-beginning 0))
+            (end (match-end 0)))
+        (<span style="color: #0000FF;">if</span> (assoc (org-no-properties lang) scimax-src-block-keymaps)
+            (<span style="color: #0000FF;">progn</span>
+              (add-text-properties
+               beg end `(local-map ,(cdr (assoc
+                                          (org-no-properties lang)
+                                          scimax-src-block-keymaps))))
+              (add-text-properties
+               beg end `(cursor-sensor-functions
+                         ((<span style="color: #0000FF;">lambda</span> (win prev-pos sym)
+                            <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">This simulates a mouse click and makes a menu change</span>
+                            (org-mouse-down-mouse nil)))))))))))
+</pre>
+</div>
+
+<p>
+Here we create an advice to trick any functions that need to know the major mode. We only apply the spoof if we are in org-mode and in a src block though. Otherwise we call the original function. So far lispy&#x2013;eval is the only function I have needed it for. This might be a general strategy though to do other things like narrow to the src-block, or even go into special edit mode temporarily if there are commands that require it.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">scimax-spoof-mode</span> (orig-func <span style="color: #6434A3;">&amp;rest</span> args)
+  <span style="color: #036A07;">"Advice function to spoof commands in org-mode src blocks.</span>
+<span style="color: #036A07;">It is for commands that depend on the major mode. One example is</span>
+<span style="color: #036A07;">`</span><span style="color: #D0372D;">lispy--eval</span><span style="color: #036A07;">'."</span>
+  (<span style="color: #0000FF;">if</span> (org-in-src-block-p)
+      (<span style="color: #0000FF;">let</span> ((major-mode (intern (format <span style="color: #008000;">"%s-mode"</span> (first (org-babel-get-src-block-info))))))
+        (apply orig-func args))
+    (apply orig-func args)))
+</pre>
+</div>
+
+<p>
+We define a minor mode so we can toggle this on and off. Here we add the function to the org-font-lock-hook and advise the lispy&#x2013;eval function. I had to add the font-lock-function to the end of the org-font-lock hook for some reason, and also add local-map as an extra-managed property so it would be removed when we toggle it off.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">define-minor-mode</span> <span style="color: #006699;">scimax-src-keymap-mode</span>
+  <span style="color: #036A07;">"Minor mode to add mode keymaps to src-blocks."</span>
+  <span style="color: #006FE0;">:init-value</span> nil
+  (<span style="color: #0000FF;">if</span> scimax-src-keymap-mode
+      (<span style="color: #0000FF;">progn</span>
+        (add-hook 'org-font-lock-hook #'scimax-add-keymap-to-src-blocks t)
+        (add-to-list 'font-lock-extra-managed-props 'local-map)
+        (add-to-list 'font-lock-extra-managed-props 'cursor-sensor-functions)
+        (advice-add 'lispy--eval <span style="color: #006FE0;">:around</span> 'scimax-spoof-mode)
+        (cursor-sensor-mode +1))
+    (remove-hook 'org-font-lock-hook #'scimax-add-keymap-to-src-blocks)
+    (advice-remove 'lispy--eval 'scimax-spoof-mode)
+    (cursor-sensor-mode -1))
+  (font-lock-fontify-buffer))
+
+(add-hook 'org-mode-hook (<span style="color: #0000FF;">lambda</span> ()
+                           (scimax-src-keymap-mode +1)))
+</pre>
+</div>
+
+<p>
+That is it! I am pretty sure this is a good idea. It helps a lot when you are writing a lot of short code blocks and near equal amounts of text (like in this blog post). It also helps write the code since many things like indentation, parentheses, etc. are automatically handled. That is what I used to go into special-edit mode all the time for!
+</p>
+
+<p>
+I have not used this long enough to know if it causes any other surprises. If you try it and find any, leave a comment!
+</p>
+
+<div id="outline-container-org49daca5" class="outline-2">
+<h2 id="org49daca5"><span class="section-number-2">1</span> Update</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+It turns out you can have the best of all the worlds by combining keymaps. The make-composed-keymap creates a new keymap that combines a keymaps and falls through to a parent keymap. So here we use that to combine several keymaps, falling through to org-mode. The only subtlety I have come across is that I remapped &lt;return&gt; in orgmode to scimax/org-return, and not all modes define it, so I redefine it in some places to just be newline. Also to keep C-c C-c for executing the block, I add that back too.
+</p>
+
+<p>
+I use a few maps here, and some of them seem to just add menus that are only active when your cursor is in the block. Pretty handy!
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">setq</span> scimax-src-block-keymaps
+      `((<span style="color: #008000;">"ipython"</span> . ,(<span style="color: #0000FF;">let</span> ((map (make-composed-keymap
+                                  `(,elpy-mode-map ,python-mode-map ,pyvenv-mode-map)
+                                  org-mode-map)))
+                        <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">In org-mode I define RET so we f</span>
+                        (define-key map (kbd <span style="color: #008000;">"&lt;return&gt;"</span>) 'newline)
+                        (define-key map (kbd <span style="color: #008000;">"C-c C-c"</span>) 'org-ctrl-c-ctrl-c)
+                        map))
+        (<span style="color: #008000;">"python"</span> . ,(<span style="color: #0000FF;">let</span> ((map (make-composed-keymap
+                                 `(,elpy-mode-map ,python-mode-map ,pyvenv-mode-map)
+                                 org-mode-map)))
+                       <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">In org-mode I define RET so we f</span>
+                       (define-key map (kbd <span style="color: #008000;">"&lt;return&gt;"</span>) 'newline)
+                       (define-key map (kbd <span style="color: #008000;">"C-c C-c"</span>) 'org-ctrl-c-ctrl-c)
+                       map))
+        (<span style="color: #008000;">"emacs-lisp"</span> . ,(<span style="color: #0000FF;">let</span> ((map (make-composed-keymap `(,lispy-mode-map
+                                                            ,emacs-lisp-mode-map
+                                                            ,outline-minor-mode-map)
+                                                          org-mode-map)))
+                           (define-key map (kbd <span style="color: #008000;">"C-c C-c"</span>) 'org-ctrl-c-ctrl-c)
+                           map))))
+</pre>
+</div>
+</div>
+</div>
+<div id="outline-container-org004cb53" class="outline-2">
+<h2 id="org004cb53"><span class="section-number-2">2</span> Update #2</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+The previous version had some issues where it would only add a keymap to the first block. The code in this post now addresses that and uses cursor-sensor-functions to make sure we change key map on entering and leaving blocks. That might mean you need an emacs of at least version 25 to use this. I guess it will work with an earlier version, but the cursor-sensor-functions might get ignored. You might have to comment out the cursor-sensor-mode line
+</p>
+
+<p>
+Thanks to those brave people alpha-testing this and helping refine the idea!
+</p>
+</div>
+</div>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/06/10/Adding-keymaps-to-src-blocks-via-org-font-lock-hook.org">org-mode source</a></p>
+<p>Org-mode version = 9.0.7</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+
+<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2017/06/10/Adding-keymaps-to-src-blocks-via-org-font-lock-hook">Discuss on Twitter</a>
+
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Org-mode-and-ipython-enhancements-in-scimax"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/05/26/Org-mode-and-ipython-enhancements-in-scimax/" rel="bookmark" title="Permanent Link to Org-mode and ipython enhancements in scimax">Org-mode and ipython enhancements in scimax</a></h2>
       <p><small><span class="blog_post_date">Posted May 26, 2017 at 04:54 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/ipython/'>ipython</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/ipython/'>ipython</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
       </small></p>
     </header>
     <div class="post_prose">
@@ -559,7 +781,7 @@ Occasionally you will run into an issue. You can clear the queue with <code>org-
       <div id="A-new-org-mode-exporter-to-Word-for-scimax"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/04/15/A-new-org-mode-exporter-to-Word-for-scimax/" rel="bookmark" title="Permanent Link to A new org-mode exporter to Word for scimax">A new org-mode exporter to Word for scimax</a></h2>
       <p><small><span class="blog_post_date">Posted April 15, 2017 at 04:19 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/export/'>export</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/export/'>export</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
       <p><small><span class="blog_post_date">Updated April 15, 2017 at 04:21 PM</span></small>
       </small></p>
     </header>
@@ -926,269 +1148,6 @@ With some content
 <a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2017/04/09/A-better-return-in-org-mode">Discuss on Twitter</a>
 
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Exporting-org-mode-to-Jupyter-notebooks"></div>
-      <h2 class="blog_post_title"><a href="/blog/2017/01/21/Exporting-org-mode-to-Jupyter-notebooks/" rel="bookmark" title="Permanent Link to Exporting org-mode to Jupyter notebooks">Exporting org-mode to Jupyter notebooks</a></h2>
-      <p><small><span class="blog_post_date">Posted January 21, 2017 at 07:51 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/python/'>python</a>, <a href='/blog/category/jupyter/'>jupyter</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
-      <p><small><span class="blog_post_date">Updated January 25, 2017 at 08:50 AM</span></small>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<div id="table-of-contents">
-<h2>Table of Contents</h2>
-<div id="text-table-of-contents">
-<ul>
-<li><a href="#orge344b68">1. Solve a nonlinear problem</a></li>
-<li><a href="#orgdcea869">2. Benefits of export to ipynb</a></li>
-<li><a href="#org26076b0">3. Limitations</a></li>
-<li><a href="#orgfe4c8f7">4. Summary</a></li>
-</ul>
-</div>
-</div>
-<p>
-I am going to use Jupyter notebooks to teach from this semester. I really dislike preparing notebooks though. A browser is a really poor editor, and I really dislike Markdown. Notebooks do not seem to have any real structure in them, e.g. the collapsible outline that I am used to in org-mode, so for long notebooks, it is difficult to get a sense for the structure. I am anticipating spending up to 80 hours preparing notebooks this semester, so today I worked out some code to export org-mode to an ipython notebook! 
-</p>
-
-<p>
-This will let me use the power tools I am accustomed to for the creation of IPython notebooks for my students, and perhaps others who do not use org-mode. 
-</p>
-
-<p>
-Jupyter notebooks are just json files, so all we need to do is generate it from an org document. The basic strategy was to build up a lisp data structure that represents the notebook and then just convert that data structure to json. I split the document up into sequential markdown and code cells, and then encode those in the format required for the notebook (json).
-</p>
-
-<p>
-So, here is an example of what can be easily written in org-mode, posted to this blog, and exported to an IPython notebook, all from one org-document.
-</p>
-
-<p>
-Check out the notebook:  <a href="/media/exporting-orgmode-to-ipynb.ipynb">exporting-orgmode-to-ipynb.ipynb</a> . 
-</p>
-
-<div id="outline-container-orge344b68" class="outline-2">
-<h2 id="orge344b68"><span class="section-number-2">1</span> Solve a nonlinear problem</h2>
-<div class="outline-text-2" id="text-1">
-<p>
-Consider the equation \(x^2 = 4\). Find a solution to it in Python using a nonlinear solver. 
-</p>
-
-<p>
-To do that, we need to define an objective function that will be equal to zero at the solution. Here is the function:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">def</span> <span style="color: #006699;">objective</span>(x):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> x**2 - 4
-</pre>
-</div>
-
-<p>
-Next, we use fsolve with an initial guess. We get fsolve from <a href="https://docs.scipy.org/doc/scipy-0.18.1/reference/generated/scipy.optimize.fsolve.html#scipy.optimize.fsolve">scipy.optimize</a>.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">from</span> scipy.optimize <span style="color: #0000FF;">import</span> fsolve
-
-<span style="color: #BA36A5;">ans</span> = fsolve(objective, 3)
-<span style="color: #0000FF;">print</span>(ans)
-</pre>
-</div>
-
-<pre class="example">
-[ 2.]
-</pre>
-
-<p>
-That should have been an obvious answer. The answer is in brackets because fsolve returns an array. In the next block we will unpack the solution into the answer using the comma operator. Also, we can see that using a different guess leads to a different answer. There are, of course, two answers: \(x = \pm 2\)
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython">ans, = fsolve(objective, -3)
-<span style="color: #0000FF;">print</span>(ans)
-</pre>
-</div>
-
-<pre class="example">
--2.0
-</pre>
-
-<p>
-Now you see we get a float answer!
-</p>
-
-<p>
-Here are some other ways to get a float:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #BA36A5;">ans</span> = fsolve(objective, -3)
-
-<span style="color: #0000FF;">print</span>(<span style="color: #006FE0;">float</span>(ans))
-<span style="color: #0000FF;">print</span>(ans[0])
-</pre>
-</div>
-
-<pre class="example">
--2.0000000000000084
--2.0
-</pre>
-
-<p>
-It is worth noting from the first result that fsolve is iterative and stops when it reaches zero within a tolerance. That is why it is not exactly -2.
-</p>
-</div>
-</div>
-
-<div id="outline-container-orgdcea869" class="outline-2">
-<h2 id="orgdcea869"><span class="section-number-2">2</span> Benefits of export to ipynb</h2>
-<div class="outline-text-2" id="text-2">
-<ol class="org-ol">
-<li>I can use org-mode</li>
-<li>And emacs</li>
-<li>and ipynb for teaching.</li>
-</ol>
-
-<p>
-The export supports org-markup: <b>bold</b>, <i>italic</i>, <span class="underline">underlined</span>, and ~~strike~~.
-</p>
-
-<p>
-We can use tables:
-</p>
-
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-<caption class="t-above"><span class="table-number">Table 1:</span> A table of squares.</caption>
-
-<colgroup>
-<col  class="org-right" />
-
-<col  class="org-right" />
-</colgroup>
-<thead>
-<tr>
-<th scope="col" class="org-right">x</th>
-<th scope="col" class="org-right">y</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td class="org-right">1</td>
-<td class="org-right">2</td>
-</tr>
-
-<tr>
-<td class="org-right">2</td>
-<td class="org-right">4</td>
-</tr>
-
-<tr>
-<td class="org-right">3</td>
-<td class="org-right">9</td>
-</tr>
-
-<tr>
-<td class="org-right">4</td>
-<td class="org-right">16</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-We can make plots.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">import</span> numpy <span style="color: #0000FF;">as</span> np
-
-<span style="color: #BA36A5;">t</span> = np.linspace(0, 2 * np.pi)
-
-<span style="color: #BA36A5;">x</span> = np.cos(t)
-<span style="color: #BA36A5;">y</span> = np.sin(t)
-
-<span style="color: #0000FF;">import</span> matplotlib.pyplot <span style="color: #0000FF;">as</span> plt
-plt.plot(x, y)
-plt.axis(<span style="color: #008000;">'equal'</span>)
-plt.xlabel(<span style="color: #008000;">'x'</span>)
-plt.ylabel(<span style="color: #008000;">'y'</span>)
-plt.savefig(<span style="color: #008000;">'circle.png'</span>)
-</pre>
-</div>
-
-<p>
-<img src="/media/circle.png"> 
-</p>
-
-<p>
-Even include HTML:
-&lt;font color="red"&gt;Pay special attention to the axis labels!&lt;/font&gt;
-</p>
-</div>
-</div>
-
-
-<div id="outline-container-org26076b0" class="outline-2">
-<h2 id="org26076b0"><span class="section-number-2">3</span> Limitations</h2>
-<div class="outline-text-2" id="text-3">
-<ul class="org-ul">
-<li>Only supports iPython blocks</li>
-<li>Does not do inline images in results</li>
-<li>Will not support src-block variables</li>
-<li>Currently only supports vanilla output results</li>
-</ul>
-</div>
-</div>
-
-
-<div id="outline-container-orgfe4c8f7" class="outline-2">
-<h2 id="orgfe4c8f7"><span class="section-number-2">4</span> Summary</h2>
-<div class="outline-text-2" id="text-4">
-<p>
-The code that does this is here: <a href="/media/ox-ipynb.el">ox-ipynb.el</a> . After I use it a while I will put it in scimax. There are some tricks in it to fix up some markdown export of latex fragments and links with no descriptions.
-</p>
-
-<p>
-I just run this command in Emacs to get the notebook. Even it renders reasonably in the notebook.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(export-ipynb-buffer)
-</pre>
-</div>
-
-<p>
-Overall, this looks extremely promising to develop lecture notes and assignments in org-mode, but export them to Ipython notebooks for the students.
-</p>
-</div>
-</div>
-<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2017/01/21/Exporting-org-mode-to-Jupyter-notebooks.org">org-mode source</a></p>
-<p>Org-mode version = 9.0.3</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-
-<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2017/01/21/Exporting-org-mode-to-Jupyter-notebooks">Discuss on Twitter</a>
-
-  <hr class="interblog" />
  <a href="/blog/category/orgmode/1">« Previous Page</a>
   --  
  <a href="/blog/category/orgmode/3">Next Page »</a>
@@ -1230,11 +1189,11 @@ Overall, this looks extremely promising to develop lecture notes and assignments
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2023/02/25/MS-Word-comments-from-org-mode/">MS Word comments from org-mode</a></li>
       <li><a href="/blog/2023/02/17/Update-on-finding-the-minimum-distance-from-a-point-to-a-curve/">Update on finding the minimum distance from a point to a curve</a></li>
       <li><a href="/blog/2023/02/01/Caching-expensive-function-calls-so-you-don-t-have-to-rerun-them/">Caching expensive function calls so you don't have to rerun them</a></li>
       <li><a href="/blog/2023/01/01/2022-in-a-nutshell/">2022 in a nutshell</a></li>
       <li><a href="/blog/2022/09/29/New-publication-Identifying-limitations-in-screening-high-throughput-photocatalytic-bimetallic-nanoparticles-with-machine-learned-hydrogen-adsorptions/">New publication - Identifying limitations in screening high-throughput photocatalytic bimetallic nanoparticles with machine-learned hydrogen adsorptions</a></li>
-      <li><a href="/blog/2022/09/12/New-publication-Neural-network-embeddings-based-similarity-search-method-for-atomistic-systems/">New publication - Neural network embeddings based similarity search method for atomistic systems</a></li>
     </ul>
   </section>
 
