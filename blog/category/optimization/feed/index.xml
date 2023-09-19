@@ -12,11 +12,161 @@
     <title>The Kitchin Research Group</title>
     <link>https://kitchingroup.cheme.cmu.edu/blog</link>
     <description>Chemical Engineering at Carnegie Mellon University</description>
-    <pubDate>Tue, 25 Apr 2023 17:43:42 GMT</pubDate>
+    <pubDate>Tue, 19 Sep 2023 19:50:11 GMT</pubDate>
     <generator>Blogofile</generator>
     <sy:updatePeriod>hourly</sy:updatePeriod>
     <sy:updateFrequency>1</sy:updateFrequency>
     
+    <item>
+      <title>Using Custodian to help converge an optimization problem</title>
+      <link>https://kitchingroup.cheme.cmu.edu/blog/2023/09/19/Using-Custodian-to-help-converge-an-optimization-problem</link>
+      <pubDate>Tue, 19 Sep 2023 15:34:21 EDT</pubDate>
+      <category><![CDATA[optimization]]></category>
+      <category><![CDATA[programming]]></category>
+      <guid isPermaLink="false">Dx1efJ79cKOKFx-BnlZVFB1wGjA=</guid>
+      <description>Using Custodian to help converge an optimization problem</description>
+      <content:encoded><![CDATA[
+
+
+&lt;p&gt;
+In high-throughput calculations, some fraction of them usually fail for some reason. Sometimes it is easy to fix these calculations and re-run them successfully, for example, you might just need a different initialization, or to increase memory or the number of allowed steps, etc.  &lt;a href="http://materialsproject.github.io/custodian/"&gt;custodian&lt;/a&gt; is a tool that is designed for this purpose. 
+&lt;/p&gt;
+
+&lt;p&gt;
+The idea is we make a function to do what we want that has arguments that control that. We need a function that can examine the output of the function and determine if it succeeded, and if it didn't succeed to say what new arguments to try next. Then we run the function in custodian and let it take care of rerunning with new arguments until it either succeeds, or tries too many times.
+&lt;/p&gt;
+
+&lt;p&gt;
+The goal here is to use &lt;a href="http://materialsproject.github.io/custodian/"&gt;custodian&lt;/a&gt; to fix a problem optimization. The example is a little contrived, we set a number of iterations artificially low so that the minimization fails by reaching the maximum number of iterations. Custodian will catch this, and increase the number of iterations until it succeeds. Here is the objective function:
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; matplotlib.pyplot &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; plt
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;objective&lt;/span&gt;(x):
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; np.exp(x**2) - 10*np.exp(x)
+
+&lt;span style="color: #BA36A5;"&gt;x&lt;/span&gt; = np.linspace(0, 2)
+plt.plot(x, objective(x))
+plt.xlabel(&lt;span style="color: #008000;"&gt;'x'&lt;/span&gt;)
+plt.ylabel(&lt;span style="color: #008000;"&gt;'y'&lt;/span&gt;);
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+&lt;figure&gt;&lt;img src="/media/354616de80c1f529dd249d03f96e5bc023bbd321.png"&gt;&lt;/figure&gt; 
+&lt;/p&gt;
+
+&lt;p&gt;
+Clearly there is a minimum near 1.75, but with a bad initial guess, and not enough iterations, an optimizer fails here. We can tell it fails from the message here, and the solution is run it again with more iterations.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; scipy.optimize &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; minimize
+
+minimize(objective, 0.0, options={&lt;span style="color: #008000;"&gt;'maxiter'&lt;/span&gt;: 2})
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example" id="org27fcdb3"&gt;
+:RESULTS:
+  message: Maximum number of iterations has been exceeded.
+  success: False
+   status: 1
+      fun: -36.86289091418059
+        x: [ 1.661e+00]
+      nit: 2
+      jac: [-2.374e-01]
+ hess_inv: [[ 6.889e-03]]
+     nfev: 20
+     njev: 10
+:END:
+&lt;/pre&gt;
+
+&lt;p&gt;
+With Custodian you define a "Job". This is a class with  &lt;code&gt;params&lt;/code&gt; that contain the adjustable arguments in a dictionary, and a &lt;code&gt;run&lt;/code&gt; method that stores the results in the params attribute. This is an important step, because the error handlers only get the params, so you need the results in there to inspect them.
+&lt;/p&gt;
+
+&lt;p&gt;
+The error handlers are another class with a &lt;code&gt;check&lt;/code&gt; method that returns True if you should rerun, and a &lt;code&gt;correct&lt;/code&gt; method that sets the params to new values to try next. It seems to return some information about what happened. In the &lt;code&gt;correct&lt;/code&gt; method, we double the maximum number of iterations allowed, and use the last solution point that failed as the initial guess for the next run.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; custodian.custodian &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; Custodian, Job, ErrorHandler
+
+&lt;span style="color: #0000FF;"&gt;class&lt;/span&gt; &lt;span style="color: #6434A3;"&gt;Minimizer&lt;/span&gt;(Job):
+    &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;__init__&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;, params=&lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;):
+        &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.params = params &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; params &lt;span style="color: #0000FF;"&gt;else&lt;/span&gt; {&lt;span style="color: #008000;"&gt;'maxiter'&lt;/span&gt;: 2, &lt;span style="color: #008000;"&gt;'x0'&lt;/span&gt;: 0}
+        
+    &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;run&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;):
+        sol = minimize(objective,
+                       &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.params[&lt;span style="color: #008000;"&gt;'x0'&lt;/span&gt;],
+                       options={&lt;span style="color: #008000;"&gt;'maxiter'&lt;/span&gt;: &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.params[&lt;span style="color: #008000;"&gt;'maxiter'&lt;/span&gt;]})
+        &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.params[&lt;span style="color: #008000;"&gt;'sol'&lt;/span&gt;] = sol
+
+&lt;span style="color: #0000FF;"&gt;class&lt;/span&gt; &lt;span style="color: #6434A3;"&gt;MaximumIterationsExceeded&lt;/span&gt;(ErrorHandler):
+    &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;__init__&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;, params):
+        &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.params = params
+
+    &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;check&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;):
+        &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.params[&lt;span style="color: #008000;"&gt;'sol'&lt;/span&gt;].message == &lt;span style="color: #008000;"&gt;'Maximum number of iterations has been exceeded.'&lt;/span&gt;
+
+    &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;correct&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;):
+        &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.params[&lt;span style="color: #008000;"&gt;'maxiter'&lt;/span&gt;] *= 2
+        &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.params[&lt;span style="color: #008000;"&gt;'x0'&lt;/span&gt;] = &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.params[&lt;span style="color: #008000;"&gt;'sol'&lt;/span&gt;].x        
+        &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; {&lt;span style="color: #008000;"&gt;'errors'&lt;/span&gt;: &lt;span style="color: #008000;"&gt;'MaximumIterations Exceeded'&lt;/span&gt;,
+                &lt;span style="color: #008000;"&gt;'actions'&lt;/span&gt;: &lt;span style="color: #008000;"&gt;'maxiter = {self.params["maxiter"]}, x0 = {self.params["x0"]}'&lt;/span&gt;}
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Now we setup the initial params to try, create a Custodian object with the handler and job, and then run it. The results and final params are stored in the params object.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #BA36A5;"&gt;params&lt;/span&gt; = {&lt;span style="color: #008000;"&gt;'maxiter'&lt;/span&gt;: 1, &lt;span style="color: #008000;"&gt;'x0'&lt;/span&gt;: 0}
+
+&lt;span style="color: #BA36A5;"&gt;c&lt;/span&gt; = Custodian([MaximumIterationsExceeded(params)],
+              [Minimizer(params)],
+               max_errors=5)
+
+c.run()
+&lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; key &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; params:
+    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(key, params[key])
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example" id="orgca61279"&gt;
+MaximumIterationsExceeded
+MaximumIterationsExceeded
+maxiter 4
+x0 [1.66250127]
+sol   message: Optimization terminated successfully.
+  success: True
+   status: 0
+      fun: -36.86307468296398
+        x: [ 1.662e+00]
+      nit: 1
+      jac: [-9.060e-06]
+ hess_inv: [[1]]
+     nfev: 6
+     njev: 3
+&lt;/pre&gt;
+
+
+
+&lt;p&gt;
+Note that params is modified, and finally has the maxiter value that worked, and the solution in it. You can see we had to rerun this problem  twice before it succeeded, but this happened automatically after the setup. This example is easy because we can simply increase the maxiter value, and no serious logic is needed. Other use cases might include try it again with another solver, try again with a different initial guess, etc. 
+&lt;/p&gt;
+
+&lt;p&gt;
+It feels a little heavyweight to define the classes, and to store the results in params here, but this was overall under an hour of work to put it all together, starting from scratch with the &lt;a href="http://materialsproject.github.io/custodian/"&gt;Custodian documentation&lt;/a&gt; from the example on the front page. You can do more sophisticated things, including having multiple error handlers. Overall, for a package designed for molecular simulations, this worked well for a different kind of problem.
+&lt;/p&gt;
+&lt;p&gt;Copyright (C) 2023 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
+&lt;p&gt;&lt;a href="/org/2023/09/19/Using-Custodian-to-help-converge-an-optimization-problem.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Org-mode version = 9.7-pre&lt;/p&gt;]]></content:encoded>
+    </item>
     <item>
       <title>Update on finding the minimum distance from a point to a curve</title>
       <link>https://kitchingroup.cheme.cmu.edu/blog/2023/02/17/Update-on-finding-the-minimum-distance-from-a-point-to-a-curve</link>
@@ -1269,184 +1419,6 @@ dot(v1, v2) =  0.000336477214214
 In the code above, we demonstrate that the point we find on the curve that minimizes the distance satisfies the property that a vector from that point to our other point is normal to the tangent of the curve at that point. This is shown by the fact that the dot product of the two vectors is very close to zero. It is not zero because of the accuracy criteria that is used to stop the minimization is not high enough.
 &lt;/p&gt;
 &lt;p&gt;Copyright (C) 2013 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;&lt;p&gt;&lt;a href="/org/2013/02/14/Find-the-minimum-distance-from-a-point-to-a-curve..org"&gt;org-mode source&lt;/a&gt;&lt;p&gt;]]></content:encoded>
-    </item>
-    <item>
-      <title>Using constrained optimization to find the amount of each phase present</title>
-      <link>https://kitchingroup.cheme.cmu.edu/blog/2013/02/12/Using-constrained-optimization-to-find-the-amount-of-each-phase-present</link>
-      <pubDate>Tue, 12 Feb 2013 09:00:00 EST</pubDate>
-      <category><![CDATA[optimization]]></category>
-      <guid isPermaLink="false">Kp8tlX5vhQuLJnSs7kNRHbpfDOk=</guid>
-      <description>Using constrained optimization to find the amount of each phase present</description>
-      <content:encoded><![CDATA[
-
-
-&lt;p&gt;
-The problem we solve here is that we have several compounds containing Ni and Al, and a bulk mixture of a particular composition of Ni and Al. We want to know which mixture of phases will minimize the total energy. The tricky part is that the optimization is constrained because the mixture of phases must have the overall stoichiometry we want.  We formulate the problem like this.
-&lt;/p&gt;
-
-&lt;p&gt;
-Basically, we want to minimize the function \(E = \sum w_i E_i\), where \(w_i\) is the mass of phase \(i\), and \(E_i\) is the energy per unit mass of phase \(i\). There are some constraints to ensure conservation of mass. Let us consider the following compounds: Al, NiAl, Ni3Al, and Ni, and consider a case where the bulk composition of our alloy is 93.8% Ni and balance Al. We want to know which phases are present, and in what proportions. There are some subtleties in considering the formula and molecular weight of an alloy. We consider the formula with each species amount normalized so the fractions all add up to one. For example, Ni_3Al is represented as Ni_{0.75}Al_{0.25}, and the molecular weight is computed as 0.75*MW_{Ni} + 0.25*MW_{Al}.
-&lt;/p&gt;
-
-&lt;p&gt;
-We use scipy.optimize.fmin_slsqp to solve this problem, and define two equality constraint functions, and the bounds on each weight fraction.
-&lt;/p&gt;
-
-&lt;p&gt;
-Note: the energies in this example were computed by density functional theory at 0K.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; np
-&lt;span style="color: #8b0000;"&gt;from&lt;/span&gt; scipy.optimize &lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; fmin_slsqp
-
-&lt;span style="color: #ff0000; font-weight: bold;"&gt;# these are atomic masses of each species&lt;/span&gt;
-Ni = 58.693
-Al = 26.982
-
-COMPOSITIONS = [&lt;span style="color: #228b22;"&gt;'Al'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'NiAl'&lt;/span&gt;,              &lt;span style="color: #228b22;"&gt;'Ni3Al'&lt;/span&gt;,  &lt;span style="color: #228b22;"&gt;'Ni'&lt;/span&gt;]
-MW = np.array(  [Al,  (Ni + Al)/2.0, (3*Ni + Al)/4.0, Ni])
-
-xNi = np.array([0.0, 0.5, 0.75, 1.0])  &lt;span style="color: #ff0000; font-weight: bold;"&gt;# mole fraction of nickel in each compd&lt;/span&gt;
-WNi = xNi*Ni / MW                      &lt;span style="color: #ff0000; font-weight: bold;"&gt;# weight fraction of Ni in each cmpd&lt;/span&gt;
-
-ENERGIES = np.array([0.0, -0.7, -0.5, 0.0])
-
-BNi = 0.938
-
-&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;G&lt;/span&gt;(w):
-    &lt;span style="color: #228b22;"&gt;'function to minimize. w is a vector of weight fractions, ENERGIES is defined above.'&lt;/span&gt;
-    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; np.dot(w, ENERGIES)
-
-&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;ec1&lt;/span&gt;(w):
-    &lt;span style="color: #228b22;"&gt;'conservation of Ni constraint'&lt;/span&gt;
-    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; BNi - np.dot(w, WNi)
-
-&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;ec2&lt;/span&gt;(w):
-    &lt;span style="color: #228b22;"&gt;'weight fractions sum to one constraint'&lt;/span&gt;
-    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; 1 - np.sum(w)
-
-w0 = np.array([0.0, 0.0, 0.5, 0.5]) &lt;span style="color: #ff0000; font-weight: bold;"&gt;# guess weight fractions&lt;/span&gt;
-
-y = fmin_slsqp(G,   
-               w0,
-               eqcons=[ec1, ec2], 
-               bounds=[(0,1)]*&lt;span style="color: #8b0000;"&gt;len&lt;/span&gt;(w0))
-
-&lt;span style="color: #8b0000;"&gt;for&lt;/span&gt; ci, wi &lt;span style="color: #8b0000;"&gt;in&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;zip&lt;/span&gt;(COMPOSITIONS, y):
-    &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'{0:8s} {1:+8.2%}'&lt;/span&gt;.format(ci, wi)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-Optimization terminated successfully.    (Exit mode 0)
-            Current function value: -0.233299644373
-            Iterations: 2
-            Function evaluations: 12
-            Gradient evaluations: 2
-Al         -0.00%
-NiAl       +0.00%
-Ni3Al     +46.66%
-Ni        +53.34%
-&lt;/pre&gt;
-
-&lt;p&gt;
-So, the sample will be about 47% &lt;i&gt;by weight&lt;/i&gt; of Ni3Al, and 53% &lt;i&gt;by weight&lt;/i&gt; of pure Ni.
-&lt;/p&gt;
-
-&lt;p&gt;
-It may be convenient to formulate this in terms of moles.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; np
-&lt;span style="color: #8b0000;"&gt;from&lt;/span&gt; scipy.optimize &lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; fmin_slsqp
-
-COMPOSITIONS = [&lt;span style="color: #228b22;"&gt;'Al'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'NiAl'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'Ni3Al'&lt;/span&gt;,  &lt;span style="color: #228b22;"&gt;'Ni'&lt;/span&gt;]
-xNi = np.array([0.0, 0.5, 0.75, 1.0])   &lt;span style="color: #ff0000; font-weight: bold;"&gt;# define this in mole fractions&lt;/span&gt;
-
-ENERGIES = np.array([0.0, -0.7, -0.5, 0.0]) 
-
-xNiB = 0.875  &lt;span style="color: #ff0000; font-weight: bold;"&gt;# bulk Ni composition&lt;/span&gt;
-
-&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;G&lt;/span&gt;(n):
-    &lt;span style="color: #228b22;"&gt;'function to minimize'&lt;/span&gt;
-    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; np.dot(n, ENERGIES)
-
-&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;ec1&lt;/span&gt;(n):
-    &lt;span style="color: #228b22;"&gt;'conservation of Ni'&lt;/span&gt;
-    Ntot = np.sum(n)
-    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; (Ntot * xNiB) - np.dot(n,  xNi)
-
-&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;ec2&lt;/span&gt;(n):
-    &lt;span style="color: #228b22;"&gt;'mole fractions sum to one'&lt;/span&gt;
-    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; 1 - np.sum(n)
-
-n0 = np.array([0.0, 0.0, 0.45, 0.55]) &lt;span style="color: #ff0000; font-weight: bold;"&gt;# initial guess of mole fractions&lt;/span&gt;
-
-y = fmin_slsqp(G,   
-               n0,
-               eqcons=[ec1, ec2], 
-               bounds=[(0, 1)]*(&lt;span style="color: #8b0000;"&gt;len&lt;/span&gt;(n0)))
-
-&lt;span style="color: #8b0000;"&gt;for&lt;/span&gt; ci, xi &lt;span style="color: #8b0000;"&gt;in&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;zip&lt;/span&gt;(COMPOSITIONS, y):
-    &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'{0:8s} {1:+8.2%}'&lt;/span&gt;.format(ci, xi)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-Optimization terminated successfully.    (Exit mode 0)
-            Current function value: -0.25
-            Iterations: 2
-            Function evaluations: 12
-            Gradient evaluations: 2
-Al         +0.00%
-NiAl       -0.00%
-Ni3Al     +50.00%
-Ni        +50.00%
-&lt;/pre&gt;
-
-&lt;p&gt;
-This means we have a 1:1 molar ratio of Ni and Ni_{0.75}Al_{0.25}. That works out to the overall bulk composition in this particular problem.
-&lt;/p&gt;
-
-&lt;p&gt;
-Let us verify that these two approaches really lead to the same conclusions. On a weight basis we estimate 53.3%wt Ni and 46.7%wt Ni3Al, whereas we predict an equimolar mixture of the two phases. Below we compute the mole fraction of Ni in each case.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;# these are atomic masses of each species&lt;/span&gt;
-Ni = 58.693
-Al = 26.982
-
-&lt;span style="color: #ff0000; font-weight: bold;"&gt;# Molar case&lt;/span&gt;
-&lt;span style="color: #ff0000; font-weight: bold;"&gt;# 1 mol Ni + 1 mol Ni_{0.75}Al_{0.25}&lt;/span&gt;
-N1 = 1.0; N2 = 1.0
-mol_Ni = 1.0 * N1 + 0.75 * N2
-xNi = mol_Ni / (N1 + N2)
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; xNi
-
-&lt;span style="color: #ff0000; font-weight: bold;"&gt;# Mass case&lt;/span&gt;
-M1 = 0.533; M2 = 0.467
-MW1 = Ni; MW2 = 0.75*Ni + 0.25*Al
-
-xNi2 = (1.0 * M1/MW1 + 0.75 * M2 / MW2) / (M1/MW1 + M2/MW2)
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; xNi2
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-0.875
-0.874192746385
-&lt;/pre&gt;
-
-&lt;p&gt;
-You can see the overall mole fraction of Ni is practically the same in each case.
-&lt;/p&gt;
-&lt;p&gt;Copyright (C) 2013 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;&lt;p&gt;&lt;a href="/org/2013/02/12/Using-constrained-optimization-to-find-the-amount-of-each-phase-present.org"&gt;org-mode source&lt;/a&gt;&lt;p&gt;]]></content:encoded>
     </item>
   </channel>
 </rss>

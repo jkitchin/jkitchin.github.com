@@ -12,11 +12,161 @@
     <title>The Kitchin Research Group</title>
     <link>https://kitchingroup.cheme.cmu.edu/blog</link>
     <description>Chemical Engineering at Carnegie Mellon University</description>
-    <pubDate>Tue, 25 Apr 2023 17:43:42 GMT</pubDate>
+    <pubDate>Tue, 19 Sep 2023 19:50:11 GMT</pubDate>
     <generator>Blogofile</generator>
     <sy:updatePeriod>hourly</sy:updatePeriod>
     <sy:updateFrequency>1</sy:updateFrequency>
     
+    <item>
+      <title>Using Custodian to help converge an optimization problem</title>
+      <link>https://kitchingroup.cheme.cmu.edu/blog/2023/09/19/Using-Custodian-to-help-converge-an-optimization-problem</link>
+      <pubDate>Tue, 19 Sep 2023 15:34:21 EDT</pubDate>
+      <category><![CDATA[optimization]]></category>
+      <category><![CDATA[programming]]></category>
+      <guid isPermaLink="false">Dx1efJ79cKOKFx-BnlZVFB1wGjA=</guid>
+      <description>Using Custodian to help converge an optimization problem</description>
+      <content:encoded><![CDATA[
+
+
+&lt;p&gt;
+In high-throughput calculations, some fraction of them usually fail for some reason. Sometimes it is easy to fix these calculations and re-run them successfully, for example, you might just need a different initialization, or to increase memory or the number of allowed steps, etc.  &lt;a href="http://materialsproject.github.io/custodian/"&gt;custodian&lt;/a&gt; is a tool that is designed for this purpose. 
+&lt;/p&gt;
+
+&lt;p&gt;
+The idea is we make a function to do what we want that has arguments that control that. We need a function that can examine the output of the function and determine if it succeeded, and if it didn't succeed to say what new arguments to try next. Then we run the function in custodian and let it take care of rerunning with new arguments until it either succeeds, or tries too many times.
+&lt;/p&gt;
+
+&lt;p&gt;
+The goal here is to use &lt;a href="http://materialsproject.github.io/custodian/"&gt;custodian&lt;/a&gt; to fix a problem optimization. The example is a little contrived, we set a number of iterations artificially low so that the minimization fails by reaching the maximum number of iterations. Custodian will catch this, and increase the number of iterations until it succeeds. Here is the objective function:
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; matplotlib.pyplot &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; plt
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;objective&lt;/span&gt;(x):
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; np.exp(x**2) - 10*np.exp(x)
+
+&lt;span style="color: #BA36A5;"&gt;x&lt;/span&gt; = np.linspace(0, 2)
+plt.plot(x, objective(x))
+plt.xlabel(&lt;span style="color: #008000;"&gt;'x'&lt;/span&gt;)
+plt.ylabel(&lt;span style="color: #008000;"&gt;'y'&lt;/span&gt;);
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+&lt;figure&gt;&lt;img src="/media/354616de80c1f529dd249d03f96e5bc023bbd321.png"&gt;&lt;/figure&gt; 
+&lt;/p&gt;
+
+&lt;p&gt;
+Clearly there is a minimum near 1.75, but with a bad initial guess, and not enough iterations, an optimizer fails here. We can tell it fails from the message here, and the solution is run it again with more iterations.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; scipy.optimize &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; minimize
+
+minimize(objective, 0.0, options={&lt;span style="color: #008000;"&gt;'maxiter'&lt;/span&gt;: 2})
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example" id="org27fcdb3"&gt;
+:RESULTS:
+  message: Maximum number of iterations has been exceeded.
+  success: False
+   status: 1
+      fun: -36.86289091418059
+        x: [ 1.661e+00]
+      nit: 2
+      jac: [-2.374e-01]
+ hess_inv: [[ 6.889e-03]]
+     nfev: 20
+     njev: 10
+:END:
+&lt;/pre&gt;
+
+&lt;p&gt;
+With Custodian you define a "Job". This is a class with  &lt;code&gt;params&lt;/code&gt; that contain the adjustable arguments in a dictionary, and a &lt;code&gt;run&lt;/code&gt; method that stores the results in the params attribute. This is an important step, because the error handlers only get the params, so you need the results in there to inspect them.
+&lt;/p&gt;
+
+&lt;p&gt;
+The error handlers are another class with a &lt;code&gt;check&lt;/code&gt; method that returns True if you should rerun, and a &lt;code&gt;correct&lt;/code&gt; method that sets the params to new values to try next. It seems to return some information about what happened. In the &lt;code&gt;correct&lt;/code&gt; method, we double the maximum number of iterations allowed, and use the last solution point that failed as the initial guess for the next run.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; custodian.custodian &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; Custodian, Job, ErrorHandler
+
+&lt;span style="color: #0000FF;"&gt;class&lt;/span&gt; &lt;span style="color: #6434A3;"&gt;Minimizer&lt;/span&gt;(Job):
+    &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;__init__&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;, params=&lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;):
+        &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.params = params &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; params &lt;span style="color: #0000FF;"&gt;else&lt;/span&gt; {&lt;span style="color: #008000;"&gt;'maxiter'&lt;/span&gt;: 2, &lt;span style="color: #008000;"&gt;'x0'&lt;/span&gt;: 0}
+        
+    &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;run&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;):
+        sol = minimize(objective,
+                       &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.params[&lt;span style="color: #008000;"&gt;'x0'&lt;/span&gt;],
+                       options={&lt;span style="color: #008000;"&gt;'maxiter'&lt;/span&gt;: &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.params[&lt;span style="color: #008000;"&gt;'maxiter'&lt;/span&gt;]})
+        &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.params[&lt;span style="color: #008000;"&gt;'sol'&lt;/span&gt;] = sol
+
+&lt;span style="color: #0000FF;"&gt;class&lt;/span&gt; &lt;span style="color: #6434A3;"&gt;MaximumIterationsExceeded&lt;/span&gt;(ErrorHandler):
+    &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;__init__&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;, params):
+        &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.params = params
+
+    &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;check&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;):
+        &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.params[&lt;span style="color: #008000;"&gt;'sol'&lt;/span&gt;].message == &lt;span style="color: #008000;"&gt;'Maximum number of iterations has been exceeded.'&lt;/span&gt;
+
+    &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;correct&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;):
+        &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.params[&lt;span style="color: #008000;"&gt;'maxiter'&lt;/span&gt;] *= 2
+        &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.params[&lt;span style="color: #008000;"&gt;'x0'&lt;/span&gt;] = &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.params[&lt;span style="color: #008000;"&gt;'sol'&lt;/span&gt;].x        
+        &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; {&lt;span style="color: #008000;"&gt;'errors'&lt;/span&gt;: &lt;span style="color: #008000;"&gt;'MaximumIterations Exceeded'&lt;/span&gt;,
+                &lt;span style="color: #008000;"&gt;'actions'&lt;/span&gt;: &lt;span style="color: #008000;"&gt;'maxiter = {self.params["maxiter"]}, x0 = {self.params["x0"]}'&lt;/span&gt;}
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Now we setup the initial params to try, create a Custodian object with the handler and job, and then run it. The results and final params are stored in the params object.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #BA36A5;"&gt;params&lt;/span&gt; = {&lt;span style="color: #008000;"&gt;'maxiter'&lt;/span&gt;: 1, &lt;span style="color: #008000;"&gt;'x0'&lt;/span&gt;: 0}
+
+&lt;span style="color: #BA36A5;"&gt;c&lt;/span&gt; = Custodian([MaximumIterationsExceeded(params)],
+              [Minimizer(params)],
+               max_errors=5)
+
+c.run()
+&lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; key &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; params:
+    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(key, params[key])
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example" id="orgca61279"&gt;
+MaximumIterationsExceeded
+MaximumIterationsExceeded
+maxiter 4
+x0 [1.66250127]
+sol   message: Optimization terminated successfully.
+  success: True
+   status: 0
+      fun: -36.86307468296398
+        x: [ 1.662e+00]
+      nit: 1
+      jac: [-9.060e-06]
+ hess_inv: [[1]]
+     nfev: 6
+     njev: 3
+&lt;/pre&gt;
+
+
+
+&lt;p&gt;
+Note that params is modified, and finally has the maxiter value that worked, and the solution in it. You can see we had to rerun this problem  twice before it succeeded, but this happened automatically after the setup. This example is easy because we can simply increase the maxiter value, and no serious logic is needed. Other use cases might include try it again with another solver, try again with a different initial guess, etc. 
+&lt;/p&gt;
+
+&lt;p&gt;
+It feels a little heavyweight to define the classes, and to store the results in params here, but this was overall under an hour of work to put it all together, starting from scratch with the &lt;a href="http://materialsproject.github.io/custodian/"&gt;Custodian documentation&lt;/a&gt; from the example on the front page. You can do more sophisticated things, including having multiple error handlers. Overall, for a package designed for molecular simulations, this worked well for a different kind of problem.
+&lt;/p&gt;
+&lt;p&gt;Copyright (C) 2023 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
+&lt;p&gt;&lt;a href="/org/2023/09/19/Using-Custodian-to-help-converge-an-optimization-problem.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Org-mode version = 9.7-pre&lt;/p&gt;]]></content:encoded>
+    </item>
     <item>
       <title>for-else loops</title>
       <link>https://kitchingroup.cheme.cmu.edu/blog/2013/07/08/for-else-loops</link>
@@ -13261,129 +13411,6 @@ It takes about 30 seconds to run the previous example. Unfortunately, the way it
 In summary, it seems possible to do a lot with Aspen automation via python. This can also be done with Matlab, Excel, and other programming languages where COM automation is possible. The COM interface is not especially well documented, and you have to do a lot of digging to figure out some things. It is not clear how committed Aspen is to maintaining or improving the COM interface (&lt;a href="http://www.chejunkie.com/aspen-plus/aspen-plus-activex-automation-server/"&gt;http://www.chejunkie.com/aspen-plus/aspen-plus-activex-automation-server/&lt;/a&gt;). Hopefully they can keep it alive for power users who do not want to program in Excel!
 &lt;/p&gt;
 &lt;p&gt;Copyright (C) 2013 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;&lt;p&gt;&lt;a href="/org/2013/06/14/Running-Aspen-via-Python.org"&gt;org-mode source&lt;/a&gt;&lt;p&gt;]]></content:encoded>
-    </item>
-    <item>
-      <title>Reading and writing pdf metadata</title>
-      <link>https://kitchingroup.cheme.cmu.edu/blog/2013/06/13/Reading-and-writing-pdf-metadata</link>
-      <pubDate>Thu, 13 Jun 2013 10:19:43 EDT</pubDate>
-      <category><![CDATA[programming]]></category>
-      <guid isPermaLink="false">V6Trq7XP-okJ43zyJNDiJV3Mz9Q=</guid>
-      <description>Reading and writing pdf metadata</description>
-      <content:encoded><![CDATA[
-
-
-&lt;p&gt;
-One key to automating analysis of files is that data be stored in files in a way that is easy to add and retrieve. I have been examining ways to add grades to files so that a program could read the file, extract the grade, and collect it in a gradebook. 
-&lt;/p&gt;
-
-&lt;p&gt;
-PDF files could be one format where this is possible. The idea is that students would turn in a PDF file as their homework. The assignment would be graded, perhaps with hand-written markup from a tablet, and the grader would enter the grade as custom metadata in the file. Later a program would read the grade in and compile the results. 
-&lt;/p&gt;
-
-&lt;p&gt;
-In this post I examine some python modules that can do this. There are several python modules that can interact with PDF files.
-&lt;/p&gt;
-
-&lt;ol class="org-ol"&gt;
-&lt;li&gt;&lt;a href="http://pybrary.net/pyPdf/"&gt;pyPDF&lt;/a&gt; (seems to be replaced by &lt;a href="http://knowah.github.io/PyPDF2/"&gt;PyPDF2&lt;/a&gt;).
-&lt;/li&gt;
-&lt;li&gt;&lt;a href="http://code.google.com/p/pdfrw/"&gt;pdfrw&lt;/a&gt;
-&lt;/li&gt;
-&lt;li&gt;&lt;a href="http://www.unixuser.org/~euske/python/pdfminer/index.html"&gt;pdfMiner&lt;/a&gt; (seems to be read-only)
-&lt;/li&gt;
-&lt;/ol&gt;
-
-&lt;p&gt;
-All of these can be installed with pip. First, we look at getting existing information from a PDF file. 
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;from&lt;/span&gt; pyPdf &lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; PdfFileReader, PdfFileWriter
-
-fname = &lt;span style="color: #228b22;"&gt;'../../../Desktop/Program Organizer Controls.pdf'&lt;/span&gt;
-
-pdf = PdfFileReader(&lt;span style="color: #8b0000;"&gt;open&lt;/span&gt;(fname, &lt;span style="color: #228b22;"&gt;'rb'&lt;/span&gt;))
-
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; pdf.getDocumentInfo()
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-{'/Creator': u'Bluebeam Stapler 10.2.1', '/Author': u'John Kitchin', '/Producer': u'Bluebeam Brewery 5.0', '/CreationDate': u"D:20130612143804-04'00'", '/ModDate': u"D:20130613095927-04'00'"}
-&lt;/pre&gt;
-
-&lt;p&gt;
-That is pretty straightfoward. Now, let us add some new metadata. We will create a &lt;code&gt;Grade&lt;/code&gt; metadata, and store the grade in it. It appears we need to read in the pdf file, add its pages and metadata to a writer, set the new metadata, and then write out the file.
-&lt;/p&gt;
-
-&lt;p&gt;
-It seems that we cannot directly modify the PDF file, so we will write out to a new file, delete the old file, and rename the new file to the old file.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;from&lt;/span&gt; pyPdf &lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; PdfFileReader, PdfFileWriter
-&lt;span style="color: #8b0000;"&gt;from&lt;/span&gt; pyPdf.generic &lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; NameObject, createStringObject
-
-inpfn = &lt;span style="color: #228b22;"&gt;'../../../Desktop/Program Organizer Controls.pdf'&lt;/span&gt;
-
-fin = &lt;span style="color: #8b0000;"&gt;file&lt;/span&gt;(inpfn, &lt;span style="color: #228b22;"&gt;'rb'&lt;/span&gt;)
-pdf_in = PdfFileReader(fin)
-
-writer = PdfFileWriter()
-
-&lt;span style="color: #8b0000;"&gt;for&lt;/span&gt; page &lt;span style="color: #8b0000;"&gt;in&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;range&lt;/span&gt;(pdf_in.getNumPages()):
-    writer.addPage(pdf_in.getPage(page))
-
-infoDict = writer._info.getObject()
-
-info = pdf_in.documentInfo
-&lt;span style="color: #8b0000;"&gt;for&lt;/span&gt; key &lt;span style="color: #8b0000;"&gt;in&lt;/span&gt; info:
-    infoDict.update({NameObject(key): createStringObject(info[key])})
-
-&lt;span style="color: #ff0000; font-weight: bold;"&gt;# &lt;/span&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;add the grade&lt;/span&gt;
-infoDict.update({NameObject(&lt;span style="color: #228b22;"&gt;'/Grade'&lt;/span&gt;): createStringObject(u&lt;span style="color: #228b22;"&gt;'A+'&lt;/span&gt;)})
-
-&lt;span style="color: #ff0000; font-weight: bold;"&gt;# &lt;/span&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;It does not appear possible to alter in place.&lt;/span&gt;
-fout = &lt;span style="color: #8b0000;"&gt;open&lt;/span&gt;(inpfn+&lt;span style="color: #228b22;"&gt;'out.pdf'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'wb'&lt;/span&gt;)
-
-writer.write(fout)
-fin.close()
-fout.close()
-
-&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; os
-os.unlink(inpfn)
-os.rename(inpfn+&lt;span style="color: #228b22;"&gt;'out.pdf'&lt;/span&gt;, inpfn)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-Finally, we can see we successfully modified the file.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;from&lt;/span&gt; pyPdf &lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; PdfFileReader, PdfFileWriter
-
-fname = &lt;span style="color: #228b22;"&gt;'../../../Desktop/Program Organizer Controls.pdf'&lt;/span&gt;
-
-pdf = PdfFileReader(&lt;span style="color: #8b0000;"&gt;open&lt;/span&gt;(fname, &lt;span style="color: #228b22;"&gt;'rb'&lt;/span&gt;))
-
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; pdf.getDocumentInfo()
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; pdf.getDocumentInfo()[&lt;span style="color: #228b22;"&gt;'/Grade'&lt;/span&gt;]
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-{'/Grade': u'A+', '/CreationDate': u"D:20130612143804-04'00'", '/Producer': u'Bluebeam Brewery 5.0', '/Creator': u'Bluebeam Stapler 10.2.1', '/ModDate': u"D:20130613095927-04'00'", '/Author': u'John Kitchin'}
-A+
-&lt;/pre&gt;
-
-&lt;p&gt;
-You can see we were able to successfully add a Grade metadata field. It is stored as a Custom Document Property in my PDF viewer. I am not sure how easy it would be for a grader to enter this into a PDF. It could be possible to automate this with some kind of script that made a decent workflow. For example an org-mode file could have links that open the PDF, allow you to grade it. Then, you could click on another link that would prompt you for the grade, and then add it to the pdf. Or maybe a small script could be written that would open the pdf, wait for your to close it, then prompt you for the grade before moving to the next one.
-&lt;/p&gt;
-&lt;p&gt;Copyright (C) 2013 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;&lt;p&gt;&lt;a href="/org/2013/06/13/Reading-and-writing-pdf-metadata.org"&gt;org-mode source&lt;/a&gt;&lt;p&gt;]]></content:encoded>
     </item>
   </channel>
 </rss>
