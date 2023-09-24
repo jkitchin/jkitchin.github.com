@@ -12,11 +12,407 @@
     <title>The Kitchin Research Group</title>
     <link>https://kitchingroup.cheme.cmu.edu/blog</link>
     <description>Chemical Engineering at Carnegie Mellon University</description>
-    <pubDate>Thu, 21 Sep 2023 17:45:48 GMT</pubDate>
+    <pubDate>Sun, 24 Sep 2023 17:14:57 GMT</pubDate>
     <generator>Blogofile</generator>
     <sy:updatePeriod>hourly</sy:updatePeriod>
     <sy:updateFrequency>1</sy:updateFrequency>
     
+    <item>
+      <title>Adding new backends to hashcache</title>
+      <link>https://kitchingroup.cheme.cmu.edu/blog/2023/09/24/Adding-new-backends-to-hashcache</link>
+      <pubDate>Sun, 24 Sep 2023 13:14:40 EDT</pubDate>
+      <category><![CDATA[programming]]></category>
+      <guid isPermaLink="false">ExJbSVnObzF77DraQxJATBiD678=</guid>
+      <description>Adding new backends to hashcache</description>
+      <content:encoded><![CDATA[
+
+
+&lt;div id="table-of-contents" role="doc-toc"&gt;
+&lt;h2&gt;Table of Contents&lt;/h2&gt;
+&lt;div id="text-table-of-contents" role="doc-toc"&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href="#org5fd57a7"&gt;1. Alternative backends for hashcache&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#orgac9f2ab"&gt;2. a shelve version&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#org3be8901"&gt;3. sqlite version&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#org32e7950"&gt;4. redis&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#org29b3384"&gt;5. Summary&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;p&gt;
+I have been working on hashcache to make it more flexible. I like the base functionality that uses the filesystem for caching. That still works.
+&lt;/p&gt;
+
+&lt;p&gt;
+Here I set up a timeit decorator to show how this works.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; pycse.hashcache &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; hashcache
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; time
+
+!rm -fr ./cache
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;timeit&lt;/span&gt;(func):
+    &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;wrapper&lt;/span&gt;(*args, **kwargs):
+        &lt;span style="color: #BA36A5;"&gt;t0&lt;/span&gt; = time.time()
+        &lt;span style="color: #BA36A5;"&gt;res&lt;/span&gt; = func(*args, **kwargs)
+        &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(f&lt;span style="color: #008000;"&gt;'Elapsed time = &lt;/span&gt;{time.time() - t0}&lt;span style="color: #008000;"&gt;s'&lt;/span&gt;)
+        &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; res
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; wrapper
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Now we decorate a function that is "expensive". The first time we run it, it takes a long time.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #6434A3;"&gt;@timeit&lt;/span&gt;
+&lt;span style="color: #6434A3;"&gt;@hashcache&lt;/span&gt;
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;expensive_func&lt;/span&gt;(x):
+    time.sleep(3)
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x
+
+expensive_func(2)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Elapsed time = 3.007030963897705s
+2
+&lt;/p&gt;
+
+&lt;p&gt;
+The second time is very fast, since we just look it up.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;expensive_func(2)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Elapsed time = 0.0012097358703613281s
+2
+&lt;/p&gt;
+
+&lt;p&gt;
+Where did we look it up from? It is stored on disk. You can see where by adding a verbose option to the decorator. This shows you all the data that was stored in the cache.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #6434A3;"&gt;@hashcache&lt;/span&gt;(verbose=&lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;)
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;expensive_func&lt;/span&gt;(x):
+    time.sleep(3)
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x
+
+expensive_func(2)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+{   'args': (2,),
+    'cwd': '/Users/jkitchin/Dropbox/emacs/journal/2023/09/23',
+    'elapsed_time': 3.0048787593841553,
+    'func': 'expensive_func',
+    'hash': 'b5436cc21714a7ea619729cc9768b8c5b3a03307',
+    'kwargs': {},
+    'module': '&lt;span class="underline"&gt;&lt;span class="underline"&gt;main&lt;/span&gt;&lt;/span&gt;',
+    'output': 2,
+    'run-at': 1695572717.2020931,
+    'run-at-human': 'Sun Sep 24 12:25:17 2023',
+    'standardized-kwargs': {'x': 2},
+    'user': 'jkitchin',
+    'version': '0.0.2'}
+2
+&lt;/p&gt;
+
+&lt;div id="outline-container-org5fd57a7" class="outline-2"&gt;
+&lt;h2 id="org5fd57a7"&gt;&lt;span class="section-number-2"&gt;1.&lt;/span&gt; Alternative backends for hashcache&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-1"&gt;
+&lt;p&gt;
+The file system is an amazing cache with many benefits. There are few reasons you might like something different though. For example, it is slow to search if you have to iterate over all the directories and read the files, and it might be slow to sync lots of directories to another place. 
+&lt;/p&gt;
+
+&lt;p&gt;
+hashcache is more flexible now, so you can define the functions that load and dump the cache. Here we use lmdb as a key-value database. lmdb expects the keys and values to be bytes, so we do some tricks with io.BytesIO to get these as strings from joblib.dump which expects to write to a file.
+&lt;/p&gt;
+
+&lt;p&gt;
+The load function has the signature (&lt;code&gt;hash&lt;/code&gt;, &lt;code&gt;verbose&lt;/code&gt;), and the dump function has the signature (&lt;code&gt;hash&lt;/code&gt;, &lt;code&gt;data&lt;/code&gt;, &lt;code&gt;verbose&lt;/code&gt;). In both cases, &lt;code&gt;hash&lt;/code&gt; will be a string for the key to save data in. &lt;code&gt;data&lt;/code&gt; will be a dictionary that should be saved in a way that it can be reloaded. &lt;code&gt;verbose&lt;/code&gt; is a flag that you can ignore or use to provide some kind of logging.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; pycse.hashcache &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; hashcache
+
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; io, joblib, lmdb
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;lmdb_dump&lt;/span&gt;(hsh, data, verbose=&lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;):
+    &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; verbose:
+        &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'running lmdb_dump'&lt;/span&gt;)
+    &lt;span style="color: #0000FF;"&gt;with&lt;/span&gt; io.BytesIO() &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; f:
+        joblib.dump(data, f)
+        value = f.getvalue()
+
+    db = lmdb.Environment(hashcache.cache)
+    &lt;span style="color: #0000FF;"&gt;with&lt;/span&gt; db.begin(write=&lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;) &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; txn:
+        txn.put(hsh.encode(&lt;span style="color: #008000;"&gt;'utf-8'&lt;/span&gt;), value)
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;lmdb_load&lt;/span&gt;(hsh, verbose=&lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;):
+    &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; verbose:
+        &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'running lmdb_load'&lt;/span&gt;)
+    db = lmdb.Environment(hashcache.cache)
+    &lt;span style="color: #0000FF;"&gt;with&lt;/span&gt; db.begin() &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; txn:
+        val = txn.get(hsh.encode(&lt;span style="color: #008000;"&gt;'utf-8'&lt;/span&gt;))
+        &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; val &lt;span style="color: #0000FF;"&gt;is&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;:
+            &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;, &lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;
+        &lt;span style="color: #0000FF;"&gt;else&lt;/span&gt;:
+            &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;, joblib.load(io.BytesIO(val))[&lt;span style="color: #008000;"&gt;'output'&lt;/span&gt;]
+                                    
+! rm -fr cache.lmdb
+
+hashcache.cache = &lt;span style="color: #008000;"&gt;'cache.lmdb'&lt;/span&gt;
+
+
+&lt;span style="color: #6434A3;"&gt;@hashcache&lt;/span&gt;(loader=lmdb_load, dumper=lmdb_dump, verbose=&lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;)
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f&lt;/span&gt;(x):
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x
+
+f(2)   
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+running lmdb_load
+running lmdb_dump
+2
+&lt;/p&gt;
+
+&lt;p&gt;
+And we can recall the result as easily.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;f(2)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+running lmdb_load
+2
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-orgac9f2ab" class="outline-2"&gt;
+&lt;h2 id="orgac9f2ab"&gt;&lt;span class="section-number-2"&gt;2.&lt;/span&gt; a shelve version&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-2"&gt;
+&lt;p&gt;
+Maybe you prefer a built in library like shelve. This is also quite simple.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; pycse.hashcache &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; hashcache
+
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; io, joblib, shelve
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;shlv_dump&lt;/span&gt;(hsh, data, verbose=&lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;):
+    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'running shlv_dump'&lt;/span&gt;)
+    &lt;span style="color: #0000FF;"&gt;with&lt;/span&gt; io.BytesIO() &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; f:
+        joblib.dump(data, f)
+        value = f.getvalue()
+
+    &lt;span style="color: #0000FF;"&gt;with&lt;/span&gt; shelve.&lt;span style="color: #006FE0;"&gt;open&lt;/span&gt;(hashcache.cache) &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; db:
+        db[&lt;span style="color: #BA36A5;"&gt;hsh&lt;/span&gt;] = value
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;shlv_load&lt;/span&gt;(hsh, verbose=&lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;):
+    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'running shlv_load'&lt;/span&gt;)
+    &lt;span style="color: #0000FF;"&gt;with&lt;/span&gt; shelve.&lt;span style="color: #006FE0;"&gt;open&lt;/span&gt;(hashcache.cache) &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; db:
+        &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; hsh &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; db:
+            &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;, joblib.load(io.BytesIO(db[hsh]))[&lt;span style="color: #008000;"&gt;'output'&lt;/span&gt;]
+        &lt;span style="color: #0000FF;"&gt;else&lt;/span&gt;:
+            &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;, &lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;
+
+hashcache.cache = &lt;span style="color: #008000;"&gt;'cache.shlv'&lt;/span&gt;
+! rm -f cache.shlv.db
+
+&lt;span style="color: #6434A3;"&gt;@hashcache&lt;/span&gt;(loader=shlv_load, dumper=shlv_dump)
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f&lt;/span&gt;(x):
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x
+
+f(2)
+    
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+running shlv_load
+running shlv_dump
+2
+&lt;/p&gt;
+
+&lt;p&gt;
+And again loading is easy.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;f(2)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+running shlv_load
+2
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-org3be8901" class="outline-2"&gt;
+&lt;h2 id="org3be8901"&gt;&lt;span class="section-number-2"&gt;3.&lt;/span&gt; sqlite version&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-3"&gt;
+&lt;p&gt;
+I am a big fan of sqlite. Here I use a simple table mapping a key to a value. I think it could be interesting to consider storing the value as &lt;a href="https://www.sqlite.org/json1.html"&gt;json&lt;/a&gt; that would make it more searchable, or you could make a more complex table, but here we keep it simple.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; pycse.hashcache &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; hashcache
+
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; io, joblib, sqlite3
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;sql_dump&lt;/span&gt;(hsh, data, verbose=&lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;):
+    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'running sql_dump'&lt;/span&gt;)
+    &lt;span style="color: #0000FF;"&gt;with&lt;/span&gt; io.BytesIO() &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; f:
+        joblib.dump(data, f)
+        value = f.getvalue()
+
+    &lt;span style="color: #0000FF;"&gt;with&lt;/span&gt; con:
+        con.execute(&lt;span style="color: #008000;"&gt;"INSERT INTO cache(hash, value) VALUES(?, ?)"&lt;/span&gt;,
+                    (hsh, value))
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;sql_load&lt;/span&gt;(hsh, verbose=&lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;):
+    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'running sql_load'&lt;/span&gt;)
+    &lt;span style="color: #0000FF;"&gt;with&lt;/span&gt; con:        
+        cur = con.execute(&lt;span style="color: #008000;"&gt;"SELECT value FROM cache WHERE hash = ?"&lt;/span&gt;,
+                          (hsh,))
+        value = cur.fetchone()
+        &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; value &lt;span style="color: #0000FF;"&gt;is&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;:
+            &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;, &lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;
+        &lt;span style="color: #0000FF;"&gt;else&lt;/span&gt;:
+            &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;, joblib.load(io.BytesIO(value[0]))[&lt;span style="color: #008000;"&gt;'output'&lt;/span&gt;]
+
+! rm -f cache.sql
+hashcache.cache = &lt;span style="color: #008000;"&gt;'cache.sql'&lt;/span&gt;
+con = sqlite3.connect(hashcache.cache)
+con.execute(&lt;span style="color: #008000;"&gt;"CREATE TABLE cache(hash TEXT unique, value BLOB)"&lt;/span&gt;)
+        
+&lt;span style="color: #6434A3;"&gt;@hashcache&lt;/span&gt;(loader=sql_load, dumper=sql_dump)
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f&lt;/span&gt;(x):
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x
+
+f(2)    
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+running sql_load
+running sql_dump
+2
+&lt;/p&gt;
+
+&lt;p&gt;
+Once again, running is easy.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;f(2)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+running sql_load
+2
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-org32e7950" class="outline-2"&gt;
+&lt;h2 id="org32e7950"&gt;&lt;span class="section-number-2"&gt;4.&lt;/span&gt; redis&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-4"&gt;
+&lt;p&gt;
+Finally, you might like a server to cache in. This opens the door to running the server remotely so it is accessible by multiple processes using the cache on different machines. We use redis for this example, but only run it locally. Make sure you run &lt;code&gt;redis-server --daemonize yes&lt;/code&gt;
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; pycse.hashcache &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; hashcache
+
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; io, joblib, redis
+
+&lt;span style="color: #BA36A5;"&gt;db&lt;/span&gt; = redis.Redis(host=&lt;span style="color: #008000;"&gt;'localhost'&lt;/span&gt;, port=6379)
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;redis_dump&lt;/span&gt;(hsh, data, verbose=&lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;):
+    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'running redis_dump'&lt;/span&gt;)
+    &lt;span style="color: #0000FF;"&gt;with&lt;/span&gt; io.BytesIO() &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; f:
+        joblib.dump(data, f)
+        value = f.getvalue()
+
+    db.&lt;span style="color: #006FE0;"&gt;set&lt;/span&gt;(hsh, value)
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;redis_load&lt;/span&gt;(hsh, verbose=&lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;):
+    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'running redis_load'&lt;/span&gt;)
+    &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; &lt;span style="color: #0000FF;"&gt;not&lt;/span&gt; hsh &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; db:
+        &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;, &lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;
+    &lt;span style="color: #0000FF;"&gt;else&lt;/span&gt;:
+        &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;, joblib.load(io.BytesIO(db.get(hsh)))[&lt;span style="color: #008000;"&gt;'output'&lt;/span&gt;]
+
+    
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; functools    
+hashcache_redis = functools.partial(hashcache,
+                                    loader=redis_load,
+                                    dumper=redis_dump)    
+
+&lt;span style="color: #6434A3;"&gt;@hashcache_redis&lt;/span&gt;
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f&lt;/span&gt;(x):
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x
+
+f(2)    
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+running redis_load
+running redis_dump
+2
+&lt;/p&gt;
+
+&lt;p&gt;
+No surprise here, loading is the same as before.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;f(2)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+running redis_load
+2
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-org29b3384" class="outline-2"&gt;
+&lt;h2 id="org29b3384"&gt;&lt;span class="section-number-2"&gt;5.&lt;/span&gt; Summary&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-5"&gt;
+&lt;p&gt;
+I have refactored hashcache to make it much easier to add new backends. You might do that for performance, ease of backup or transferability, to add new capabilities for searching, etc. The new code is a little cleaner than it was before IMO. I am not sure it is API-stable yet, but it is getting there.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;p&gt;Copyright (C) 2023 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
+&lt;p&gt;&lt;a href="/org/2023/09/24/Adding-new-backends-to-hashcache.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Org-mode version = 9.7-pre&lt;/p&gt;]]></content:encoded>
+    </item>
     <item>
       <title>A better manager for supervising Python functions</title>
       <link>https://kitchingroup.cheme.cmu.edu/blog/2023/09/21/A-better-manager-for-supervising-Python-functions</link>
@@ -858,8 +1254,8 @@ This solution works pretty well, similar to custodian. It is a little simpler th
       <title>Using Custodian to help converge an optimization problem</title>
       <link>https://kitchingroup.cheme.cmu.edu/blog/2023/09/19/Using-Custodian-to-help-converge-an-optimization-problem</link>
       <pubDate>Tue, 19 Sep 2023 15:34:21 EDT</pubDate>
-      <category><![CDATA[programming]]></category>
       <category><![CDATA[optimization]]></category>
+      <category><![CDATA[programming]]></category>
       <guid isPermaLink="false">Dx1efJ79cKOKFx-BnlZVFB1wGjA=</guid>
       <description>Using Custodian to help converge an optimization problem</description>
       <content:encoded><![CDATA[
@@ -1958,98 +2354,6 @@ You can see that we changed into the directory, ran some code, and then caught a
 One case that is not handled well with this code is if the directory you want to change into does not exist. In that case an exception is raised on entering the context when you try change into a directory that does not exist. An alternative class based context manager can be found &lt;a href="http://code.activestate.com/recipes/576620-changedirectory-context-manager/"&gt;here&lt;/a&gt;. 
 &lt;/p&gt;
 &lt;p&gt;Copyright (C) 2013 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;&lt;p&gt;&lt;a href="/org/2013/06/16/Automatic,-temporary-directory-changing.org"&gt;org-mode source&lt;/a&gt;&lt;p&gt;]]></content:encoded>
-    </item>
-    <item>
-      <title>Aspen COM object introspection</title>
-      <link>https://kitchingroup.cheme.cmu.edu/blog/2013/06/15/Aspen-COM-object-introspection</link>
-      <pubDate>Sat, 15 Jun 2013 14:18:38 EDT</pubDate>
-      <category><![CDATA[programming]]></category>
-      <guid isPermaLink="false">PQBJ5niIiuzhAEZArJ-oc59vYxM=</guid>
-      <description>Aspen COM object introspection</description>
-      <content:encoded><![CDATA[
-
-
-&lt;p&gt;
-COM programming is a bit more difficult than normal python programming. The main reason is the functions on the objects are not easy to inspect, and they are not always well documented. Let us look at this for the Aspen COM interface.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; win32com.client &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; win32
-
-aspen = win32.Dispatch(&lt;span style="color: #228b22;"&gt;'Apwn.Document'&lt;/span&gt;)
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; aspen
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; dir(aspen)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-Aspen Plus 27.0 OLE Services
-['_ApplyTypes_', '_FlagAsMethod', '_LazyAddAttr_', '_NewEnum', '_Release_', '__AttrToID__', '__LazyMap__', '__call__', '__doc__', '__eq__', '__getattr__', '__getitem__', '__init__', '__int__', '__len__', '__module__', '__ne__', '__nonzero__', '__repr__', '__setattr__', '__setitem__', '__str__', '_builtMethods_', '_enum_', '_find_dispatch_type_', '_get_good_object_', '_get_good_single_object_', '_lazydata_', '_make_method_', '_mapCachedItems_', '_oleobj_', '_olerepr_', '_print_details_', '_proc_', '_unicode_to_string_', '_username_', '_wrap_dispatch_']
-&lt;/pre&gt;
-
-&lt;p&gt;
-These are not that helpful. The COM object is so-called &lt;a href="http://oreilly.com/catalog/pythonwin32/chapter/ch12.html#49339"&gt;"late-bound"&lt;/a&gt; which means there is no information available about the methods. To get an "early-bound" object we have to do some work. We have to run the makepy.py utility which will generate a python interface with the methods. I found the makepy.py function like this:
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; os
-&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; win32com.client &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; win32
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; os.path.split(win32.__file__)[0]
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; os.path.exists(os.path.join(os.path.split(win32.__file__)[0], &lt;span style="color: #228b22;"&gt;'makepy.py'&lt;/span&gt;))
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-C:\Users\jkitchin\AppData\Local\Enthought\Canopy\System\lib\site-packages\win32com\client
-True
-&lt;/pre&gt;
-
-&lt;p&gt;
-So, change to the directory above, and run makepy.py. This will pop a window with a lot of libraries to select from. Select "Aspen Plus GUI 27.0 Type Library (10.0)" and click ok. You will see some output like this.
-&lt;/p&gt;
-
-&lt;pre class="example"&gt;
-PS C:\Users\jkitchin\AppData\Local\Enthought\Canopy\System\lib\site-packages\win32com\client&amp;gt; python makepy.py
-Generating to C:\Users\jkitchin\AppData\Local\Temp\gen_py\2.7\8E567520-F9BA-11CF-90B2-0000C0A810C4x409x16x0.py
-Building definitions from type library...
-Generating...
-Importing module
-&lt;/pre&gt;
-
-&lt;p&gt;
-That command created a new python module that contains the methods available. Luckily, you do not have to do anything special to use it. The new module will automatically be loaded. Let us see an example.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; win32com.client &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; win32
-
-aspen = win32.Dispatch(&lt;span style="color: #228b22;"&gt;'Apwn.Document'&lt;/span&gt;)
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; aspen
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; dir(aspen)
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt;
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; dir(aspen.Engine)
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt;
-&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; inspect
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; inspect.getargspec(aspen.InitFromArchive2)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-Aspen Plus 27.0 OLE Services
-['Activate', 'AdviseParent', 'CLSID', 'Choose', 'Close', 'CreateRouteTree', 'DeleteSelection', 'EditCompoundDocument', 'Export', 'Generate', 'GetNew', 'GetNew3', 'Import', 'InitFromArchive', 'InitFromArchive2', 'InitFromArchive3', 'InitFromFile', 'InitFromFile2', 'InitFromTemplate', 'InitFromTemplate2', 'InitFromXML', 'InitNew', 'InitNew2', 'LoadLink', 'NewSelection', 'Readback', 'Reconcile', 'Reinit', 'Restore', 'Restore2', 'RootModel', 'Run', 'Run2', 'RunScript', 'Save', 'Save2', 'SaveAs', 'SaveAs2', 'SaveLink', 'SaveSelection', 'Selection', 'SetCompat', 'SetParent', 'UIDisable', 'WriteArchive', 'WriteArchive2', '_ApplyTypes_', '__call__', '__doc__', '__eq__', '__getattr__', '__init__', '__int__', '__module__', '__ne__', '__repr__', '__setattr__', '__str__', '__unicode__', '_get_good_object_', '_get_good_single_object_', '_oleobj_', '_prop_map_get_', '_prop_map_put_', 'coclass_clsid']
-
-['AddStopPoint', 'CLSID', 'ClearStopPoints', 'ConnectionDialog', 'DeleteStopPoint', 'EngineFilesSettings', 'ExportReport', 'GetStopPoint', 'Host', 'HostDescription', 'MoveTo', 'OptionSettings', 'ProcessInput', 'Reinit', 'ReinitializeEO', 'Run', 'Run2', 'RunSettings', 'SetEngineFilesSettings', 'SetOptionSettings', 'Step', 'Stop', 'StopPoints', 'SynchronizeEO', '_ApplyTypes_', '__doc__', '__eq__', '__getattr__', '__init__', '__module__', '__ne__', '__repr__', '__setattr__', '_get_good_object_', '_get_good_single_object_', '_oleobj_', '_prop_map_get_', '_prop_map_put_', 'coclass_clsid']
-
-ArgSpec(args=['self', 'filename', 'host_type', 'node', 'username', 'password', 'working_directory', 'failmode'], varargs=None, keywords=None, defaults=(&amp;lt;PyOleEmpty object at 0x0000000001D36BB0&amp;gt;, &amp;lt;PyOleEmpty object at 0x0000000001D36BB0&amp;gt;, &amp;lt;PyOleEmpty object at 0x0000000001D36BB0&amp;gt;, &amp;lt;PyOleEmpty object at 0x0000000001D36BB0&amp;gt;, &amp;lt;PyOleEmpty object at 0x0000000001D36BB0&amp;gt;, &amp;lt;PyOleEmpty object at 0x0000000001D36BB0&amp;gt;, &amp;lt;PyOleEmpty object at 0x0000000001D36BB0&amp;gt;))
-&lt;/pre&gt;
-
-&lt;p&gt;
-This is much more useful! We can see all the methods of a COM object! See this reference for more details: &lt;a href="http://oreilly.com/catalog/pythonwin32/chapter/ch12.html#49339"&gt;http://oreilly.com/catalog/pythonwin32/chapter/ch12.html#49339&lt;/a&gt;.
-&lt;/p&gt;
-&lt;p&gt;Copyright (C) 2013 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;&lt;p&gt;&lt;a href="/org/2013/06/15/Aspen-COM-object-introspection.org"&gt;org-mode source&lt;/a&gt;&lt;p&gt;]]></content:encoded>
     </item>
   </channel>
 </rss>

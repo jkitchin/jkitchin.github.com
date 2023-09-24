@@ -12,11 +12,407 @@
     <title>The Kitchin Research Group</title>
     <link>https://kitchingroup.cheme.cmu.edu/blog</link>
     <description>Chemical Engineering at Carnegie Mellon University</description>
-    <pubDate>Thu, 21 Sep 2023 17:45:49 GMT</pubDate>
+    <pubDate>Sun, 24 Sep 2023 17:14:58 GMT</pubDate>
     <generator>Blogofile</generator>
     <sy:updatePeriod>hourly</sy:updatePeriod>
     <sy:updateFrequency>1</sy:updateFrequency>
     
+    <item>
+      <title>Adding new backends to hashcache</title>
+      <link>https://kitchingroup.cheme.cmu.edu/blog/2023/09/24/Adding-new-backends-to-hashcache</link>
+      <pubDate>Sun, 24 Sep 2023 13:14:40 EDT</pubDate>
+      <category><![CDATA[programming]]></category>
+      <guid isPermaLink="false">ExJbSVnObzF77DraQxJATBiD678=</guid>
+      <description>Adding new backends to hashcache</description>
+      <content:encoded><![CDATA[
+
+
+&lt;div id="table-of-contents" role="doc-toc"&gt;
+&lt;h2&gt;Table of Contents&lt;/h2&gt;
+&lt;div id="text-table-of-contents" role="doc-toc"&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href="#org5fd57a7"&gt;1. Alternative backends for hashcache&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#orgac9f2ab"&gt;2. a shelve version&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#org3be8901"&gt;3. sqlite version&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#org32e7950"&gt;4. redis&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#org29b3384"&gt;5. Summary&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;p&gt;
+I have been working on hashcache to make it more flexible. I like the base functionality that uses the filesystem for caching. That still works.
+&lt;/p&gt;
+
+&lt;p&gt;
+Here I set up a timeit decorator to show how this works.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; pycse.hashcache &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; hashcache
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; time
+
+!rm -fr ./cache
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;timeit&lt;/span&gt;(func):
+    &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;wrapper&lt;/span&gt;(*args, **kwargs):
+        &lt;span style="color: #BA36A5;"&gt;t0&lt;/span&gt; = time.time()
+        &lt;span style="color: #BA36A5;"&gt;res&lt;/span&gt; = func(*args, **kwargs)
+        &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(f&lt;span style="color: #008000;"&gt;'Elapsed time = &lt;/span&gt;{time.time() - t0}&lt;span style="color: #008000;"&gt;s'&lt;/span&gt;)
+        &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; res
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; wrapper
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Now we decorate a function that is "expensive". The first time we run it, it takes a long time.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #6434A3;"&gt;@timeit&lt;/span&gt;
+&lt;span style="color: #6434A3;"&gt;@hashcache&lt;/span&gt;
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;expensive_func&lt;/span&gt;(x):
+    time.sleep(3)
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x
+
+expensive_func(2)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Elapsed time = 3.007030963897705s
+2
+&lt;/p&gt;
+
+&lt;p&gt;
+The second time is very fast, since we just look it up.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;expensive_func(2)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Elapsed time = 0.0012097358703613281s
+2
+&lt;/p&gt;
+
+&lt;p&gt;
+Where did we look it up from? It is stored on disk. You can see where by adding a verbose option to the decorator. This shows you all the data that was stored in the cache.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #6434A3;"&gt;@hashcache&lt;/span&gt;(verbose=&lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;)
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;expensive_func&lt;/span&gt;(x):
+    time.sleep(3)
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x
+
+expensive_func(2)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+{   'args': (2,),
+    'cwd': '/Users/jkitchin/Dropbox/emacs/journal/2023/09/23',
+    'elapsed_time': 3.0048787593841553,
+    'func': 'expensive_func',
+    'hash': 'b5436cc21714a7ea619729cc9768b8c5b3a03307',
+    'kwargs': {},
+    'module': '&lt;span class="underline"&gt;&lt;span class="underline"&gt;main&lt;/span&gt;&lt;/span&gt;',
+    'output': 2,
+    'run-at': 1695572717.2020931,
+    'run-at-human': 'Sun Sep 24 12:25:17 2023',
+    'standardized-kwargs': {'x': 2},
+    'user': 'jkitchin',
+    'version': '0.0.2'}
+2
+&lt;/p&gt;
+
+&lt;div id="outline-container-org5fd57a7" class="outline-2"&gt;
+&lt;h2 id="org5fd57a7"&gt;&lt;span class="section-number-2"&gt;1.&lt;/span&gt; Alternative backends for hashcache&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-1"&gt;
+&lt;p&gt;
+The file system is an amazing cache with many benefits. There are few reasons you might like something different though. For example, it is slow to search if you have to iterate over all the directories and read the files, and it might be slow to sync lots of directories to another place. 
+&lt;/p&gt;
+
+&lt;p&gt;
+hashcache is more flexible now, so you can define the functions that load and dump the cache. Here we use lmdb as a key-value database. lmdb expects the keys and values to be bytes, so we do some tricks with io.BytesIO to get these as strings from joblib.dump which expects to write to a file.
+&lt;/p&gt;
+
+&lt;p&gt;
+The load function has the signature (&lt;code&gt;hash&lt;/code&gt;, &lt;code&gt;verbose&lt;/code&gt;), and the dump function has the signature (&lt;code&gt;hash&lt;/code&gt;, &lt;code&gt;data&lt;/code&gt;, &lt;code&gt;verbose&lt;/code&gt;). In both cases, &lt;code&gt;hash&lt;/code&gt; will be a string for the key to save data in. &lt;code&gt;data&lt;/code&gt; will be a dictionary that should be saved in a way that it can be reloaded. &lt;code&gt;verbose&lt;/code&gt; is a flag that you can ignore or use to provide some kind of logging.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; pycse.hashcache &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; hashcache
+
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; io, joblib, lmdb
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;lmdb_dump&lt;/span&gt;(hsh, data, verbose=&lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;):
+    &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; verbose:
+        &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'running lmdb_dump'&lt;/span&gt;)
+    &lt;span style="color: #0000FF;"&gt;with&lt;/span&gt; io.BytesIO() &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; f:
+        joblib.dump(data, f)
+        value = f.getvalue()
+
+    db = lmdb.Environment(hashcache.cache)
+    &lt;span style="color: #0000FF;"&gt;with&lt;/span&gt; db.begin(write=&lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;) &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; txn:
+        txn.put(hsh.encode(&lt;span style="color: #008000;"&gt;'utf-8'&lt;/span&gt;), value)
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;lmdb_load&lt;/span&gt;(hsh, verbose=&lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;):
+    &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; verbose:
+        &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'running lmdb_load'&lt;/span&gt;)
+    db = lmdb.Environment(hashcache.cache)
+    &lt;span style="color: #0000FF;"&gt;with&lt;/span&gt; db.begin() &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; txn:
+        val = txn.get(hsh.encode(&lt;span style="color: #008000;"&gt;'utf-8'&lt;/span&gt;))
+        &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; val &lt;span style="color: #0000FF;"&gt;is&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;:
+            &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;, &lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;
+        &lt;span style="color: #0000FF;"&gt;else&lt;/span&gt;:
+            &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;, joblib.load(io.BytesIO(val))[&lt;span style="color: #008000;"&gt;'output'&lt;/span&gt;]
+                                    
+! rm -fr cache.lmdb
+
+hashcache.cache = &lt;span style="color: #008000;"&gt;'cache.lmdb'&lt;/span&gt;
+
+
+&lt;span style="color: #6434A3;"&gt;@hashcache&lt;/span&gt;(loader=lmdb_load, dumper=lmdb_dump, verbose=&lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;)
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f&lt;/span&gt;(x):
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x
+
+f(2)   
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+running lmdb_load
+running lmdb_dump
+2
+&lt;/p&gt;
+
+&lt;p&gt;
+And we can recall the result as easily.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;f(2)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+running lmdb_load
+2
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-orgac9f2ab" class="outline-2"&gt;
+&lt;h2 id="orgac9f2ab"&gt;&lt;span class="section-number-2"&gt;2.&lt;/span&gt; a shelve version&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-2"&gt;
+&lt;p&gt;
+Maybe you prefer a built in library like shelve. This is also quite simple.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; pycse.hashcache &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; hashcache
+
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; io, joblib, shelve
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;shlv_dump&lt;/span&gt;(hsh, data, verbose=&lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;):
+    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'running shlv_dump'&lt;/span&gt;)
+    &lt;span style="color: #0000FF;"&gt;with&lt;/span&gt; io.BytesIO() &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; f:
+        joblib.dump(data, f)
+        value = f.getvalue()
+
+    &lt;span style="color: #0000FF;"&gt;with&lt;/span&gt; shelve.&lt;span style="color: #006FE0;"&gt;open&lt;/span&gt;(hashcache.cache) &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; db:
+        db[&lt;span style="color: #BA36A5;"&gt;hsh&lt;/span&gt;] = value
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;shlv_load&lt;/span&gt;(hsh, verbose=&lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;):
+    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'running shlv_load'&lt;/span&gt;)
+    &lt;span style="color: #0000FF;"&gt;with&lt;/span&gt; shelve.&lt;span style="color: #006FE0;"&gt;open&lt;/span&gt;(hashcache.cache) &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; db:
+        &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; hsh &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; db:
+            &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;, joblib.load(io.BytesIO(db[hsh]))[&lt;span style="color: #008000;"&gt;'output'&lt;/span&gt;]
+        &lt;span style="color: #0000FF;"&gt;else&lt;/span&gt;:
+            &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;, &lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;
+
+hashcache.cache = &lt;span style="color: #008000;"&gt;'cache.shlv'&lt;/span&gt;
+! rm -f cache.shlv.db
+
+&lt;span style="color: #6434A3;"&gt;@hashcache&lt;/span&gt;(loader=shlv_load, dumper=shlv_dump)
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f&lt;/span&gt;(x):
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x
+
+f(2)
+    
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+running shlv_load
+running shlv_dump
+2
+&lt;/p&gt;
+
+&lt;p&gt;
+And again loading is easy.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;f(2)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+running shlv_load
+2
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-org3be8901" class="outline-2"&gt;
+&lt;h2 id="org3be8901"&gt;&lt;span class="section-number-2"&gt;3.&lt;/span&gt; sqlite version&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-3"&gt;
+&lt;p&gt;
+I am a big fan of sqlite. Here I use a simple table mapping a key to a value. I think it could be interesting to consider storing the value as &lt;a href="https://www.sqlite.org/json1.html"&gt;json&lt;/a&gt; that would make it more searchable, or you could make a more complex table, but here we keep it simple.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; pycse.hashcache &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; hashcache
+
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; io, joblib, sqlite3
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;sql_dump&lt;/span&gt;(hsh, data, verbose=&lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;):
+    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'running sql_dump'&lt;/span&gt;)
+    &lt;span style="color: #0000FF;"&gt;with&lt;/span&gt; io.BytesIO() &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; f:
+        joblib.dump(data, f)
+        value = f.getvalue()
+
+    &lt;span style="color: #0000FF;"&gt;with&lt;/span&gt; con:
+        con.execute(&lt;span style="color: #008000;"&gt;"INSERT INTO cache(hash, value) VALUES(?, ?)"&lt;/span&gt;,
+                    (hsh, value))
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;sql_load&lt;/span&gt;(hsh, verbose=&lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;):
+    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'running sql_load'&lt;/span&gt;)
+    &lt;span style="color: #0000FF;"&gt;with&lt;/span&gt; con:        
+        cur = con.execute(&lt;span style="color: #008000;"&gt;"SELECT value FROM cache WHERE hash = ?"&lt;/span&gt;,
+                          (hsh,))
+        value = cur.fetchone()
+        &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; value &lt;span style="color: #0000FF;"&gt;is&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;:
+            &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;, &lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;
+        &lt;span style="color: #0000FF;"&gt;else&lt;/span&gt;:
+            &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;, joblib.load(io.BytesIO(value[0]))[&lt;span style="color: #008000;"&gt;'output'&lt;/span&gt;]
+
+! rm -f cache.sql
+hashcache.cache = &lt;span style="color: #008000;"&gt;'cache.sql'&lt;/span&gt;
+con = sqlite3.connect(hashcache.cache)
+con.execute(&lt;span style="color: #008000;"&gt;"CREATE TABLE cache(hash TEXT unique, value BLOB)"&lt;/span&gt;)
+        
+&lt;span style="color: #6434A3;"&gt;@hashcache&lt;/span&gt;(loader=sql_load, dumper=sql_dump)
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f&lt;/span&gt;(x):
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x
+
+f(2)    
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+running sql_load
+running sql_dump
+2
+&lt;/p&gt;
+
+&lt;p&gt;
+Once again, running is easy.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;f(2)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+running sql_load
+2
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-org32e7950" class="outline-2"&gt;
+&lt;h2 id="org32e7950"&gt;&lt;span class="section-number-2"&gt;4.&lt;/span&gt; redis&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-4"&gt;
+&lt;p&gt;
+Finally, you might like a server to cache in. This opens the door to running the server remotely so it is accessible by multiple processes using the cache on different machines. We use redis for this example, but only run it locally. Make sure you run &lt;code&gt;redis-server --daemonize yes&lt;/code&gt;
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; pycse.hashcache &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; hashcache
+
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; io, joblib, redis
+
+&lt;span style="color: #BA36A5;"&gt;db&lt;/span&gt; = redis.Redis(host=&lt;span style="color: #008000;"&gt;'localhost'&lt;/span&gt;, port=6379)
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;redis_dump&lt;/span&gt;(hsh, data, verbose=&lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;):
+    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'running redis_dump'&lt;/span&gt;)
+    &lt;span style="color: #0000FF;"&gt;with&lt;/span&gt; io.BytesIO() &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; f:
+        joblib.dump(data, f)
+        value = f.getvalue()
+
+    db.&lt;span style="color: #006FE0;"&gt;set&lt;/span&gt;(hsh, value)
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;redis_load&lt;/span&gt;(hsh, verbose=&lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;):
+    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'running redis_load'&lt;/span&gt;)
+    &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; &lt;span style="color: #0000FF;"&gt;not&lt;/span&gt; hsh &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; db:
+        &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;, &lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;
+    &lt;span style="color: #0000FF;"&gt;else&lt;/span&gt;:
+        &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;, joblib.load(io.BytesIO(db.get(hsh)))[&lt;span style="color: #008000;"&gt;'output'&lt;/span&gt;]
+
+    
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; functools    
+hashcache_redis = functools.partial(hashcache,
+                                    loader=redis_load,
+                                    dumper=redis_dump)    
+
+&lt;span style="color: #6434A3;"&gt;@hashcache_redis&lt;/span&gt;
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f&lt;/span&gt;(x):
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x
+
+f(2)    
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+running redis_load
+running redis_dump
+2
+&lt;/p&gt;
+
+&lt;p&gt;
+No surprise here, loading is the same as before.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;f(2)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+running redis_load
+2
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-org29b3384" class="outline-2"&gt;
+&lt;h2 id="org29b3384"&gt;&lt;span class="section-number-2"&gt;5.&lt;/span&gt; Summary&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-5"&gt;
+&lt;p&gt;
+I have refactored hashcache to make it much easier to add new backends. You might do that for performance, ease of backup or transferability, to add new capabilities for searching, etc. The new code is a little cleaner than it was before IMO. I am not sure it is API-stable yet, but it is getting there.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;p&gt;Copyright (C) 2023 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
+&lt;p&gt;&lt;a href="/org/2023/09/24/Adding-new-backends-to-hashcache.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Org-mode version = 9.7-pre&lt;/p&gt;]]></content:encoded>
+    </item>
     <item>
       <title>A better manager for supervising Python functions</title>
       <link>https://kitchingroup.cheme.cmu.edu/blog/2023/09/21/A-better-manager-for-supervising-Python-functions</link>
@@ -903,8 +1299,8 @@ Check out the Youtube video summary here:
       <title>Using Custodian to help converge an optimization problem</title>
       <link>https://kitchingroup.cheme.cmu.edu/blog/2023/09/19/Using-Custodian-to-help-converge-an-optimization-problem</link>
       <pubDate>Tue, 19 Sep 2023 15:34:21 EDT</pubDate>
-      <category><![CDATA[programming]]></category>
       <category><![CDATA[optimization]]></category>
+      <category><![CDATA[programming]]></category>
       <guid isPermaLink="false">Dx1efJ79cKOKFx-BnlZVFB1wGjA=</guid>
       <description>Using Custodian to help converge an optimization problem</description>
       <content:encoded><![CDATA[
@@ -1184,8 +1580,8 @@ Finding new ways to make hydrogen with renewable energy and renewable feedstocks
       <title>MS Word comments from org-mode</title>
       <link>https://kitchingroup.cheme.cmu.edu/blog/2023/02/25/MS-Word-comments-from-org-mode</link>
       <pubDate>Sat, 25 Feb 2023 11:49:07 EST</pubDate>
-      <category><![CDATA[orgmode]]></category>
       <category><![CDATA[docx]]></category>
+      <category><![CDATA[orgmode]]></category>
       <guid isPermaLink="false">nYgz4HgYkb--oubKxhPu4xrPVSA=</guid>
       <description>MS Word comments from org-mode</description>
       <content:encoded><![CDATA[
@@ -1539,675 +1935,6 @@ There is no wisdom in fixing the first problem, here I just tried a newer optimi
 &lt;/p&gt;
 &lt;p&gt;Copyright (C) 2023 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
 &lt;p&gt;&lt;a href="/org/2023/02/17/Update-on-finding-the-minimum-distance-from-a-point-to-a-curve.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
-&lt;p&gt;Org-mode version = 9.5.5&lt;/p&gt;]]></content:encoded>
-    </item>
-    <item>
-      <title>Caching expensive function calls so you don't have to rerun them</title>
-      <link>https://kitchingroup.cheme.cmu.edu/blog/2023/02/01/Caching-expensive-function-calls-so-you-don-t-have-to-rerun-them</link>
-      <pubDate>Wed, 01 Feb 2023 20:09:44 EST</pubDate>
-      <category><![CDATA[python]]></category>
-      <guid isPermaLink="false">TuAI-nnf5JY8R8O-DrQ6Ra7u8hI=</guid>
-      <description>Caching expensive function calls so you don't have to rerun them</description>
-      <content:encoded><![CDATA[
-
-
-&lt;div id="table-of-contents" role="doc-toc"&gt;
-&lt;h2&gt;Table of Contents&lt;/h2&gt;
-&lt;div id="text-table-of-contents" role="doc-toc"&gt;
-&lt;ul&gt;
-&lt;li&gt;&lt;a href="#org07769a2"&gt;1. where things start to go wrong&lt;/a&gt;
-&lt;ul&gt;
-&lt;li&gt;&lt;a href="#org45a5a5a"&gt;1.1. Global variables&lt;/a&gt;&lt;/li&gt;
-&lt;li&gt;&lt;a href="#org81a44de"&gt;1.2. running functions with mutable arguments&lt;/a&gt;&lt;/li&gt;
-&lt;li&gt;&lt;a href="#orgeecc951"&gt;1.3. If you run the same function different ways, the cache is not reused&lt;/a&gt;&lt;/li&gt;
-&lt;li&gt;&lt;a href="#orgb8d7f30"&gt;1.4. Fragile cache invalidation&lt;/a&gt;&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/li&gt;
-&lt;li&gt;&lt;a href="#orgd5fbbc2"&gt;2. Some partial solutions with pycse.hashcache&lt;/a&gt;
-&lt;ul&gt;
-&lt;li&gt;&lt;a href="#orge7c0587"&gt;2.1. No known problem with global variables&lt;/a&gt;&lt;/li&gt;
-&lt;li&gt;&lt;a href="#org857113f"&gt;2.2. hashcache and mutable arguments&lt;/a&gt;&lt;/li&gt;
-&lt;li&gt;&lt;a href="#org4925e4a"&gt;2.3. Reuse the cache when you run different ways&lt;/a&gt;&lt;/li&gt;
-&lt;li&gt;&lt;a href="#org8461f88"&gt;2.4. Insensitivity to unimportant changes&lt;/a&gt;&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/li&gt;
-&lt;li&gt;&lt;a href="#orgfb0f2ed"&gt;3. Is it the answer?&lt;/a&gt;&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;p&gt;
-Check out the video at:
-&lt;/p&gt;
-&lt;iframe width="560" height="315" src="https://www.youtube.com/embed/Sp0qebuYsZU" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen&gt;&lt;/iframe&gt;
-
-&lt;p&gt;
-Nobody likes to run expensive jobs more than necessary, so cache solutions are often used where you save the results, and look them up later. There is functools.cache in Python, but it is memory only, and not persistent, so you start over in a new session.
-&lt;/p&gt;
-
-&lt;p&gt;
-For persistent cache, joblib (&lt;a href="https://joblib.readthedocs.io/en/latest/"&gt;https://joblib.readthedocs.io/en/latest/&lt;/a&gt;) is a standard tool for this. Here is a simple example: 
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; joblib &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; Memory
-&lt;span style="color: #BA36A5;"&gt;location&lt;/span&gt; = &lt;span style="color: #008000;"&gt;'/Users/jkitchin/Dropbox/emacs/journal/2023/02/01/joblib_cache/joblib_cache'&lt;/span&gt;
-&lt;span style="color: #BA36A5;"&gt;memory&lt;/span&gt; = Memory(location, verbose=0)
-
-&lt;span style="color: #6434A3;"&gt;@memory.cache&lt;/span&gt;
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;fun&lt;/span&gt;(x=1.0):
-    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'If you see this, go get a coffee while it runs &amp;#128012;.'&lt;/span&gt;)
-    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x**2
-
-&lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(fun(2)) &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;Runs the function&lt;/span&gt;
-&lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(fun(2)) &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;Looks up the cached value&lt;/span&gt;
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-If you see this, go get a coffee while it runs 🐌.
-4
-4
-&lt;/p&gt;
-
-&lt;p&gt;
-That works because joblib saves the results in a file in the location you specify.
-&lt;/p&gt;
-
-&lt;p&gt;
-Here is another example with another arg.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #6434A3;"&gt;@memory.cache&lt;/span&gt;
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f2&lt;/span&gt;(x=1.0, a=3):
-    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(f&lt;span style="color: #008000;"&gt;'If you see this, go get a coffee while it runs. a=&lt;/span&gt;{"&amp;#128012;"*a}&lt;span style="color: #008000;"&gt;'&lt;/span&gt;)
-    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; a*x**2
-
-(f2(2),       &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;Runs function&lt;/span&gt;
- f2(2, a=3),  &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;calls cache&lt;/span&gt;
- f2(2, 4))    &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;Runs another function because a changed&lt;/span&gt;
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-If you see this, go get a coffee while it runs. a=🐌🐌🐌
-If you see this, go get a coffee while it runs. a=🐌🐌🐌🐌
-&lt;/p&gt;
-&lt;table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides"&gt;
-
-
-&lt;colgroup&gt;
-&lt;col  class="org-right" /&gt;
-
-&lt;col  class="org-right" /&gt;
-
-&lt;col  class="org-right" /&gt;
-&lt;/colgroup&gt;
-&lt;tbody&gt;
-&lt;tr&gt;
-&lt;td class="org-right"&gt;12&lt;/td&gt;
-&lt;td class="org-right"&gt;12&lt;/td&gt;
-&lt;td class="org-right"&gt;16&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-
-&lt;p&gt;
-Here, we look up from the cache each time.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-jupyter-python"&gt;(f2(2), f2(2, a=3), f2(2, 4))
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides"&gt;
-
-
-&lt;colgroup&gt;
-&lt;col  class="org-right" /&gt;
-
-&lt;col  class="org-right" /&gt;
-
-&lt;col  class="org-right" /&gt;
-&lt;/colgroup&gt;
-&lt;tbody&gt;
-&lt;tr&gt;
-&lt;td class="org-right"&gt;12&lt;/td&gt;
-&lt;td class="org-right"&gt;12&lt;/td&gt;
-&lt;td class="org-right"&gt;16&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-
-
-&lt;div id="outline-container-org07769a2" class="outline-2"&gt;
-&lt;h2 id="org07769a2"&gt;&lt;span class="section-number-2"&gt;1.&lt;/span&gt; where things start to go wrong&lt;/h2&gt;
-&lt;div class="outline-text-2" id="text-1"&gt;
-&lt;/div&gt;
-&lt;div id="outline-container-org45a5a5a" class="outline-3"&gt;
-&lt;h3 id="org45a5a5a"&gt;&lt;span class="section-number-3"&gt;1.1.&lt;/span&gt; Global variables&lt;/h3&gt;
-&lt;div class="outline-text-3" id="text-1-1"&gt;
-&lt;p&gt;
-First, we look at an uncached version of a function that uses a global variable.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #BA36A5;"&gt;a&lt;/span&gt; = 3
-
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f3&lt;/span&gt;(x=1.0):
-    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; a*x**2
-
-f3(2)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-12
-&lt;/p&gt;
-
-&lt;p&gt;
-We can change &lt;code&gt;a&lt;/code&gt; and see the change.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #BA36A5;"&gt;a&lt;/span&gt;=0
-f3(2)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-0
-&lt;/p&gt;
-
-&lt;p&gt;
-Now we look at a cached version.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #BA36A5;"&gt;a&lt;/span&gt; = 3
-&lt;span style="color: #6434A3;"&gt;@memory.cache&lt;/span&gt;
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f4&lt;/span&gt;(x=1.0):
-    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'If you see this, go get a coffee while it runs &amp;#128012;.'&lt;/span&gt;)
-    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; a*x**2
-
-(f4(2), f4(2), f4(2))
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-If you see this, go get a coffee while it runs 🐌.
-&lt;/p&gt;
-&lt;table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides"&gt;
-
-
-&lt;colgroup&gt;
-&lt;col  class="org-right" /&gt;
-
-&lt;col  class="org-right" /&gt;
-
-&lt;col  class="org-right" /&gt;
-&lt;/colgroup&gt;
-&lt;tbody&gt;
-&lt;tr&gt;
-&lt;td class="org-right"&gt;12&lt;/td&gt;
-&lt;td class="org-right"&gt;12&lt;/td&gt;
-&lt;td class="org-right"&gt;12&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-
-&lt;p&gt;
-Changing the global variable does not change the cache though. uh oh. This is just wrong. The answers should clearly be 0. Incorrect cache invalidation strikes.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #BA36A5;"&gt;a&lt;/span&gt; = 0
-(f4(2), f4(2), f4(2))
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides"&gt;
-
-
-&lt;colgroup&gt;
-&lt;col  class="org-right" /&gt;
-
-&lt;col  class="org-right" /&gt;
-
-&lt;col  class="org-right" /&gt;
-&lt;/colgroup&gt;
-&lt;tbody&gt;
-&lt;tr&gt;
-&lt;td class="org-right"&gt;12&lt;/td&gt;
-&lt;td class="org-right"&gt;12&lt;/td&gt;
-&lt;td class="org-right"&gt;12&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-
-&lt;div id="outline-container-org81a44de" class="outline-3"&gt;
-&lt;h3 id="org81a44de"&gt;&lt;span class="section-number-3"&gt;1.2.&lt;/span&gt; running functions with mutable arguments&lt;/h3&gt;
-&lt;div class="outline-text-3" id="text-1-2"&gt;
-&lt;p&gt;
-Using mutable arguments is a recipe for trouble and unanticipated problems, but it is easy to unintentionally do, and not always obvious, as I show here.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; ase.build &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; bulk
-&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; ase.calculators.emt &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; EMT
-
-&lt;span style="color: #BA36A5;"&gt;atoms&lt;/span&gt; = bulk(&lt;span style="color: #008000;"&gt;'Pd'&lt;/span&gt;)
-atoms.set_calculator(EMT())
-
-&lt;span style="color: #6434A3;"&gt;@memory.cache&lt;/span&gt;
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f&lt;/span&gt;(atoms):
-    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'If you see this, go get a coffee.'&lt;/span&gt;)
-    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; atoms.get_potential_energy()
-
-(f(atoms), f(atoms))
-
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-If you see this, go get a coffee.
-If you see this, go get a coffee.
-&lt;/p&gt;
-&lt;table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides"&gt;
-
-
-&lt;colgroup&gt;
-&lt;col  class="org-right" /&gt;
-
-&lt;col  class="org-right" /&gt;
-&lt;/colgroup&gt;
-&lt;tbody&gt;
-&lt;tr&gt;
-&lt;td class="org-right"&gt;0.0003422625372841992&lt;/td&gt;
-&lt;td class="org-right"&gt;0.0003422625372841992&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-
-&lt;p&gt;
-You can see this ran twice. The reason is that the atoms object was mutated by adding data onto it. Here is how I know:
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; joblib
-&lt;span style="color: #BA36A5;"&gt;atoms&lt;/span&gt; = bulk(&lt;span style="color: #008000;"&gt;'Pd'&lt;/span&gt;)
-atoms.set_calculator(EMT())
-joblib.&lt;span style="color: #006FE0;"&gt;hash&lt;/span&gt;(atoms), atoms._calc.results
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides"&gt;
-
-
-&lt;colgroup&gt;
-&lt;col  class="org-left" /&gt;
-
-&lt;col  class="org-left" /&gt;
-&lt;/colgroup&gt;
-&lt;tbody&gt;
-&lt;tr&gt;
-&lt;td class="org-left"&gt;ee2ed2eb9fdb4b3d6416803a33f43a22&lt;/td&gt;
-&lt;td class="org-left"&gt;nil&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-
-&lt;p&gt;
-Here you can see that simply running the get energy function the hash changes because the results dictionary on the calculator changes. That means subsequent uses of the atoms object will have a different hash, and you cannot rely on that to look up the results. In this case the results should not change the output of the function, but since they are included in the hash, it incorrectly invalidates the hash.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-jupyter-python"&gt;atoms.get_potential_energy()
-joblib.&lt;span style="color: #006FE0;"&gt;hash&lt;/span&gt;(atoms), atoms._calc.results
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides"&gt;
-
-
-&lt;colgroup&gt;
-&lt;col  class="org-left" /&gt;
-
-&lt;col  class="org-left" /&gt;
-&lt;/colgroup&gt;
-&lt;tbody&gt;
-&lt;tr&gt;
-&lt;td class="org-left"&gt;d37ef0a5761f499060b4f55bdf644814&lt;/td&gt;
-&lt;td class="org-left"&gt;(energy : 0.0003422625372841992 energies : array ((0.00034226)) free_energy : 0.0003422625372841992 forces : array (((0 0 0))))&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-
-&lt;p&gt;
-Suffice to say, this is non-obvious, but having seen it, not a surprise; mutable arguments are frequently a source of problems.
-&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-
-&lt;div id="outline-container-orgeecc951" class="outline-3"&gt;
-&lt;h3 id="orgeecc951"&gt;&lt;span class="section-number-3"&gt;1.3.&lt;/span&gt; If you run the same function different ways, the cache is not reused&lt;/h3&gt;
-&lt;div class="outline-text-3" id="text-1-3"&gt;
-&lt;p&gt;
-Some aspects of this are specific to org-mode and how scripts are run in it. Here we have to use an absolute path to make sure we use the right cache. That still doesn't solve the problem though as we will see.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-python"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; joblib &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; Memory
-&lt;span style="color: #BA36A5;"&gt;location&lt;/span&gt; = &lt;span style="color: #008000;"&gt;'/Users/jkitchin/Dropbox/emacs/journal/2023/02/01/joblib_cache/joblib_cache'&lt;/span&gt;
-&lt;span style="color: #BA36A5;"&gt;memory&lt;/span&gt; = Memory(location, verbose=0)
-
-a = 3
-&lt;span style="color: #6434A3;"&gt;@memory.cache&lt;/span&gt;
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f4&lt;/span&gt;(x=1.0):
-    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'If you see this, go get a coffee while it runs'&lt;/span&gt;)
-    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; a*x**2
-
-&lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;((f4(2), f4(2), f4(2)))
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-The issue is that joblib uses the file name it thinks the function is from in the path it saves the results. The filename is different
-&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-
-&lt;div id="outline-container-orgb8d7f30" class="outline-3"&gt;
-&lt;h3 id="orgb8d7f30"&gt;&lt;span class="section-number-3"&gt;1.4.&lt;/span&gt; Fragile cache invalidation&lt;/h3&gt;
-&lt;div class="outline-text-3" id="text-1-4"&gt;
-&lt;p&gt;
-joblib uses the function source in its hash. That means &lt;i&gt;any&lt;/i&gt; change to the source, including the function name, renaming variables, whitespace, comments or docstring changes invalidates the hash even though they may have no change in the output. That is an overabundance of caution, but simple to implement.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #6434A3;"&gt;@memory.cache&lt;/span&gt;
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f4&lt;/span&gt;(x=1.0):
-    &lt;span style="color: #036A07;"&gt;'add a ds.'&lt;/span&gt;
-    &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;comment&lt;/span&gt;
-    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'If you see this, go get a coffee while it runs'&lt;/span&gt;)
-    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; a*x**2
-
-&lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;((f4(2), f4(2), f4(2)))
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-If you see this, go get a coffee while it runs
-(0, 0, 0)
-&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-
-
-&lt;div id="outline-container-orgd5fbbc2" class="outline-2"&gt;
-&lt;h2 id="orgd5fbbc2"&gt;&lt;span class="section-number-2"&gt;2.&lt;/span&gt; Some partial solutions with pycse.hashcache&lt;/h2&gt;
-&lt;div class="outline-text-2" id="text-2"&gt;
-&lt;p&gt;
-I wrote &lt;code&gt;hashcache&lt;/code&gt; to solve some of these problems. It is actually built on top of joblib.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; pycse
-pycse.__version__, pycse.__file__
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides"&gt;
-
-
-&lt;colgroup&gt;
-&lt;col  class="org-right" /&gt;
-
-&lt;col  class="org-left" /&gt;
-&lt;/colgroup&gt;
-&lt;tbody&gt;
-&lt;tr&gt;
-&lt;td class="org-right"&gt;2.2.1&lt;/td&gt;
-&lt;td class="org-left"&gt;/Users/jkitchin/Dropbox/python/pycse/pycse/__init__.py&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; pycse.hashcache &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; hashcache
-  
-hashcache.&lt;span style="color: #BA36A5;"&gt;location&lt;/span&gt; = &lt;span style="color: #008000;"&gt;"/Users/jkitchin/Dropbox/emacs/journal/2023/02/01/cache"&lt;/span&gt;
-hashcache.&lt;span style="color: #BA36A5;"&gt;verbose&lt;/span&gt; = &lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;
-
-&lt;span style="color: #6434A3;"&gt;@hashcache&lt;/span&gt;
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;h1&lt;/span&gt;(x):
-    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'This runs soo slow... Go get a coffee'&lt;/span&gt;)
-    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x**2
-
-h1(2), h1(2)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides"&gt;
-
-
-&lt;colgroup&gt;
-&lt;col  class="org-right" /&gt;
-
-&lt;col  class="org-right" /&gt;
-&lt;/colgroup&gt;
-&lt;tbody&gt;
-&lt;tr&gt;
-&lt;td class="org-right"&gt;4&lt;/td&gt;
-&lt;td class="org-right"&gt;4&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-&lt;/div&gt;
-
-&lt;div id="outline-container-orge7c0587" class="outline-3"&gt;
-&lt;h3 id="orge7c0587"&gt;&lt;span class="section-number-3"&gt;2.1.&lt;/span&gt; No known problem with global variables&lt;/h3&gt;
-&lt;div class="outline-text-3" id="text-2-1"&gt;
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #BA36A5;"&gt;a&lt;/span&gt; = 3
-&lt;span style="color: #6434A3;"&gt;@hashcache&lt;/span&gt;
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;h4&lt;/span&gt;(x=1.0):
-    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'If you see this, go get a coffee while it runs'&lt;/span&gt;)
-    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; a*x**2
-
-(h4(2), h4(2), h4(2))
-
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-If you see this, go get a coffee while it runs
-&lt;/p&gt;
-&lt;table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides"&gt;
-
-
-&lt;colgroup&gt;
-&lt;col  class="org-right" /&gt;
-
-&lt;col  class="org-right" /&gt;
-
-&lt;col  class="org-right" /&gt;
-&lt;/colgroup&gt;
-&lt;tbody&gt;
-&lt;tr&gt;
-&lt;td class="org-right"&gt;12&lt;/td&gt;
-&lt;td class="org-right"&gt;12&lt;/td&gt;
-&lt;td class="org-right"&gt;12&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #BA36A5;"&gt;a&lt;/span&gt;=0
-(h4(2), h4(2), h4(2))
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides"&gt;
-
-
-&lt;colgroup&gt;
-&lt;col  class="org-right" /&gt;
-
-&lt;col  class="org-right" /&gt;
-
-&lt;col  class="org-right" /&gt;
-&lt;/colgroup&gt;
-&lt;tbody&gt;
-&lt;tr&gt;
-&lt;td class="org-right"&gt;0&lt;/td&gt;
-&lt;td class="org-right"&gt;0&lt;/td&gt;
-&lt;td class="org-right"&gt;0&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-
-&lt;p&gt;
-Whew!!! we got the right answers. hashcache does a better job detecting the external change.
-&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-
-&lt;div id="outline-container-org857113f" class="outline-3"&gt;
-&lt;h3 id="org857113f"&gt;&lt;span class="section-number-3"&gt;2.2.&lt;/span&gt; hashcache and mutable arguments&lt;/h3&gt;
-&lt;div class="outline-text-3" id="text-2-2"&gt;
-&lt;p&gt;
-hashcache does not solve the mutable argument problem, but, it does warn you it detected it.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; ase.build &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; bulk
-&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; ase.calculators.emt &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; EMT
-
-&lt;span style="color: #BA36A5;"&gt;atoms&lt;/span&gt; = bulk(&lt;span style="color: #008000;"&gt;'Pd'&lt;/span&gt;)
-atoms.set_calculator(EMT())
-
-&lt;span style="color: #6434A3;"&gt;@hashcache&lt;/span&gt;
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;h&lt;/span&gt;(atoms):
-    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'If you see this, go get a coffee.'&lt;/span&gt;)
-    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; atoms.get_potential_energy()
-
-(h(atoms), h(atoms), h(atoms))
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides"&gt;
-
-
-&lt;colgroup&gt;
-&lt;col  class="org-right" /&gt;
-
-&lt;col  class="org-right" /&gt;
-
-&lt;col  class="org-right" /&gt;
-&lt;/colgroup&gt;
-&lt;tbody&gt;
-&lt;tr&gt;
-&lt;td class="org-right"&gt;0.0003422625372841992&lt;/td&gt;
-&lt;td class="org-right"&gt;0.0003422625372841992&lt;/td&gt;
-&lt;td class="org-right"&gt;0.0003422625372841992&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-
-&lt;div id="outline-container-org4925e4a" class="outline-3"&gt;
-&lt;h3 id="org4925e4a"&gt;&lt;span class="section-number-3"&gt;2.3.&lt;/span&gt; Reuse the cache when you run different ways&lt;/h3&gt;
-&lt;div class="outline-text-3" id="text-2-3"&gt;
-&lt;p&gt;
-hashcache uses the same cache at the function and function environment level, so it avoids reruns even from different places. It is a judgement call by you to say if this is the right thing to do.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(h1(2), h1(2))
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-4 4
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-python"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; pycse.hashcache &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; hashcache
-hashcache.&lt;span style="color: #BA36A5;"&gt;location&lt;/span&gt; = &lt;span style="color: #008000;"&gt;"/Users/jkitchin/Dropbox/emacs/journal/2023/02/01/cache"&lt;/span&gt;
-
-&lt;span style="color: #6434A3;"&gt;@hashcache&lt;/span&gt;
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;h1&lt;/span&gt;(x):
-    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'This runs soo slow... Go get a coffee'&lt;/span&gt;)
-    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x**2
-
-&lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(h1(2), h1(2))
-&lt;/pre&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-
-&lt;div id="outline-container-org8461f88" class="outline-3"&gt;
-&lt;h3 id="org8461f88"&gt;&lt;span class="section-number-3"&gt;2.4.&lt;/span&gt; Insensitivity to unimportant changes&lt;/h3&gt;
-&lt;div class="outline-text-3" id="text-2-4"&gt;
-&lt;p&gt;
-Instead of hashing the source of the function, in hashcache I hash the bytecode instead. This is certainly less sensitive to unimportant changes like docstrings, comments or whitespace. I do use the function name in the hash, so even though that does not affect the output, I thought it might be confusing in the future.
-&lt;/p&gt;
-
-&lt;p&gt;
-Here, small changes like comments, docstrings, etc, don't affect the hash.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #BA36A5;"&gt;a&lt;/span&gt; = 3
-&lt;span style="color: #6434A3;"&gt;@hashcache&lt;/span&gt;
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;h4&lt;/span&gt;(x=1.0):
-    &lt;span style="color: #036A07;"&gt;'doc string'&lt;/span&gt;
-    &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;comments&lt;/span&gt;
-    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'If you see this, go get a coffee while it runs'&lt;/span&gt;)
-    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; a*x**2    
-
-(h4(2), h4(2), h4(2))
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides"&gt;
-
-
-&lt;colgroup&gt;
-&lt;col  class="org-right" /&gt;
-
-&lt;col  class="org-right" /&gt;
-
-&lt;col  class="org-right" /&gt;
-&lt;/colgroup&gt;
-&lt;tbody&gt;
-&lt;tr&gt;
-&lt;td class="org-right"&gt;12&lt;/td&gt;
-&lt;td class="org-right"&gt;12&lt;/td&gt;
-&lt;td class="org-right"&gt;12&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-
-&lt;div id="outline-container-orgfb0f2ed" class="outline-2"&gt;
-&lt;h2 id="orgfb0f2ed"&gt;&lt;span class="section-number-2"&gt;3.&lt;/span&gt; Is it the answer?&lt;/h2&gt;
-&lt;div class="outline-text-2" id="text-3"&gt;
-&lt;p&gt;
-Probably not completely. It is almost certain I have not captured all the ways the cache should be invalidated, or when a new cache should be used. hashcache is for now, a proof of concept in understanding why this is a hard problem to solve. I prefer its behavior over the defaults in joblib so far though.
-&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;p&gt;Copyright (C) 2023 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
-&lt;p&gt;&lt;a href="/org/2023/02/01/Caching-expensive-function-calls-so-you-don't-have-to-rerun-them.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
 &lt;p&gt;Org-mode version = 9.5.5&lt;/p&gt;]]></content:encoded>
     </item>
   </channel>

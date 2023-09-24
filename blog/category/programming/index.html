@@ -102,6 +102,424 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Adding-new-backends-to-hashcache"></div>
+      <h2 class="blog_post_title"><a href="/blog/2023/09/24/Adding-new-backends-to-hashcache/" rel="bookmark" title="Permanent Link to Adding new backends to hashcache">Adding new backends to hashcache</a></h2>
+      <p><small><span class="blog_post_date">Posted September 24, 2023 at 01:14 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/programming/'>programming</a></span> | tags: 
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org5fd57a7">1. Alternative backends for hashcache</a></li>
+<li><a href="#orgac9f2ab">2. a shelve version</a></li>
+<li><a href="#org3be8901">3. sqlite version</a></li>
+<li><a href="#org32e7950">4. redis</a></li>
+<li><a href="#org29b3384">5. Summary</a></li>
+</ul>
+</div>
+</div>
+<p>
+I have been working on hashcache to make it more flexible. I like the base functionality that uses the filesystem for caching. That still works.
+</p>
+
+<p>
+Here I set up a timeit decorator to show how this works.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-jupyter-python"><span style="color: #0000FF;">from</span> pycse.hashcache <span style="color: #0000FF;">import</span> hashcache
+<span style="color: #0000FF;">import</span> time
+
+!rm -fr ./cache
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">timeit</span>(func):
+    <span style="color: #0000FF;">def</span> <span style="color: #006699;">wrapper</span>(*args, **kwargs):
+        <span style="color: #BA36A5;">t0</span> = time.time()
+        <span style="color: #BA36A5;">res</span> = func(*args, **kwargs)
+        <span style="color: #006FE0;">print</span>(f<span style="color: #008000;">'Elapsed time = </span>{time.time() - t0}<span style="color: #008000;">s'</span>)
+        <span style="color: #0000FF;">return</span> res
+    <span style="color: #0000FF;">return</span> wrapper
+</pre>
+</div>
+
+<p>
+Now we decorate a function that is "expensive". The first time we run it, it takes a long time.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-jupyter-python"><span style="color: #6434A3;">@timeit</span>
+<span style="color: #6434A3;">@hashcache</span>
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">expensive_func</span>(x):
+    time.sleep(3)
+    <span style="color: #0000FF;">return</span> x
+
+expensive_func(2)
+</pre>
+</div>
+
+<p>
+Elapsed time = 3.007030963897705s
+2
+</p>
+
+<p>
+The second time is very fast, since we just look it up.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-jupyter-python">expensive_func(2)
+</pre>
+</div>
+
+<p>
+Elapsed time = 0.0012097358703613281s
+2
+</p>
+
+<p>
+Where did we look it up from? It is stored on disk. You can see where by adding a verbose option to the decorator. This shows you all the data that was stored in the cache.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-jupyter-python"><span style="color: #6434A3;">@hashcache</span>(verbose=<span style="color: #D0372D;">True</span>)
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">expensive_func</span>(x):
+    time.sleep(3)
+    <span style="color: #0000FF;">return</span> x
+
+expensive_func(2)
+</pre>
+</div>
+
+<p>
+{   'args': (2,),
+    'cwd': '/Users/jkitchin/Dropbox/emacs/journal/2023/09/23',
+    'elapsed_time': 3.0048787593841553,
+    'func': 'expensive_func',
+    'hash': 'b5436cc21714a7ea619729cc9768b8c5b3a03307',
+    'kwargs': {},
+    'module': '<span class="underline"><span class="underline">main</span></span>',
+    'output': 2,
+    'run-at': 1695572717.2020931,
+    'run-at-human': 'Sun Sep 24 12:25:17 2023',
+    'standardized-kwargs': {'x': 2},
+    'user': 'jkitchin',
+    'version': '0.0.2'}
+2
+</p>
+
+<div id="outline-container-org5fd57a7" class="outline-2">
+<h2 id="org5fd57a7"><span class="section-number-2">1.</span> Alternative backends for hashcache</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+The file system is an amazing cache with many benefits. There are few reasons you might like something different though. For example, it is slow to search if you have to iterate over all the directories and read the files, and it might be slow to sync lots of directories to another place. 
+</p>
+
+<p>
+hashcache is more flexible now, so you can define the functions that load and dump the cache. Here we use lmdb as a key-value database. lmdb expects the keys and values to be bytes, so we do some tricks with io.BytesIO to get these as strings from joblib.dump which expects to write to a file.
+</p>
+
+<p>
+The load function has the signature (<code>hash</code>, <code>verbose</code>), and the dump function has the signature (<code>hash</code>, <code>data</code>, <code>verbose</code>). In both cases, <code>hash</code> will be a string for the key to save data in. <code>data</code> will be a dictionary that should be saved in a way that it can be reloaded. <code>verbose</code> is a flag that you can ignore or use to provide some kind of logging.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-jupyter-python"><span style="color: #0000FF;">from</span> pycse.hashcache <span style="color: #0000FF;">import</span> hashcache
+
+<span style="color: #0000FF;">import</span> io, joblib, lmdb
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">lmdb_dump</span>(hsh, data, verbose=<span style="color: #D0372D;">False</span>):
+    <span style="color: #0000FF;">if</span> verbose:
+        <span style="color: #006FE0;">print</span>(<span style="color: #008000;">'running lmdb_dump'</span>)
+    <span style="color: #0000FF;">with</span> io.BytesIO() <span style="color: #0000FF;">as</span> f:
+        joblib.dump(data, f)
+        value = f.getvalue()
+
+    db = lmdb.Environment(hashcache.cache)
+    <span style="color: #0000FF;">with</span> db.begin(write=<span style="color: #D0372D;">True</span>) <span style="color: #0000FF;">as</span> txn:
+        txn.put(hsh.encode(<span style="color: #008000;">'utf-8'</span>), value)
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">lmdb_load</span>(hsh, verbose=<span style="color: #D0372D;">False</span>):
+    <span style="color: #0000FF;">if</span> verbose:
+        <span style="color: #006FE0;">print</span>(<span style="color: #008000;">'running lmdb_load'</span>)
+    db = lmdb.Environment(hashcache.cache)
+    <span style="color: #0000FF;">with</span> db.begin() <span style="color: #0000FF;">as</span> txn:
+        val = txn.get(hsh.encode(<span style="color: #008000;">'utf-8'</span>))
+        <span style="color: #0000FF;">if</span> val <span style="color: #0000FF;">is</span> <span style="color: #D0372D;">None</span>:
+            <span style="color: #0000FF;">return</span> <span style="color: #D0372D;">False</span>, <span style="color: #D0372D;">None</span>
+        <span style="color: #0000FF;">else</span>:
+            <span style="color: #0000FF;">return</span> <span style="color: #D0372D;">True</span>, joblib.load(io.BytesIO(val))[<span style="color: #008000;">'output'</span>]
+                                    
+! rm -fr cache.lmdb
+
+hashcache.cache = <span style="color: #008000;">'cache.lmdb'</span>
+
+
+<span style="color: #6434A3;">@hashcache</span>(loader=lmdb_load, dumper=lmdb_dump, verbose=<span style="color: #D0372D;">True</span>)
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">f</span>(x):
+    <span style="color: #0000FF;">return</span> x
+
+f(2)   
+</pre>
+</div>
+
+<p>
+running lmdb_load
+running lmdb_dump
+2
+</p>
+
+<p>
+And we can recall the result as easily.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-jupyter-python">f(2)
+</pre>
+</div>
+
+<p>
+running lmdb_load
+2
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgac9f2ab" class="outline-2">
+<h2 id="orgac9f2ab"><span class="section-number-2">2.</span> a shelve version</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+Maybe you prefer a built in library like shelve. This is also quite simple.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-jupyter-python"><span style="color: #0000FF;">from</span> pycse.hashcache <span style="color: #0000FF;">import</span> hashcache
+
+<span style="color: #0000FF;">import</span> io, joblib, shelve
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">shlv_dump</span>(hsh, data, verbose=<span style="color: #D0372D;">False</span>):
+    <span style="color: #006FE0;">print</span>(<span style="color: #008000;">'running shlv_dump'</span>)
+    <span style="color: #0000FF;">with</span> io.BytesIO() <span style="color: #0000FF;">as</span> f:
+        joblib.dump(data, f)
+        value = f.getvalue()
+
+    <span style="color: #0000FF;">with</span> shelve.<span style="color: #006FE0;">open</span>(hashcache.cache) <span style="color: #0000FF;">as</span> db:
+        db[<span style="color: #BA36A5;">hsh</span>] = value
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">shlv_load</span>(hsh, verbose=<span style="color: #D0372D;">False</span>):
+    <span style="color: #006FE0;">print</span>(<span style="color: #008000;">'running shlv_load'</span>)
+    <span style="color: #0000FF;">with</span> shelve.<span style="color: #006FE0;">open</span>(hashcache.cache) <span style="color: #0000FF;">as</span> db:
+        <span style="color: #0000FF;">if</span> hsh <span style="color: #0000FF;">in</span> db:
+            <span style="color: #0000FF;">return</span> <span style="color: #D0372D;">True</span>, joblib.load(io.BytesIO(db[hsh]))[<span style="color: #008000;">'output'</span>]
+        <span style="color: #0000FF;">else</span>:
+            <span style="color: #0000FF;">return</span> <span style="color: #D0372D;">False</span>, <span style="color: #D0372D;">None</span>
+
+hashcache.cache = <span style="color: #008000;">'cache.shlv'</span>
+! rm -f cache.shlv.db
+
+<span style="color: #6434A3;">@hashcache</span>(loader=shlv_load, dumper=shlv_dump)
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">f</span>(x):
+    <span style="color: #0000FF;">return</span> x
+
+f(2)
+    
+</pre>
+</div>
+
+<p>
+running shlv_load
+running shlv_dump
+2
+</p>
+
+<p>
+And again loading is easy.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-jupyter-python">f(2)
+</pre>
+</div>
+
+<p>
+running shlv_load
+2
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3be8901" class="outline-2">
+<h2 id="org3be8901"><span class="section-number-2">3.</span> sqlite version</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+I am a big fan of sqlite. Here I use a simple table mapping a key to a value. I think it could be interesting to consider storing the value as <a href="https://www.sqlite.org/json1.html">json</a> that would make it more searchable, or you could make a more complex table, but here we keep it simple.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-jupyter-python"><span style="color: #0000FF;">from</span> pycse.hashcache <span style="color: #0000FF;">import</span> hashcache
+
+<span style="color: #0000FF;">import</span> io, joblib, sqlite3
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">sql_dump</span>(hsh, data, verbose=<span style="color: #D0372D;">False</span>):
+    <span style="color: #006FE0;">print</span>(<span style="color: #008000;">'running sql_dump'</span>)
+    <span style="color: #0000FF;">with</span> io.BytesIO() <span style="color: #0000FF;">as</span> f:
+        joblib.dump(data, f)
+        value = f.getvalue()
+
+    <span style="color: #0000FF;">with</span> con:
+        con.execute(<span style="color: #008000;">"INSERT INTO cache(hash, value) VALUES(?, ?)"</span>,
+                    (hsh, value))
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">sql_load</span>(hsh, verbose=<span style="color: #D0372D;">False</span>):
+    <span style="color: #006FE0;">print</span>(<span style="color: #008000;">'running sql_load'</span>)
+    <span style="color: #0000FF;">with</span> con:        
+        cur = con.execute(<span style="color: #008000;">"SELECT value FROM cache WHERE hash = ?"</span>,
+                          (hsh,))
+        value = cur.fetchone()
+        <span style="color: #0000FF;">if</span> value <span style="color: #0000FF;">is</span> <span style="color: #D0372D;">None</span>:
+            <span style="color: #0000FF;">return</span> <span style="color: #D0372D;">False</span>, <span style="color: #D0372D;">None</span>
+        <span style="color: #0000FF;">else</span>:
+            <span style="color: #0000FF;">return</span> <span style="color: #D0372D;">True</span>, joblib.load(io.BytesIO(value[0]))[<span style="color: #008000;">'output'</span>]
+
+! rm -f cache.sql
+hashcache.cache = <span style="color: #008000;">'cache.sql'</span>
+con = sqlite3.connect(hashcache.cache)
+con.execute(<span style="color: #008000;">"CREATE TABLE cache(hash TEXT unique, value BLOB)"</span>)
+        
+<span style="color: #6434A3;">@hashcache</span>(loader=sql_load, dumper=sql_dump)
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">f</span>(x):
+    <span style="color: #0000FF;">return</span> x
+
+f(2)    
+</pre>
+</div>
+
+<p>
+running sql_load
+running sql_dump
+2
+</p>
+
+<p>
+Once again, running is easy.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-jupyter-python">f(2)
+</pre>
+</div>
+
+<p>
+running sql_load
+2
+</p>
+</div>
+</div>
+
+<div id="outline-container-org32e7950" class="outline-2">
+<h2 id="org32e7950"><span class="section-number-2">4.</span> redis</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+Finally, you might like a server to cache in. This opens the door to running the server remotely so it is accessible by multiple processes using the cache on different machines. We use redis for this example, but only run it locally. Make sure you run <code>redis-server --daemonize yes</code>
+</p>
+
+<div class="org-src-container">
+<pre class="src src-jupyter-python"><span style="color: #0000FF;">from</span> pycse.hashcache <span style="color: #0000FF;">import</span> hashcache
+
+<span style="color: #0000FF;">import</span> io, joblib, redis
+
+<span style="color: #BA36A5;">db</span> = redis.Redis(host=<span style="color: #008000;">'localhost'</span>, port=6379)
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">redis_dump</span>(hsh, data, verbose=<span style="color: #D0372D;">False</span>):
+    <span style="color: #006FE0;">print</span>(<span style="color: #008000;">'running redis_dump'</span>)
+    <span style="color: #0000FF;">with</span> io.BytesIO() <span style="color: #0000FF;">as</span> f:
+        joblib.dump(data, f)
+        value = f.getvalue()
+
+    db.<span style="color: #006FE0;">set</span>(hsh, value)
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">redis_load</span>(hsh, verbose=<span style="color: #D0372D;">False</span>):
+    <span style="color: #006FE0;">print</span>(<span style="color: #008000;">'running redis_load'</span>)
+    <span style="color: #0000FF;">if</span> <span style="color: #0000FF;">not</span> hsh <span style="color: #0000FF;">in</span> db:
+        <span style="color: #0000FF;">return</span> <span style="color: #D0372D;">False</span>, <span style="color: #D0372D;">None</span>
+    <span style="color: #0000FF;">else</span>:
+        <span style="color: #0000FF;">return</span> <span style="color: #D0372D;">True</span>, joblib.load(io.BytesIO(db.get(hsh)))[<span style="color: #008000;">'output'</span>]
+
+    
+<span style="color: #0000FF;">import</span> functools    
+hashcache_redis = functools.partial(hashcache,
+                                    loader=redis_load,
+                                    dumper=redis_dump)    
+
+<span style="color: #6434A3;">@hashcache_redis</span>
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">f</span>(x):
+    <span style="color: #0000FF;">return</span> x
+
+f(2)    
+</pre>
+</div>
+
+<p>
+running redis_load
+running redis_dump
+2
+</p>
+
+<p>
+No surprise here, loading is the same as before.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-jupyter-python">f(2)
+</pre>
+</div>
+
+<p>
+running redis_load
+2
+</p>
+</div>
+</div>
+
+<div id="outline-container-org29b3384" class="outline-2">
+<h2 id="org29b3384"><span class="section-number-2">5.</span> Summary</h2>
+<div class="outline-text-2" id="text-5">
+<p>
+I have refactored hashcache to make it much easier to add new backends. You might do that for performance, ease of backup or transferability, to add new capabilities for searching, etc. The new code is a little cleaner than it was before IMO. I am not sure it is API-stable yet, but it is getting there.
+</p>
+</div>
+</div>
+<p>Copyright (C) 2023 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2023/09/24/Adding-new-backends-to-hashcache.org">org-mode source</a></p>
+<p>Org-mode version = 9.7-pre</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+
+<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2023/09/24/Adding-new-backends-to-hashcache">Discuss on Twitter</a>
+
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="A-better-manager-for-supervising-Python-functions"></div>
       <h2 class="blog_post_title"><a href="/blog/2023/09/21/A-better-manager-for-supervising-Python-functions/" rel="bookmark" title="Permanent Link to A better manager for supervising Python functions">A better manager for supervising Python functions</a></h2>
       <p><small><span class="blog_post_date">Posted September 21, 2023 at 01:42 PM</span> | categories:
@@ -988,7 +1406,7 @@ This solution works pretty well, similar to custodian. It is a little simpler th
       <div id="Using-Custodian-to-help-converge-an-optimization-problem"></div>
       <h2 class="blog_post_title"><a href="/blog/2023/09/19/Using-Custodian-to-help-converge-an-optimization-problem/" rel="bookmark" title="Permanent Link to Using Custodian to help converge an optimization problem">Using Custodian to help converge an optimization problem</a></h2>
       <p><small><span class="blog_post_date">Posted September 19, 2023 at 03:34 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/programming/'>programming</a>, <a href='/blog/category/optimization/'>optimization</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/optimization/'>optimization</a>, <a href='/blog/category/programming/'>programming</a></span> | tags: 
       <p><small><span class="blog_post_date">Updated September 19, 2023 at 03:35 PM</span></small>
       </small></p>
     </header>
@@ -1259,456 +1677,6 @@ Needless to say, go watch <a href="http://pyvideo.org/video/1780/transforming-co
 <a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2013/07/08/for-else-loops">Discuss on Twitter</a>
 
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="The-and-or-trick-in-python"></div>
-      <h2 class="blog_post_title"><a href="/blog/2013/07/07/The-and-or-trick-in-python/" rel="bookmark" title="Permanent Link to The and-or trick in python">The and-or trick in python</a></h2>
-      <p><small><span class="blog_post_date">Posted July 07, 2013 at 08:38 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/programming/'>programming</a>, <a href='/blog/category/logic/'>logic</a></span> | tags: 
-      <p><small><span class="blog_post_date">Updated July 08, 2013 at 09:03 AM</span></small>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<div id="table-of-contents">
-<h2>Table of Contents</h2>
-<div id="text-table-of-contents">
-<ul>
-<li><a href="#sec-1">1. Using more modern python syntax than the and-or trick</a></li>
-<li><a href="#sec-2">2. using defaultdict</a></li>
-</ul>
-</div>
-</div>
-
-<p>
-The boolean logic commands <code>and</code> and <code>or</code> have return values in python. Let us first review briefly what these operators do by examples. The typical usage is in conditional statements. First, we look at what kind of values evaluate to "True" or "False" in python. Anything that is "empty" usually evaluates to False, along with the integer 0 and the boolean value of False.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #8b0000;">for</span> value <span style="color: #8b0000;">in</span> (<span style="color: #228b22;">''</span>, 0, <span style="color: #8b0000;">None</span>, [], (), {}, <span style="color: #8b0000;">False</span>):
-    <span style="color: #8b0000;">if</span> value:
-        <span style="color: #8b0000;">print</span> value, <span style="color: #228b22;">"True"</span>
-    <span style="color: #8b0000;">else:</span>
-        <span style="color: #8b0000;">print</span> value, <span style="color: #228b22;">"False"</span>
-</pre>
-</div>
-
-<pre class="example">
- False
-0 False
-None False
-[] False
-() False
-{} False
-False False
-</pre>
-
-<p>
-Objects that are not empty evaluate to "True", along with numbers not equal to 0, and the boolean value True.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #8b0000;">for</span> value <span style="color: #8b0000;">in</span> (<span style="color: #228b22;">' '</span>, 2, 1, <span style="color: #228b22;">"a"</span>, [1], (3,), <span style="color: #8b0000;">True</span>):
-    <span style="color: #8b0000;">if</span> value:
-        <span style="color: #8b0000;">print</span> value, <span style="color: #228b22;">"True"</span>
-    <span style="color: #8b0000;">else:</span>
-        <span style="color: #8b0000;">print</span> value, <span style="color: #228b22;">"False"</span>
-</pre>
-</div>
-
-<pre class="example">
-  True
-2 True
-1 True
-a True
-[1] True
-(3,) True
-True True
-</pre>
-
-<p>
-The <code>and</code> and <code>or</code> operators compare two objects. <code>and</code> evaluates to "True" if both objects evaluate to "True" and <code>or</code> evaluates to "True" if either object evaluates to "True". Here are some examples.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python">a = <span style="color: #8b0000;">None</span>
-b = 5
-
-<span style="color: #8b0000;">if</span> a <span style="color: #8b0000;">and</span> b:
-    <span style="color: #8b0000;">print</span> <span style="color: #8b0000;">True</span>
-<span style="color: #8b0000;">else:</span>
-    <span style="color: #8b0000;">print</span> <span style="color: #8b0000;">False</span>
-</pre>
-</div>
-
-<pre class="example">
-False
-</pre>
-
-<div class="org-src-container">
-
-<pre class="src src-python">a = <span style="color: #8b0000;">None</span>
-b = 5
-
-<span style="color: #8b0000;">if</span> a <span style="color: #8b0000;">or</span> b:
-    <span style="color: #8b0000;">print</span> <span style="color: #8b0000;">True</span>
-<span style="color: #8b0000;">else:</span>
-    <span style="color: #8b0000;">print</span> <span style="color: #8b0000;">False</span>
-</pre>
-</div>
-
-<pre class="example">
-True
-</pre>
-
-<p>
-Now the interesting part. The <code>and</code> and <code>or</code> operators actually return values! With the <code>and</code> operator, each argument is evaluated, and if they all evaluate to True, the last argument is returned. Otherwise the first False argument is returned.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python">a = 1
-b = 5
-<span style="color: #8b0000;">print</span> a <span style="color: #8b0000;">and</span> b
-<span style="color: #8b0000;">print</span> b <span style="color: #8b0000;">and</span> a
-<span style="color: #8b0000;">print</span> a <span style="color: #8b0000;">and</span> <span style="color: #8b0000;">False</span>
-<span style="color: #8b0000;">print</span> a <span style="color: #8b0000;">and</span> <span style="color: #8b0000;">True</span>
-<span style="color: #8b0000;">print</span> a <span style="color: #8b0000;">and</span> <span style="color: #8b0000;">None</span>
-<span style="color: #8b0000;">print</span> <span style="color: #8b0000;">False</span> <span style="color: #8b0000;">and</span> a
-<span style="color: #8b0000;">print</span> <span style="color: #8b0000;">None</span> <span style="color: #8b0000;">and</span> a
-<span style="color: #8b0000;">print</span> <span style="color: #8b0000;">True</span> <span style="color: #8b0000;">and</span> <span style="color: #228b22;">'a'</span> <span style="color: #8b0000;">and</span> 0 <span style="color: #8b0000;">and</span> <span style="color: #8b0000;">True</span> <span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">first False item is zero</span>
-</pre>
-</div>
-
-<pre class="example">
-5
-1
-False
-True
-None
-False
-None
-0
-</pre>
-
-<p>
-The <code>or</code> operator returns the first True value or the last value if nothing is True. Note that if a True value is found, the values in the expressions after that value are not evaluated.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #8b0000;">print</span> 2 <span style="color: #8b0000;">or</span> <span style="color: #8b0000;">False</span>
-<span style="color: #8b0000;">print</span> 0 <span style="color: #8b0000;">or</span> <span style="color: #8b0000;">False</span>
-<span style="color: #8b0000;">print</span> 0 <span style="color: #8b0000;">or</span> <span style="color: #8b0000;">False</span> <span style="color: #8b0000;">or</span> 4 <span style="color: #8b0000;">or</span> {}
-</pre>
-</div>
-
-<pre class="example">
-2
-False
-4
-</pre>
-
-<p>
-One way you might see this is to set variables depending on what command-line arguments were used in a script. For example:
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #8b0000;">import</span> sys
-
-<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">replace this:</span>
-<span style="color: #8b0000;">if</span> <span style="color: #228b22;">'plot'</span> <span style="color: #8b0000;">in</span> sys.argv:
-    PLOT = <span style="color: #8b0000;">True</span>
-<span style="color: #8b0000;">else:</span>
-    PLOT = <span style="color: #8b0000;">False</span>
-
-<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">with this</span>
-PLOT = <span style="color: #228b22;">'plot'</span> <span style="color: #8b0000;">in</span> sys.argv <span style="color: #8b0000;">or</span> <span style="color: #8b0000;">False</span>
-
-<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">later in your code:</span>
-<span style="color: #8b0000;">if</span> PLOT: 
-    <span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">do something to make a plot</span>
-</pre>
-</div>
-
-<p>
-Now we get to the <a href="http://www.diveintopython.net/power_of_introspection/and_or.html">and-or</a> trick. The trick is to assign a variable one value if some boolean value is True, and another value if the expression is False. 
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python">a = <span style="color: #8b0000;">True</span>
-b = <span style="color: #8b0000;">True</span>
-
-<span style="color: #8b0000;">if</span> a <span style="color: #8b0000;">and</span> b:
-    c = <span style="color: #228b22;">"value1"</span>
-<span style="color: #8b0000;">else:</span> 
-    c = <span style="color: #228b22;">"value2"</span>
-
-<span style="color: #8b0000;">print</span> c
-</pre>
-</div>
-
-<pre class="example">
-value1
-</pre>
-
-<p>
-We can replace the if/else code above with this one line expression:
-</p>
-<div class="org-src-container">
-
-<pre class="src src-python">a = <span style="color: #8b0000;">True</span>
-b = <span style="color: #8b0000;">True</span>
-
-c = (a <span style="color: #8b0000;">and</span> b) <span style="color: #8b0000;">and</span> <span style="color: #228b22;">"value1"</span> <span style="color: #8b0000;">or</span> <span style="color: #228b22;">"value2"</span>
-<span style="color: #8b0000;">print</span> c
-</pre>
-</div>
-
-<pre class="example">
-value1
-</pre>
-
-<p>
-There is a problem. If the first value evaluates to False, you will not get what you expect:
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python">a = <span style="color: #8b0000;">True</span>
-b = <span style="color: #8b0000;">True</span>
-
-c = (a <span style="color: #8b0000;">and</span> b) <span style="color: #8b0000;">and</span> <span style="color: #8b0000;">None</span> <span style="color: #8b0000;">or</span> <span style="color: #228b22;">"value2"</span>
-<span style="color: #8b0000;">print</span> c
-</pre>
-</div>
-
-<pre class="example">
-value2
-</pre>
-
-<p>
-In this case, (a <code>and</code> b) evaluates to True, so we would expect the value of c to be the first value. However, None evaluates to False, so the <code>or</code> operator returns the first "True" value, which is the second value. We have to modify the code so that both the or arguments are True. We do this by putting both arguments inside a list, which will then always evaluate to True. This will assign the first list to c if the expression is True, and the second list if it is False. We wrap the whole thing in parentheses, and then index the returned list to get the contents of the list.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python">a = <span style="color: #8b0000;">True</span>
-b = <span style="color: #8b0000;">True</span>
-
-c = ((a <span style="color: #8b0000;">and</span> b) <span style="color: #8b0000;">and</span> [<span style="color: #8b0000;">None</span>] <span style="color: #8b0000;">or</span> [<span style="color: #228b22;">"value2"</span>])[0]
-
-<span style="color: #8b0000;">print</span> c
-</pre>
-</div>
-
-<pre class="example">
-None
-</pre>
-
-<div class="org-src-container">
-
-<pre class="src src-python">a = <span style="color: #8b0000;">True</span>
-b = <span style="color: #8b0000;">True</span>
-
-c = (<span style="color: #8b0000;">not</span> (a <span style="color: #8b0000;">and</span> b) <span style="color: #8b0000;">and</span> [<span style="color: #8b0000;">None</span>] <span style="color: #8b0000;">or</span> [<span style="color: #228b22;">"value2"</span>])[0]
-
-<span style="color: #8b0000;">print</span> c
-</pre>
-</div>
-
-<pre class="example">
-value2
-</pre>
-
-<p>
-This is definitely a trick. I find the syntax difficult to read, especially compared to the more verbose if/else statements. It is interesting though, and there might be places where the return value of the boolean operators might be useful, now that you know you can get them.
-</p>
-
-<p>
-Here is a tough example of using this to update a dictionary entry. Previously we used a dictionary to <a href="http://jkitchin.github.io/blog/2013/05/29/Getting-a-dictionary-of-counts/">count</a> unique entries in a list. 
-</p>
-<div class="org-src-container">
-
-<pre class="src src-python">d = {}
-
-d[<span style="color: #228b22;">'key'</span>] = (d.get(<span style="color: #228b22;">'key'</span>, <span style="color: #8b0000;">None</span>) <span style="color: #8b0000;">and</span> [d[<span style="color: #228b22;">'key'</span>] + 1] <span style="color: #8b0000;">or</span> [1])[0]
-
-<span style="color: #8b0000;">print</span> d
-
-d[<span style="color: #228b22;">'key'</span>] = (d.get(<span style="color: #228b22;">'key'</span>, <span style="color: #8b0000;">None</span>) <span style="color: #8b0000;">and</span> [d[<span style="color: #228b22;">'key'</span>] + 1] <span style="color: #8b0000;">or</span> [1])[0]
-<span style="color: #8b0000;">print</span> d
-</pre>
-</div>
-
-<pre class="example">
-{'key': 1}
-{'key': 2}
-</pre>
-
-<p>
-This works because the .get function on a dictionary returns None if the key does not exist, resulting in assigning the value of 1 to that key, or it returns something that evaluates to True if the key does exist, so the key gets incremented. 
-</p>
-
-<p>
-Let us see this trick in action. Before we used if/else statements to achieve our goal, checking if the key is in the dictionary and incrementing by one if it is, and if not, setting the key to 1.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python">L = [<span style="color: #228b22;">'a'</span>, <span style="color: #228b22;">'a'</span>, <span style="color: #228b22;">'b'</span>,<span style="color: #228b22;">'d'</span>, <span style="color: #228b22;">'e'</span>, <span style="color: #228b22;">'b'</span>, <span style="color: #228b22;">'e'</span>, <span style="color: #228b22;">'a'</span>]
-
-<span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">old method</span>
-d = {}
-<span style="color: #8b0000;">for</span> el <span style="color: #8b0000;">in</span> L:
-    <span style="color: #8b0000;">if</span> el <span style="color: #8b0000;">in</span> d:
-        d[el] += 1
-    <span style="color: #8b0000;">else:</span>
-        d[el] = 1
-
-<span style="color: #8b0000;">print</span> d
-</pre>
-</div>
-
-<pre class="example">
-{'a': 3, 'b': 2, 'e': 2, 'd': 1}
-</pre>
-
-<p>
-Here is the new method:
-</p>
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #ff0000; font-weight: bold;"># </span><span style="color: #ff0000; font-weight: bold;">new method:</span>
-L = [<span style="color: #228b22;">'a'</span>, <span style="color: #228b22;">'a'</span>, <span style="color: #228b22;">'b'</span>,<span style="color: #228b22;">'d'</span>, <span style="color: #228b22;">'e'</span>, <span style="color: #228b22;">'b'</span>, <span style="color: #228b22;">'e'</span>, <span style="color: #228b22;">'a'</span>]
-d = {}
-<span style="color: #8b0000;">for</span> el <span style="color: #8b0000;">in</span> L:
-    d[el] = (d.get(el, <span style="color: #8b0000;">None</span>) <span style="color: #8b0000;">and</span> [d[el] + 1] <span style="color: #8b0000;">or</span> [1])[0]
-<span style="color: #8b0000;">print</span> d
-</pre>
-</div>
-
-<pre class="example">
-{'a': 3, 'b': 2, 'e': 2, 'd': 1}
-</pre>
-
-<p>
-We have in (an admittedly hard to read) a single single line replaced the if/else statement! I have for a long time thought this should possible. I am somewhat disappointed that it is not easier to read though.
-</p>
-
-
-<p>
-<b>Update 7/8/2013</b>
-</p>
-<div id="outline-container-sec-1" class="outline-2">
-<h2 id="sec-1"><span class="section-number-2">1</span> Using more modern python syntax than the and-or trick</h2>
-<div class="outline-text-2" id="text-1">
-<p>
-@<sub>Mark</sub>_ pointed out in a comment the <a href="http://docs.python.org/2/reference/expressions.html#conditional-expressions">more modern syntax</a> in python is "value1" if a else "value2". Here is how it works.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python">a = <span style="color: #8b0000;">True</span>
-c = <span style="color: #228b22;">"value1"</span> <span style="color: #8b0000;">if</span> a <span style="color: #8b0000;">else</span> <span style="color: #228b22;">"value2"</span>
-<span style="color: #8b0000;">print</span> c
-</pre>
-</div>
-
-<pre class="example">
-value1
-</pre>
-
-<div class="org-src-container">
-
-<pre class="src src-python">a = <span style="color: #228b22;">''</span>
-c = <span style="color: #228b22;">"value1"</span> <span style="color: #8b0000;">if</span> a <span style="color: #8b0000;">else</span> <span style="color: #228b22;">"value2"</span>
-<span style="color: #8b0000;">print</span> c
-</pre>
-</div>
-
-<pre class="example">
-value2
-</pre>
-
-<p>
-This is indeed very clean to read. This leads to a cleaner and easier to read implementation of the counting code.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python">L = [<span style="color: #228b22;">'a'</span>, <span style="color: #228b22;">'a'</span>, <span style="color: #228b22;">'b'</span>,<span style="color: #228b22;">'d'</span>, <span style="color: #228b22;">'e'</span>, <span style="color: #228b22;">'b'</span>, <span style="color: #228b22;">'e'</span>, <span style="color: #228b22;">'a'</span>]
-d = {}
-<span style="color: #8b0000;">for</span> el <span style="color: #8b0000;">in</span> L:
-    d[el] = (d[el] + 1) <span style="color: #8b0000;">if</span> (el <span style="color: #8b0000;">in</span> d) <span style="color: #8b0000;">else</span> 1
-<span style="color: #8b0000;">print</span> d
-</pre>
-</div>
-
-<pre class="example">
-{'a': 3, 'b': 2, 'e': 2, 'd': 1}
-</pre>
-
-<p>
-See the next section for an even cleaner implementation.
-</p>
-</div>
-</div>
-<div id="outline-container-sec-2" class="outline-2">
-<h2 id="sec-2"><span class="section-number-2">2</span> using defaultdict</h2>
-<div class="outline-text-2" id="text-2">
-<p>
-@<sub>Mark</sub>_ also suggested the use of <a href="http://docs.python.org/2/library/collections.html#collections.defaultdict">defaultdict</a> for the counting code. That is pretty concise! It is not obvious that the default value is equal to zero, but int() returns zero. This is much better than the and-or trick.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #8b0000;">from</span> collections <span style="color: #8b0000;">import</span> defaultdict
-<span style="color: #8b0000;">print</span> int()
-
-L = [<span style="color: #228b22;">'a'</span>, <span style="color: #228b22;">'a'</span>, <span style="color: #228b22;">'b'</span>,<span style="color: #228b22;">'d'</span>, <span style="color: #228b22;">'e'</span>, <span style="color: #228b22;">'b'</span>, <span style="color: #228b22;">'e'</span>, <span style="color: #228b22;">'a'</span>]
-d = defaultdict(int)
-<span style="color: #8b0000;">for</span> el <span style="color: #8b0000;">in</span> L:
-    d[el] += 1
-<span style="color: #8b0000;">print</span> d
-</pre>
-</div>
-
-<pre class="example">
-0
-defaultdict(&lt;type 'int'&gt;, {'a': 3, 'b': 2, 'e': 2, 'd': 1})
-</pre>
-</div>
-</div>
-<p>Copyright (C) 2013 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2013/07/07/The-and-or-trick-in-python.org">org-mode source</a><p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-
-<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2013/07/07/The-and-or-trick-in-python">Discuss on Twitter</a>
-
-  <hr class="interblog" />
  <a href="/blog/category/programming/2">Next Page »</a>
 
           </div>
@@ -1748,11 +1716,11 @@ defaultdict(&lt;type 'int'&gt;, {'a': 3, 'b': 2, 'e': 2, 'd': 1})
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2023/09/24/Adding-new-backends-to-hashcache/">Adding new backends to hashcache</a></li>
       <li><a href="/blog/2023/09/21/A-better-manager-for-supervising-Python-functions/">A better manager for supervising Python functions</a></li>
       <li><a href="/blog/2023/09/20/Supervising-Python-functions/">Supervising Python functions</a></li>
       <li><a href="/blog/2023/09/19/New-publication-Sequential-Sampling-Methods-for-Finding-Classification-Boundaries-in-Engineering-Applications/">New publication - Sequential Sampling Methods for Finding Classification Boundaries in Engineering Applications</a></li>
       <li><a href="/blog/2023/09/19/Using-Custodian-to-help-converge-an-optimization-problem/">Using Custodian to help converge an optimization problem</a></li>
-      <li><a href="/blog/2023/04/25/New-Publication-An-Inverse-Mapping-Approach-for-Process-Systems-Engineering-Using-Automatic-Differentiation-and-the-Implicit-Function-Theorem/">New Publication - An Inverse Mapping Approach for Process Systems Engineering Using Automatic Differentiation and the Implicit Function Theorem</a></li>
     </ul>
   </section>
 
