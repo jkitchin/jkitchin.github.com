@@ -13,8 +13,8 @@ Many catalyst properties that we are interested in require tens of thousands of 
 
 
 
-His [publications can be found here](http://www.researcherid.com/rid/A-2363-2010).
+His [publications can be found here](https://www.webofscience.com/wos/author/record/A-2363-2010).
 
-His CV can be found [here](https://www.dropbox.com/s/ch0khcl8nq71ixd/kitchin_cv.docx?dl=0)
+His CV can be found [here](https://docs.google.com/document/d/1s6jT5Wb5qyMugkdnEJ-7vv--jIzVlyQ9TgzCnifzMBE/edit)
 </%self:filter>
 </article>
