@@ -2,26 +2,24 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents" role="doc-toc">
 <ul>
-<li><a href="#org5d31cd0">1. The ChemE Faculty on Google Maps</a></li>
-<li><a href="#org5048652">2. Current Department Publications</a></li>
-<li><a href="#org10716fe">3. Department publications by year</a></li>
-<li><a href="#org896492d">4. Department on ResearchGate</a></li>
-<li><a href="#orgf8896c2">5. CMU alumni in academia</a></li>
-<li><a href="#org359d4ed">6. Where do our PhD students come from?</a></li>
+<li><a href="#org67b40bf">1. The ChemE Faculty on Google Maps</a></li>
+<li><a href="#orgfdc7fd9">2. Current Department Publications</a></li>
+<li><a href="#org7192213">3. Department publications by year</a></li>
+<li><a href="#orgb88997e">4. CMU alumni in academia</a></li>
 </ul>
 </div>
 </div>
 <%inherit file="_templates/site.mako" />
 
-<div id="outline-container-org5d31cd0" class="outline-2">
-<h2 id="org5d31cd0"><span class="section-number-2">1.</span> The ChemE Faculty on Google Maps</h2>
+<div id="outline-container-org67b40bf" class="outline-2">
+<h2 id="org67b40bf"><span class="section-number-2">1.</span> The ChemE Faculty on Google Maps</h2>
 <div class="outline-text-2" id="text-1">
 <iframe src="https://www.google.com/maps/d/embed?mid=zDNHhN3lg2P0.kZ9gh2LUcjbg" width="640" height="480"></iframe>
 </div>
 </div>
 
-<div id="outline-container-org5048652" class="outline-2">
-<h2 id="org5048652"><span class="section-number-2">2.</span> Current Department Publications</h2>
+<div id="outline-container-orgfdc7fd9" class="outline-2">
+<h2 id="orgfdc7fd9"><span class="section-number-2">2.</span> Current Department Publications</h2>
 <div class="outline-text-2" id="text-2">
 <script src="http://syndic8.scopus.com/getMessage?registrationId=HAGDHBGEOCGMJAGIJAHIHEJDHJGGLIMGIIIKOHGJKD"></script>
 
@@ -85,6 +83,10 @@
 </tr>
 
 <tr>
+<td class="org-left"><a href="https://www.scopus.com/authid/detail.uri?authorId=55318039800">Tagbo Niepa</a></td>
+</tr>
+
+<tr>
 <td class="org-left"><a href="https://www.scopus.com/authid/detail.url?origin=AuthorProfile&amp;authorId=55671596100">Grigorios Panagakos</a></td>
 </tr>
 
@@ -105,14 +107,6 @@
 </tr>
 
 <tr>
-<td class="org-left"><a href="https://www.scopus.com/authid/detail.url?origin=AuthorProfile&amp;authorId=35243622700">Zack Ulissi</a></td>
-</tr>
-
-<tr>
-<td class="org-left"><a href="https://www.scopus.com/authid/detail.url?origin=AuthorProfile&amp;authorId=7402361317">Lynn Walker</a></td>
-</tr>
-
-<tr>
 <td class="org-left"><a href="https://www.scopus.com/authid/detail.url?origin=AuthorProfile&amp;authorId=56014391900">Elizabeth Wayne</a></td>
 </tr>
 
@@ -125,17 +119,15 @@
 </div>
 
 
-
-
-
-<div id="outline-container-org10716fe" class="outline-2">
-<h2 id="org10716fe"><span class="section-number-2">3.</span> Department publications by year</h2>
+<div id="outline-container-org7192213" class="outline-2">
+<h2 id="org7192213"><span class="section-number-2">3.</span> Department publications by year</h2>
 <div class="outline-text-2" id="text-3">
 <p>
 These publications were  derived from Scopus.
 </p>
 
 <ul class="org-ul">
+<li><a href="./dept-publications-2023.html">2023</a></li>
 <li><a href="./dept-publications-2022.html">2022</a></li>
 <li><a href="./dept-publications-2021.html">2021</a></li>
 <li><a href="./dept-publications-2020.html">2020</a></li>
@@ -158,25 +150,9 @@ These publications were  derived from Scopus.
 </div>
 </div>
 
-<div id="outline-container-org896492d" class="outline-2">
-<h2 id="org896492d"><span class="section-number-2">4.</span> Department on ResearchGate</h2>
+<div id="outline-container-orgb88997e" class="outline-2">
+<h2 id="orgb88997e"><span class="section-number-2">4.</span> CMU alumni in academia</h2>
 <div class="outline-text-2" id="text-4">
-<p>
-<a href="https://www.researchgate.net/institution/Carnegie_Mellon_University/department/Department_of_Chemical_Engineering">https://www.researchgate.net/institution/Carnegie_Mellon_University/department/Department_of_Chemical_Engineering</a>
-</p>
-</div>
-</div>
-
-<div id="outline-container-orgf8896c2" class="outline-2">
-<h2 id="orgf8896c2"><span class="section-number-2">5.</span> CMU alumni in academia</h2>
-<div class="outline-text-2" id="text-5">
 <iframe src="https://www.google.com/maps/d/embed?mid=zDNHhN3lg2P0.kKYunRBQeH6A" width="640" height="480"></iframe>
-</div>
-</div>
-
-<div id="outline-container-org359d4ed" class="outline-2">
-<h2 id="org359d4ed"><span class="section-number-2">6.</span> Where do our PhD students come from?</h2>
-<div class="outline-text-2" id="text-6">
-<iframe width="100%" height="400" frameborder="0" scrolling="no" allowtransparency="true" src="https://mapalist.com/Public/pm.aspx?mapid=543490" ></iframe>
 </div>
 </div>
