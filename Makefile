@@ -25,5 +25,7 @@ deploy:
 	git add . && git add -u && git commit -m "source-commit" && git push --force
 
 all:
+	make publications
+	make dept
 	make build
 	make deploy
