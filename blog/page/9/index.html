@@ -102,10 +102,172 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Using-autograd-for-error-propagation"></div>
+      <h2 class="blog_post_title"><a href="/blog/2018/11/05/Using-autograd-for-error-propagation/" rel="bookmark" title="Permanent Link to Using autograd for error propagation">Using autograd for error propagation</a></h2>
+      <p><small><span class="blog_post_date">Posted November 05, 2018 at 09:04 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/uncertainty/'>uncertainty</a></span> | tags: 
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+Back in <a href="http://kitchingroup.cheme.cmu.edu/blog/2013/03/07/Another-approach-to-error-propagation/">2013</a> I wrote about using the uncertainties package to propagate uncertainties. The problem setup was for finding the uncertainty in the exit concentration from a CSTR when there are uncertainties in the other parameters. In this problem we were given this information about the parameters and their uncertainties.
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-right" />
+
+<col  class="org-right" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">Parameter</th>
+<th scope="col" class="org-right">value</th>
+<th scope="col" class="org-right">&sigma;</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">Fa0</td>
+<td class="org-right">5</td>
+<td class="org-right">0.05</td>
+</tr>
+
+<tr>
+<td class="org-left">v0</td>
+<td class="org-right">10</td>
+<td class="org-right">0.1</td>
+</tr>
+
+<tr>
+<td class="org-left">V</td>
+<td class="org-right">66000</td>
+<td class="org-right">100</td>
+</tr>
+
+<tr>
+<td class="org-left">k</td>
+<td class="org-right">3</td>
+<td class="org-right">0.2</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+The exit concentration is found by solving this equation:
+</p>
+
+<p>
+\(0 = Fa0 - v0 * Ca - k * Ca**2 * V\)
+</p>
+
+<p>
+So the question was what is Ca, and what is the uncertainty on it? Finding Ca is easy with fsolve.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">from</span> scipy.optimize <span style="color: #0000FF;">import</span> fsolve
+
+<span style="color: #BA36A5;">Fa0</span> = 5.0
+<span style="color: #BA36A5;">v0</span> = 10.0
+
+<span style="color: #BA36A5;">V</span> = 66000.0
+<span style="color: #BA36A5;">k</span> = 3.0
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">func</span>(Ca, v0, k, Fa0, V):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #036A07;">"Mole balance for a CSTR. Solve this equation for func(Ca)=0"</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">Fa</span> = v0 * Ca     <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">exit molar flow of A</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">ra</span> = -k * Ca**2  <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">rate of reaction of A L/mol/h</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> Fa0 - Fa + V * ra
+
+Ca, = fsolve(func, 0.1 * Fa0 / v0, args=(v0, k, Fa0, V))
+Ca
+</pre>
+</div>
+
+<pre class="example">
+0.0050000000000000001
+
+</pre>
+
+<p>
+The uncertainty on Ca is a little trickier. A <a href="https://en.wikipedia.org/wiki/Propagation_of_uncertainty#Simplification">simplified</a> way to estimate it is:
+</p>
+
+<p>
+\(\sigma_{Ca} = \sqrt{(dCa/dv0)^2 \sigma_{v0}^2 + (dCa/dv0)^2 \sigma_{v0}^2 + (dCa/dFa0)^2 \sigma_{Fa0}^2 + (dCa/dV)^2 \sigma_{V}^2}\)
+</p>
+
+<p>
+We know the &sigma;_i for each input, we just need those partial derivatives. However, we only have the implicit function we used to solve for Ca, and I do not want to do the algebra to solve for Ca. Luckily, we <a href="http://kitchingroup.cheme.cmu.edu/blog/2018/10/08/Getting-derivatives-from-implicit-functions-with-autograd/">previously worked out</a> how to get these derivatives from an implicit function using autograd. We just need to loop through the arguments, get the relevant derivatives, and accumulate the product of the squared derivatives and errors. Finally, take the square root of that sum.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">import</span> autograd.numpy <span style="color: #0000FF;">as</span> np
+<span style="color: #0000FF;">from</span> autograd <span style="color: #0000FF;">import</span> grad
+
+<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">these are the uncertainties on the inputs</span>
+<span style="color: #BA36A5;">s</span> = [<span style="color: #D0372D;">None</span>, 0.1, 0.2, 0.05, 100]
+
+<span style="color: #BA36A5;">S2</span> = 0.0
+
+<span style="color: #BA36A5;">dfdCa</span> = grad(func, 0)
+<span style="color: #0000FF;">for</span> i <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">range</span>(1, 5):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">dfdarg2</span> = grad(func, i)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">dCadarg2</span> = -dfdarg2(Ca, v0, k, Fa0, V) / dfdCa(Ca, v0, k, Fa0, V)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">S2</span> += dCadarg2**2 * s[i]**2
+
+<span style="color: #BA36A5;">Ca_s</span> = np.sqrt(S2)
+<span style="color: #0000FF;">print</span>(f<span style="color: #008000;">'Ca = {Ca:1.5f} +\- {Ca_s}'</span>)
+</pre>
+</div>
+
+<pre class="example">
+Ca = 0.00500 +\- 0.00016776432898276802
+
+
+</pre>
+
+<p>
+That is the same uncertainty estimate the quantities package provided. One benefit here is I did not have to do the somewhat complicated wrapping procedure around fsolve that was required with uncertainties to get this. On the other hand, I did have to derive the formula and implement them. It worked fine here, since we have an implicit function and a way to get the required derivatives. It could take some work to do this with the exit concentration of a PFR, which requires an integrator. Maybe that <a href="http://kitchingroup.cheme.cmu.edu/blog/2018/10/11/A-differentiable-ODE-integrator-for-sensitivity-analysis/">differentiable integrator</a> will come in handy again!
+</p>
+<p>Copyright (C) 2018 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2018/11/05/Using-autograd-for-error-propagation.org">org-mode source</a></p>
+<p>Org-mode version = 9.1.14</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+
+<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2018/11/05/Using-autograd-for-error-propagation">Discuss on Twitter</a>
+
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Constrained-optimization-with-Lagrange-multipliers-and-autograd"></div>
       <h2 class="blog_post_title"><a href="/blog/2018/11/03/Constrained-optimization-with-Lagrange-multipliers-and-autograd/" rel="bookmark" title="Permanent Link to Constrained optimization with Lagrange multipliers and autograd">Constrained optimization with Lagrange multipliers and autograd</a></h2>
       <p><small><span class="blog_post_date">Posted November 03, 2018 at 09:39 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/optimization/'>optimization</a>, <a href='/blog/category/autograd/'>autograd</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/optimization/'>optimization</a></span> | tags: 
       </small></p>
     </header>
     <div class="post_prose">
@@ -614,7 +776,7 @@ This is not faster than direct numerical integration. One benefit to this soluti
       <div id="A-differentiable-ODE-integrator-for-sensitivity-analysis"></div>
       <h2 class="blog_post_title"><a href="/blog/2018/10/11/A-differentiable-ODE-integrator-for-sensitivity-analysis/" rel="bookmark" title="Permanent Link to A differentiable ODE integrator for sensitivity analysis">A differentiable ODE integrator for sensitivity analysis</a></h2>
       <p><small><span class="blog_post_date">Posted October 11, 2018 at 12:13 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/sensitivity/'>sensitivity</a>, <a href='/blog/category/ode/'>ode</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/ode/'>ode</a>, <a href='/blog/category/sensitivity/'>sensitivity</a></span> | tags: 
       </small></p>
     </header>
     <div class="post_prose">
@@ -996,188 +1158,6 @@ These are amazing results to me. Before trying it, I would not have thought it w
 <a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2018/10/10/Autograd-and-the-derivative-of-an-integral-function">Discuss on Twitter</a>
 
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Compressibility-variation-from-an-implicit-equation-of-state"></div>
-      <h2 class="blog_post_title"><a href="/blog/2018/10/09/Compressibility-variation-from-an-implicit-equation-of-state/" rel="bookmark" title="Permanent Link to Compressibility variation from an implicit equation of state">Compressibility variation from an implicit equation of state</a></h2>
-      <p><small><span class="blog_post_date">Posted October 09, 2018 at 09:21 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<div id="table-of-contents">
-<h2>Table of Contents</h2>
-<div id="text-table-of-contents">
-<ul>
-<li><a href="#org56ce300">1. Summary thoughts</a></li>
-</ul>
-</div>
-</div>
-<p>
-In this <a href="http://kitchingroup.cheme.cmu.edu/blog/2018/10/07/Compressibility-factor-variation-from-the-van-der-Waals-equation-by-three-different-approaches/">post</a> I explored using automatic differentiation to compute how the compressibility of a gas defined by the van der Waal equation varies with the reduced pressure. In that example we had an explicit function of the pressure as a function of the volume and temperature, and we could derive a differential equation that defines the variation we were interested in.
-</p>
-
-<p>
-I thought we should be able to derive the differential equation more directly, still using automatic differentiation and we explore that idea here. The general strategy to compute the compressibility as a function of pressure is to integrate \(dV / dP_r\) over a range of \(P_r\) to get the molar volume as a function of \(P_r\), and then to directly compute the compressibility from \(Z = PV/(RT)\).
-</p>
-
-<p>
-To use this approach we need to get \(dV / dP_r\) from the van der Waal equation. Previously, we derived this in a round about way from the explicit form of the van der Waal equation. Here, we follow the work in this <a href="http://kitchingroup.cheme.cmu.edu/blog/2018/10/08/Getting-derivatives-from-implicit-functions-with-autograd/">post</a> to get the derivative from the implicit form of the van der Waal equation:
-</p>
-
-<p>
-\(f(V, P_r, T_r) = \frac{R Tr * Tc}{V - b} - \frac{a}{V^2} - P_r Pc = 0\)
-</p>
-
-<p>
-Based on the work in this <a href="http://kitchingroup.cheme.cmu.edu/blog/2018/10/08/Getting-derivatives-from-implicit-functions-with-autograd/">post</a>, we can get
-</p>
-
-<p>
-\(dV/dP_r = (-df/dP_r) / (df/dV)\)
-</p>
-
-<p>
-and the two derivatives on the right can be found easily by automatic differentiation. First, we express the van der Waal equation in implicit form, with the variables as \(V, P_r, T_r\). Only two of those variables are independent; if you define two of them you can compute the third one using a tool like fsolve.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #BA36A5;">R</span> = 0.08206
-<span style="color: #BA36A5;">Pc</span> = 72.9
-<span style="color: #BA36A5;">Tc</span> = 304.2
-
-<span style="color: #BA36A5;">a</span> = 27 * R**2 * Tc**2 / (Pc * 64)
-<span style="color: #BA36A5;">b</span> = R * Tc / (8 * Pc)
-
-<span style="color: #BA36A5;">Tr</span> = 1.1  <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">Constant for this example</span>
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">f</span>(V, Pr, Tr):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> R * Tr * Tc / (V - b) - a / V**2 - Pr * Pc
-</pre>
-</div>
-
-<p>
-Now, if we want to know how does the volume vary with \(P_r\), we need to derive the derivative \(dV/dP_r\), and then integrate it. Here we use autograd to define the derivatives, and then we define a function that uses them. Note the arguments in the function dVdPr are in an order that anticipates we want to integrate it in solve_ivp, to get a function \(V(P_r)\).
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">from</span> autograd <span style="color: #0000FF;">import</span> grad
-
-<span style="color: #BA36A5;">dfdPr</span> = grad(f, 1)  <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">derivative of f with respect to arg at index=1: Pr</span>
-<span style="color: #BA36A5;">dfdV</span> = grad(f, 0)  <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">derivative of f with respect to arg at index=0: V</span>
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">dVdPr</span>(Pr, V):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> -dfdPr(V, Pr, Tr) / dfdV(V, Pr, Tr)  <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">Tr is a constant in here</span>
-</pre>
-</div>
-
-<p>
-Now, we need an initial condition to start the integration from. We want the volume at \(P_r=0.1\). We have to use fsolve for this, or some other method that tells you want is the volume at \(P_r=0.1\). We can pass the values of \(P_r\) and \(T_R\) as arguments to our implicit function. Since \(V\) is the first argument, we can directly solve our implicit function. Otherwise you would have to define a helper objective function to use with fsolve.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">from</span> scipy.optimize <span style="color: #0000FF;">import</span> fsolve
-
-V0, = fsolve(f, 3.5, args=(0.1, 1.1))
-V0
-</pre>
-</div>
-
-<pre class="example">
-3.6764763125625435
-
-</pre>
-
-<p>
-Finally, we are ready to integrate the ODE, and plot the solution.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">import</span> numpy <span style="color: #0000FF;">as</span> np
-<span style="color: #0000FF;">from</span> scipy.integrate <span style="color: #0000FF;">import</span> solve_ivp
-
-<span style="color: #BA36A5;">Pr_span</span> = (0.1, 10)
-<span style="color: #BA36A5;">Pr_eval</span>, <span style="color: #BA36A5;">h</span> = np.linspace(*Pr_span, retstep=<span style="color: #D0372D;">True</span>)
-
-<span style="color: #BA36A5;">sol</span> = solve_ivp(dVdPr, Pr_span, (V0,), max_step=h)
-<span style="color: #0000FF;">print</span>(sol.message)
-
-%matplotlib inline
-<span style="color: #0000FF;">import</span> matplotlib.pyplot <span style="color: #0000FF;">as</span> plt
-
-<span style="color: #BA36A5;">Pr</span> = sol.t  <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">the P_r steps used in the solution</span>
-<span style="color: #BA36A5;">V</span> = sol.y[0]  <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">V(P_r) from the solution</span>
-
-<span style="color: #BA36A5;">Z</span> = Pr * Pc * V / (R * Tr * Tc)  <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">Compressibility Z(P_r)</span>
-
-plt.plot(Pr, Z)
-plt.xlabel(<span style="color: #008000;">'$P_r$'</span>)
-plt.ylabel(<span style="color: #008000;">'Z'</span>)
-plt.xlim([0, 10])
-plt.ylim([0, 2])
-</pre>
-</div>
-
-<pre class="example">
-The solver successfully reached the end of the integration interval.
-
-
-</pre>
-
-<pre class="example">
-(0, 2)
-
-</pre>
-
-
-
-<p>
-<img src="/media/0a06a9507e7d4f809f61d49b8988e2d1-90490gTZ.png"> 
-</p>
-
-<p>
-That is the same result as we got before.
-</p>
-
-<div id="outline-container-org56ce300" class="outline-2">
-<h2 id="org56ce300"><span class="section-number-2">1</span> Summary thoughts</h2>
-<div class="outline-text-2" id="text-1">
-<p>
-This method also worked successfully to solve this problem. In most ways, this method has less algebraic manipulations required to get to the solution. In <a href="http://kitchingroup.cheme.cmu.edu/blog/2018/10/07/Compressibility-factor-variation-from-the-van-der-Waals-equation-by-three-different-approaches/#orge63b16e">method 3</a>, we had to do some calculus that relied on a particular explicit form of the van der Waal equation. While those manipulations were not particularly difficulty, the leave opportunities for mistakes, and they will be more difficult for an implicit equation of state (e.g. if there was a \(P\) on the right hand side).
-</p>
-
-<p>
-This approach also required some manipulation, but it is a standard one and that is how do you get a derivative from an implicit function. After that, it is straightforward to define the desired derivative as a function and then integrate it to get the solution. So, we still don't get a free pass on calculus, but we do reduce the number of manipulations required to get to the solution. I consider that a plus.
-</p>
-</div>
-</div>
-<p>Copyright (C) 2018 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2018/10/09/Compressibility-variation-from-an-implicit-equation-of-state.org">org-mode source</a></p>
-<p>Org-mode version = 9.1.13</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-
-<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2018/10/09/Compressibility-variation-from-an-implicit-equation-of-state">Discuss on Twitter</a>
-
-  <hr class="interblog" />
  <a href="../8">« Previous Page</a>
   --  
  <a href="../10">Next Page »</a>
@@ -1219,11 +1199,11 @@ This approach also required some manipulation, but it is a standard one and that
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2023/12/10/New-publication-Applying-Large-Graph-Neural-Networks-to-Predict-Transition-Metal-Complex-Energies-Using-the-tmQM-wB97MV-Data-Set/">New publication - Applying Large Graph Neural Networks to Predict Transition Metal Complex Energies Using the tmQM_wB97MV Data Set</a></li>
       <li><a href="/blog/2023/12/03/New-publication-Chemical-Properties-from-Graph-Neural-Network-Predicted-Electron-Densities/">New publication - Chemical Properties from Graph Neural Network-Predicted Electron Densities</a></li>
       <li><a href="/blog/2023/09/24/New-publication-Beyond-Independent-Error-Assumptions-in-Large-GNN-Atomistic-Models/">New publication - Beyond Independent Error Assumptions in Large GNN Atomistic Models</a></li>
       <li><a href="/blog/2023/09/24/Adding-new-backends-to-hashcache/">Adding new backends to hashcache</a></li>
       <li><a href="/blog/2023/09/21/A-better-manager-for-supervising-Python-functions/">A better manager for supervising Python functions</a></li>
-      <li><a href="/blog/2023/09/20/Supervising-Python-functions/">Supervising Python functions</a></li>
     </ul>
   </section>
 

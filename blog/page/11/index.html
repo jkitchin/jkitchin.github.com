@@ -102,10 +102,287 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="A-new-ode-integrator-function-in-scipy"></div>
+      <h2 class="blog_post_title"><a href="/blog/2018/09/04/A-new-ode-integrator-function-in-scipy/" rel="bookmark" title="Permanent Link to A new ode integrator function in scipy">A new ode integrator function in scipy</a></h2>
+      <p><small><span class="blog_post_date">Posted September 04, 2018 at 09:20 PM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/ode/'>ode</a>, <a href='/blog/category/scipy/'>scipy</a></span> | tags: 
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+I learned recently about a new way to solve ODEs in scipy: <a href="https://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.solve_ivp.html">scipy.integrate.solve_ivp</a>. This new function is recommended instead of <code>scipy.integrate.odeint</code> for new code. This function caught my eye because it added functionality that was previously missing, and that I had written into my pycse package. That functionality is events.
+</p>
+
+<p>
+To explore how to use this new function, I will recreate an old <a href="http://kitchingroup.cheme.cmu.edu/blog/2013/01/28/Mimicking-ode-events-in-python/">blog post</a> where I used events to count the number of roots in a function. Spoiler alert: it may not be ready for production.
+</p>
+
+<p>
+The question at hand is how many roots are there in \(f(x) = x^3 + 6x^2 - 4x - 24\), and what are they. Now, I know there are three roots and that you can use <code>np.roots</code> for this, but that
+only works for polynomials. Here they are, so we know what we are looking for.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">import</span> numpy <span style="color: #0000FF;">as</span> np
+np.roots([1, 6, -4, -24])
+</pre>
+</div>
+
+<pre class="example">
+array([-6.,  2., -2.])
+
+</pre>
+
+<p>
+The point of this is to find a more general way to count roots in an interval. We do it by integrating the derivative of the function, and using an event function to  count when the function is equal to zero. First, we define the derivative:
+</p>
+
+<p>
+\(f'(x) = 3x^2 + 12x - 4\), and the value of our original function at some value that is the beginning of the range we want to consider, say \(f(-8) = -120\). Now, we have an ordinary differential equation that can be integrated. Our event function is simply, it is just the function value \(y\). In the next block, I include an optional t_eval arg so we can see the solution at more points.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">def</span> <span style="color: #006699;">fprime</span>(x, y):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> 3 * x**2 + 12 * x - 4
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">event</span>(x, y):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> y
+
+<span style="color: #0000FF;">import</span> numpy <span style="color: #0000FF;">as</span> np
+<span style="color: #0000FF;">from</span> scipy.integrate <span style="color: #0000FF;">import</span> solve_ivp
+<span style="color: #BA36A5;">sol</span> = solve_ivp(fprime, (-8, 4), np.array([-120]), t_eval=np.linspace(-8, 4, 10), events=[event])
+sol
+</pre>
+</div>
+
+<pre class="example">
+ message: 'The solver successfully reached the interval end.'
+    nfev: 26
+    njev: 0
+     nlu: 0
+     sol: None
+  status: 0
+ success: True
+       t: array([-8.        , -6.66666667, -5.33333333, -4.        , -2.66666667,
+      -1.33333333,  0.        ,  1.33333333,  2.66666667,  4.        ])
+t_events: [array([-6.])]
+       y: array([[-120.        ,  -26.96296296,   16.2962963 ,   24.        ,
+         10.37037037,  -10.37037037,  -24.        ,  -16.2962963 ,
+         26.96296296,  120.        ]])
+
+</pre>
+
+<div class="org-src-container">
+<pre class="src src-ipython">sol.t_events
+</pre>
+</div>
+
+<pre class="example">
+[array([-6.])]
+
+</pre>
+
+<p>
+Huh. That is not what I expected. There should be three values in sol.t_events, but there is only one. Looking at sol.y, you can see there are three sign changes, which means three zeros. The graph here confirms that.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython">%matplotlib inline
+<span style="color: #0000FF;">import</span> matplotlib.pyplot <span style="color: #0000FF;">as</span> plt
+plt.plot(sol.t, sol.y[0])
+</pre>
+</div>
+
+<pre class="example">
+[&lt;matplotlib.lines.Line2D at 0x151281d860&gt;]
+
+</pre>
+
+
+
+<p>
+<img src="/media/e56c3df20f7d52f874861f0041da6fd5-18185E.png"> 
+</p>
+
+<p>
+What appears to be happening is that the events are only called during the solver steps, which are <i>different</i> than the t_eval steps. It appears a workaround is to specify a max_step that can be taken by the solver to force the event functions to be evaluated more often. Adding this seems to create a new cryptic warning.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #BA36A5;">sol</span> = solve_ivp(fprime, (-8, 4), np.array([-120]), events=[event], max_step=1.0)
+sol
+</pre>
+</div>
+
+<pre class="example">
+/Users/jkitchin/anaconda/lib/python3.6/site-packages/scipy/integrate/_ivp/rk.py:145: RuntimeWarning: divide by zero encountered in double_scalars
+  max(1, SAFETY * error_norm ** (-1 / (order + 1))))
+
+
+</pre>
+
+<pre class="example">
+ message: 'The solver successfully reached the interval end.'
+    nfev: 80
+    njev: 0
+     nlu: 0
+     sol: None
+  status: 0
+ success: True
+       t: array([-8.        , -7.89454203, -6.89454203, -5.89454203, -4.89454203,
+      -3.89454203, -2.89454203, -1.89454203, -0.89454203,  0.10545797,
+       1.10545797,  2.10545797,  3.10545797,  4.        ])
+t_events: [array([-6., -2.,  2.])]
+       y: array([[-120.        , -110.49687882,  -38.94362768,    3.24237128,
+         22.06111806,   23.51261266,   13.59685508,   -1.68615468,
+        -16.33641662,  -24.35393074,  -19.73869704,    3.50928448,
+         51.39001383,  120.        ]])
+
+</pre>
+
+<div class="org-src-container">
+<pre class="src src-ipython">sol.t_events
+</pre>
+</div>
+
+<pre class="example">
+[array([-6., -2.,  2.])]
+
+</pre>
+
+<p>
+That is more like it. Here, I happen to know the answers, so we are safe setting a max_step of 1.0, but that feels awkward and unreliable. You don't want this max_step to be too small, because it probably makes for more computations. On the other hand, it can't be too large either because you might miss roots. It seems there is room for improvement on this.
+</p>
+
+<p>
+It also seems odd that the solve_ivp only returns the t_events, and not also the corresponding solution values. I guess in this case, we know the solution values are zero at t_events, but, supposing you instead were looking for a maximum value by getting a derivative that was equal to zero, you might end up getting stuck solving for it some how.
+</p>
+
+<p>
+Let's consider this parabola with a maximum at \(x=2\), where \(y=2\):
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #BA36A5;">x</span> = np.linspace(0, 4)
+plt.plot(x, 2 - (x - 2)**2)
+</pre>
+</div>
+
+<pre class="example">
+[&lt;matplotlib.lines.Line2D at 0x1512dad9e8&gt;]
+
+</pre>
+
+
+
+<p>
+<img src="/media/e56c3df20f7d52f874861f0041da6fd5-181K3p.png"> 
+</p>
+
+<p>
+We can find the maximum like this.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">def</span> <span style="color: #006699;">yprime</span>(x, y):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> -2  * (x - 2)
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">maxevent</span>(x, y):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> yprime(x, y)
+
+<span style="color: #BA36A5;">sol</span> = solve_ivp(yprime, (0, 4), np.array([-2]), events=[maxevent])
+sol
+</pre>
+</div>
+
+<pre class="example">
+/Users/jkitchin/anaconda/lib/python3.6/site-packages/scipy/integrate/_ivp/rk.py:145: RuntimeWarning: divide by zero encountered in double_scalars
+  max(1, SAFETY * error_norm ** (-1 / (order + 1))))
+
+
+</pre>
+
+<pre class="example">
+ message: 'The solver successfully reached the interval end.'
+    nfev: 20
+    njev: 0
+     nlu: 0
+     sol: None
+  status: 0
+ success: True
+       t: array([ 0.        ,  0.08706376,  0.95770136,  4.        ])
+t_events: [array([ 2.])]
+       y: array([[-2.        , -1.65932506,  0.91361355, -2.        ]])
+
+</pre>
+
+<p>
+Clearly, we found the maximum at x=2, but now what?  Re-solve the ODE and use t_eval with the t_events values? Use a fine t_eval array, and interpolate the solution? That doesn't seem smart. You could make the event terminal, so that it stops at the max, and then read off the last value, but this will not work if you want to count more than one maximum, for example.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #BA36A5;">maxevent.terminal</span> = <span style="color: #D0372D;">True</span>
+solve_ivp(yprime, (0, 4), (-2,), events=[maxevent])
+</pre>
+</div>
+
+<pre class="example">
+/Users/jkitchin/anaconda/lib/python3.6/site-packages/scipy/integrate/_ivp/rk.py:145: RuntimeWarning: divide by zero encountered in double_scalars
+  max(1, SAFETY * error_norm ** (-1 / (order + 1))))
+
+
+</pre>
+
+<pre class="example">
+ message: 'A termination event occurred.'
+    nfev: 20
+    njev: 0
+     nlu: 0
+     sol: None
+  status: 1
+ success: True
+       t: array([ 0.        ,  0.08706376,  0.95770136,  2.        ])
+t_events: [array([ 2.])]
+       y: array([[-2.        , -1.65932506,  0.91361355,  2.        ]])
+
+</pre>
+
+<p>
+Internet: am I missing something obvious here?
+</p>
+<p>Copyright (C) 2018 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2018/09/04/A-new-ode-integrator-function-in-scipy.org">org-mode source</a></p>
+<p>Org-mode version = 9.1.13</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+
+<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2018/09/04/A-new-ode-integrator-function-in-scipy">Discuss on Twitter</a>
+
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Getting-geo-tagged-information-from-photos-for-blogging"></div>
       <h2 class="blog_post_title"><a href="/blog/2018/07/01/Getting-geo-tagged-information-from-photos-for-blogging/" rel="bookmark" title="Permanent Link to Getting geo-tagged information from photos for blogging">Getting geo-tagged information from photos for blogging</a></h2>
       <p><small><span class="blog_post_date">Posted July 01, 2018 at 07:17 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/geotag/'>geotag</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/geotag/'>geotag</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
       <p><small><span class="blog_post_date">Updated July 01, 2018 at 08:05 PM</span></small>
       </small></p>
     </header>
@@ -475,7 +752,7 @@ There is one little footnote to speak of, and that is I had to do a little hacke
       <div id="Literate-programming-with-python-doctests"></div>
       <h2 class="blog_post_title"><a href="/blog/2018/05/17/Literate-programming-with-python-doctests/" rel="bookmark" title="Permanent Link to Literate programming with python doctests">Literate programming with python doctests</a></h2>
       <p><small><span class="blog_post_date">Posted May 17, 2018 at 04:41 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/python/'>python</a>, <a href='/blog/category/noweb/'>noweb</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/noweb/'>noweb</a>, <a href='/blog/category/python/'>python</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
       <p><small><span class="blog_post_date">Updated May 18, 2018 at 03:07 PM</span></small>
       </small></p>
     </header>
@@ -1197,72 +1474,6 @@ Generic functions have many other potential applications to replace functions th
 <a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2018/05/09/Making-it-easier-to-extend-the-export-of-org-mode-links-with-generic-functions">Discuss on Twitter</a>
 
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="New-publication-in-Nature-Catalysis"></div>
-      <h2 class="blog_post_title"><a href="/blog/2018/04/16/New-publication-in-Nature-Catalysis/" rel="bookmark" title="Permanent Link to New publication in Nature Catalysis">New publication in Nature Catalysis</a></h2>
-      <p><small><span class="blog_post_date">Posted April 16, 2018 at 12:53 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/publication/'>publication</a>, <a href='/blog/category/news/'>news</a></span> | tags: 
-      <p><small><span class="blog_post_date">Updated April 16, 2018 at 12:55 PM</span></small>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-Machine learning (ML) is impacting many fields, including catalysis. In this comment, I briefly discuss the major directions that ML is influencing the field of catalysis, along with some outlook on future directions. There were strict word and reference limits, so apologies in advance if I left out your work!
-</p>
-
-<div class="org-src-container">
-<pre class="src src-bibtex"><span style="color: #006699;">@article</span>{<span style="color: #D0372D;">kitchin-2018-machin-learn-catal</span>,
-  <span style="color: #BA36A5;">author</span> =       {John R. Kitchin},
-  <span style="color: #BA36A5;">title</span> =        {Machine Learning in Catalysis},
-  <span style="color: #BA36A5;">journal</span> =      {Nature Catalysis},
-  <span style="color: #BA36A5;">volume</span> =       1,
-  <span style="color: #BA36A5;">number</span> =       4,
-  <span style="color: #BA36A5;">pages</span> =        {230-232},
-  <span style="color: #BA36A5;">year</span> =         2018,
-  <span style="color: #BA36A5;">doi</span> =          {<span style="color: #006DAF; text-decoration: underline;">10.1038/s41929-018-0056-y</span>},
-  <span style="color: #BA36A5;">url</span> =          {<span style="color: #006DAF; text-decoration: underline;">https://doi.org/10.1038/s41929-018-0056-y</span>},
-  <span style="color: #BA36A5;">DATE_ADDED</span> =   {Mon Apr 16 12:50:43 2018},
-}
-</pre>
-</div>
-
-
-<p>
-You can see a read-only version of the paper here: <a href="https://rdcu.be/LGrM">https://rdcu.be/LGrM</a>
-</p>
-
-<p>
-<script type='text/javascript' src='https://d1bxh8uas1mnw7.cloudfront.net/assets/embed.js'></script>
-<div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1038/s41929-018-0056-y'></div>
-</p>
-<p>Copyright (C) 2018 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2018/04/16/New-publication-in-Nature-Catalysis.org">org-mode source</a></p>
-<p>Org-mode version = 9.1.6</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-
-<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2018/04/16/New-publication-in-Nature-Catalysis">Discuss on Twitter</a>
-
-  <hr class="interblog" />
  <a href="../10">« Previous Page</a>
   --  
  <a href="../12">Next Page »</a>
@@ -1304,11 +1515,11 @@ You can see a read-only version of the paper here: <a href="https://rdcu.be/LGrM
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2023/12/10/New-publication-Applying-Large-Graph-Neural-Networks-to-Predict-Transition-Metal-Complex-Energies-Using-the-tmQM-wB97MV-Data-Set/">New publication - Applying Large Graph Neural Networks to Predict Transition Metal Complex Energies Using the tmQM_wB97MV Data Set</a></li>
       <li><a href="/blog/2023/12/03/New-publication-Chemical-Properties-from-Graph-Neural-Network-Predicted-Electron-Densities/">New publication - Chemical Properties from Graph Neural Network-Predicted Electron Densities</a></li>
       <li><a href="/blog/2023/09/24/New-publication-Beyond-Independent-Error-Assumptions-in-Large-GNN-Atomistic-Models/">New publication - Beyond Independent Error Assumptions in Large GNN Atomistic Models</a></li>
       <li><a href="/blog/2023/09/24/Adding-new-backends-to-hashcache/">Adding new backends to hashcache</a></li>
       <li><a href="/blog/2023/09/21/A-better-manager-for-supervising-Python-functions/">A better manager for supervising Python functions</a></li>
-      <li><a href="/blog/2023/09/20/Supervising-Python-functions/">Supervising Python functions</a></li>
     </ul>
   </section>
 
