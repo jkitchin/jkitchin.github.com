@@ -102,6 +102,165 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Sensitivity-analysis-with-odeint-and-autograd"></div>
+      <h2 class="blog_post_title"><a href="/blog/2019/09/13/Sensitivity-analysis-with-odeint-and-autograd/" rel="bookmark" title="Permanent Link to Sensitivity analysis with odeint and autograd">Sensitivity analysis with odeint and autograd</a></h2>
+      <p><small><span class="blog_post_date">Posted September 13, 2019 at 09:56 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/ode/'>ode</a></span> | tags: 
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+In this <a href="http://kitchingroup.cheme.cmu.edu/blog/2018/10/11/A-differentiable-ODE-integrator-for-sensitivity-analysis/">previous post</a> I showed a way to do sensitivity analysis of the solution of a differential equation to parameters in the equation using autograd. The basic approach was to write a differentiable integrator, and then use it in a function so that autograd could take the derivative.
+</p>
+
+<p>
+Since that time, autograd has added <a href="https://github.com/HIPS/autograd/blob/master/autograd/scipy/integrate.py">derivative support</a> for <code>scipy.integrate.odeint</code>. In this post we examine that. As usual with autograd, we have to import the autograd version of numpy, and the autograd version of odeint. We will find the derivative of the solution to an ODE (which is an array) so we need to also import the jacobian function. Finally, there is a subtle, and non-obvious requirement that we need to import the autograd tuple. That ensures that the variables are differentiable through the tuple we will use for the arguments.
+</p>
+
+<p>
+The differential equation we solve returns the concentration of a species as a function of time, and the solution depends on two parameters, i.e. \(C = f(t; k_1, k_{-1})\), and we are interested in the time-dependent sensitivity of \(C\) with respect to those parameters. The approach we use is to define a function that has those parameters as arguments. The function will solve the ODE and return the time-dependent solution. First we make that solution, mostly to see that the autograd version of odeint works.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">import</span> autograd.numpy <span style="color: #0000FF;">as</span> np
+<span style="color: #0000FF;">from</span> autograd.scipy.integrate <span style="color: #0000FF;">import</span> odeint
+<span style="color: #0000FF;">from</span> autograd <span style="color: #0000FF;">import</span> jacobian
+<span style="color: #0000FF;">from</span> autograd.builtins <span style="color: #0000FF;">import</span> <span style="color: #006FE0;">tuple</span>
+
+<span style="color: #0000FF;">import</span> matplotlib.pyplot <span style="color: #0000FF;">as</span> plt
+
+<span style="color: #BA36A5;">Ca0</span> = 1.0
+<span style="color: #BA36A5;">k1</span> = <span style="color: #BA36A5;">k_1</span> = 3.0
+
+<span style="color: #BA36A5;">tspan</span> = np.linspace(0, 0.5)
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">C</span>(K):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">k1</span>, <span style="color: #BA36A5;">k_1</span> = K
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">def</span> <span style="color: #006699;">dCdt</span>(Ca, t, k1, k_1):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> -k1 * Ca + k_1 * (Ca0 - Ca)
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">sol</span> = odeint(dCdt, Ca0, tspan, <span style="color: #006FE0;">tuple</span>((k1, k_1)))
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> sol
+
+plt.plot(tspan, C([k1, k_1]))
+plt.xlim([tspan.<span style="color: #006FE0;">min</span>(), tspan.<span style="color: #006FE0;">max</span>()])
+plt.xlabel(<span style="color: #008000;">'t'</span>)
+plt.ylabel(<span style="color: #008000;">'C'</span>);
+</pre>
+</div>
+
+<pre class="example">
+&lt;Figure size 432x288 with 1 Axes&gt;
+</pre>
+
+
+<p>
+<figure><img src="/media/bca9e95a16f361ce6d92dd6efe90a2e653e014ef.png"></figure> 
+</p>
+
+
+<p>
+Now, the solution is an array, and we want the derivative of C with respect to the parameters at each time point. That means we want the jacobian derivative of the output with respect to the input. Here is the autograd approach to doing that. The jacobian function returns a function that we can evaluate to get the derivatives.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">import</span> time
+<span style="color: #BA36A5;">t0</span> = time.time()
+<span style="color: #BA36A5;">dCdk</span> = jacobian(C, 0)
+
+
+<span style="color: #BA36A5;">k_sensitivity</span> = dCdk(np.array([k1, k_1]))
+
+<span style="color: #BA36A5;">k1_sensitivity</span> = k_sensitivity[:, 0, 0]
+<span style="color: #BA36A5;">k_1_sensitivity</span> = k_sensitivity[:, 0, 1]
+
+plt.plot(tspan, np.<span style="color: #006FE0;">abs</span>(k1_sensitivity), label=<span style="color: #008000;">'dC/dk1'</span>)
+plt.plot(tspan, np.<span style="color: #006FE0;">abs</span>(k_1_sensitivity), label=<span style="color: #008000;">'dC/dk_1'</span>)
+plt.legend(loc=<span style="color: #008000;">'best'</span>)
+plt.xlabel(<span style="color: #008000;">'t'</span>)
+plt.ylabel(<span style="color: #008000;">'sensitivity'</span>)
+<span style="color: #0000FF;">print</span>(f<span style="color: #008000;">'Elapsed time = {time.time() - t0:1.1f} seconds'</span>)
+</pre>
+</div>
+
+<p>
+Elapsed time = 38.2 seconds
+</p>
+
+<pre class="example">
+&lt;Figure size 432x288 with 1 Axes&gt;
+</pre>
+
+
+<p>
+<figure><img src="/media/3a0a58bb6d4b3e1b215c2918d511f3a8a3a2ca3d.png"></figure> 
+</p>
+
+<p>
+That looks similar to the results from before. It is pretty slow I think, that took more than half a minute to work out. That is still faster and probably more correct than if I had to do it by hand. In contrast, however, the finite difference code below is comparatively very fast! I don't know what is slow in the autograd implementation. I guess it is an implementation detail.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span style="color: #0000FF;">import</span> numdifftools <span style="color: #0000FF;">as</span> nd
+<span style="color: #BA36A5;">t0</span> = time.time()
+
+<span style="color: #BA36A5;">fdk1</span>, <span style="color: #BA36A5;">fdk_1</span> = nd.Jacobian(C)([k1, k_1]).T
+<span style="color: #0000FF;">print</span>(f<span style="color: #008000;">'Elapsed time = {time.time() - t0:1.1f} seconds'</span>)
+
+plt.plot(tspan, np.<span style="color: #006FE0;">abs</span>(fdk1), label=<span style="color: #008000;">'fd dC/dk1'</span>)
+plt.plot(tspan, np.<span style="color: #006FE0;">abs</span>(fdk_1), label=<span style="color: #008000;">'fd dC/dk_1'</span>)
+plt.plot(tspan, np.<span style="color: #006FE0;">abs</span>(k1_sensitivity), <span style="color: #008000;">'y--'</span>, label=<span style="color: #008000;">'dC/dk1'</span>)
+plt.plot(tspan, np.<span style="color: #006FE0;">abs</span>(k_1_sensitivity),<span style="color: #008000;">'m--'</span>, label=<span style="color: #008000;">'dC/dk_1'</span>)
+plt.legend(loc=<span style="color: #008000;">'best'</span>);
+plt.xlabel(<span style="color: #008000;">'t'</span>);
+plt.ylabel(<span style="color: #008000;">'sensitivity'</span>);
+</pre>
+</div>
+
+<p>
+Elapsed time = 0.1 seconds
+</p>
+
+<pre class="example">
+&lt;Figure size 432x288 with 1 Axes&gt;
+</pre>
+
+
+<p>
+<figure><img src="/media/be7bf4798396d6a27938715f6bb0e22b8f3e0b1c.png"></figure> 
+</p>
+
+<p>
+You can see the two results are visually indistinguishable. Even the code is pretty similar. I would tend to prefer the autograd way since it should be less sensitive to finite difference artifacts, but it is nice to have an independent way to test if it is working.
+</p>
+<p>Copyright (C) 2019 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2019/09/13/Sensitivity-analysis-with-odeint-and-autograd.org">org-mode source</a></p>
+<p>Org-mode version = 9.2.3</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+
+<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2019/09/13/Sensitivity-analysis-with-odeint-and-autograd">Discuss on Twitter</a>
+
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="New-publication-in-SoftwareX"></div>
       <h2 class="blog_post_title"><a href="/blog/2019/07/08/New-publication-in-SoftwareX/" rel="bookmark" title="Permanent Link to New publication in SoftwareX">New publication in SoftwareX</a></h2>
       <p><small><span class="blog_post_date">Posted July 08, 2019 at 07:15 AM</span> | categories:
@@ -254,7 +413,7 @@ x .dot. y = 1.3598389888491538
       <div id="Using-results-from-one-code-block-in-another-org-mode"></div>
       <h2 class="blog_post_title"><a href="/blog/2019/02/12/Using-results-from-one-code-block-in-another-org-mode/" rel="bookmark" title="Permanent Link to Using results from one code block in another org-mode">Using results from one code block in another org-mode</a></h2>
       <p><small><span class="blog_post_date">Posted February 12, 2019 at 09:20 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/elisp/'>elisp</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/elisp/'>elisp</a></span> | tags: 
       <p><small><span class="blog_post_date">Updated February 25, 2019 at 02:17 PM</span></small>
       </small></p>
     </header>
@@ -1009,219 +1168,6 @@ plt.ylabel(<span style="color: #008000;">'Tweet count'</span>)
 <a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2018/12/31/2018-in-a-nutshell-for-the-Kitchin-Research-Group">Discuss on Twitter</a>
 
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Line-integrals-in-Python-with-autograd"></div>
-      <h2 class="blog_post_title"><a href="/blog/2018/11/16/Line-integrals-in-Python-with-autograd/" rel="bookmark" title="Permanent Link to Line integrals in Python with autograd">Line integrals in Python with autograd</a></h2>
-      <p><small><span class="blog_post_date">Posted November 16, 2018 at 08:39 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/autograd/'>autograd</a>, <a href='/blog/category/integration/'>integration</a>, <a href='/blog/category/python/'>python</a></span> | tags: 
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<div id="table-of-contents">
-<h2>Table of Contents</h2>
-<div id="text-table-of-contents">
-<ul>
-<li><a href="#org107f13d">1. Summary</a></li>
-</ul>
-</div>
-</div>
-<p>
-A line integral is an integral of a function along a curve in space. We usually represent the curve by a parametric equation, e.g. \(\mathbf{r}(t) = [x(t), y(t), z(t)] = x(t)\mathbf{i} + y(t)\mathbf{j} + z(t)\mathbf{k}\).  So, in general the curve will be a vector function, and the function we want to integrate will also be a vector function.
-</p>
-
-<p>
-Then, we can write the line integral definition as:
-</p>
-
-<p>
-\(\int_C \mathbf{F(r)}\cdot d\mathbf{r} = \int_a^b \mathbf{F}({\mathbf{r}(t)) \cdot \mathbf{r'}(t) dt\) where \(\mathbf{r'}(t) = \frac{d\mathbf{r}}{dt}\). This integrand is a scalar function, because of the dot product.
-</p>
-
-<p>
-The following examples are adapted from Chapter 10 in Advanced Engineering Mathematics by Kreysig.
-</p>
-
-<p>
-The first example is the evaluation of  a line integral in the plane. We want to evaluate the integral of \(\mathbf{F(r)}=[-y, -xy]\) on the curve \(\mathbf{r(t)}=[-sin(t), cos(t)]\) from t=0 to t = &pi;/2. The answer in the book is given as 0.4521. Here we evaluate this numerically, using autograd for the relevant derivative. Since the curve has multiple outputs, we have to use the jacobian function to get the derivatives. After that, it is a simple bit of matrix multiplication, and a call to the quad function.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">import</span> autograd.numpy <span style="color: #0000FF;">as</span> np
-<span style="color: #0000FF;">from</span> autograd <span style="color: #0000FF;">import</span> jacobian
-<span style="color: #0000FF;">from</span> scipy.integrate <span style="color: #0000FF;">import</span> quad
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">F</span>(X):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">x</span>, <span style="color: #BA36A5;">y</span> = X
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> -y, -x * y
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">r</span>(t):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> np.array([-np.sin(t), np.cos(t)])
-
-<span style="color: #BA36A5;">drdt</span> = jacobian(r)
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">integrand</span>(t):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> F(r(t)) @ drdt(t)
-
-<span style="color: #BA36A5;">I</span>, <span style="color: #BA36A5;">e</span> = quad(integrand, 0.0, np.pi / 2)
-<span style="color: #0000FF;">print</span>(f<span style="color: #008000;">'The integral is {I:1.4f}.'</span>)
-</pre>
-</div>
-
-<pre class="example">
-The integral is 0.4521.
-
-
-</pre>
-
-<p>
-We get the same result as the analytical solution.
-</p>
-
-
-<p>
-The next example is in three dimensions. Find the line integral along \(\mathbf{r}(t)=[cos(t), sin(t), 3t]\) of the function \(\mathbf{F(r)}=[z, x, y]\) from t=0 to t=2 &pi;. The solution is given as 21.99.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">import</span> autograd.numpy <span style="color: #0000FF;">as</span> np
-<span style="color: #0000FF;">from</span> autograd <span style="color: #0000FF;">import</span> elementwise_grad, grad, jacobian
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">F</span>(X):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">x</span>, <span style="color: #BA36A5;">y</span>, <span style="color: #BA36A5;">z</span> = X
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> [z, x, y]
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">C</span>(t):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> np.array([np.cos(t), np.sin(t), 3 * t])
-
-<span style="color: #BA36A5;">dCdt</span> = jacobian(C, 0)
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">integrand</span>(t):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> F(C(t)) @ dCdt(t)
-
-<span style="color: #BA36A5;">I</span>, <span style="color: #BA36A5;">e</span> = quad(integrand, 0, 2 * np.pi)
-<span style="color: #0000FF;">print</span>(f<span style="color: #008000;">'The integral is {I:1.2f}.'</span>)
-</pre>
-</div>
-
-<pre class="example">
-The integral is 21.99.
-
-
-</pre>
-
-<p>
-That is also the same as the analytical solution. Note the real analytical solution was 7 &pi;, which is nearly equivalent to our answer.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython">7 * np.pi - I
-</pre>
-</div>
-
-<pre class="example">
-3.552713678800501e-15
-
-</pre>
-
-
-<p>
-As a final example, we consider an alternate form of the line integral. In this form we do not use a dot product, so the integral results in a vector. This doesn't require anything from autograd, but does require us to be somewhat clever in how to do the integrals since quad can only integrate scalar functions. We need to integrate each component of the integrand independently. Here is one approach where we use lambda functions for each component. You could also manually separate the components.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #0000FF;">def</span> <span style="color: #006699;">F</span>(r):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">x</span>, <span style="color: #BA36A5;">y</span>, <span style="color: #BA36A5;">z</span> = r
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> x * y, y * z, z
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">r</span>(t):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> np.array([np.cos(t), np.sin(t), 3 * t])
-
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">integrand</span>(t):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> F(r(t))
-
-[quad(<span style="color: #0000FF;">lambda</span> t: integrand(t)[i], 0, 2 * np.pi)[0] <span style="color: #0000FF;">for</span> i <span style="color: #0000FF;">in</span> [0, 1, 2]]
-</pre>
-</div>
-
-<pre class="example">
-[-6.9054847581172525e-18, -18.849555921538755, 59.21762640653615]
-
-</pre>
-
-<p>
-The analytical solution in this case was given as:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython">[0, -6 * np.pi, 6 * np.pi**2]
-</pre>
-</div>
-
-<pre class="example">
-[0, -18.84955592153876, 59.21762640653615]
-
-</pre>
-
-<p>
-which is evidently the same as our numerical solution.
-</p>
-
-<p>
-Maybe an alternative, but more verbose is this vectorized integrate function. We still make temporary functions for integrating, and the vectorization is essentially like the list comprehension above, but we avoid the lambda functions.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span style="color: #6434A3;">@np.vectorize</span>
-<span style="color: #0000FF;">def</span> <span style="color: #006699;">integrate</span>(i):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">def</span> <span style="color: #006699;">integrand</span>(t):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> F(r(t))[i]
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">I</span>, <span style="color: #BA36A5;">e</span> = quad(integrand, 0, 2 * np.pi)
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> I
-
-integrate([0, 1, 2])
-</pre>
-</div>
-
-<pre class="example">
-array([ -6.90548476e-18,  -1.88495559e+01,   5.92176264e+01])
-
-</pre>
-
-<div id="outline-container-org107f13d" class="outline-2">
-<h2 id="org107f13d"><span class="section-number-2">1</span> Summary</h2>
-<div class="outline-text-2" id="text-1">
-<p>
-Once again, autograd provides a convenient way to compute function jacobians which make it easy to evaluate line integrals in Python.</p>
-</div>
-</div>
-<p>Copyright (C) 2018 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2018/11/16/Line-integrals-in-Python-with-autograd.org">org-mode source</a></p>
-<p>Org-mode version = 9.1.14</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-
-<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2018/11/16/Line-integrals-in-Python-with-autograd">Discuss on Twitter</a>
-
-  <hr class="interblog" />
  <a href="../7">« Previous Page</a>
   --  
  <a href="../9">Next Page »</a>
@@ -1263,11 +1209,11 @@ Once again, autograd provides a convenient way to compute function jacobians whi
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2024/02/17/New-publication-Circumventing-data-imbalance-in-magnetic-ground-state-data-for-magnetic-moment-predictions/">New publication - Circumventing data imbalance in magnetic ground state data for magnetic moment predictions</a></li>
       <li><a href="/blog/2023/12/10/New-publication-Applying-Large-Graph-Neural-Networks-to-Predict-Transition-Metal-Complex-Energies-Using-the-tmQM-wB97MV-Data-Set/">New publication - Applying Large Graph Neural Networks to Predict Transition Metal Complex Energies Using the tmQM_wB97MV Data Set</a></li>
       <li><a href="/blog/2023/12/03/New-publication-Chemical-Properties-from-Graph-Neural-Network-Predicted-Electron-Densities/">New publication - Chemical Properties from Graph Neural Network-Predicted Electron Densities</a></li>
       <li><a href="/blog/2023/09/24/New-publication-Beyond-Independent-Error-Assumptions-in-Large-GNN-Atomistic-Models/">New publication - Beyond Independent Error Assumptions in Large GNN Atomistic Models</a></li>
       <li><a href="/blog/2023/09/24/Adding-new-backends-to-hashcache/">Adding new backends to hashcache</a></li>
-      <li><a href="/blog/2023/09/21/A-better-manager-for-supervising-Python-functions/">A better manager for supervising Python functions</a></li>
     </ul>
   </section>
 
