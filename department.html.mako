@@ -2,16 +2,16 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents" role="doc-toc">
 <ul>
-<li><a href="#org8ae2f34">1. Current Department Publications</a></li>
-<li><a href="#org835716e">2. Department publications by year</a></li>
-<li><a href="#org35b6435">3. CMU alumni in academia</a></li>
+<li><a href="#org0ada263">1. Current Department Publications</a></li>
+<li><a href="#orgd5e7b75">2. Department publications by year</a></li>
+<li><a href="#orgd2c27fb">3. CMU alumni in academia</a></li>
 </ul>
 </div>
 </div>
 <%inherit file="_templates/site.mako" />
 
-<div id="outline-container-org8ae2f34" class="outline-2">
-<h2 id="org8ae2f34"><span class="section-number-2">1.</span> Current Department Publications</h2>
+<div id="outline-container-org0ada263" class="outline-2">
+<h2 id="org0ada263"><span class="section-number-2">1.</span> Current Department Publications</h2>
 <div class="outline-text-2" id="text-1">
 <script src="http://syndic8.scopus.com/getMessage?registrationId=HAGDHBGEOCGMJAGIJAHIHEJDHJGGLIMGIIIKOHGJKD"></script>
 
@@ -111,8 +111,8 @@
 </div>
 
 
-<div id="outline-container-org835716e" class="outline-2">
-<h2 id="org835716e"><span class="section-number-2">2.</span> Department publications by year</h2>
+<div id="outline-container-orgd5e7b75" class="outline-2">
+<h2 id="orgd5e7b75"><span class="section-number-2">2.</span> Department publications by year</h2>
 <div class="outline-text-2" id="text-2">
 <p>
 These publications were  derived from Scopus.
@@ -142,8 +142,8 @@ These publications were  derived from Scopus.
 </div>
 </div>
 
-<div id="outline-container-org35b6435" class="outline-2">
-<h2 id="org35b6435"><span class="section-number-2">3.</span> CMU alumni in academia</h2>
+<div id="outline-container-orgd2c27fb" class="outline-2">
+<h2 id="orgd2c27fb"><span class="section-number-2">3.</span> CMU alumni in academia</h2>
 <div class="outline-text-2" id="text-3">
 <iframe src="https://www.google.com/maps/d/embed?mid=zDNHhN3lg2P0.kKYunRBQeH6A" width="640" height="480"></iframe>
 </div>
