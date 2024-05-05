@@ -102,6 +102,235 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="LDAP-lookups-from-Emacs"></div>
+      <h2 class="blog_post_title"><a href="/blog/2015/11/25/LDAP-lookups-from-Emacs/" rel="bookmark" title="Permanent Link to LDAP lookups from Emacs">LDAP lookups from Emacs</a></h2>
+      <p><small><span class="blog_post_date">Posted November 25, 2015 at 09:31 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/helm/'>helm</a></span> | tags: 
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+
+<p>
+Now that I have email and Cisco Jabber totally integrated into Emacs it would be nice to tap into the CMU LDAP (Lightweight Directory Access Protocol) service  to find emails and phone numbers. We to use the ldapsearch command-line utility to query our LDAP service like this to find an email address.
+</p>
+
+<p>
+You might like the video explanation here: <a href="https://www.youtube.com/watch?v=N7AaKHRd9uw">https://www.youtube.com/watch?v=N7AaKHRd9uw</a> 
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(shell-command-to-string <span style="color: #008000;">"ldapsearch -x -LLL -h ldap.andrew.cmu.edu -b ou=Person,dc=cmu,dc=edu cn=\"John Kitchin\""</span>)
+</pre>
+</div>
+
+<pre class="example">
+dn: guid=1976CCAA-B465-11D8-8000-080020CC75D3,ou=person,dc=cmu,dc=edu
+objectClass: cmuPerson
+eduPersonPrimaryAffiliation: Faculty
+guid: 1976CCAA-B465-11D8-8000-080020CC75D3
+cmuPrivate: homePostalAddress
+cmuPrivate: homePhone
+cn: John Kitchin
+givenName: John
+sn: Kitchin
+cmuPrimaryCampus: Pittsburgh
+cmuCampus: Pittsburgh
+cmuAndrewId: jkitchin
+cmueduId: jkitchin
+cmuAndrewCommonNamespaceId: jkitchin
+mail: jkitchin@cmu.edu
+eduPersonSchoolCollegeName: CIT - Consolidated
+cmuPersonPrincipalName: jkitchin@ANDREW.CMU.EDU
+postalAddress: DH A207F
+cmuDepartment: Chemical Engineering
+cmuDepartment: MSE: Materials Science &amp; Engineering
+cmuPersonAffiliation: Tenure-Track Faculty
+eduPersonAffiliation: Faculty
+cmuAccount: uid=jkitchin,ou=account,dc=andrew,dc=cmu,dc=edu
+cmuAccount: uid=jkitchin,ou=account,dc=cmu,dc=edu
+cmuActiveDN: uid=jkitchin,ou=account,dc=andrew,dc=cmu,dc=edu
+cmuActiveDN: uid=jkitchin,ou=account,dc=cmu,dc=edu
+title: Professor
+telephoneNumber: +1 412 268 7803
+</pre>
+
+<p>
+We actually get LDIF data from ldapsearch with a lot of details. Next we wrap the output in a function that converts each result from ldapsearch into a p-list that we will use later in a helm function to help us select a match.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">ldap-query</span> (query-string)
+  <span style="color: #036A07;">"Send QUERY-STRING to our ldap server and parse results into a</span>
+<span style="color: #036A07;">list of p-lists for each entry returned."</span>
+  (<span style="color: #0000FF;">interactive</span> <span style="color: #008000;">"sLDAP query: "</span>)
+  (<span style="color: #0000FF;">let</span> ((output (butlast (split-string
+                          (shell-command-to-string
+                           (format (concat  <span style="color: #008000;">"ldapsearch -x -LLL "</span>
+                                            <span style="color: #008000;">"-h ldap.andrew.cmu.edu "</span>
+                                            <span style="color: #008000;">"-b ou=Person,dc=cmu,dc=edu %s"</span>)
+                                   query-string))
+                          <span style="color: #008000;">"\n"</span>)))
+        (lines '())
+        (result '())
+        (results '(())))
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">cleanup trailing lines and ignore initial lines</span>
+    (<span style="color: #0000FF;">loop</span> for line in output
+          do
+          (<span style="color: #0000FF;">cond</span>
+           <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">join lines that run over</span>
+           ((s-starts-with? <span style="color: #008000;">" "</span> line)
+            (<span style="color: #0000FF;">setf</span> (car (last lines))
+                  (concat (car (last lines)) line)))
+           <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">ignore this</span>
+           ((string-match <span style="color: #008000;">"Size limit exceeded"</span> line)
+            nil)
+           (t
+            (add-to-list 'lines line t))))
+
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">now we need to parse the lines. A new entry starts with a dn: line.</span>
+    (<span style="color: #0000FF;">dolist</span> (line lines)
+      (<span style="color: #0000FF;">cond</span>
+       ((s-starts-with? <span style="color: #008000;">"dn:"</span> line)
+        <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">add new entry</span>
+        (add-to-list 'results `(<span style="color: #006FE0;">:dn</span> ,line)))
+       ((string-match <span style="color: #008000;">":"</span> line)
+        (<span style="color: #0000FF;">let*</span> ((s (split-string line <span style="color: #008000;">":"</span>))
+               (prop (intern (concat <span style="color: #008000;">":"</span> (s-trim (car s)))))
+               (val (s-trim (cadr s))))
+          (<span style="color: #0000FF;">setf</span> (car results) (plist-put (car results) prop val))))))
+    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">last result seems to be nil so we drop it</span>
+    (-filter (<span style="color: #0000FF;">lambda</span> (x) (not (null x))) results)))
+</pre>
+</div>
+
+<pre class="example">
+ldap-query
+</pre>
+
+<p>
+Here is an example of that function:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(ldap-query <span style="color: #008000;">"cn=\"John Kitchin\""</span>)
+</pre>
+</div>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">((<span style="color: #006FE0;">:dn</span> <span style="color: #008000;">"dn: guid=1976CCAA-B465-11D8-8000-080020CC75D3,ou=person,dc=cmu,dc=edu"</span> <span style="color: #006FE0;">:objectClass</span> <span style="color: #008000;">"cmuPerson"</span> <span style="color: #006FE0;">:eduPersonPrimaryAffiliation</span> <span style="color: #008000;">"Faculty"</span> <span style="color: #006FE0;">:guid</span> <span style="color: #008000;">"1976CCAA-B465-11D8-8000-080020CC75D3"</span> <span style="color: #006FE0;">:cmuPrivate</span> <span style="color: #008000;">"homePhone"</span> <span style="color: #006FE0;">:cn</span> <span style="color: #008000;">"John Kitchin"</span> <span style="color: #006FE0;">:givenName</span> <span style="color: #008000;">"John"</span> <span style="color: #006FE0;">:sn</span> <span style="color: #008000;">"Kitchin"</span> <span style="color: #006FE0;">:cmuPrimaryCampus</span> <span style="color: #008000;">"Pittsburgh"</span> <span style="color: #006FE0;">:cmuCampus</span> <span style="color: #008000;">"Pittsburgh"</span> <span style="color: #006FE0;">:cmuAndrewId</span> <span style="color: #008000;">"jkitchin"</span> <span style="color: #006FE0;">:cmueduId</span> <span style="color: #008000;">"jkitchin"</span> <span style="color: #006FE0;">:cmuAndrewCommonNamespaceId</span> <span style="color: #008000;">"jkitchin"</span> <span style="color: #006FE0;">:mail</span> <span style="color: #008000;">"jkitchin@cmu.edu"</span> <span style="color: #006FE0;">:eduPersonSchoolCollegeName</span> <span style="color: #008000;">"CIT - Consolidated"</span> <span style="color: #006FE0;">:cmuPersonPrincipalName</span> <span style="color: #008000;">"jkitchin@ANDREW.CMU.EDU"</span> <span style="color: #006FE0;">:postalAddress</span> <span style="color: #008000;">"DH A207F"</span> <span style="color: #006FE0;">:cmuDepartment</span> <span style="color: #008000;">"MSE"</span> <span style="color: #006FE0;">:cmuPersonAffiliation</span> <span style="color: #008000;">"Tenure-Track Faculty"</span> <span style="color: #006FE0;">:eduPersonAffiliation</span> <span style="color: #008000;">"Faculty"</span> <span style="color: #006FE0;">:cmuAccount</span> <span style="color: #008000;">"uid=jkitchin,ou=account,dc=cmu,dc=edu"</span> <span style="color: #006FE0;">:cmuActiveDN</span> <span style="color: #008000;">"uid=jkitchin,ou=account,dc=cmu,dc=edu"</span> <span style="color: #006FE0;">:title</span> <span style="color: #008000;">"Professor"</span> <span style="color: #006FE0;">:telephoneNumber</span> <span style="color: #008000;">"+1 412 268 7803"</span>))
+</pre>
+</div>
+
+
+<p>
+Now, we wrap a helm function around that to give us a nice menu to select entries from, and a few actions like sending an email, calling, copying the name and email, and seeing the information in a reasonable way. We also add a fallback method in case we don't find what we want and need to do a new search.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">helm-ldap</span> (query-string)
+  (<span style="color: #0000FF;">interactive</span> <span style="color: #008000;">"sLDAP query: "</span>)
+  (helm
+   <span style="color: #006FE0;">:sources</span>
+   `(((name . <span style="color: #008000;">"HELM ldap"</span>)
+      (candidates . ,(mapcar
+                      (<span style="color: #0000FF;">lambda</span> (x)
+                        (cons
+                         (format
+                          <span style="color: #008000;">"%20s|%30s|%30s|%20s|%s"</span>
+                          (s-truncate
+                           20
+                           (<span style="color: #0000FF;">or</span> (plist-get x <span style="color: #006FE0;">:title</span>) <span style="color: #008000;">" "</span>))
+                          (plist-get x <span style="color: #006FE0;">:cn</span>)
+                          (plist-get x <span style="color: #006FE0;">:mail</span>)
+                          (plist-get x <span style="color: #006FE0;">:cmuDisplayAddress</span>)
+                          (<span style="color: #0000FF;">or</span> (plist-get x <span style="color: #006FE0;">:telephoneNumber</span>) <span style="color: #008000;">" "</span>))
+                         x))
+                      (ldap-query
+                       (<span style="color: #0000FF;">if</span> (string-match <span style="color: #008000;">"="</span> query-string)
+                           query-string
+                         (concat <span style="color: #008000;">"cn=*"</span> query-string <span style="color: #008000;">"*"</span>)))))
+      (action . ((<span style="color: #008000;">"Email"</span> . (<span style="color: #0000FF;">lambda</span> (x)
+                              (compose-mail)
+                              (message-goto-to)
+                              (insert (plist-get x <span style="color: #006FE0;">:mail</span>))
+                              (message-goto-subject)))
+                 (<span style="color: #008000;">"Call"</span> . (<span style="color: #0000FF;">lambda</span> (x)
+                             (cisco-call
+                              (plist-get x <span style="color: #006FE0;">:telephoneNumber</span>))))
+                 (<span style="color: #008000;">"Copy Name and email address"</span> . (<span style="color: #0000FF;">lambda</span> (x)
+                                                    (kill-new
+                                                     (format
+                                                      <span style="color: #008000;">"%s &lt;%s&gt;"</span>
+                                                      (plist-get x <span style="color: #006FE0;">:cn</span>)
+                                                      (plist-get x <span style="color: #006FE0;">:mail</span>)))))
+                 (<span style="color: #008000;">"Information"</span> . (<span style="color: #0000FF;">lambda</span> (x)
+                                    (switch-to-buffer
+                                     (get-buffer-create <span style="color: #008000;">"*helm ldap*"</span>))
+                                    (erase-buffer)
+                                    (<span style="color: #0000FF;">dolist</span> (key (<span style="color: #0000FF;">cl-loop</span>
+                                                  for key in x by #'cddr
+                                                  collect key))
+                                      (insert (format <span style="color: #008000;">"|%s | %s|\n"</span>
+                                                      key (plist-get x key))))
+                                    (org-mode)
+                                    (goto-char 0)
+                                    (org-ctrl-c-ctrl-c)
+                                    (insert <span style="color: #008000;">"press q to quit.\n\n"</span>)
+                                    (<span style="color: #0000FF;">setq</span> buffer-read-only t)
+                                    (use-local-map (copy-keymap org-mode-map))
+                                    (local-set-key <span style="color: #008000;">"q"</span>
+                                                   #'(lambda ()
+                                                       (<span style="color: #0000FF;">interactive</span>)
+                                                       (quit-window t))))))))
+     <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">fallback action</span>
+     ((name . <span style="color: #008000;">"New search"</span>)
+      (dummy)
+      (action . (<span style="color: #0000FF;">lambda</span> (x) (helm-ldap x)))))))
+</pre>
+</div>
+
+<pre class="example">
+helm-ldap
+</pre>
+
+<p>
+That is pretty convenient!
+</p>
+
+<p>
+John Kitchin &lt;jkitchin@cmu.edu&gt;</p>
+<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/11/25/LDAP-lookups-from-Emacs.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+
+<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2015/11/25/LDAP-lookups-from-Emacs">Discuss on Twitter</a>
+
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Contextual-help-in-org-mode"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/11/24/Contextual-help-in-org-mode/" rel="bookmark" title="Permanent Link to Contextual help in org-mode">Contextual help in org-mode</a></h2>
       <p><small><span class="blog_post_date">Posted November 24, 2015 at 10:08 AM</span> | categories:
@@ -629,7 +858,7 @@ checkbox
       <div id="Improving-org-ref-cite-links-with-tooltips"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/11/23/Improving-org-ref-cite-links-with-tooltips/" rel="bookmark" title="Permanent Link to Improving org-ref cite links with tooltips">Improving org-ref cite links with tooltips</a></h2>
       <p><small><span class="blog_post_date">Posted November 23, 2015 at 07:03 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/orgref/'>orgref</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgref/'>orgref</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
       </small></p>
     </header>
     <div class="post_prose">
@@ -947,7 +1176,7 @@ It works for this syntax too: `helm', which is also commonly used in doc strings
       <div id="Insert-org-entities-into-org-mode-with-helm"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/11/21/Insert-org-entities-into-org-mode-with-helm/" rel="bookmark" title="Permanent Link to Insert org-entities into org-mode with helm">Insert org-entities into org-mode with helm</a></h2>
       <p><small><span class="blog_post_date">Posted November 21, 2015 at 11:37 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/helm/'>helm</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/helm/'>helm</a></span> | tags: 
       </small></p>
     </header>
     <div class="post_prose">
@@ -1028,375 +1257,6 @@ Now I can write things like the particle was 60 Å in diameter at a temperature 
 <a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2015/11/21/Insert-org-entities-into-org-mode-with-helm">Discuss on Twitter</a>
 
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Asynchronously-running-python-blocks-in-org-mode"></div>
-      <h2 class="blog_post_title"><a href="/blog/2015/11/20/Asynchronously-running-python-blocks-in-org-mode/" rel="bookmark" title="Permanent Link to Asynchronously running python blocks in org-mode">Asynchronously running python blocks in org-mode</a></h2>
-      <p><small><span class="blog_post_date">Posted November 20, 2015 at 11:46 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/python/'>python</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
-      <p><small><span class="blog_post_date">Updated November 20, 2015 at 07:30 PM</span></small>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-If you run long Python blocks from org-mode, you might want to keep working while it runs. Currently Emacs gets blocked and you have to wait patiently.  In this post we consider some ways to avoid this that run our code asynchronously, but still put results where they belong in the org-buffer.
-</p>
-
-<p>
-This is a long post. You may want to see the video: <a href="https://www.youtube.com/watch?v=VDyoN8yipSE">https://www.youtube.com/watch?v=VDyoN8yipSE</a> , or skip to the <a href="#sec-3">end</a> where the best and final version is shown.
-</p>
-
-<div id="outline-container-sec-1" class="outline-2">
-<h2 id="sec-1"><span class="section-number-2">1</span> The async module</h2>
-<div class="outline-text-2" id="text-1">
-<p>
-Here we consider an approach that uses <a href="https://github.com/jwiegley/emacs-async">https://github.com/jwiegley/emacs-async</a> module. The idea is to tangle the Python block at point to a temp file, then asynchronously run it. We capture the output and put it back in the buffer. We use a uuid to find the place to put the results in org-mode format. Here is the code that implements this idea.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">async</span>)
-
-(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-babel-async-execute</span> ()
-  <span style="color: #036A07;">"Run a python block at point asynchrously."</span>
-  (<span style="color: #0000FF;">interactive</span>)
-
-  (<span style="color: #0000FF;">let</span> ((current-file (buffer-file-name))
-        (uuid (org-id-uuid))
-        (temporary-file-directory <span style="color: #008000;">"./"</span>)
-        (tempfile (make-temp-file <span style="color: #008000;">"py-"</span>)))
-
-    (org-babel-tangle '(4) tempfile)
-    (org-babel-remove-result)
-    (<span style="color: #0000FF;">save-excursion</span>
-      (re-search-forward <span style="color: #008000;">"#\\+END_SRC"</span>)
-      (insert (format
-               <span style="color: #008000;">"\n\n#+RESULTS: %s\n: %s"</span>
-               (<span style="color: #0000FF;">or</span> (org-element-property <span style="color: #006FE0;">:name</span> (org-element-context))
-                   <span style="color: #008000;">""</span>)
-               uuid)))
-
-    (<span style="color: #0000FF;">async-start</span>
-     <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">what to start</span>
-     `(<span style="color: #0000FF;">lambda</span> ()
-        <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">now we run the command then cleanup</span>
-        (<span style="color: #0000FF;">prog1</span>
-            (shell-command-to-string (format <span style="color: #008000;">"python %s"</span> ,tempfile))
-          (delete-file ,tempfile)))
-
-     `(<span style="color: #0000FF;">lambda</span> (result)
-        <span style="color: #036A07;">"Code that runs when the async function finishes."</span>
-        (<span style="color: #0000FF;">save-window-excursion</span>
-          (<span style="color: #0000FF;">save-excursion</span>
-            (<span style="color: #0000FF;">save-restriction</span>
-              (<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect ,current-file)
-                (goto-char (point-min))
-                (re-search-forward ,uuid)
-                (beginning-of-line)
-                (kill-line)
-                (insert (mapconcat
-                         (<span style="color: #0000FF;">lambda</span> (x)
-                           (format <span style="color: #008000;">": %s"</span> x))
-                         (butlast (s-split <span style="color: #008000;">"\n"</span> result))
-                         <span style="color: #008000;">"\n"</span>))))))))))
-</pre>
-</div>
-
-<pre class="example">
-org-babel-async-execute
-</pre>
-
-<p>
-Here is a block to test it on. We can run the block, and keep on working while the code runs. The results seem to get inserted correctly at the right point even if I am in another window or frame! We don't get easy access to continuous output of the command. This wouldn't work if we close Emacs, but who does that?
-</p>
-
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #0000FF;">print</span> <span style="color: #008000;">'hello world'</span>
-<span style="color: #0000FF;">import</span> time
-time.sleep(5)
-
-<span style="color: #0000FF;">import</span> os
-<span style="color: #0000FF;">print</span> os.getcwd()
-<span style="color: #0000FF;">print</span> time.asctime()
-</pre>
-</div>
-
-<pre class="example">
-hello world
-/Users/jkitchin/blogofile-jkitchin.github.com/_blog
-Fri Nov 20 10:17:53 2015
-</pre>
-
-<p>
-There are some limitations to this approach. One of them is it assumes the src block is a stand-alone block that will run on its own. That is usually how I run mine, but I could see having other modules that should be tangled out of a file too. I think the script is being run in the current working directory, so it probably will find any local imports it needs.
-</p>
-
-<p>
-You don't get any intermediate feedback on this process. It seems to be possible to do that with a different approach that puts some output in a new buffer, e.g. with start-process. But, you still need some clever code like the async model to know when to insert the results back into this buffer. We consider Emacs processes and sentinels next.
-</p>
-</div>
-</div>
-
-<div id="outline-container-sec-2" class="outline-2">
-<h2 id="sec-2"><span class="section-number-2">2</span> Emacs process approach with tangling</h2>
-<div class="outline-text-2" id="text-2">
-<p>
-We can start a process in Emacs, and attach a sentinel function to it that runs after the process completes. Here is an example of that. We still tangle the src-block here.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-babel-async-execute</span> ()
-  (<span style="color: #0000FF;">interactive</span>)
-  (<span style="color: #0000FF;">let*</span> ((current-file (buffer-file-name))
-        (uuid (org-id-uuid))
-        (temporary-file-directory <span style="color: #008000;">"./"</span>)
-        (tempfile (make-temp-file <span style="color: #008000;">"py-"</span>))
-        (pbuffer (format <span style="color: #008000;">"*%s*"</span> uuid))
-        process)
-
-    (org-babel-tangle '(4) tempfile)
-    (org-babel-remove-result)
-
-    (<span style="color: #0000FF;">save-excursion</span>
-      (re-search-forward <span style="color: #008000;">"#\\+END_SRC"</span>)
-      (insert (format
-               <span style="color: #008000;">"\n\n#+RESULTS: %s\n: %s"</span>
-               (<span style="color: #0000FF;">or</span> (org-element-property <span style="color: #006FE0;">:name</span> (org-element-context))
-                   <span style="color: #008000;">""</span>)
-               uuid)))
-
-    (<span style="color: #0000FF;">setq</span> process (start-process
-                   uuid
-                   pbuffer
-                   <span style="color: #008000;">"python"</span>
-                   tempfile))
-
-    (set-process-sentinel
-     process
-     `(<span style="color: #0000FF;">lambda</span> (process event)
-        (<span style="color: #0000FF;">when</span> (string= <span style="color: #008000;">"finished\n"</span> event)
-          (delete-file ,tempfile)
-          (<span style="color: #0000FF;">save-window-excursion</span>
-            (<span style="color: #0000FF;">save-excursion</span>
-              (<span style="color: #0000FF;">save-restriction</span>
-                (<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect ,current-file)
-                  (goto-char (point-min))
-                  (re-search-forward ,uuid)
-                  (beginning-of-line)
-                  (kill-line)
-                  (insert (mapconcat
-                           (<span style="color: #0000FF;">lambda</span> (x)
-                             (format <span style="color: #008000;">": %s"</span> x))
-                           (split-string
-                            (<span style="color: #0000FF;">with-current-buffer</span> ,pbuffer (buffer-string))
-                            <span style="color: #008000;">"\n"</span>)
-                           <span style="color: #008000;">"\n"</span>)))))))
-        (kill-buffer ,pbuffer)))))
-</pre>
-</div>
-
-<pre class="example">
-org-babel-async-execute
-</pre>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #0000FF;">print</span> <span style="color: #008000;">'hello world'</span>
-<span style="color: #0000FF;">import</span> time
-time.sleep(10)
-
-<span style="color: #0000FF;">import</span> os
-<span style="color: #0000FF;">print</span> os.getcwd()
-<span style="color: #0000FF;">print</span> time.asctime()
-</pre>
-</div>
-
-<pre class="example">
-hello world
-/Users/jkitchin/blogofile-jkitchin.github.com/_blog
-Fri Nov 20 10:20:01 2015
-</pre>
-
-<p>
-That works well from what I can see. There are some limitations. I doubt this will work if you use variables in the src block header. Next we consider an approach that does not do the tangling, and that will show us code output as it goes.
-</p>
-</div>
-</div>
-
-<div id="outline-container-sec-3" class="outline-2">
-<h2 id="sec-3"><a id="ID-D8F2CBB5-31B2-4477-A363-E3C0063214DE" name="ID-D8F2CBB5-31B2-4477-A363-E3C0063214DE"></a><span class="section-number-2">3</span> Emacs process approach with no tangling</h2>
-<div class="outline-text-2" id="text-3">
-<p>
-As an alternative to tangling to a file, here we just copy the code to a file and then run it. This allows us to use :var in the header to pass data in at run time. At the moment, this code only supports printed output from code blocks, not the value for :results.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-babel-async-execute:python</span> ()
-  <span style="color: #036A07;">"Execute the python src-block at point asynchronously.</span>
-<span style="color: #036A07;">:var headers are supported.</span>
-<span style="color: #036A07;">:results output is all that is supported for output.</span>
-
-<span style="color: #036A07;">A new window will pop up showing you the output as it appears,</span>
-<span style="color: #036A07;">and the output in that window will be put in the RESULTS section</span>
-<span style="color: #036A07;">of the code block."</span>
-  (<span style="color: #0000FF;">interactive</span>)
-  (<span style="color: #0000FF;">let*</span> ((current-file (buffer-file-name))
-         (uuid (org-id-uuid))
-         (code (org-element-property <span style="color: #006FE0;">:value</span> (org-element-context)))
-         (temporary-file-directory <span style="color: #008000;">"."</span>)
-         (tempfile (make-temp-file <span style="color: #008000;">"py-"</span>))
-         (pbuffer (format <span style="color: #008000;">"*%s*"</span> uuid))
-         (varcmds (org-babel-variable-assignments:python
-                   (nth 2 (org-babel-get-src-block-info))))
-         process)
-
-    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">get rid of old results, and put a place-holder for the new results to</span>
-    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">come.</span>
-    (org-babel-remove-result)
-
-    (<span style="color: #0000FF;">save-excursion</span>
-      (re-search-forward <span style="color: #008000;">"#\\+END_SRC"</span>)
-      (insert (format
-               <span style="color: #008000;">"\n\n#+RESULTS: %s\n: %s"</span>
-               (<span style="color: #0000FF;">or</span> (org-element-property <span style="color: #006FE0;">:name</span> (org-element-context))
-                   <span style="color: #008000;">""</span>)
-               uuid)))
-
-    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">open the results buffer to see the results in.</span>
-    (switch-to-buffer-other-window pbuffer)
-
-    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Create temp file containing the code.</span>
-    (<span style="color: #0000FF;">with-temp-file</span> tempfile
-      <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">if there are :var headers insert them.</span>
-      (<span style="color: #0000FF;">dolist</span> (cmd varcmds)
-        (insert cmd)
-        (insert <span style="color: #008000;">"\n"</span>))
-      (insert code))
-
-    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">run the code</span>
-    (<span style="color: #0000FF;">setq</span> process (start-process
-                   uuid
-                   pbuffer
-                   <span style="color: #008000;">"python"</span>
-                   tempfile))
-
-    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">when the process is done, run this code to put the results in the</span>
-    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">org-mode buffer.</span>
-    (set-process-sentinel
-     process
-     `(<span style="color: #0000FF;">lambda</span> (process event)
-        (<span style="color: #0000FF;">save-window-excursion</span>
-          (<span style="color: #0000FF;">save-excursion</span>
-            (<span style="color: #0000FF;">save-restriction</span>
-              (<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect ,current-file)
-                (goto-char (point-min))
-                (re-search-forward ,uuid)
-                (beginning-of-line)
-                (kill-line)
-                (insert
-                 (mapconcat
-                  (<span style="color: #0000FF;">lambda</span> (x)
-                    (format <span style="color: #008000;">": %s"</span> x))
-                  (butlast (split-string
-                            (<span style="color: #0000FF;">with-current-buffer</span>
-                                ,pbuffer
-                              (buffer-string))
-                            <span style="color: #008000;">"\n"</span>))
-                  <span style="color: #008000;">"\n"</span>))))))
-        <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">delete the results buffer then delete the tempfile.</span>
-        <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">finally, delete the process.</span>
-        (<span style="color: #0000FF;">when</span> (get-buffer ,pbuffer)
-          (kill-buffer ,pbuffer)
-          (delete-window))
-        (delete-file ,tempfile)
-        (delete-process process)))))
-</pre>
-</div>
-
-<pre class="example">
-org-babel-async-execute:python
-</pre>
-
-<p>
-Let us try it out again.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #0000FF;">print</span> <span style="color: #008000;">'hello world'</span>
-<span style="color: #0000FF;">import</span> time
-time.sleep(1)
-
-<span style="color: #0000FF;">for</span> i <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">range</span>(5):
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">print</span> i
-
-<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   time.sleep(0.5)
-
-
-<span style="color: #0000FF;">import</span> os
-<span style="color: #0000FF;">print</span> os.getcwd()
-<span style="color: #0000FF;">print</span> time.asctime()
-
-<span style="color: #0000FF;">print</span> data
-
-<span style="color: #0000FF;">raise</span> <span style="color: #6434A3;">IOError</span>(<span style="color: #008000;">'No file!'</span>)
-</pre>
-</div>
-
-<pre class="example">
-hello world
-0
-1
-2
-3
-4
-/Users/jkitchin/blogofile-jkitchin.github.com/_blog
-Fri Nov 20 19:30:16 2015
-[1, 3]
-Traceback (most recent call last):
-  File "/Users/jkitchin/blogofile-jkitchin.github.com/_blog/py-84344aa1", line 18, in &lt;module&gt;
-    raise IOError('No file!')
-IOError: No file!
-</pre>
-
-<p>
-It works fine for this simple example. We get to see the output as the code executes, which is a pleasant change from the usual way of running python blocks. There is some support for some header arguments, notably the :var header. I don't use :results value in Python, so for now only output is supported. We even support Exceptions in the output finally!
-</p>
-
-<p>
-Maybe some org-moder's out there can try this and run it through some more rigorous paces?
-</p>
-</div>
-</div>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/11/20/Asynchronously-running-python-blocks-in-org-mode.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-
-<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2015/11/20/Asynchronously-running-python-blocks-in-org-mode">Discuss on Twitter</a>
-
-  <hr class="interblog" />
  <a href="../35">« Previous Page</a>
   --  
  <a href="../37">Next Page »</a>
@@ -1438,11 +1298,11 @@ Maybe some org-moder's out there can try this and run it through some more rigor
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2024/05/05/Kolmogorov-Arnold-Networks-KANs-and-Lennard-Jones/">Kolmogorov-Arnold Networks (KANs) and Lennard Jones</a></li>
       <li><a href="/blog/2024/04/20/Generalization-of-Graph-Based-Active-Learning-Relaxation-Strategies-Across-Materials/">Generalization of Graph-Based Active Learning Relaxation Strategies Across Materials</a></li>
       <li><a href="/blog/2024/04/03/A-little-more-than-a-decade-of-the-Kitchingroup-blog/">A little more than a decade of the Kitchingroup blog</a></li>
       <li><a href="/blog/2024/02/17/New-publication-Circumventing-data-imbalance-in-magnetic-ground-state-data-for-magnetic-moment-predictions/">New publication - Circumventing data imbalance in magnetic ground state data for magnetic moment predictions</a></li>
       <li><a href="/blog/2023/12/10/New-publication-Applying-Large-Graph-Neural-Networks-to-Predict-Transition-Metal-Complex-Energies-Using-the-tmQM-wB97MV-Data-Set/">New publication - Applying Large Graph Neural Networks to Predict Transition Metal Complex Energies Using the tmQM_wB97MV Data Set</a></li>
-      <li><a href="/blog/2023/12/03/New-publication-Chemical-Properties-from-Graph-Neural-Network-Predicted-Electron-Densities/">New publication - Chemical Properties from Graph Neural Network-Predicted Electron Densities</a></li>
     </ul>
   </section>
 
