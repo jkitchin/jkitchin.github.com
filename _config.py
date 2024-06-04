@@ -58,7 +58,11 @@ blog.timezone = "US/Eastern"
 
 # # blog_googleanaltics_id -- enable Google Analytics tracking
 # # TODO: move to plugin/filter?
-blog.googleanlytics_id = "UA-35731398-1"
+# [2024-06-04 Tue] this is the old universal analytics
+# blog.googleanlytics_id = "UA-35731398-1"
+
+# this is the new one. [2024-06-04 Tue]
+blog.googleanlytics_id = "444337616"
 
 # # Markdown extensions
 # # These are turned off by default, but turned on
