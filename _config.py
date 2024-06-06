@@ -62,7 +62,7 @@ blog.timezone = "US/Eastern"
 # blog.googleanlytics_id = "UA-35731398-1"
 
 # this is the new one. [2024-06-04 Tue]
-blog.googleanlytics_id = "444337616"
+blog.googleanlytics_id = "G-PH8NF4F0RE"
 
 # # Markdown extensions
 # # These are turned off by default, but turned on
