@@ -102,6 +102,125 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Conditional-hydra-menus"></div>
+      <h2 class="blog_post_title"><a href="/blog/2015/06/24/Conditional-hydra-menus/" rel="bookmark" title="Permanent Link to Conditional hydra menus">Conditional hydra menus</a></h2>
+      <p><small><span class="blog_post_date">Posted June 24, 2015 at 07:31 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/hydra/'>hydra</a>, <a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+
+<p>
+Usually the <a href="https://github.com/abo-abo/hydra">hydra</a> menu is hard coded in the defhydra macro. Sometimes, you would like conditional options, that is, depending on some condition we get different options <i>when we run the hydra</i> and not when it was defined. This is an open <a href="https://github.com/abo-abo/hydra/issues/86">issue</a> in hydra. Here we explore a way to achieve that. The idea is to construct the code for the hydra, then eval it, and run the hydra. In this example we make the conditional menu depend on whether we are on an even or odd numbered line. I use the `' syntax for defining the list of code. ` is a variation of ' (quote) that enables you to use the , operator to evaluate that element while in data mode. So, here is our first idea:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">my-hydra-1</span> ()
+  (<span style="color: #0000FF;">interactive</span>)
+  (eval
+   `(<span style="color: #0000FF;">defhydra</span> my-hydra-1 (<span style="color: #006FE0;">:color</span> blue) <span style="color: #008000;">"My hydra"</span>
+      ,(<span style="color: #0000FF;">if</span> (evenp (line-number-at-pos))
+           '(<span style="color: #008000;">"e"</span> (message-box <span style="color: #008000;">"Even line"</span>) <span style="color: #008000;">"Even"</span>)
+         '(<span style="color: #008000;">"o"</span> (message-box <span style="color: #008000;">"Odd line"</span>) <span style="color: #008000;">"Odd"</span>))
+      ,(<span style="color: #0000FF;">when</span> t '(<span style="color: #008000;">"a"</span> (message-box <span style="color: #008000;">"always true"</span>) <span style="color: #008000;">"always"</span>))
+      <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">This does not work. you must return a legitimate hydra menu item</span>
+      <span style="color: #8D8D84;">;;      </span><span style="color: #8D8D84; font-style: italic;">,(when nil '("n" (message-box "never") "never"))</span>
+      ))
+  (my-hydra-1/body))
+
+(my-hydra-1)
+(my-hydra-1)
+</pre>
+</div>
+
+<pre class="example">
+my-hydra
+</pre>
+
+<p>
+As long as it is not expensive to compute the conditionals, this seems like an easy enough way to get conditional options in a hydra. One limitation of the previous approach is our menu conditionals must return a hydra menu, and not nil. Here is an alternative approach to writing the function that solves the issue of the nil return in the last function. Here we build up the code list using append. It might seem like a macro should be used here, but I have not figured out how to get the macro to run the conditionals at the run-time. Note, we cannot use funcall on the defhydra because that is a macro.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">my-hydra-2</span> ()
+  (<span style="color: #0000FF;">interactive</span>)
+  (<span style="color: #0000FF;">let</span> ((conditionals '((<span style="color: #0000FF;">if</span> (evenp (line-number-at-pos))
+                            '(<span style="color: #008000;">"e"</span> (message-box <span style="color: #008000;">"Even second"</span>) <span style="color: #008000;">"Even"</span>)
+                          '(<span style="color: #008000;">"o"</span> (message-box <span style="color: #008000;">"Odd second"</span>) <span style="color: #008000;">"Odd"</span>))
+                        (<span style="color: #0000FF;">when</span> t '(<span style="color: #008000;">"a"</span> (message-box <span style="color: #008000;">"always true"</span>) <span style="color: #008000;">"always"</span>))
+                        (<span style="color: #0000FF;">when</span> nil '(<span style="color: #008000;">"n"</span> (message-box <span style="color: #008000;">"never"</span>) <span style="color: #008000;">"never"</span>)))))
+    (eval
+     (append
+      '(defhydra my-hydra-2 (<span style="color: #006FE0;">:color</span> blue) <span style="color: #008000;">"My hydra"</span>)
+      (<span style="color: #0000FF;">loop</span> for cond in conditionals
+            with result = (eval cond)
+            if (eval cond)
+            collect (eval cond))))
+    (my-hydra-2/body)))
+
+(my-hydra-2)
+(my-hydra-2)
+</pre>
+</div>
+
+<p>
+That works too. Let us try another type of syntax where the conditional statements have a cons cell with a conditional statement, and a hydra menu option for when the statement is true. This is functionally similar to our first method, but has some advantages in brevity and less quoting. We add a conditional hint here too (at some expense of additional quoting).
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">my-hydra-3</span> ()
+  (<span style="color: #0000FF;">interactive</span>)
+  (<span style="color: #0000FF;">let</span> ((conditionals
+         `(((evenp (line-number-at-pos)) . (<span style="color: #008000;">"e"</span> (message-box <span style="color: #008000;">"Even second"</span>) ,(format <span style="color: #008000;">"Even: %s"</span> (line-number-at-pos))))
+           ((oddp (line-number-at-pos)) . (<span style="color: #008000;">"o"</span> (message-box <span style="color: #008000;">"Odd second"</span>) ,(format <span style="color: #008000;">"Odd: %s"</span> (line-number-at-pos))))
+           (t . (<span style="color: #008000;">"a"</span> (message-box <span style="color: #008000;">"always true"</span>) <span style="color: #008000;">"always"</span>))
+           (nil . (<span style="color: #008000;">"n"</span> (message-box <span style="color: #008000;">"never"</span>) <span style="color: #008000;">"never"</span>)))))
+    (eval
+     (append
+      '(defhydra my-hydra-3 (<span style="color: #006FE0;">:color</span> blue) <span style="color: #008000;">"My hydra"</span>)
+      (<span style="color: #0000FF;">loop</span> for cond in conditionals
+            if (eval (car  cond))
+            collect (cdr cond))))
+    (my-hydra-3/body)))
+
+(my-hydra-3)
+(my-hydra-3)
+</pre>
+</div>
+
+<p>
+I cannot figure out how to abstract this much further. There is a little redundancy in names, e.g. in the defhydra and at the end, but it is not too bad, which would usually be handled by a macro. I tried some defmacros to try this, but I could not figure out how to get the conditionals to expand at the right times, which is at run time, and not at macro expansion time. I need a macro that generates a function that has the call to defhydra in it! Maybe next year ;)
+</p>
+<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/06/24/Conditional-hydra-menus.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+
+<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2015/06/24/Conditional-hydra-menus">Discuss on Twitter</a>
+
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Clickable-org-contacts-in-text-files"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/06/22/Clickable-org-contacts-in-text-files/" rel="bookmark" title="Permanent Link to Clickable org-contacts in text files">Clickable org-contacts in text files</a></h2>
       <p><small><span class="blog_post_date">Posted June 22, 2015 at 01:07 PM</span> | categories:
@@ -379,7 +498,7 @@ That doesn't look too bad. Now, anytime I open an org-mode file with an email ad
       <div id="ox-pandoc-org-mode-+-org-ref-to-docx-with-bibliographies"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/06/11/ox-pandoc-org-mode-+-org-ref-to-docx-with-bibliographies/" rel="bookmark" title="Permanent Link to ox-pandoc - org-mode + org-ref to docx with bibliographies">ox-pandoc - org-mode + org-ref to docx with bibliographies</a></h2>
       <p><small><span class="blog_post_date">Posted June 11, 2015 at 12:58 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/pandoc/'>pandoc</a>, <a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/docx/'>docx</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/docx/'>docx</a>, <a href='/blog/category/pandoc/'>pandoc</a></span> | tags: 
       <p><small><span class="blog_post_date">Updated June 12, 2015 at 11:19 AM</span></small>
       </small></p>
     </header>
@@ -515,7 +634,7 @@ Here is the word document that results from this file: <a href="/media/2015-06-1
       <div id="A-python-version-of-the-s-exp-bibtex-entry"></div>
       <h2 class="blog_post_title"><a href="/blog/2015/06/11/A-python-version-of-the-s-exp-bibtex-entry/" rel="bookmark" title="Permanent Link to A python version of the s-exp bibtex entry">A python version of the s-exp bibtex entry</a></h2>
       <p><small><span class="blog_post_date">Posted June 11, 2015 at 10:02 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/bibtex/'>bibtex</a>, <a href='/blog/category/python/'>python</a>, <a href='/blog/category/ref/'>ref</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/python/'>python</a>, <a href='/blog/category/ref/'>ref</a>, <a href='/blog/category/bibtex/'>bibtex</a></span> | tags: 
       </small></p>
     </header>
     <div class="post_prose">
@@ -643,287 +762,6 @@ So, it seems Python can do some things like lisp in treating functions like firs
 <a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2015/06/11/A-python-version-of-the-s-exp-bibtex-entry">Discuss on Twitter</a>
 
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="A-sexp-version-of-a-bibtex-entry"></div>
-      <h2 class="blog_post_title"><a href="/blog/2015/06/10/A-sexp-version-of-a-bibtex-entry/" rel="bookmark" title="Permanent Link to A sexp version of a bibtex entry">A sexp version of a bibtex entry</a></h2>
-      <p><small><span class="blog_post_date">Posted June 10, 2015 at 08:54 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/lisp/'>lisp</a>, <a href='/blog/category/bibtex/'>bibtex</a></span> | tags: 
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-
-<p>
-Below you see a typical bibtex entry. Today we explore an alternate approach to represent the information (data) in that entry as s-expressions, i.e. as a lisp data structure. Why? because it seems like an interesting exploration!
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-bibtex"><span style="color: #006699;">@article</span>{<span style="color: #D0372D;">hallenbeck-2013-effec-o2</span>,
-  <span style="color: #BA36A5;">author</span> =       "Hallenbeck, Alexander P. and Kitchin, John R.",
-  <span style="color: #BA36A5;">title</span> =        {Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a
-                  primary-amine based polymeric \ce{CO_2} sorbent},
-  <span style="color: #BA36A5;">keywords</span> =     {RUA, orgmode},
-  <span style="color: #BA36A5;">journal</span> =      "Industrial \&amp; Engineering Chemistry Research",
-  <span style="color: #BA36A5;">pages</span> =        "10788-10794",
-  <span style="color: #BA36A5;">year</span> =         2013,
-  <span style="color: #BA36A5;">volume</span> =       {52},
-  <span style="color: #BA36A5;">number</span> =       {31},
-  <span style="color: #BA36A5;">doi</span> =          "<span style="color: #006DAF; text-decoration: underline;">10.1021/ie400582a</span>",
-  <span style="color: #BA36A5;">url</span> =          "<span style="color: #006DAF; text-decoration: underline;">http://pubs.acs.org/doi/abs/10.1021/ie400582a</span>",
-  <span style="color: #BA36A5;">eprint</span> =       "http://pubs.acs.org/doi/pdf/10.1021/ie400582a",
-}
-</pre>
-</div>
-
-<p>
-Here is what that same data structure might look like as a sexp-based lisp data structure.
-</p>
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(article <span style="color: #008000;">"hallenbeck-2013-effec-o2"</span>
-         (author <span style="color: #008000;">"Hallenbeck, Alexander P. and Kitchin, John R."</span>)
-         (title <span style="color: #008000;">"Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a primary-amine based polymeric \ce{CO_2} sorbent"</span>)
-         (journal <span style="color: #008000;">"Industrial \&amp; Engineering Chemistry Research"</span>)
-         (pages <span style="color: #008000;">"10788-10794"</span>)
-         (year 2013)
-         (number 31)
-         (doi <span style="color: #008000;">"10.1021/ie400582a"</span>)
-         (url <span style="color: #008000;">"http://pubs.acs.org/doi/abs/10.1021/ie400582a"</span>)
-         (eprint <span style="color: #008000;">"http://pubs.acs.org/doi/pdf/10.1021/ie400582a"</span>))
-</pre>
-</div>
-
-<p>
-We can retrieve data from the sexp form pretty easily. Here we get the authors.
-</p>
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let*</span> ((art '(article <span style="color: #008000;">"hallenbeck-2013-effec-o2"</span>
-                      (author <span style="color: #008000;">"Hallenbeck, Alexander P. and Kitchin, John R."</span>)
-                      (title <span style="color: #008000;">"Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a primary-amine based polymeric \ce{CO_2} sorbent"</span>)
-                      (journal <span style="color: #008000;">"Industrial \&amp; Engineering Chemistry Research"</span>)
-                      (pages <span style="color: #008000;">"10788-10794"</span>)
-                      (year 2013)
-                      (number 31)
-                      (doi <span style="color: #008000;">"10.1021/ie400582a"</span>)
-                      (url <span style="color: #008000;">"http://pubs.acs.org/doi/abs/10.1021/ie400582a"</span>)
-                      (eprint <span style="color: #008000;">"http://pubs.acs.org/doi/pdf/10.1021/ie400582a"</span>)))
-       (fields (cddr art)))
-  (cadr (assoc 'author fields)))
-</pre>
-</div>
-
-<pre class="example">
-Hallenbeck, Alexander P. and Kitchin, John R.
-</pre>
-
-<p>
-That is simple enough you might just write a little function to streamline it like this, and return a formatted string.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">get-article-field</span> (article field)
-  <span style="color: #036A07;">"Return value of FIELD in ARTICLE."</span>
-  (cadr (assoc field (cddr article))))
-
-(<span style="color: #0000FF;">let</span> ((art '(article <span style="color: #008000;">"hallenbeck-2013-effec-o2"</span>
-                     (author <span style="color: #008000;">"Hallenbeck, Alexander P. and Kitchin, John R."</span>)
-                     (title <span style="color: #008000;">"Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a primary-amine based polymeric \ce{CO_2} sorbent"</span>)
-                     (journal <span style="color: #008000;">"Industrial \&amp; Engineering Chemistry Research"</span>)
-                     (pages <span style="color: #008000;">"10788-10794"</span>)
-                     (year 2013)
-                     (number 31)
-                     (doi <span style="color: #008000;">"10.1021/ie400582a"</span>)
-                     (url <span style="color: #008000;">"http://pubs.acs.org/doi/abs/10.1021/ie400582a"</span>)
-                     (eprint <span style="color: #008000;">"http://pubs.acs.org/doi/pdf/10.1021/ie400582a"</span>))))
-  (format <span style="color: #008000;">"%s, doi:%s (%s)"</span>
-          (get-article-field art 'author)
-          (get-article-field art 'doi)
-          (get-article-field art 'year)))
-</pre>
-</div>
-
-<pre class="example">
-Hallenbeck, Alexander P. and Kitchin, John R., doi:10.1021/ie400582a (2013)
-</pre>
-
-<p>
-You might be wondering, why is that even a little bit interesting? One reason is that it looks a little like what lisp returns after parsing an xml file. Another is, the data structure looks kind of like data, but it is also some code, if article was defined as a function!  Let us consider what this might look like. I use a macro to define the field functions since in this case they all do the same thing, and these simply return a string with the field-name and value in curly brackets. We eval the macro to make sure it defines the function. I define an article function that wraps the fields in @bibtex-key{fields}, which defines a bibtex entry.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defmacro</span> <span style="color: #006699;">make-field</span> (field-name)
-  <span style="color: #036A07;">"define a field that returns a string"</span>
-  `(<span style="color: #0000FF;">defun</span> ,(intern field-name) (content)
-     (format <span style="color: #008000;">"  %s = {%s}"</span> ,field-name content)))
-
-(<span style="color: #0000FF;">loop</span> for field in '(<span style="color: #008000;">"author"</span> <span style="color: #008000;">"title"</span> <span style="color: #008000;">"journal"</span> <span style="color: #008000;">"pages"</span> <span style="color: #008000;">"number"</span> <span style="color: #008000;">"doi"</span> <span style="color: #008000;">"url"</span> <span style="color: #008000;">"eprint"</span> <span style="color: #008000;">"year"</span>)
-  do (eval `(make-field ,field)))
-
-(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">article</span> (bibtex-key <span style="color: #6434A3;">&amp;rest</span> fields)
-  (concat
-   (format <span style="color: #008000;">"@article{%s,\n"</span> bibtex-key)
-   (mapconcat (<span style="color: #0000FF;">lambda</span> (field) (eval field)) fields <span style="color: #008000;">",\n"</span>)
-   <span style="color: #008000;">"\n}\n"</span>))
-
-(article <span style="color: #008000;">"hallenbeck-2013-effec-o2"</span>
-         (author <span style="color: #008000;">"Hallenbeck, Alexander P. and Kitchin, John R."</span>)
-         (title <span style="color: #008000;">"Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a primary-amine based polymeric \ce{CO_2} sorbent"</span>)
-         (journal <span style="color: #008000;">"Industrial \&amp; Engineering Chemistry Research"</span>)
-         (pages <span style="color: #008000;">"10788-10794"</span>)
-         (number 31)
-         (year 2013)
-         (doi <span style="color: #008000;">"10.1021/ie400582a"</span>)
-         (url <span style="color: #008000;">"http://pubs.acs.org/doi/abs/10.1021/ie400582a"</span>)
-         (eprint <span style="color: #008000;">"http://pubs.acs.org/doi/pdf/10.1021/ie400582a"</span>))
-</pre>
-</div>
-
-<pre class="example">
-@article{hallenbeck-2013-effec-o2,
-  author = {Hallenbeck, Alexander P. and Kitchin, John R.},
-  title = {Effects of ce{O_2} and ce{SO_2} on the capture capacity of a primary-amine based polymeric ce{CO_2} sorbent},
-  journal = {Industrial &amp; Engineering Chemistry Research},
-  pages = {10788-10794},
-  number = {31},
-  year = {2013},
-  doi = {10.1021/ie400582a},
-  url = {http://pubs.acs.org/doi/abs/10.1021/ie400582a},
-  eprint = {http://pubs.acs.org/doi/pdf/10.1021/ie400582a}
-}
-</pre>
-
-<p>
-Wow. We <i>executed</i> our data structure, and got a bibtex entry! That seems moderately interesting to me. Next is an example of taking the same data structure and rendering it as xml. This is some lispy wizardry, rather than use a macro to define functions, I temporarily define functions within a cl-flet macro, which I have to collect as a list of code. Then, I eval the list. This feels pretty odd, but seems like a lispy kind of thing to do.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(eval
- (list 'cl-flet
-       (append (<span style="color: #0000FF;">loop</span> for field in '(<span style="color: #008000;">"author"</span> <span style="color: #008000;">"title"</span> <span style="color: #008000;">"journal"</span> <span style="color: #008000;">"pages"</span>
-                                      <span style="color: #008000;">"number"</span> <span style="color: #008000;">"doi"</span> <span style="color: #008000;">"url"</span> <span style="color: #008000;">"eprint"</span> <span style="color: #008000;">"year"</span>)
-                       collect (list (intern field)
-                                     '(content)
-                                     `(format <span style="color: #008000;">"  &lt;%s&gt;%s&lt;/%s&gt;"</span> ,field content ,field)))
-               '((article (bibtex-key <span style="color: #6434A3;">&amp;rest</span> fields)
-                          (concat
-                           (format
-                            <span style="color: #008000;">"&lt;article bibtex-key=\"%s\"&gt;\n"</span> bibtex-key)
-                           (mapconcat (<span style="color: #0000FF;">lambda</span> (field) (eval field)) fields <span style="color: #008000;">"\n"</span>)
-                           <span style="color: #008000;">"\n&lt;/article&gt;"</span>)))
-               )
-       <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">body of cl-flet</span>
-       '(article <span style="color: #008000;">"hallenbeck-2013-effec-o2"</span>
-                (author <span style="color: #008000;">"Hallenbeck, Alexander P. and Kitchin, John R."</span>)
-                (title <span style="color: #008000;">"Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a primary-amine based polymeric \ce{CO_2} sorbent"</span>)
-                (journal <span style="color: #008000;">"Industrial \&amp; Engineering Chemistry Research"</span>)
-                (pages <span style="color: #008000;">"10788-10794"</span>)
-                (number 31)
-                (year 2013)
-                (doi <span style="color: #008000;">"10.1021/ie400582a"</span>)
-                (url <span style="color: #008000;">"http://pubs.acs.org/doi/abs/10.1021/ie400582a"</span>)
-                (eprint <span style="color: #008000;">"http://pubs.acs.org/doi/pdf/10.1021/ie400582a"</span>))))
-</pre>
-</div>
-
-<pre class="example">
-&lt;article bibtex-key="hallenbeck-2013-effec-o2"&gt;
-  &lt;author&gt;Hallenbeck, Alexander P. and Kitchin, John R.&lt;/author&gt;
-  &lt;title&gt;Effects of ce{O_2} and ce{SO_2} on the capture capacity of a primary-amine based polymeric ce{CO_2} sorbent&lt;/title&gt;
-  &lt;journal&gt;Industrial &amp; Engineering Chemistry Research&lt;/journal&gt;
-  &lt;pages&gt;10788-10794&lt;/pages&gt;
-  &lt;number&gt;31&lt;/number&gt;
-  &lt;year&gt;2013&lt;/year&gt;
-  &lt;doi&gt;10.1021/ie400582a&lt;/doi&gt;
-  &lt;url&gt;http://pubs.acs.org/doi/abs/10.1021/ie400582a&lt;/url&gt;
-  &lt;eprint&gt;http://pubs.acs.org/doi/pdf/10.1021/ie400582a&lt;/eprint&gt;
-&lt;/article&gt;
-</pre>
-
-<p>
-Prefer json? No problem, just reformat the functions!
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(eval
- (list 'cl-flet
-       (append (<span style="color: #0000FF;">loop</span> for field in '(<span style="color: #008000;">"author"</span> <span style="color: #008000;">"title"</span> <span style="color: #008000;">"journal"</span> <span style="color: #008000;">"pages"</span>
-                                      <span style="color: #008000;">"number"</span> <span style="color: #008000;">"doi"</span> <span style="color: #008000;">"url"</span> <span style="color: #008000;">"eprint"</span> <span style="color: #008000;">"year"</span>)
-                       collect (list (intern field)
-                                     '(content)
-                                     `(format <span style="color: #008000;">"   \"%s\": \"%s\""</span> ,field content)))
-               '((article (bibtex-key <span style="color: #6434A3;">&amp;rest</span> fields)
-                          (concat
-                           (format
-                            <span style="color: #008000;">"{\"article\":\n  {\"bibtex-key\": \"%s\",\n"</span> bibtex-key)
-                           (mapconcat (<span style="color: #0000FF;">lambda</span> (field) (eval field)) fields <span style="color: #008000;">",\n"</span>)
-                           <span style="color: #008000;">"}\n}"</span>))))
-       <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">body of cl-flet</span>
-       '(article <span style="color: #008000;">"hallenbeck-2013-effec-o2"</span>
-                (author <span style="color: #008000;">"Hallenbeck, Alexander P. and Kitchin, John R."</span>)
-                (title <span style="color: #008000;">"Effects of \ce{O_2} and \ce{SO_2} on the capture capacity of a primary-amine based polymeric \ce{CO_2} sorbent"</span>)
-                (journal <span style="color: #008000;">"Industrial \&amp; Engineering Chemistry Research"</span>)
-                (pages <span style="color: #008000;">"10788-10794"</span>)
-                (number 31)
-                (year 2013)
-                (doi <span style="color: #008000;">"10.1021/ie400582a"</span>)
-                (url <span style="color: #008000;">"http://pubs.acs.org/doi/abs/10.1021/ie400582a"</span>)
-                (eprint <span style="color: #008000;">"http://pubs.acs.org/doi/pdf/10.1021/ie400582a"</span>))))
-</pre>
-</div>
-
-<pre class="example">
-{"article":
-  {"bibtex-key": "hallenbeck-2013-effec-o2",
-   "author": "Hallenbeck, Alexander P. and Kitchin, John R.",
-   "title": "Effects of ce{O_2} and ce{SO_2} on the capture capacity of a primary-amine based polymeric ce{CO_2} sorbent",
-   "journal": "Industrial &amp; Engineering Chemistry Research",
-   "pages": "10788-10794",
-   "number": "31",
-   "year": "2013",
-   "doi": "10.1021/ie400582a",
-   "url": "http://pubs.acs.org/doi/abs/10.1021/ie400582a",
-   "eprint": "http://pubs.acs.org/doi/pdf/10.1021/ie400582a"}
-}
-</pre>
-
-<p>
-Is this useful? Great question. I don't plan to convert by bibtex files to sexp format anytime soon ;) The format I used above is just a simple one. It might be desirable to include individual authors instead of an author string, and maybe support attributes to establish an author order. An author structure might be more complex to include scientific ids like an orcid, alternative names, etc&#x2026; Finally, the s-exp data structure is super easy to use in lisp, but other languages would have parse it into some native structure the way they parse json or xml. There is limited support for s-expressions in most other non-lispy languages.
-</p>
-
-<p>
-I like the idea of data representation as code, and its conversion to some other kind of format. It is subtle here, but notice we <i>never</i> had to write a parser for the sexp notation. That <i>already exists as the lisp interpreter</i>. We did write code to use the data, and convert the data. The sexp notation is pretty easy to write, in contrast to the xml or json representations. Some interesting issues might be what to do with fields that are not defined, perhaps a macro would be used on the fly, or in the cl-flet definition. It is hard to imagine doing these things in another language than lisp!
-</p>
-<p>Copyright (C) 2015 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2015/06/10/A-sexp-version-of-a-bibtex-entry.org">org-mode source</a><p><p>Org-mode version = 8.2.10</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-
-<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2015/06/10/A-sexp-version-of-a-bibtex-entry">Discuss on Twitter</a>
-
-  <hr class="interblog" />
  <a href="../44">« Previous Page</a>
   --  
  <a href="../46">Next Page »</a>
@@ -965,11 +803,11 @@ I like the idea of data representation as code, and its conversion to some other
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2024/06/06/New-publication-Surface-Segregation-Studies-in-Ternary-Noble-Metal-Alloys-Comparing-DFT-and-Machine-Learning-with-Experimental-Data/">New publication - Surface Segregation Studies in Ternary Noble Metal Alloys Comparing DFT and Machine Learning with Experimental Data</a></li>
       <li><a href="/blog/2024/05/23/New-publication-Cyclic-Steady-State-Simulation-and-Waveform-Design-for-Dynamic-Programmable-Catalysis/">New publication - Cyclic Steady-State Simulation and Waveform Design for Dynamic Programmable Catalysis</a></li>
       <li><a href="/blog/2024/05/05/Kolmogorov-Arnold-Networks-KANs-and-Lennard-Jones/">Kolmogorov-Arnold Networks (KANs) and Lennard Jones</a></li>
       <li><a href="/blog/2024/04/20/Generalization-of-Graph-Based-Active-Learning-Relaxation-Strategies-Across-Materials/">Generalization of Graph-Based Active Learning Relaxation Strategies Across Materials</a></li>
       <li><a href="/blog/2024/04/03/A-little-more-than-a-decade-of-the-Kitchingroup-blog/">A little more than a decade of the Kitchingroup blog</a></li>
-      <li><a href="/blog/2024/02/17/New-publication-Circumventing-data-imbalance-in-magnetic-ground-state-data-for-magnetic-moment-predictions/">New publication - Circumventing data imbalance in magnetic ground state data for magnetic moment predictions</a></li>
     </ul>
   </section>
 
