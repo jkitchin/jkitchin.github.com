@@ -2,16 +2,16 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents" role="doc-toc">
 <ul>
-<li><a href="#org0ada263">1. Current Department Publications</a></li>
-<li><a href="#orgd5e7b75">2. Department publications by year</a></li>
-<li><a href="#orgd2c27fb">3. CMU alumni in academia</a></li>
+<li><a href="#orge7e94dc">1. Current Department Publications</a></li>
+<li><a href="#org95f7470">2. Department publications by year</a></li>
+<li><a href="#orgb58cd06">3. CMU alumni in academia</a></li>
 </ul>
 </div>
 </div>
 <%inherit file="_templates/site.mako" />
 
-<div id="outline-container-org0ada263" class="outline-2">
-<h2 id="org0ada263"><span class="section-number-2">1.</span> Current Department Publications</h2>
+<div id="outline-container-orge7e94dc" class="outline-2">
+<h2 id="orge7e94dc"><span class="section-number-2">1.</span> Current Department Publications</h2>
 <div class="outline-text-2" id="text-1">
 <script src="http://syndic8.scopus.com/getMessage?registrationId=HAGDHBGEOCGMJAGIJAHIHEJDHJGGLIMGIIIKOHGJKD"></script>
 
@@ -75,7 +75,7 @@
 </tr>
 
 <tr>
-<td class="org-left"><a href="https://www.scopus.com/authid/detail.url?origin=AuthorProfile&amp;authorId=55318039800">Tagbo Niepa</a></td>
+<td class="org-left"><a href="https://www.scopus.com/authid/detail.uri?authorId=55318039800">Tagbo Niepa</a></td>
 </tr>
 
 <tr>
@@ -110,15 +110,15 @@
 </div>
 </div>
 
-
-<div id="outline-container-orgd5e7b75" class="outline-2">
-<h2 id="orgd5e7b75"><span class="section-number-2">2.</span> Department publications by year</h2>
+<div id="outline-container-org95f7470" class="outline-2">
+<h2 id="org95f7470"><span class="section-number-2">2.</span> Department publications by year</h2>
 <div class="outline-text-2" id="text-2">
 <p>
 These publications were  derived from Scopus.
 </p>
 
 <ul class="org-ul">
+<li><a href="./dept-publications-2024.html">2024</a></li>
 <li><a href="./dept-publications-2023.html">2023</a></li>
 <li><a href="./dept-publications-2022.html">2022</a></li>
 <li><a href="./dept-publications-2021.html">2021</a></li>
@@ -142,8 +142,8 @@ These publications were  derived from Scopus.
 </div>
 </div>
 
-<div id="outline-container-orgd2c27fb" class="outline-2">
-<h2 id="orgd2c27fb"><span class="section-number-2">3.</span> CMU alumni in academia</h2>
+<div id="outline-container-orgb58cd06" class="outline-2">
+<h2 id="orgb58cd06"><span class="section-number-2">3.</span> CMU alumni in academia</h2>
 <div class="outline-text-2" id="text-3">
 <iframe src="https://www.google.com/maps/d/embed?mid=zDNHhN3lg2P0.kKYunRBQeH6A" width="640" height="480"></iframe>
 </div>
