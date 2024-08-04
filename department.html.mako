@@ -2,16 +2,16 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents" role="doc-toc">
 <ul>
-<li><a href="#orge7e94dc">1. Current Department Publications</a></li>
-<li><a href="#org95f7470">2. Department publications by year</a></li>
-<li><a href="#orgb58cd06">3. CMU alumni in academia</a></li>
+<li><a href="#orga7b57d5">1. Current Department Publications</a></li>
+<li><a href="#org736d9c2">2. Department publications by year</a></li>
+<li><a href="#org4a35dbc">3. CMU alumni in academia</a></li>
 </ul>
 </div>
 </div>
 <%inherit file="_templates/site.mako" />
 
-<div id="outline-container-orge7e94dc" class="outline-2">
-<h2 id="orge7e94dc"><span class="section-number-2">1.</span> Current Department Publications</h2>
+<div id="outline-container-orga7b57d5" class="outline-2">
+<h2 id="orga7b57d5"><span class="section-number-2">1.</span> Current Department Publications</h2>
 <div class="outline-text-2" id="text-1">
 <script src="http://syndic8.scopus.com/getMessage?registrationId=HAGDHBGEOCGMJAGIJAHIHEJDHJGGLIMGIIIKOHGJKD"></script>
 
@@ -75,7 +75,7 @@
 </tr>
 
 <tr>
-<td class="org-left"><a href="https://www.scopus.com/authid/detail.uri?authorId=55318039800">Tagbo Niepa</a></td>
+<td class="org-left"><a href="https://www.scopus.com/authid/detail.url?origin=AuthorProfile&amp;authorId=55318039800">Tagbo Niepa</a></td>
 </tr>
 
 <tr>
@@ -99,10 +99,6 @@
 </tr>
 
 <tr>
-<td class="org-left"><a href="https://www.scopus.com/authid/detail.url?origin=AuthorProfile&amp;authorId=56014391900">Elizabeth Wayne</a></td>
-</tr>
-
-<tr>
 <td class="org-left"><a href="https://www.scopus.com/authid/detail.url?origin=AuthorProfile&amp;authorId=35609935600">Kathyrn Whitehead</a></td>
 </tr>
 </tbody>
@@ -110,8 +106,8 @@
 </div>
 </div>
 
-<div id="outline-container-org95f7470" class="outline-2">
-<h2 id="org95f7470"><span class="section-number-2">2.</span> Department publications by year</h2>
+<div id="outline-container-org736d9c2" class="outline-2">
+<h2 id="org736d9c2"><span class="section-number-2">2.</span> Department publications by year</h2>
 <div class="outline-text-2" id="text-2">
 <p>
 These publications were  derived from Scopus.
@@ -142,8 +138,8 @@ These publications were  derived from Scopus.
 </div>
 </div>
 
-<div id="outline-container-orgb58cd06" class="outline-2">
-<h2 id="orgb58cd06"><span class="section-number-2">3.</span> CMU alumni in academia</h2>
+<div id="outline-container-org4a35dbc" class="outline-2">
+<h2 id="org4a35dbc"><span class="section-number-2">3.</span> CMU alumni in academia</h2>
 <div class="outline-text-2" id="text-3">
 <iframe src="https://www.google.com/maps/d/embed?mid=zDNHhN3lg2P0.kKYunRBQeH6A" width="640" height="480"></iframe>
 </div>
