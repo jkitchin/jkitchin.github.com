@@ -1,11 +1,11 @@
 SOURCES = $(wildcard _posts/* _templates/*)
 
 build:	${SOURCES}
-	blogofile build
+	uv run blogofile build
 
 serve:
-	blogofile build
-	blogofile serve
+	uv run blogofile build
+	uv run blogofile serve
 
 status:
 	cd _deploy
@@ -20,7 +20,7 @@ dept:
 	python dept_publications.py
 
 deploy:
-	rsync -avz --delete --exclude=.git _site/ _deploy
+	rsync -avz --delete --exclude=.git --exclude=.venv _site/ _deploy
 	cd _deploy; git add . && git add -u &&	git commit -m "deployment" && git push origin master --force
 	git add . && git add -u && git commit -m "source-commit" && git push --force
 
