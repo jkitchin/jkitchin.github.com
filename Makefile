@@ -1,6 +1,9 @@
 SOURCES = $(wildcard _posts/* _templates/*)
 
-build:	${SOURCES}
+env:
+	source .venv/bin/activate
+
+build:
 	uv run blogofile build
 
 serve:
