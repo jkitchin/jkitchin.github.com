@@ -2,15 +2,15 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents" role="doc-toc">
 <ul>
-<li><a href="#orgcd76894">1. Current Department Publications</a></li>
-<li><a href="#orgdcf4544">2. Department publications by year</a></li>
-<li><a href="#org3385f2e">3. CMU alumni in academia</a></li>
+<li><a href="#org5111bfd">1. Current Department Publications</a></li>
+<li><a href="#orgcb2d9fa">2. Department publications by year</a></li>
+<li><a href="#org7513c60">3. CMU alumni in academia</a></li>
 </ul>
 </div>
 </div>
 <%inherit file="_templates/site.mako" />
-<div id="outline-container-orgcd76894" class="outline-2">
-<h2 id="orgcd76894"><span class="section-number-2">1.</span> Current Department Publications</h2>
+<div id="outline-container-org5111bfd" class="outline-2">
+<h2 id="org5111bfd"><span class="section-number-2">1.</span> Current Department Publications</h2>
 <div class="outline-text-2" id="text-1">
 <script src="http://syndic8.scopus.com/getMessage?registrationId=HAGDHBGEOCGMJAGIJAHIHEJDHJGGLIMGIIIKOHGJKD"></script>
 
@@ -82,10 +82,6 @@
 </tr>
 
 <tr>
-<td class="org-left"><a href="https://www.scopus.com/authid/detail.url?origin=AuthorProfile&amp;authorId=55671596100">Grigorios Panagakos</a></td>
-</tr>
-
-<tr>
 <td class="org-left"><a href="https://www.scopus.com/authid/detail.url?origin=AuthorProfile&amp;authorId=7403387058">Anne Robinson</a></td>
 </tr>
 
@@ -116,8 +112,8 @@
 </table>
 </div>
 </div>
-<div id="outline-container-orgdcf4544" class="outline-2">
-<h2 id="orgdcf4544"><span class="section-number-2">2.</span> Department publications by year</h2>
+<div id="outline-container-orgcb2d9fa" class="outline-2">
+<h2 id="orgcb2d9fa"><span class="section-number-2">2.</span> Department publications by year</h2>
 <div class="outline-text-2" id="text-2">
 <p>
 These publications were  derived from Scopus.
@@ -148,8 +144,8 @@ These publications were  derived from Scopus.
 </ul>
 </div>
 </div>
-<div id="outline-container-org3385f2e" class="outline-2">
-<h2 id="org3385f2e"><span class="section-number-2">3.</span> CMU alumni in academia</h2>
+<div id="outline-container-org7513c60" class="outline-2">
+<h2 id="org7513c60"><span class="section-number-2">3.</span> CMU alumni in academia</h2>
 <div class="outline-text-2" id="text-3">
 <iframe src="https://www.google.com/maps/d/embed?mid=zDNHhN3lg2P0.kKYunRBQeH6A" width="640" height="480"></iframe>
 </div>
