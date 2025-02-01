@@ -12,1368 +12,156 @@
     <title>The Kitchin Research Group</title>
     <link>https://kitchingroup.cheme.cmu.edu/blog</link>
     <description>Chemical Engineering at Carnegie Mellon University</description>
-    <pubDate>Fri, 31 Jan 2025 12:21:19 GMT</pubDate>
+    <pubDate>Sat, 01 Feb 2025 13:12:56 GMT</pubDate>
     <generator>Blogofile</generator>
     <sy:updatePeriod>hourly</sy:updatePeriod>
     <sy:updateFrequency>1</sy:updateFrequency>
     
     <item>
-      <title>Compressibility factor variation from the van der Waals equation by three different approaches</title>
-      <link>https://kitchingroup.cheme.cmu.edu/blog/2018/10/07/Compressibility-factor-variation-from-the-van-der-Waals-equation-by-three-different-approaches</link>
-      <pubDate>Sun, 07 Oct 2018 13:08:11 EDT</pubDate>
+      <title>Using autograd to plot implicit functions</title>
+      <link>https://kitchingroup.cheme.cmu.edu/blog/2019/10/02/Using-autograd-to-plot-implicit-functions</link>
+      <pubDate>Wed, 02 Oct 2019 21:30:46 EDT</pubDate>
       <category><![CDATA[autograd]]></category>
-      <category><![CDATA[ode]]></category>
-      <category><![CDATA[nonlinear algebra]]></category>
-      <category><![CDATA[python]]></category>
-      <guid isPermaLink="false">nzuQ2552fiegwa_OqTuF-vQ3pMs=</guid>
-      <description>Compressibility factor variation from the van der Waals equation by three different approaches</description>
+      <category><![CDATA[nonlinear-algebra]]></category>
+      <category><![CDATA[implicit-function]]></category>
+      <guid isPermaLink="false">wHgJ4s626IZnowZ4a9K6z-zL8p0=</guid>
+      <description>Using autograd to plot implicit functions</description>
       <content:encoded><![CDATA[
 
 
-&lt;div id="table-of-contents"&gt;
-&lt;h2&gt;Table of Contents&lt;/h2&gt;
-&lt;div id="text-table-of-contents"&gt;
-&lt;ul&gt;
-&lt;li&gt;&lt;a href="#org2fd7cfa"&gt;1. Method 1 - fsolve&lt;/a&gt;&lt;/li&gt;
-&lt;li&gt;&lt;a href="#org7ade82a"&gt;2. Method 2 - solve_ivp&lt;/a&gt;&lt;/li&gt;
-&lt;li&gt;&lt;a href="#orge63b16e"&gt;3. Method 3 - autograd + solve_ivp&lt;/a&gt;&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;/div&gt;
 &lt;p&gt;
-In the book &lt;span class="underline"&gt;Problem solving in chemical and biochemical engineering with POLYMATH, Excel and Matlab&lt;/span&gt; by Cutlip and Shacham there is a problem (7.1) where you want to plot the compressibility factor for CO&lt;sub&gt;2&lt;/sub&gt; over a range of \(0.1 \le P_r &lt;= 10\) for a constant \(T_r=1.1\) using the van der Waal equation of state. There are a two standard ways to do this:
-&lt;/p&gt;
-
-&lt;ol class="org-ol"&gt;
-&lt;li&gt;Solve a nonlinear equation for different values of \(P_r\).&lt;/li&gt;
-&lt;li&gt;Solve a nonlinear equation for one value of \(P_r\), then derive an ODE for how the compressibility varies with \(P_r\) and integrate it over the relevant range.&lt;/li&gt;
-&lt;/ol&gt;
-
-&lt;p&gt;
-In this post, we compare and contrast the two methods, and consider a variation of the second method that uses automatic differentiation.
-&lt;/p&gt;
-
-&lt;div id="outline-container-org2fd7cfa" class="outline-2"&gt;
-&lt;h2 id="org2fd7cfa"&gt;&lt;span class="section-number-2"&gt;1&lt;/span&gt; Method 1 - fsolve&lt;/h2&gt;
-&lt;div class="outline-text-2" id="text-1"&gt;
-&lt;p&gt;
-The van der Waal equation of state is:
+Consider the solution to these equations (adapted from &lt;a href="https://www.mathworks.com/help/optim/ug/fsolve.html"&gt;https://www.mathworks.com/help/optim/ug/fsolve.html&lt;/a&gt;):
 &lt;/p&gt;
 
 &lt;p&gt;
-\(P = \frac{R T}{V - b} - \frac{a}{V^2}\).
+\(e^{-e^{-(x_1 + x_2)}} = x_2 (1 + x_1^2)\)
 &lt;/p&gt;
 
 &lt;p&gt;
-We define the reduced pressure as \(P_r = P / P_c\), and the reduced temperature as \(T_r = T / T_c\).
+and
 &lt;/p&gt;
 
 &lt;p&gt;
-So, we simply solve for V at a given \(P_r\), and then compute \(Z\). There is a subtle trick needed to make this easy to solve, and that is to multiply each side of the equation by \((V - b)\) to avoid a singularity when \(V = b\), which happens in this case near \(P_r \approx 7.5\).
+\(x_1 \cos(x_2) + x_2 \sin(x_1) = 1/2\)
+&lt;/p&gt;
+
+&lt;p&gt;
+It is not clear how many solutions there are to this set of equations, or what you should guess for the initial guess. Usually, the best way to see where a solution might be is to plot the equations and see where they intersect. These equations are implicit though, and it is not easy to plot them because we cannot solve for \(x_2\) in terms of \(x_1\) in either case. Here we explore a strategy to get plots so we can see where solutions could be.
+&lt;/p&gt;
+
+&lt;p&gt;
+The idea is that we find one solution to each equation independently. Then, we derive a differential equation for each equation so we can integrate it to find the curve that is defined by the implicit function.  First, we find a solution for each equation. We guess a value for \(x_2\) and then find the value of \(x_1\) that solves each equation independently.
 &lt;/p&gt;
 
 &lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; scipy.optimize &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; fsolve
-&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
-%matplotlib inline
-&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; matplotlib.pyplot &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; plt
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; autograd.numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; scipy.optimize &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; fsolve
 
-&lt;span style="color: #BA36A5;"&gt;R&lt;/span&gt; = 0.08206
-&lt;span style="color: #BA36A5;"&gt;Pc&lt;/span&gt; = 72.9
-&lt;span style="color: #BA36A5;"&gt;Tc&lt;/span&gt; = 304.2
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f1&lt;/span&gt;(x1, x2):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; np.exp(-np.exp(-(x1 + x2))) - x2 * (1 + x1**2)
 
-&lt;span style="color: #BA36A5;"&gt;a&lt;/span&gt; = 27 * R**2 * Tc**2 / (Pc * 64)
-&lt;span style="color: #BA36A5;"&gt;b&lt;/span&gt; = R * Tc / (8 * Pc)
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f2&lt;/span&gt;(x1, x2):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x1 * np.cos(x2) + x2 * np.sin(x1) - 0.5
 
-&lt;span style="color: #BA36A5;"&gt;Tr&lt;/span&gt; = 1.1
+&lt;span style="color: #BA36A5;"&gt;x2_1&lt;/span&gt; = 0.6
+x1_1, = fsolve(f1, 0, args=(x2_1,))
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'f1: '&lt;/span&gt;, x1_1, x2_1)
 
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;objective&lt;/span&gt;(V, Pr):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;P&lt;/span&gt; = Pr * Pc
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;T&lt;/span&gt; = Tr * Tc
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; P * (V - b) - (R * T)  +  a / V**2 * (V - b)
-
-
-&lt;span style="color: #BA36A5;"&gt;Pr_range&lt;/span&gt; = np.linspace(0.1, 10)
-&lt;span style="color: #BA36A5;"&gt;V&lt;/span&gt; = [fsolve(objective, 3, args=(Pr,))[0] &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; Pr &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; Pr_range]
-
-&lt;span style="color: #BA36A5;"&gt;T&lt;/span&gt; = Tr * Tc
-&lt;span style="color: #BA36A5;"&gt;P_range&lt;/span&gt; = Pr_range * Pc
-&lt;span style="color: #BA36A5;"&gt;Z&lt;/span&gt; = P_range * V / (R * T)
-
-plt.plot(Pr_range, Z)
-plt.xlabel(&lt;span style="color: #008000;"&gt;'$P_r$'&lt;/span&gt;)
-plt.ylabel(&lt;span style="color: #008000;"&gt;'Z'&lt;/span&gt;)
-plt.xlim([0, 10])
-plt.ylim([0, 2])
+&lt;span style="color: #BA36A5;"&gt;x2_2&lt;/span&gt; = 1.0
+x1_2, = fsolve(f2, 0 ,args=(x2_2,))
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'f2: '&lt;/span&gt;, x1_2, x2_2)
 &lt;/pre&gt;
 &lt;/div&gt;
 
-&lt;pre class="example"&gt;
-(0, 2)
-
-&lt;/pre&gt;
-
-
-
 &lt;p&gt;
-&lt;img src="/media/13bc1d996aa4bd032faad00425793120-90490byl.png"&gt; 
+f1:  0.08638978040861575 0.6
+f2:  0.32842406163614396 1.0
 &lt;/p&gt;
 
 &lt;p&gt;
-That looks like Figure 7-1 in the book. This approach is fine, but the equation did require a little algebraic finesse to solve, and you have to use some iteration to get the solution.
-&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-
-&lt;div id="outline-container-org7ade82a" class="outline-2"&gt;
-&lt;h2 id="org7ade82a"&gt;&lt;span class="section-number-2"&gt;2&lt;/span&gt; Method 2 - solve_ivp&lt;/h2&gt;
-&lt;div class="outline-text-2" id="text-2"&gt;
-&lt;p&gt;
-In this method, you have to derive an expression for \(\frac{dV}{dP_r}\). That derivation goes like this:
-&lt;/p&gt;
-
-&lt;p&gt;
-\(\frac{dV}{dP_r} = \frac{dV}{dP} \frac{dP}{dP_r}\)
-&lt;/p&gt;
-
-&lt;p&gt;
-The first term \(\frac{dV}{dP}\) is \((\frac{dP}{dV})^{-1}\), which we can derive directly from the van der Waal equation, and the second term is just a constant: \(P_c\) from the definition of \(P_r\).
-&lt;/p&gt;
-
-&lt;p&gt;
-They derived:
-&lt;/p&gt;
-
-&lt;p&gt;
-\(\frac{dP}{dV} = -\frac{R T}{(V - b)^2} + \frac{2 a}{V^3}\)
-&lt;/p&gt;
-
-&lt;p&gt;
-We need to solve for one V, at the beginning of the range of \(P_r\) we are interested in.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython"&gt;V0, = fsolve(objective, 3, args=(0.1,))
-V0
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-3.6764763125625461
-
-&lt;/pre&gt;
-
-&lt;p&gt;
-Now, we can define the functions, and integrate them to get the same solution. I defined these pretty verbosely, just for readability.
+Next, we need a differential equation that is \(dx_2/dx_1\). If we had that, we could just integrate it from one of the starting points above, and get the curve we want. The functions are implicit, so we have to use the implicit derivative, which for the first equation is \(dx_2/dx_1 = -df1/dx_1 / df1/dx_2\). We will get these gradients from autograd. Then, we just integrate the solution. Here we do this for the first equation.
 &lt;/p&gt;
 
 &lt;div class="org-src-container"&gt;
 &lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; scipy.integrate &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; solve_ivp
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; autograd &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; grad
 
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;dPdV&lt;/span&gt;(V):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; -R * T / (V - b)**2 + 2 * a / V**3
+&lt;span style="color: #BA36A5;"&gt;df1dx1&lt;/span&gt; = grad(f1, 0)
+&lt;span style="color: #BA36A5;"&gt;df1dx2&lt;/span&gt; = grad(f1, 1)
 
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;dVdP&lt;/span&gt;(V):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; 1 / dPdV(V)
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;dx2dx1_1&lt;/span&gt;(x1, x2):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; -df1dx1(x1, x2) / df1dx2(x1, x2)
 
-&lt;span style="color: #BA36A5;"&gt;dPdPr&lt;/span&gt; = Pc
+&lt;span style="color: #BA36A5;"&gt;x1_span&lt;/span&gt; = (x1_1, 1)
+&lt;span style="color: #BA36A5;"&gt;x2_0&lt;/span&gt; = (x2_1, )
+&lt;span style="color: #BA36A5;"&gt;sol1&lt;/span&gt; = solve_ivp(dx2dx1_1, x1_span, x2_0, max_step=0.1)
+&lt;/pre&gt;
+&lt;/div&gt;
 
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;dVdPr&lt;/span&gt;(Pr, V):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; dVdP(V) * dPdPr
+&lt;p&gt;
+And then, we do it for the second equation.
+&lt;/p&gt;
 
-&lt;span style="color: #BA36A5;"&gt;Pr_span&lt;/span&gt; = (0.1, 10)
-&lt;span style="color: #BA36A5;"&gt;Pr_eval&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;h&lt;/span&gt; = np.linspace(*Pr_span, retstep=&lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;)
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #BA36A5;"&gt;df2dx1&lt;/span&gt; = grad(f2, 0)
+&lt;span style="color: #BA36A5;"&gt;df2dx2&lt;/span&gt; = grad(f2, 1)
 
-&lt;span style="color: #BA36A5;"&gt;sol&lt;/span&gt; = solve_ivp(dVdPr, Pr_span, (V0,), dense_output=&lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;, max_step=h)
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;dx2dx1_2&lt;/span&gt;(x1, x2):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; -df2dx1(x1, x2) / df2dx2(x1, x2)
 
-&lt;span style="color: #BA36A5;"&gt;V&lt;/span&gt; = sol.y[0]
-&lt;span style="color: #BA36A5;"&gt;P&lt;/span&gt; = sol.t * Pc
-&lt;span style="color: #BA36A5;"&gt;Z&lt;/span&gt; = P * V / (R * T)
-plt.plot(sol.t, Z)
-plt.xlabel(&lt;span style="color: #008000;"&gt;'$P_r$'&lt;/span&gt;)
-plt.ylabel(&lt;span style="color: #008000;"&gt;'Z'&lt;/span&gt;)
-plt.xlim([0, 10])
-plt.ylim([0, 2])
+&lt;span style="color: #BA36A5;"&gt;x1_span&lt;/span&gt; = (x1_2, 1)
+&lt;span style="color: #BA36A5;"&gt;x2_0&lt;/span&gt; = (x2_2, )
+&lt;span style="color: #BA36A5;"&gt;sol2&lt;/span&gt; = solve_ivp(dx2dx1_2, x1_span, x2_0, max_step=0.1)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Finally, we plot the two solutions.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython"&gt;%matplotlib inline
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; matplotlib.pyplot &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; plt
+plt.plot(sol1.t, sol1.y.T)
+plt.plot(sol2.t, sol2.y.T)
+plt.xlabel(&lt;span style="color: #008000;"&gt;'$x_1$'&lt;/span&gt;)
+plt.ylabel(&lt;span style="color: #008000;"&gt;'$x_2$'&lt;/span&gt;)
+plt.legend([&lt;span style="color: #008000;"&gt;'f1'&lt;/span&gt;, &lt;span style="color: #008000;"&gt;'f2'&lt;/span&gt;])
 &lt;/pre&gt;
 &lt;/div&gt;
 
 &lt;pre class="example"&gt;
-(0, 2)
-
+&amp;lt;Figure size 432x288 with 1 Axes&amp;gt;
 &lt;/pre&gt;
 
 
-
 &lt;p&gt;
-&lt;img src="/media/13bc1d996aa4bd032faad00425793120-90490o8r.png"&gt; 
+&lt;figure&gt;&lt;img src="/media/b770a79094dc5fa34b51ebeed23401d697cc0f01.png"&gt;&lt;/figure&gt; 
 &lt;/p&gt;
 
 &lt;p&gt;
-This also looks like Figure 7-1. It is arguably a better approach since we only need an initial condition, and after that have a reliable integration (rather than many iterative solutions from an initial guess of the solution in fsolve).
-&lt;/p&gt;
-
-&lt;p&gt;
-The only downside to this approach (in my opinion) is the need to derive and implement derivatives. As equations of state get more complex, this gets more tedious and complicated.
-&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-
-&lt;div id="outline-container-orge63b16e" class="outline-2"&gt;
-&lt;h2 id="orge63b16e"&gt;&lt;span class="section-number-2"&gt;3&lt;/span&gt; Method 3 - autograd + solve_ivp&lt;/h2&gt;
-&lt;div class="outline-text-2" id="text-3"&gt;
-&lt;p&gt;
-The whole point of automatic differentiation is to get derivatives of functions that are written as programs. We explore here the possibility of using this to solve this problem. The idea is to use autograd to define the derivative \(dP/dV\), and then solve the ODE like we did before.
+You can see now that in this range, there is only one intersection, i.e. one solution, and it is near \(x_1=0.4, x_2=0.6\). We can finally use that as an initial guess to find the only solution in this region, with confidence we are not missing any solutions.
 &lt;/p&gt;
 
 &lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; autograd &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; grad
+&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;objective&lt;/span&gt;(X):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;x1&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;x2&lt;/span&gt; = X
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; [f1(x1, x2), f2(x1, x2)]
 
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;P&lt;/span&gt;(V):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; R * T / (V - b) - a / V**2
-
-&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;autograd.grad returns a callable that acts like a function&lt;/span&gt;
-&lt;span style="color: #BA36A5;"&gt;dPdV&lt;/span&gt; = grad(P, 0)
-
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;dVdPr&lt;/span&gt;(Pr, V):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; 1 / dPdV(V) * Pc
-
-&lt;span style="color: #BA36A5;"&gt;sol&lt;/span&gt; = solve_ivp(dVdPr,  Pr_span, (V0,), dense_output=&lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;, max_step=h)
-
-V, = sol.y
-&lt;span style="color: #BA36A5;"&gt;P&lt;/span&gt; = sol.t * Pc
-&lt;span style="color: #BA36A5;"&gt;Z&lt;/span&gt; = P * V / (R * T)
-plt.plot(sol.t, Z)
-plt.xlabel(&lt;span style="color: #008000;"&gt;'$P_r$'&lt;/span&gt;)
-plt.ylabel(&lt;span style="color: #008000;"&gt;'Z'&lt;/span&gt;)
-plt.xlim([0, 10])
-plt.ylim([0, 2])
+fsolve(objective, [0.4, 0.6])
 &lt;/pre&gt;
 &lt;/div&gt;
 
 &lt;pre class="example"&gt;
-(0, 2)
-
-&lt;/pre&gt;
-
-
-
-&lt;p&gt;
-&lt;img src="/media/13bc1d996aa4bd032faad00425793120-90490O2H.png"&gt; 
-&lt;/p&gt;
-
-&lt;p&gt;
-Not surprisingly, this answer looks the same as the previous ones. I think this solution is pretty awesome. We only had to implement the van der Waal equation, and then let autograd do its job to get the relevant derivative. We don't get a free pass on calculus here; we still have to know which derivatives are important. We also need some knowledge about how to use autograd, but with that, this problem becomes pretty easy to solve.
-&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;p&gt;Copyright (C) 2018 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
-&lt;p&gt;&lt;a href="/org/2018/10/07/Compressibility-factor-variation-from-the-van-der-Waals-equation-by-three-different-approaches.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
-&lt;p&gt;Org-mode version = 9.1.13&lt;/p&gt;]]></content:encoded>
-    </item>
-    <item>
-      <title>Solving nonlinear algebra problems with internal state information</title>
-      <link>https://kitchingroup.cheme.cmu.edu/blog/2018/09/24/Solving-nonlinear-algebra-problems-with-internal-state-information</link>
-      <pubDate>Mon, 24 Sep 2018 15:25:06 EDT</pubDate>
-      <category><![CDATA[nonlinear algebra]]></category>
-      <category><![CDATA[python]]></category>
-      <guid isPermaLink="false">BlqHNVHd84spZMeCrwRb4yewh38=</guid>
-      <description>Solving nonlinear algebra problems with internal state information</description>
-      <content:encoded><![CDATA[
-
-
-&lt;div id="table-of-contents"&gt;
-&lt;h2&gt;Table of Contents&lt;/h2&gt;
-&lt;div id="text-table-of-contents"&gt;
-&lt;ul&gt;
-&lt;li&gt;&lt;a href="#org532d5ce"&gt;1. First approach&lt;/a&gt;&lt;/li&gt;
-&lt;li&gt;&lt;a href="#orga01a4af"&gt;2. Second approach - use a state dictionary as an arg in the objective function&lt;/a&gt;&lt;/li&gt;
-&lt;li&gt;&lt;a href="#orgc590864"&gt;3. third approach - a callable object&lt;/a&gt;&lt;/li&gt;
-&lt;li&gt;&lt;a href="#orgaef298d"&gt;4. Summary&lt;/a&gt;&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;p&gt;
-In engineering, we often need to solve an equation in one variable, and then use the solution to compute other variables. For example, we might want the bubble point temperature of a mixture, and then to determine the composition of the vapor phase that has formed. In other words, we compute the temperature, and then have to use it in a subsequent step to get the composition. Here is a bubble point computation adapted from example 10.2 in Smith and van Ness, Introduction to Chemical Engineering Thermodynamics.
-&lt;/p&gt;
-
-&lt;p&gt;
-Given a solution of acetone (x&lt;sub&gt;1&lt;/sub&gt;=0.3), acetonitrile (x&lt;sub&gt;2&lt;/sub&gt;=0.45) and nitromethane (x&lt;sub&gt;3&lt;/sub&gt;=0.25) at a total pressure of 80 kPa, compute the bubble point temperature and gas phase composition.
-&lt;/p&gt;
-
-&lt;p&gt;
-The key here is to find a temperature where the gas-phase mole fractions sum to one. The gas phase mole fractions are defined by:
-&lt;/p&gt;
-
-&lt;p&gt;
-\(y_i = x_i Pvap_i(T) / P\)
-&lt;/p&gt;
-
-&lt;p&gt;
-The typical way I would teach students how solve this looks like this. It uses the Antoine equation coded below to estimate the vapor pressure of each component as a function of temperature, and then uses fsolve to find a temperature where the gas-phase mole fractions sum to one.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
-&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; scipy.optimize &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; fsolve
-
-&lt;span style="color: #BA36A5;"&gt;acetone&lt;/span&gt; = (14.5463, 2940.46, 237.22)
-&lt;span style="color: #BA36A5;"&gt;acetonitrile&lt;/span&gt; = (14.2724, 2945.47,224)
-&lt;span style="color: #BA36A5;"&gt;nitromethane&lt;/span&gt; = (14.2043, 2972.64, 209)
-
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;antoine&lt;/span&gt;(T, A, B, C):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;T&lt;/span&gt; = &lt;span style="color: #006FE0;"&gt;float&lt;/span&gt;(T) &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;there is some subtle issue that comes up when T is an array,&lt;/span&gt;
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;as passed in from fsolve. It needs to be a float, or you get&lt;/span&gt;
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;the wrong answer.&lt;/span&gt;
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; np.exp(A - B / (T + C))
-
-&lt;span style="color: #BA36A5;"&gt;x&lt;/span&gt; = np.array([0.3, 0.45, 0.25])
-&lt;span style="color: #BA36A5;"&gt;P&lt;/span&gt; = 80
-
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;objective&lt;/span&gt;(T):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;Pvap&lt;/span&gt; = np.array([antoine(T, *pars) &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; pars &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; [acetone, acetonitrile, nitromethane]])
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;y&lt;/span&gt; = x * Pvap / P
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; 1 - y.&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;()
-
-Tans, = fsolve(objective, 70)
-
-&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;This is where we end up repeating code&lt;/span&gt;
-&lt;span style="color: #BA36A5;"&gt;Pvap&lt;/span&gt; = np.array([antoine(Tans, *pars) &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; pars &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; [acetone, acetonitrile, nitromethane]])
-&lt;span style="color: #BA36A5;"&gt;y&lt;/span&gt; = x * Pvap / P
-
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(f&lt;span style="color: #008000;"&gt;'The bubble point temperature is {Tans:1.2f} degC, and the gas phase compositions are {np.round(y, 4)}.'&lt;/span&gt;)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-The bubble point temperature is 68.60 degC, and the gas phase compositions are [ 0.5196  0.3773  0.1031].
-
-
+array([0.35324662, 0.60608174])
 &lt;/pre&gt;
 
 &lt;p&gt;
-This solution works fine, but there is in my opinion, an issue with the small amount of repeated code at the end that is required to get the composition of the gas-phase. This is a small problem here, but as the problems get bigger it is more and more tedious to correctly repeat all the code to see what the state of a system is at the solution, and it seems wasteful to have to repeat the computations; they were known in the objective function. In the following subsections, I explore some alternative approaches to reduce the repetition.
-&lt;/p&gt;
-
-&lt;div id="outline-container-org532d5ce" class="outline-2"&gt;
-&lt;h2 id="org532d5ce"&gt;&lt;span class="section-number-2"&gt;1&lt;/span&gt; First approach&lt;/h2&gt;
-&lt;div class="outline-text-2" id="text-1"&gt;
-&lt;p&gt;
-There are two small chunks of repeated code in the example above. One way to minimize the amount of repeated code is to pull these out into reusable functions. Here, we do that, and only have to repeat one function call at the end to get the system composition out.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
-&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; scipy.optimize &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; fsolve
-
-&lt;span style="color: #BA36A5;"&gt;acetone&lt;/span&gt; = (14.5463, 2940.46, 237.22)
-&lt;span style="color: #BA36A5;"&gt;acetonitrile&lt;/span&gt; = (14.2724, 2945.47,224)
-&lt;span style="color: #BA36A5;"&gt;nitromethane&lt;/span&gt; = (14.2043, 2972.64, 209)
-
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;antoine&lt;/span&gt;(T, A, B, C):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;T&lt;/span&gt; = &lt;span style="color: #006FE0;"&gt;float&lt;/span&gt;(T) &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;there is some subtle issue that comes up when T is an array,&lt;/span&gt;
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;as passed in from fsolve. It needs to be a float, or you get&lt;/span&gt;
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;the wrong answer.&lt;/span&gt;
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; np.exp(A - B / (T + C))
-
-&lt;span style="color: #BA36A5;"&gt;x&lt;/span&gt; = np.array([0.3, 0.45, 0.25])
-&lt;span style="color: #BA36A5;"&gt;P&lt;/span&gt; = 80
-
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;Pvap&lt;/span&gt;(T):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; np.array([antoine(T, *pars) &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; pars &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; [acetone, acetonitrile, nitromethane]])
-
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;y&lt;/span&gt;(T):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x * Pvap(T) / P
-
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;objective&lt;/span&gt;(T):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; 1 - y(T).&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;()
-
-Tans, = fsolve(objective, 70)
-
-&lt;span style="color: #BA36A5;"&gt;yans&lt;/span&gt; = y(Tans) &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;minimal repetition of a calculation to get the composition state.&lt;/span&gt;
-
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(f&lt;span style="color: #008000;"&gt;'The bubble point temperature is {Tans:1.2f} degC, and the gas phase compositions are {np.round(yans, 4)}.'&lt;/span&gt;)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-The bubble point temperature is 68.60 degC, and the gas phase compositions are [ 0.5196  0.3773  0.1031].
-
-
-&lt;/pre&gt;
-
-&lt;p&gt;
-That is a small improvement. The code is not much shorter, just reorganized for easier reuse. It would be easy in this case to also get the vapor pressures of each species at this temperature, just by calling the &lt;code&gt;Pvap&lt;/code&gt; function. Still, it feels annoying we have to recalculate the answer to something you know must have already been known when the objective function was evaluated.
-&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-
-&lt;div id="outline-container-orga01a4af" class="outline-2"&gt;
-&lt;h2 id="orga01a4af"&gt;&lt;span class="section-number-2"&gt;2&lt;/span&gt; Second approach - use a state dictionary as an arg in the objective function&lt;/h2&gt;
-&lt;div class="outline-text-2" id="text-2"&gt;
-&lt;p&gt;
-In this approach, we will use a dictionary to store the state of the objective function. The dictionary will be in the global namespace, and we will just update it each time the objective function is called.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
-&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; scipy.optimize &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; fsolve
-
-&lt;span style="color: #BA36A5;"&gt;acetone&lt;/span&gt; = (14.5463, 2940.46, 237.22)
-&lt;span style="color: #BA36A5;"&gt;acetonitrile&lt;/span&gt; = (14.2724, 2945.47,224)
-&lt;span style="color: #BA36A5;"&gt;nitromethane&lt;/span&gt; = (14.2043, 2972.64, 209)
-
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;antoine&lt;/span&gt;(T, A, B, C):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; np.exp(A - B / (T + C))
-
-&lt;span style="color: #BA36A5;"&gt;x&lt;/span&gt; = np.array([0.3, 0.45, 0.25])
-
-&lt;span style="color: #BA36A5;"&gt;state&lt;/span&gt; = {}
-
-&lt;span style="color: #BA36A5;"&gt;P&lt;/span&gt; = 80
-
-
-&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;objective&lt;/span&gt;(T, state):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;T&lt;/span&gt; = &lt;span style="color: #006FE0;"&gt;float&lt;/span&gt;(T)
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;Pvap&lt;/span&gt; = np.array([antoine(T, *pars) &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; pars &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; [acetone, acetonitrile, nitromethane]])
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;y&lt;/span&gt; = x * Pvap / P
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   state.update({&lt;span style="color: #008000;"&gt;'y'&lt;/span&gt;: y,
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt; &lt;span style="color: #008000;"&gt;'T'&lt;/span&gt;:  T,
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt; &lt;span style="color: #008000;"&gt;'Pvap'&lt;/span&gt;: Pvap,
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt; &lt;span style="color: #008000;"&gt;'z'&lt;/span&gt;: 1 - y.&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;()})
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; state[&lt;span style="color: #008000;"&gt;'z'&lt;/span&gt;]
-
-Tans, = fsolve(objective, 70, args=(state,))
-
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(f&lt;span style="color: #008000;"&gt;'The bubble point temperature is {Tans:1.2f} degC, and the gas phase compositions are {np.round(state["y"], 4)}.'&lt;/span&gt;)
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(Tans- state[&lt;span style="color: #008000;"&gt;'T'&lt;/span&gt;]) &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;check to make sure last value from objective is the same as the solution&lt;/span&gt;
-state
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-The bubble point temperature is 68.60 degC, and the gas phase compositions are [ 0.5196  0.3773  0.1031].
-0.0
-
-
-&lt;/pre&gt;
-
-&lt;pre class="example"&gt;
-{'Pvap': array([ 138.5620209 ,   67.07966082,   32.98218545]),
- 'T': 68.60064626680659,
- 'y': array([ 0.51960758,  0.37732309,  0.10306933]),
- 'z': -3.4194869158454821e-14}
-
-&lt;/pre&gt;
-
-&lt;p&gt;
-What we see in the &lt;code&gt;state&lt;/code&gt; dictionary is the result from the last time that the objective function was called. It appears that the list time it was called is also where the solution comes from, so the other variables stored here should be consistent. Now you can see we have access to both the Pvap and y composition data from the solution without needing any further computations. This approach could be easily extended to store any derived quantities that represent internal states you want. We don't store any history in this, but you could by appending to lists in the dictionary.
-&lt;/p&gt;
-
-&lt;p&gt;
-One &lt;i&gt;feature&lt;/i&gt; of this is the state dictionary is updated by side effect, and you have to use the state dictionary as an argument parameter to the function.
-&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-
-
-&lt;div id="outline-container-orgc590864" class="outline-2"&gt;
-&lt;h2 id="orgc590864"&gt;&lt;span class="section-number-2"&gt;3&lt;/span&gt; third approach - a callable object&lt;/h2&gt;
-&lt;div class="outline-text-2" id="text-3"&gt;
-&lt;p&gt;
-A standard approach to tracking state data is to encapsulate it in a class. fsolve requires a callable function that returns zero at the solution. It is possible to make an object &lt;i&gt;act like a callable function&lt;/i&gt; if we define a &lt;code&gt;__call__&lt;/code&gt; method on it. Then, in this method, we can set attributes on the object to keep track of the state, similar to what we did with the dictionary. Since we have a class, we can define some other special dunder methods, e.g. to print the solution. Here is one implementation.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-ipython"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
-&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; scipy.optimize &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; fsolve
-
-&lt;span style="color: #0000FF;"&gt;class&lt;/span&gt; &lt;span style="color: #6434A3;"&gt;Objective&lt;/span&gt;(&lt;span style="color: #006FE0;"&gt;object&lt;/span&gt;):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;acetone&lt;/span&gt; = (14.5463, 2940.46, 237.22)
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;acetonitrile&lt;/span&gt; = (14.2724, 2945.47,224)
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;nitromethane&lt;/span&gt; = (14.2043, 2972.64, 209)
-
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;__init__&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;, x, P):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.x = np.array(x)
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.P = P
-
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;antoine&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;, T, A, B, C):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; np.exp(A - B / (T + C))
-
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;__str__&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;s&lt;/span&gt; = f&lt;span style="color: #008000;"&gt;'The bubble point temperature is {self.T:1.2f} degC, and the gas phase compositions are {np.round(self.y, 4)}.'&lt;/span&gt;
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; s
-
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;__call__&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;, T):
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;T&lt;/span&gt; = &lt;span style="color: #006FE0;"&gt;float&lt;/span&gt;(T)
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.T = T
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.Pvap = np.array([&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.antoine(T, *pars) &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; pars &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; [&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.acetone, &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.acetonitrile, &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.nitromethane]])
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.y = &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.x * &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.Pvap / &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.P
-&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; 1 - &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.y.&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;()
-
-&lt;span style="color: #BA36A5;"&gt;obj&lt;/span&gt; = Objective(x=np.array([0.3, 0.45, 0.25]), P=80)
-ans, = fsolve(obj, 60)
-
-&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(obj)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-The bubble point temperature is 68.60 degC, and the gas phase compositions are [ 0.5196  0.3773  0.1031].
-
-
-&lt;/pre&gt;
-
-
-&lt;p&gt;
-Similar to the state dictionary approach, there is no repeated code here, and no repeated evaluations to get to the state after the solution. This is a bit more advanced Python than the state dictionary. Note, this implementation doesn't have any checking in it, so if you try to print the object before calling fsolve, you will get an error because the attributes don't exist until &lt;i&gt;after&lt;/i&gt; the object has been called. That is also an issue with the state dictionary above.
-&lt;/p&gt;
-
-&lt;p&gt;
-There are many choices you could make in constructing this example. Maybe this one has gone too far in encapsulating the antoine function as a method. That limits its reusability for another problem. On the other hand, you can reuse it for any other pressure or liquid composition of acetone, acetonitrile and nitromethane very readily.
-&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-
-&lt;div id="outline-container-orgaef298d" class="outline-2"&gt;
-&lt;h2 id="orgaef298d"&gt;&lt;span class="section-number-2"&gt;4&lt;/span&gt; Summary&lt;/h2&gt;
-&lt;div class="outline-text-2" id="text-4"&gt;
-&lt;p&gt;
-We looked at three ways to reduce having redundant code in the solution to problems involving nonlinear algebra. The first approach is conceptually simple; you break out as much as you can into reusable functions, and then at most have repeated function calls. These computations are usually not expensive, so repeating them is mostly tedious and provides opportunities for mistakes. This is probably what I will stick to for teaching students that are just seeing this for the first time.
-&lt;/p&gt;
-
-&lt;p&gt;
-The second approach used a dictionary (other data structures could work too) as an argument to the objective function, and internal states were kept in the dictionary so that after the problem was solved, you have immediate access to them. This is more advanced than the first approach because it requires understanding that the dictionary is modified as a side effect of solving the problem.
-&lt;/p&gt;
-
-&lt;p&gt;
-Finally,  we considered an object-oriented class encapsulation of the information we wanted. I consider this the most advanced Python solution, since it requires some understanding of classes, dunder methods and attributes, and how to make an instance of a class.
-&lt;/p&gt;
-
-&lt;p&gt;
-The last two methods seem like candidates for an advanced class in problem solving. Thoughts?
-&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;p&gt;Copyright (C) 2018 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
-&lt;p&gt;&lt;a href="/org/2018/09/24/Solving-nonlinear-algebra-problems-with-internal-state-information.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
-&lt;p&gt;Org-mode version = 9.1.13&lt;/p&gt;]]></content:encoded>
-    </item>
-    <item>
-      <title>Coupled nonlinear equations</title>
-      <link>https://kitchingroup.cheme.cmu.edu/blog/2013/09/02/Coupled-nonlinear-equations</link>
-      <pubDate>Mon, 02 Sep 2013 15:21:24 EDT</pubDate>
-      <category><![CDATA[nonlinear algebra]]></category>
-      <guid isPermaLink="false">Oumw3EcR3iH2rik3sHzqmqgXhc8=</guid>
-      <description>Coupled nonlinear equations</description>
-      <content:encoded><![CDATA[
-
-
-&lt;p&gt;
-Suppose we seek the solution to this set of equations:
-&lt;/p&gt;
-
-\begin{align}
-y &amp;=&amp; x^2 \\
-y &amp;=&amp; 8 - x^2
-\end{align}
-
-&lt;p&gt;
-To solve this we need to setup a function that is equal to zero at the solution. We have two equations, so our function must return two values. There are two variables, so the argument to our function will be an array of values. 
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;from&lt;/span&gt; scipy.optimize &lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; fsolve
-
-&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;objective&lt;/span&gt;(X):
-    &lt;span style="color: #8b008b;"&gt;x&lt;/span&gt;, &lt;span style="color: #8b008b;"&gt;y&lt;/span&gt; = X            &lt;span style="color: #ff0000; font-weight: bold;"&gt;# &lt;/span&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;unpack the array in the argument&lt;/span&gt;
-    &lt;span style="color: #8b008b;"&gt;z1&lt;/span&gt; = y - x**2       &lt;span style="color: #ff0000; font-weight: bold;"&gt;# &lt;/span&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;first equation&lt;/span&gt;
-    &lt;span style="color: #8b008b;"&gt;z2&lt;/span&gt; = y - 8 + x**2   &lt;span style="color: #ff0000; font-weight: bold;"&gt;# &lt;/span&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;second equation&lt;/span&gt;
-    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; [z1, z2]     &lt;span style="color: #ff0000; font-weight: bold;"&gt;# &lt;/span&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;list of zeros&lt;/span&gt;
-
-&lt;span style="color: #8b008b;"&gt;x0&lt;/span&gt;, &lt;span style="color: #8b008b;"&gt;y0&lt;/span&gt; = 1, 1           &lt;span style="color: #ff0000; font-weight: bold;"&gt;# &lt;/span&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;initial guesses&lt;/span&gt;
-&lt;span style="color: #8b008b;"&gt;guess&lt;/span&gt; = [x0, y0]
-&lt;span style="color: #8b008b;"&gt;sol&lt;/span&gt; = fsolve(objective, guess)
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; sol
-
-&lt;span style="color: #ff0000; font-weight: bold;"&gt;# &lt;/span&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;of course there may be more than one solution&lt;/span&gt;
-&lt;span style="color: #8b008b;"&gt;x0&lt;/span&gt;, &lt;span style="color: #8b008b;"&gt;y0&lt;/span&gt; = -1, -1           &lt;span style="color: #ff0000; font-weight: bold;"&gt;# &lt;/span&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;initial guesses&lt;/span&gt;
-&lt;span style="color: #8b008b;"&gt;guess&lt;/span&gt; = [x0, y0]
-&lt;span style="color: #8b008b;"&gt;sol&lt;/span&gt; = fsolve(objective, guess)
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; sol
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-[ 2.  4.]
-[-2.  4.]
-&lt;/pre&gt;
-&lt;p&gt;Copyright (C) 2013 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;&lt;p&gt;&lt;a href="/org/2013/09/02/Coupled-nonlinear-equations.org"&gt;org-mode source&lt;/a&gt;&lt;p&gt;]]></content:encoded>
-    </item>
-    <item>
-      <title>Finding the nth root of a periodic function</title>
-      <link>https://kitchingroup.cheme.cmu.edu/blog/2013/03/05/Finding-the-nth-root-of-a-periodic-function</link>
-      <pubDate>Tue, 05 Mar 2013 14:06:04 EST</pubDate>
-      <category><![CDATA[nonlinear algebra]]></category>
-      <guid isPermaLink="false">TjQQYRtTLiik-QWmqbwfFnxpj5M=</guid>
-      <description>Finding the nth root of a periodic function</description>
-      <content:encoded><![CDATA[
-
-
-
-&lt;p&gt;
-There is a heat transfer problem where one needs to find the n^th root of the following equation: \(x J_1(x) - Bi J_0(x)=0\) where \(J_0\) and \(J_1\) are the Bessel functions of zero and first order, and \(Bi\) is the Biot number. We examine an approach to finding these roots. 
-&lt;/p&gt;
-
-&lt;p&gt;
-First,  we plot the function.
-&lt;/p&gt;
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;from&lt;/span&gt; scipy.special &lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; jn, jn_zeros
-&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; matplotlib.pyplot &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; plt
-&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; np
-
-Bi = 1
-
-&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;f&lt;/span&gt;(x):
-    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; x * jn(1, x) - Bi * jn(0, x)
-
-X = np.linspace(0, 30, 200)
-plt.plot(X, f(X))
-plt.savefig(&lt;span style="color: #228b22;"&gt;'images/heat-transfer-roots-1.png'&lt;/span&gt;)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;&lt;img src="/img/./images/heat-transfer-roots-1.png"&gt;&lt;p&gt;
-
-&lt;p&gt;
-You can see there are many roots to this equation, and we want to be sure we get the n^{th} root. This function is pretty well behaved, so if you make a good guess about the solution you will get an answer, but if you make a bad guess, you may get the wrong root. We examine next a way to do it without guessing the solution. What we want is the solution to \(f(x) = 0\), but we want all the solutions in a given interval. We derive a new equation, \(f'(x) = 0\), with initial condition \(f(0) = f0\), and integrate the ODE with an event function that identifies all zeros of \(f\) for us. The derivative of our function is \(df/dx = d/dx(x J_1(x)) - Bi J'_0(x)\). It is known (&lt;a href="http://www.markrobrien.com/besselfunct.pdf" &gt;http://www.markrobrien.com/besselfunct.pdf&lt;/a&gt;) that \(d/dx(x J_1(x)) = x J_0(x)\), and \(J'_0(x) = -J_1(x)\). All we have to do now is set up the problem and run it.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;from&lt;/span&gt; pycse &lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; *  &lt;span style="color: #ff0000; font-weight: bold;"&gt;# contains the ode integrator with events&lt;/span&gt;
-
-&lt;span style="color: #8b0000;"&gt;from&lt;/span&gt; scipy.special &lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; jn, jn_zeros
-&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; matplotlib.pyplot &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; plt
-&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; np
-
-Bi = 1
-
-&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;f&lt;/span&gt;(x):
-    &lt;span style="color: #228b22;"&gt;"function we want roots for"&lt;/span&gt;
-    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; x * jn(1, x) - Bi * jn(0, x)
-
-&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;fprime&lt;/span&gt;(f, x):
-    &lt;span style="color: #228b22;"&gt;"df/dx"&lt;/span&gt;
-    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; x * jn(0, x) - Bi * (-jn(1, x))
-
-&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;e1&lt;/span&gt;(f, x):
-    &lt;span style="color: #228b22;"&gt;"event function to find zeros of f"&lt;/span&gt;
-    isterminal = &lt;span style="color: #8b0000;"&gt;False&lt;/span&gt;
-    value = f
-    direction = 0
-    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; value, isterminal, direction
-
-f0 = f(0)
-xspan = np.linspace(0, 30, 200)
-
-x, fsol, XE, FE, IE = odelay(fprime, f0, xspan, events=[e1])
-
-plt.plot(x, fsol, &lt;span style="color: #228b22;"&gt;'.-'&lt;/span&gt;, label=&lt;span style="color: #228b22;"&gt;'Numerical solution'&lt;/span&gt;)
-plt.plot(xspan, f(xspan), &lt;span style="color: #228b22;"&gt;'--'&lt;/span&gt;, label=&lt;span style="color: #228b22;"&gt;'Analytical function'&lt;/span&gt;)
-plt.plot(XE, FE, &lt;span style="color: #228b22;"&gt;'ro'&lt;/span&gt;, label=&lt;span style="color: #228b22;"&gt;'roots'&lt;/span&gt;)
-plt.legend(loc=&lt;span style="color: #228b22;"&gt;'best'&lt;/span&gt;)
-plt.savefig(&lt;span style="color: #228b22;"&gt;'images/heat-transfer-roots-2.png'&lt;/span&gt;)
-
-&lt;span style="color: #8b0000;"&gt;for&lt;/span&gt; i, root &lt;span style="color: #8b0000;"&gt;in&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;enumerate&lt;/span&gt;(XE):
-    &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'root {0} is at {1}'&lt;/span&gt;.format(i, root)
-
-plt.show()
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-root 0 is at 1.25578377377
-root 1 is at 4.07947743741
-root 2 is at 7.15579904465
-root 3 is at 10.2709851256
-root 4 is at 13.3983973869
-root 5 is at 16.5311587137
-root 6 is at 19.6667276775
-root 7 is at 22.8039503455
-root 8 is at 25.9422288192
-root 9 is at 29.081221492
-&lt;/pre&gt;
-
-&lt;p&gt;&lt;img src="/img/./images/heat-transfer-roots-2.png"&gt;&lt;p&gt;
-
-&lt;p&gt;
-You can work this out once, and then you have all the roots in the interval and you can select the one you want.
-&lt;/p&gt;
-&lt;p&gt;Copyright (C) 2013 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;&lt;p&gt;&lt;a href="/org/2013/03/05/Finding-the-nth-root-of-a-periodic-function.org"&gt;org-mode source&lt;/a&gt;&lt;p&gt;]]></content:encoded>
-    </item>
-    <item>
-      <title>Method of continuity for solving nonlinear equations - Part II</title>
-      <link>https://kitchingroup.cheme.cmu.edu/blog/2013/03/01/Method-of-continuity-for-solving-nonlinear-equations-Part-II</link>
-      <pubDate>Fri, 01 Mar 2013 18:17:16 EST</pubDate>
-      <category><![CDATA[nonlinear algebra]]></category>
-      <guid isPermaLink="false">4_-S1D6ejDJUeABaeRUHhVajP_M=</guid>
-      <description>Method of continuity for solving nonlinear equations - Part II</description>
-      <content:encoded><![CDATA[
-
-
-&lt;p&gt;
-&lt;a href="http://matlab.cheme.cmu.edu/2011/11/02/method-of-continuity-for-solving-nonlinear-equations-part-ii-2/" &gt;Matlab post&lt;/a&gt;
-Yesterday in Post 1324 we looked at a way to solve nonlinear equations that takes away some of the burden of initial guess generation. The idea was to reformulate the equations with a new variable \(\lambda\), so that at \(\lambda=0\) we have a simpler problem we know how to solve, and at \(\lambda=1\) we have the original set of equations. Then, we derive a set of ODEs on how the solution changes with \(\lambda\), and solve them.
-&lt;/p&gt;
-
-&lt;p&gt;
-Today we look at a simpler example and explain a little more about what is going on. Consider the equation: \(f(x) = x^2 - 5x + 6 = 0\), which has two roots, \(x=2\) and \(x=3\). We will use the method of continuity to solve this equation to illustrate a few ideas. First, we introduce a new variable \(\lambda\) as: \(f(x; \lambda) = 0\). For example, we could write \(f(x;\lambda) = \lambda x^2 - 5x + 6 = 0\). Now, when \(\lambda=0\), we hve the simpler equation \(- 5x + 6 = 0\), with the solution \(x=6/5\). The question now is, how does \(x\) change as \(\lambda\) changes? We get that from the total derivative of how \(f(x,\lambda)\) changes with \(\lambda\). The total derivative is:
-&lt;/p&gt;
-
-&lt;p&gt;
-$$\frac{df}{d\lambda} = \frac{\partial f}{\partial \lambda} + \frac{\partial f}{\partial x}\frac{\partial x}{\partial \lambda}=0$$
-&lt;/p&gt;
-
-&lt;p&gt;
-We can calculate two of those quantities: \(\frac{\partial f}{\partial \lambda}\) and \(\frac{\partial f}{\partial x}\) analytically from our equation and solve for \(\frac{\partial x}{\partial \lambda}\) as
-&lt;/p&gt;
-
-&lt;p&gt;
-$$ \frac{\partial x}{\partial \lambda} = -\frac{\partial f}{\partial \lambda}/\frac{\partial f}{\partial x}$$
-&lt;/p&gt;
-
-&lt;p&gt;
-That defines an ordinary differential equation that we can solve by integrating from \(\lambda=0\) where we know the solution to \(\lambda=1\) which is the solution to the real problem. For this problem: \(\frac{\partial f}{\partial \lambda}=x^2\) and \(\frac{\partial f}{\partial x}=-5 + 2\lambda x\).
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; np
-&lt;span style="color: #8b0000;"&gt;from&lt;/span&gt; scipy.integrate &lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; odeint
-&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; matplotlib.pyplot &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; plt
-
-&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;dxdL&lt;/span&gt;(x, Lambda):
-    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; -x**2 / (-5.0 + 2 * Lambda * x)
-
-x0 = 6.0/5.0
-Lspan = np.linspace(0, 1)
-x = odeint(dxdL, x0, Lspan)
-
-plt.plot(Lspan, x)
-plt.xlabel(&lt;span style="color: #228b22;"&gt;'$\lambda$'&lt;/span&gt;)
-plt.ylabel(&lt;span style="color: #228b22;"&gt;'x'&lt;/span&gt;)
-plt.savefig(&lt;span style="color: #228b22;"&gt;'images/nonlin-contin-II-1.png'&lt;/span&gt;)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;&lt;img src="/img/./images/nonlin-contin-II-1.png"&gt;&lt;p&gt;
-
-&lt;p&gt;
-We found one solution at x=2. What about the other solution? To get that we have to introduce \(\lambda\) into the equations in another way. We could try: \(f(x;\lambda) = x^2 + \lambda(-5x + 6)\), but this leads to an ODE that is singular at the initial starting point. Another approach is \(f(x;\lambda) = x^2 + 6 + \lambda(-5x)\), but now the solution at \(\lambda=0\) is imaginary, and we do not have a way to integrate that! What we can do instead is add and subtract a number like this: \(f(x;\lambda) = x^2 - 4 + \lambda(-5x + 6 + 4)\). Now at \(\lambda=0\), we have a simple equation with roots at \(\pm 2\), and we already know that \(x=2\) is a solution. So, we create our ODE on \(dx/d\lambda\) with initial condition \(x(0) = -2\).
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; np
-&lt;span style="color: #8b0000;"&gt;from&lt;/span&gt; scipy.integrate &lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; odeint
-&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; matplotlib.pyplot &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; plt
-
-&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;dxdL&lt;/span&gt;(x, Lambda):
-    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; (5 * x - 10) / (2 * x - 5 * Lambda)
-
-x0 = -2
-Lspan = np.linspace(0, 1)
-x = odeint(dxdL, x0, Lspan)
-
-plt.plot(Lspan, x)
-plt.xlabel(&lt;span style="color: #228b22;"&gt;'$\lambda$'&lt;/span&gt;)
-plt.ylabel(&lt;span style="color: #228b22;"&gt;'x'&lt;/span&gt;)
-plt.savefig(&lt;span style="color: #228b22;"&gt;'images/nonlin-contin-II-2.png'&lt;/span&gt;)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;&lt;img src="/img/./images/nonlin-contin-II-2.png"&gt;&lt;p&gt;
-
-&lt;p&gt;
-Now we have the other solution. Note if you choose the other root, \(x=2\), you find that 2 is a root, and learn nothing new. You could choose other values to add, e.g., if you chose to add and subtract 16, then you would find that one starting point leads to one root, and the other starting point leads to the other root. This method does not solve all problems associated with nonlinear root solving, namely, how many roots are there, and which one is &amp;ldquo;best&amp;rdquo; or physically reasonable? But it does give a way to solve an equation where you have no idea what an initial guess should be. You can see, however, that just like you can get different answers from different initial guesses, here you can get different answers by setting up the equations differently.&lt;/p&gt;
-&lt;p&gt;Copyright (C) 2013 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;&lt;p&gt;&lt;a href="/org/2013/03/01/Method-of-continuity-for-solving-nonlinear-equations---Part-II.org"&gt;org-mode source&lt;/a&gt;&lt;p&gt;]]></content:encoded>
-    </item>
-    <item>
-      <title>Finding equilibrium conversion</title>
-      <link>https://kitchingroup.cheme.cmu.edu/blog/2013/02/27/Finding-equilibrium-conversion</link>
-      <pubDate>Wed, 27 Feb 2013 10:48:49 EST</pubDate>
-      <category><![CDATA[nonlinear algebra]]></category>
-      <guid isPermaLink="false">7OZbOjq6F2CU8OgxePmWoJ-0njU=</guid>
-      <description>Finding equilibrium conversion</description>
-      <content:encoded><![CDATA[
-
-
-
-&lt;p&gt;
-A common problem to solve in reaction engineering is finding the equilibrium conversion.&lt;sup&gt;&lt;a id="fnr.1" name="fnr.1" class="footref" href="#fn.1"&gt;1&lt;/a&gt;&lt;/sup&gt; A typical problem to solve is the following nonlinear equation:
-&lt;/p&gt;
-
-&lt;p&gt;
-\(1.44 = \frac{X_e^2}{(1-X_e)^2}\)
-&lt;/p&gt;
-
-&lt;p&gt;
-To solve this we create a function:
-&lt;/p&gt;
-
-&lt;p&gt;
-\(f(X_e)=0=1.44 - \frac{X_e^2}{(1-X_e)^2}\)
-&lt;/p&gt;
-
-&lt;p&gt;
-and use a nonlinear solver to find the value of \(X_e\) that makes this function equal to zero. We have to provide an initial guess. Chemical intuition suggests that the solution must be between 0 and 1, and mathematical intuition suggests the solution might be near 0.5 (which would give a ratio near 1).
-&lt;/p&gt;
-
-&lt;p&gt;
-Here is our solution.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;from&lt;/span&gt; scipy.optimize &lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; fsolve
-
-&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;func&lt;/span&gt;(Xe):
-    z = 1.44 - (Xe**2)/(1-Xe)**2
-    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; z
-
-X0 = 0.5
-Xe, = fsolve(func, X0)
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt;(&lt;span style="color: #228b22;"&gt;'The equilibrium conversion is X = {0:1.2f}'&lt;/span&gt;.format(Xe))
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-The equilibrium conversion is X = 0.55
-&lt;/pre&gt;
-&lt;p&gt;Copyright (C) 2013 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;&lt;p&gt;&lt;a href="/org/2013/02/27/Finding-equilibrium-conversion.org"&gt;org-mode source&lt;/a&gt;&lt;p&gt;]]></content:encoded>
-    </item>
-    <item>
-      <title>Counting roots</title>
-      <link>https://kitchingroup.cheme.cmu.edu/blog/2013/02/27/Counting-roots</link>
-      <pubDate>Wed, 27 Feb 2013 10:13:59 EST</pubDate>
-      <category><![CDATA[nonlinear algebra]]></category>
-      <guid isPermaLink="false">2u2JDmduFdGVKGPniycHK0-Dlwo=</guid>
-      <description>Counting roots</description>
-      <content:encoded><![CDATA[
-
-
-&lt;p&gt;
-&lt;a href="http://matlab.cheme.cmu.edu/2011/09/10/counting-roots/" &gt;Matlab post&lt;/a&gt;
-The goal here is to determine how many roots there are in a nonlinear function we are interested in solving. For this example, we use a cubic polynomial because we know there are three roots.
-&lt;/p&gt;
-
-&lt;p&gt;
-$$f(x) = x^3 + 6x^2 - 4x -24$$
-&lt;/p&gt;
-
-&lt;div id="outline-container-1" class="outline-2"&gt;
-&lt;h2 id="sec-1"&gt;&lt;span class="section-number-2"&gt;1&lt;/span&gt; Use roots for this polynomial&lt;/h2&gt;
-&lt;div class="outline-text-2" id="text-1"&gt;
-&lt;p&gt;
-This ony works for a polynomial, it does not work for any other nonlinear function.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; np
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; np.roots([1, 6, -4, -24])
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-[-6.  2. -2.]
-&lt;/pre&gt;
-
-&lt;p&gt;
-Let us plot the function to see where the roots are.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; np
-&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; matplotlib.pyplot &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; plt
-
-x = np.linspace(-8, 4)
-y = x**3 + 6 * x**2 - 4*x - 24
-plt.plot(x, y)
-plt.savefig(&lt;span style="color: #228b22;"&gt;'images/count-roots-1.png'&lt;/span&gt;)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;&lt;img src="/img/./images/count-roots-1.png"&gt;&lt;p&gt;
-
-&lt;p&gt;
-Now we consider several approaches to counting the number of roots in this interval. Visually it is pretty easy, you just look for where the function crosses zero. Computationally, it is tricker.
-&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div id="outline-container-2" class="outline-2"&gt;
-&lt;h2 id="sec-2"&gt;&lt;span class="section-number-2"&gt;2&lt;/span&gt; method 1&lt;/h2&gt;
-&lt;div class="outline-text-2" id="text-2"&gt;
-&lt;p&gt;
-Count the number of times the sign changes in the interval. What we have to do is multiply neighboring elements together, and look for negative values. That indicates a sign change. For example the product of two positive or negative numbers is a positive number. You only get a negative number from the product of a positive and negative number, which means the sign changed.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; np
-&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; matplotlib.pyplot &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; plt
-
-x = np.linspace(-8, 4)
-y = x**3 + 6 * x**2 - 4*x - 24
-
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; np.sum(y[0:-2] * y[1:-1] &amp;lt; 0)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-3
-&lt;/pre&gt;
-
-&lt;p&gt;
-This method gives us the number of roots, but not where the roots are. 
-&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div id="outline-container-3" class="outline-2"&gt;
-&lt;h2 id="sec-3"&gt;&lt;span class="section-number-2"&gt;3&lt;/span&gt; Method 2&lt;/h2&gt;
-&lt;div class="outline-text-2" id="text-3"&gt;
-&lt;p&gt;
-Using events in an ODE solver python can identify events in the solution to an ODE, for example, when a function has a certain value, e.g. f(x) = 0. We can take advantage of this to find the roots and number of roots in this case. We take the derivative of our function, and integrate it from an initial starting point, and define an event function that counts zeros.
-&lt;/p&gt;
-
-&lt;p&gt;
-$$f'(x) = 3x^2 + 12x - 4$$
-&lt;/p&gt;
-
-&lt;p&gt;
-with f(-8) = -120
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; np
-&lt;span style="color: #8b0000;"&gt;from&lt;/span&gt; pycse &lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; odelay
-
-&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;fprime&lt;/span&gt;(f, x):
-    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; 3.0 * x**2 + 12.0*x - 4.0
-
-&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;event&lt;/span&gt;(f, x):
-    value = f &lt;span style="color: #ff0000; font-weight: bold;"&gt;# &lt;/span&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;we want f = 0&lt;/span&gt;
-    isterminal = &lt;span style="color: #8b0000;"&gt;False&lt;/span&gt;
-    direction = 0
-    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; value, isterminal, direction
-
-xspan = np.linspace(-8, 4)
-f0 = -120
-
-X, F, TE, YE, IE = odelay(fprime, f0, xspan, events=[event])
-&lt;span style="color: #8b0000;"&gt;for&lt;/span&gt; te, ye &lt;span style="color: #8b0000;"&gt;in&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;zip&lt;/span&gt;(TE, YE):
-    &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'root found at x = {0: 1.3f}, f={1: 1.3f}'&lt;/span&gt;.format(te, ye)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-root found at x = -6.000, f=-0.000
-root found at x = -2.000, f=-0.000
-root found at x =  2.000, f= 0.000
-&lt;/pre&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;p&gt;Copyright (C) 2013 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;&lt;p&gt;&lt;a href="/org/2013/02/27/Counting-roots.org"&gt;org-mode source&lt;/a&gt;&lt;p&gt;]]></content:encoded>
-    </item>
-    <item>
-      <title>Method of continuity for nonlinear equation solving</title>
-      <link>https://kitchingroup.cheme.cmu.edu/blog/2013/02/22/Method-of-continuity-for-nonlinear-equation-solving</link>
-      <pubDate>Fri, 22 Feb 2013 09:00:00 EST</pubDate>
-      <category><![CDATA[nonlinear algebra]]></category>
-      <guid isPermaLink="false">ByVVx4yMiOd9-aKU5QugcG9fGbk=</guid>
-      <description>Method of continuity for nonlinear equation solving</description>
-      <content:encoded><![CDATA[
-
-
-&lt;p&gt;
-&lt;a href="http://matlab.cheme.cmu.edu/2011/11/01/method-of-continuity-for-nonlinear-equation-solving/" &gt;Matlab post&lt;/a&gt;
-
-Adapted from Perry's Chemical Engineers Handbook, 6th edition 2-63.
-&lt;/p&gt;
-
-&lt;p&gt;
-We seek the solution to the following nonlinear equations:
-&lt;/p&gt;
-
-&lt;p&gt;
-\(2 + x + y - x^2 + 8 x y + y^3 = 0\)
-&lt;/p&gt;
-
-&lt;p&gt;
-\(1 + 2x - 3y + x^2 + xy - y e^x = 0\)
-&lt;/p&gt;
-
-&lt;p&gt;
-In principle this is easy, we simply need some initial guesses and a nonlinear solver. The challenge here is what would you guess? There could be many solutions. The equations are implicit, so it is not easy to graph them, but let us give it a shot, starting on the x range -5 to 5. The idea is set a value for x, and then solve for y in each equation.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; np
-&lt;span style="color: #8b0000;"&gt;from&lt;/span&gt; scipy.optimize &lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; fsolve
-
-&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; matplotlib.pyplot &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; plt
-
-&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;f&lt;/span&gt;(x, y):
-    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; 2 + x + y - x**2 + 8*x*y + y**3;
-
-&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;g&lt;/span&gt;(x, y):
-    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; 1 + 2*x - 3*y + x**2 + x*y - y*np.exp(x)
-
-x = np.linspace(-5, 5, 500)
-
-&lt;span style="color: #8b0000;"&gt;@np&lt;/span&gt;.vectorize
-&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;fy&lt;/span&gt;(x):
-    x0 = 0.0
-    &lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;tmp&lt;/span&gt;(y):
-        &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; f(x, y)
-    y1, = fsolve(tmp, x0)
-    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; y1
-
-&lt;span style="color: #8b0000;"&gt;@np&lt;/span&gt;.vectorize
-&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;gy&lt;/span&gt;(x):
-    x0 = 0.0
-    &lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;tmp&lt;/span&gt;(y):
-        &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; g(x, y)
-    y1, = fsolve(tmp, x0)
-    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; y1
-
-
-plt.plot(x, fy(x), x, gy(x))
-plt.xlabel(&lt;span style="color: #228b22;"&gt;'x'&lt;/span&gt;)
-plt.ylabel(&lt;span style="color: #228b22;"&gt;'y'&lt;/span&gt;)
-plt.legend([&lt;span style="color: #228b22;"&gt;'fy'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'gy'&lt;/span&gt;])
-plt.savefig(&lt;span style="color: #228b22;"&gt;'images/continuation-1.png'&lt;/span&gt;)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-&amp;gt;&amp;gt;&amp;gt; &amp;gt;&amp;gt;&amp;gt; &amp;gt;&amp;gt;&amp;gt; &amp;gt;&amp;gt;&amp;gt; ... ... &amp;gt;&amp;gt;&amp;gt; ... ... &amp;gt;&amp;gt;&amp;gt; &amp;gt;&amp;gt;&amp;gt; &amp;gt;&amp;gt;&amp;gt; ... ... ... ... ... ... ... &amp;gt;&amp;gt;&amp;gt; ... ... ... ... ... ... ... &amp;gt;&amp;gt;&amp;gt; &amp;gt;&amp;gt;&amp;gt; /opt/kitchingroup/enthought/epd-7.3-2-rh5-x86_64/lib/python2.7/site-packages/scipy/optimize/minpack.py:152: RuntimeWarning: The iteration is not making good progress, as measured by the 
-  improvement from the last ten iterations.
-  warnings.warn(msg, RuntimeWarning)
-/opt/kitchingroup/enthought/epd-7.3-2-rh5-x86_64/lib/python2.7/site-packages/scipy/optimize/minpack.py:152: RuntimeWarning: The iteration is not making good progress, as measured by the 
-  improvement from the last five Jacobian evaluations.
-  warnings.warn(msg, RuntimeWarning)
-[&amp;lt;matplotlib.lines.Line2D object at 0x1a0c4990&amp;gt;, &amp;lt;matplotlib.lines.Line2D object at 0x1a0c4a90&amp;gt;]
-&amp;lt;matplotlib.text.Text object at 0x19d5e390&amp;gt;
-&amp;lt;matplotlib.text.Text object at 0x19d61d90&amp;gt;
-&amp;lt;matplotlib.legend.Legend object at 0x189df850&amp;gt;
-&lt;/pre&gt;
-
-&lt;p&gt;&lt;img src="/img/./images/continuation-1.png"&gt;&lt;p&gt;
-
-&lt;p&gt;
-You can see there is a solution near x = -1, y = 0, because both functions equal zero there. We can even use that guess with fsolve. It is disappointly easy! But, keep in mind that in 3 or more dimensions, you cannot perform this visualization, and another method could be required.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;func&lt;/span&gt;(X):
-    x,y = X
-    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; [f(x, y), g(x, y)]
-
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; fsolve(func, [-2, -2])
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-... ... &amp;gt;&amp;gt;&amp;gt; [ -1.00000000e+00   1.28730858e-15]
-&lt;/pre&gt;
-
-
-&lt;p&gt;
-We explore a method that bypasses this problem today. The principle is to introduce a new variable, \(\lambda\), which will vary from 0 to 1. at \(\lambda=0\) we will have a simpler equation, preferrably a linear one, which can be easily solved, or which can be analytically solved. At \(\lambda=1\), we have the original equations. Then, we create a system of differential equations that start at the easy solution, and integrate from \(\lambda=0\) to \(\lambda=1\), to recover the final solution.
-&lt;/p&gt;
-
-&lt;p&gt;
-We rewrite the equations as:
-&lt;/p&gt;
-
-&lt;p&gt;
-\(f(x,y) = (2 + x + y) + \lambda(- x^2 + 8 x y + y^3) = 0\)
-&lt;/p&gt;
-
-&lt;p&gt;
-\(g(x,y) = (1 + 2x - 3y) + \lambda(x^2 + xy - y e^x) = 0\)
-&lt;/p&gt;
-
-&lt;p&gt;
-Now, at \(\lambda=0\) we have the simple linear equations:
-&lt;/p&gt;
-
-&lt;p&gt;
-\(x + y = -2\)
-&lt;/p&gt;
-
-&lt;p&gt;
-\(2x - 3y = -1\)
-&lt;/p&gt;
-
-&lt;p&gt;
-These equations are trivial to solve:
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;x0 = np.linalg.solve([[1., 1.], [2., -3.]],[ -2, -1])
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; x0
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-[-1.4 -0.6]
-&lt;/pre&gt;
-
-&lt;p&gt;
-We form the system of ODEs by differentiating the new equations with respect to \(\lambda\). Why do we do that? The solution, (x,y) will be a function of \(\lambda\). From calculus, you can show that:
-&lt;/p&gt;
-
-&lt;p&gt;
-\(\frac{\partial f}{\partial x}\frac{\partial x}{\partial \lambda}+\frac{\partial f}{\partial y}\frac{\partial y}{\partial \lambda}=-\frac{\partial f}{\partial \lambda}\)
-&lt;/p&gt;
-
-&lt;p&gt;
-\(\frac{\partial g}{\partial x}\frac{\partial x}{\partial \lambda}+\frac{\partial g}{\partial y}\frac{\partial y}{\partial \lambda}=-\frac{\partial g}{\partial \lambda}\)
-&lt;/p&gt;
-
-&lt;p&gt;
-Now, solve this for \(\frac{\partial x}{\partial \lambda}\) and \(\frac{\partial y}{\partial \lambda}\). You can use Cramer's rule to solve for these to yield:
-&lt;/p&gt;
-
-\begin{eqnarray} \
-\frac{\partial x}{\partial \lambda} &amp;=&amp; \frac{\partial f/\partial y \partial g/\partial \lambda - \partial f/\partial \lambda \partial g/\partial y}{\partial f/\partial x \partial g/\partial y - \partial f/\partial y \partial g/\partial x } \\\\
-\frac{\partial y}{\partial \lambda} &amp;=&amp; \frac{\partial f/\partial \lambda \partial g/\partial x - \partial f/\partial x \partial g/\partial \lambda}{\partial f/\partial x \partial g/\partial y - \partial f/\partial y \partial g/\partial x } \end{eqnarray} 
-
-For this set of equations: 
-
-\begin{eqnarray} \
-\partial f/\partial x &amp;=&amp; 1 - 2\lambda x + 8\lambda y \\\\ 
-\partial f/\partial y &amp;=&amp; 1 + 8 \lambda x + 3 \lambda y^2 \\\\
-\partial g/\partial x &amp;=&amp; 2 + 2 \lambda x + \lambda y - \lambda y e^x\\\\ 
-\partial g/\partial y &amp;=&amp; -3 + \lambda x - \lambda e^x 
-\end{eqnarray} 
-
-&lt;p&gt;
-Now, we simply set up those two differential equations on \(\frac{\partial x}{\partial \lambda}\) and \(\frac{\partial y}{\partial \lambda}\), with the initial conditions at \(\lambda = 0\) which is the solution of the simpler linear equations, and integrate to \(\lambda = 1\), which is the final solution of the original equations!
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;ode&lt;/span&gt;(X, LAMBDA):
-    x,y = X
-    pfpx = 1.0 - 2.0 * LAMBDA * x + 8 * LAMBDA * y
-    pfpy = 1.0 + 8.0 * LAMBDA * x + 3.0 * LAMBDA * y**2
-    pfpLAMBDA = -x**2 + 8.0 * x * y + y**3;
-    pgpx = 2. + 2. * LAMBDA * x + LAMBDA * y - LAMBDA * y * np.exp(x)
-    pgpy = -3. + LAMBDA * x - LAMBDA * np.exp(x)
-    pgpLAMBDA = x**2 + x * y - y * np.exp(x);
-    dxdLAMBDA = (pfpy * pgpLAMBDA - pfpLAMBDA * pgpy) / (pfpx * pgpy - pfpy * pgpx)
-    dydLAMBDA = (pfpLAMBDA * pgpx - pfpx * pgpLAMBDA) / (pfpx * pgpy - pfpy * pgpx) 
-    dXdLAMBDA = [dxdLAMBDA, dydLAMBDA]
-    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; dXdLAMBDA
-
-
-&lt;span style="color: #8b0000;"&gt;from&lt;/span&gt; scipy.integrate &lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; odeint
-
-lambda_span = np.linspace(0, 1, 100)
-
-X = odeint(ode, x0, lambda_span)
-
-xsol, ysol = X[-1]
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'The solution is at x={0:1.3f}, y={1:1.3f}'&lt;/span&gt;.format(xsol, ysol)
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; f(xsol, ysol), g(xsol, ysol)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-... ... ... ... ... ... ... ... ... &amp;gt;&amp;gt;&amp;gt; &amp;gt;&amp;gt;&amp;gt; &amp;gt;&amp;gt;&amp;gt; &amp;gt;&amp;gt;&amp;gt; &amp;gt;&amp;gt;&amp;gt; &amp;gt;&amp;gt;&amp;gt; &amp;gt;&amp;gt;&amp;gt; The solution is at x=-1.000, y=0.000
--1.27746598808e-06 -1.15873819107e-06
-&lt;/pre&gt;
-
-&lt;p&gt;
-You can see the solution is somewhat approximate; the true solution is x = -1, y = 0. The approximation could be improved by lowering the tolerance on the ODE solver. The functions evaluate to a small number, close to zero. You have to apply some judgment to determine if that is sufficiently accurate. For instance if the units on that answer are kilometers, but you need an answer accurate to a millimeter, this may not be accurate enough.
-&lt;/p&gt;
-
-&lt;p&gt;
-This is a fair amount of work to get a solution! The idea is to solve a simple problem, and then gradually turn on the hard part by the lambda parameter. What happens if there are multiple solutions? The answer you finally get will depend on your \(\lambda=0\)  starting point, so it is possible to miss solutions this way. For problems with lots of variables, this would be a good approach if you can identify the easy problem.
-&lt;/p&gt;
-&lt;p&gt;Copyright (C) 2013 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;&lt;p&gt;&lt;a href="/org/2013/02/22/Method-of-continuity-for-nonlinear-equation-solving.org"&gt;org-mode source&lt;/a&gt;&lt;p&gt;]]></content:encoded>
-    </item>
-    <item>
-      <title>Calculating a bubble point pressure of a mixture</title>
-      <link>https://kitchingroup.cheme.cmu.edu/blog/2013/02/18/Calculating-a-bubble-point-pressure-of-a-mixture</link>
-      <pubDate>Mon, 18 Feb 2013 09:00:00 EST</pubDate>
-      <category><![CDATA[nonlinear algebra]]></category>
-      <guid isPermaLink="false">pRZlFP3yQwJs7jwDKG2E5hSQrsU=</guid>
-      <description>Calculating a bubble point pressure of a mixture</description>
-      <content:encoded><![CDATA[
-
-
-&lt;p&gt;
-&lt;a href="http://matlab.cheme.cmu.edu/2011/09/15/calculating-a-bubble-point-pressure/" &gt;Matlab post&lt;/a&gt;
-&lt;/p&gt;
-
-&lt;p&gt;
-Adapted from &lt;a href="http://terpconnect.umd.edu/~nsw/ench250/bubpnt.htm" &gt;http://terpconnect.umd.edu/~nsw/ench250/bubpnt.htm&lt;/a&gt; (dead link)
-&lt;/p&gt;
-
-&lt;p&gt;
-We previously learned to read a datafile containing lots of Antoine coefficients into a database, and use the coefficients to estimate vapor pressure of a single compound. Here we use those coefficents to compute a bubble point pressure of a mixture. 
-&lt;/p&gt;
-
-&lt;p&gt;
-The bubble point is the temperature at which the sum of the component vapor pressures is equal to the the total pressure. This is where a bubble of vapor will first start forming, and the mixture starts to boil.
-&lt;/p&gt;
-
-&lt;p&gt;
-Consider an equimolar mixture of benzene, toluene, chloroform, acetone and methanol. Compute the bubble point at 760 mmHg, and the gas phase composition. The gas phase composition is given by: \(y_i = x_i*P_i/P_T\).
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; np
-&lt;span style="color: #8b0000;"&gt;from&lt;/span&gt; scipy.optimize &lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; fsolve
-
-&lt;span style="color: #ff0000; font-weight: bold;"&gt;# load our thermodynamic data&lt;/span&gt;
-data = np.loadtxt(&lt;span style="color: #228b22;"&gt;'data/antoine_data.dat'&lt;/span&gt;,
-                  dtype=[(&lt;span style="color: #228b22;"&gt;'id'&lt;/span&gt;, np.int),
-                         (&lt;span style="color: #228b22;"&gt;'formula'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'S8'&lt;/span&gt;),
-                         (&lt;span style="color: #228b22;"&gt;'name'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'S28'&lt;/span&gt;),
-                         (&lt;span style="color: #228b22;"&gt;'A'&lt;/span&gt;, np.float),
-                         (&lt;span style="color: #228b22;"&gt;'B'&lt;/span&gt;, np.float),
-                         (&lt;span style="color: #228b22;"&gt;'C'&lt;/span&gt;, np.float),
-                         (&lt;span style="color: #228b22;"&gt;'Tmin'&lt;/span&gt;, np.float),
-                         (&lt;span style="color: #228b22;"&gt;'Tmax'&lt;/span&gt;, np.float),
-                         (&lt;span style="color: #228b22;"&gt;'??'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'S4'&lt;/span&gt;),
-                         (&lt;span style="color: #228b22;"&gt;'?'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'S4'&lt;/span&gt;)],
-                  skiprows=7)
-
-compounds = [&lt;span style="color: #228b22;"&gt;'benzene'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'toluene'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'chloroform'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'acetone'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'methanol'&lt;/span&gt;]
-
-&lt;span style="color: #ff0000; font-weight: bold;"&gt;# extract the data we want&lt;/span&gt;
-A = np.array([data[data[&lt;span style="color: #228b22;"&gt;'name'&lt;/span&gt;] == x][&lt;span style="color: #228b22;"&gt;'A'&lt;/span&gt;][0] &lt;span style="color: #8b0000;"&gt;for&lt;/span&gt; x &lt;span style="color: #8b0000;"&gt;in&lt;/span&gt; compounds])
-B = np.array([data[data[&lt;span style="color: #228b22;"&gt;'name'&lt;/span&gt;] == x][&lt;span style="color: #228b22;"&gt;'B'&lt;/span&gt;][0] &lt;span style="color: #8b0000;"&gt;for&lt;/span&gt; x &lt;span style="color: #8b0000;"&gt;in&lt;/span&gt; compounds])
-C = np.array([data[data[&lt;span style="color: #228b22;"&gt;'name'&lt;/span&gt;] == x][&lt;span style="color: #228b22;"&gt;'C'&lt;/span&gt;][0] &lt;span style="color: #8b0000;"&gt;for&lt;/span&gt; x &lt;span style="color: #8b0000;"&gt;in&lt;/span&gt; compounds])
-Tmin = np.array([data[data[&lt;span style="color: #228b22;"&gt;'name'&lt;/span&gt;] == x][&lt;span style="color: #228b22;"&gt;'Tmin'&lt;/span&gt;][0] &lt;span style="color: #8b0000;"&gt;for&lt;/span&gt; x &lt;span style="color: #8b0000;"&gt;in&lt;/span&gt; compounds])
-Tmax = np.array([data[data[&lt;span style="color: #228b22;"&gt;'name'&lt;/span&gt;] == x][&lt;span style="color: #228b22;"&gt;'Tmax'&lt;/span&gt;][0] &lt;span style="color: #8b0000;"&gt;for&lt;/span&gt; x &lt;span style="color: #8b0000;"&gt;in&lt;/span&gt; compounds])
-
-
-&lt;span style="color: #ff0000; font-weight: bold;"&gt;# we have an equimolar mixture&lt;/span&gt;
-x = np.array([0.2, 0.2, 0.2, 0.2, 0.2])
-
-&lt;span style="color: #ff0000; font-weight: bold;"&gt;# Given a T, we can compute the pressure of each species like this:&lt;/span&gt;
-
-T = 67 &lt;span style="color: #ff0000; font-weight: bold;"&gt;# degC&lt;/span&gt;
-P = 10**(A - B / (T + C))
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; P
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; np.dot(x, P)  &lt;span style="color: #ff0000; font-weight: bold;"&gt;# total mole-fraction weighted pressure&lt;/span&gt;
-
-Tguess = 67
-Ptotal = 760
-
-&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;func&lt;/span&gt;(T):
-    P = 10**(A - B / (T + C))
-    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; Ptotal - np.dot(x, P)
-    
-Tbubble, = fsolve(func, Tguess)
-
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'The bubble point is {0:1.2f} degC'&lt;/span&gt;.format(Tbubble)
-
-&lt;span style="color: #ff0000; font-weight: bold;"&gt;# double check answer is in a valid T range&lt;/span&gt;
-&lt;span style="color: #8b0000;"&gt;if&lt;/span&gt; np.any(Tbubble &amp;lt; Tmin) &lt;span style="color: #8b0000;"&gt;or&lt;/span&gt; np.any(Tbubble &amp;gt; Tmax):
-    &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'T_bubble is out of range!'&lt;/span&gt;
-
-&lt;span style="color: #ff0000; font-weight: bold;"&gt;# print gas phase composition&lt;/span&gt;
-y = x * 10**(A - B / (Tbubble + C))/Ptotal
-
-&lt;span style="color: #8b0000;"&gt;for&lt;/span&gt; cmpd, yi &lt;span style="color: #8b0000;"&gt;in&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;zip&lt;/span&gt;(compounds, y):
-    &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'y_{0:&amp;lt;10s} = {1:1.3f}'&lt;/span&gt;.format(cmpd, yi)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-[  498.4320267    182.16010994   898.31061294  1081.48181768   837.88860027]
-699.654633507
-The bubble point is 69.46 degC
-y_benzene    = 0.142
-y_toluene    = 0.053
-y_chloroform = 0.255
-y_acetone    = 0.308
-y_methanol   = 0.242
-&lt;/pre&gt;
-&lt;p&gt;Copyright (C) 2013 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;&lt;p&gt;&lt;a href="/org/2013/02/18/Calculating-a-bubble-point-pressure-of-a-mixture.org"&gt;org-mode source&lt;/a&gt;&lt;p&gt;]]></content:encoded>
-    </item>
-    <item>
-      <title>Solving CSTR design equations</title>
-      <link>https://kitchingroup.cheme.cmu.edu/blog/2013/02/18/Solving-CSTR-design-equations</link>
-      <pubDate>Mon, 18 Feb 2013 09:00:00 EST</pubDate>
-      <category><![CDATA[nonlinear algebra]]></category>
-      <guid isPermaLink="false">BW3kShDPxaW0cPOTB-sgqJTkv8M=</guid>
-      <description>Solving CSTR design equations</description>
-      <content:encoded><![CDATA[
-
-
-
-&lt;p&gt;
-Given a continuously stirred tank reactor with a volume of 66,000 dm^3 where the reaction \(A \rightarrow B\) occurs, at a rate of \(-r_A = k C_A^2\) (\(k=3\) L/mol/h), with an entering molar flow of F_{A0} = 5 mol/h and a volumetric flowrate of 10 L/h, what is the exit concentration of A?
-&lt;/p&gt;
-
-&lt;p&gt;
-From a mole balance we know that at steady state \(0 = F_{A0} - F_A + V r_A\). That equation simply states the sum of the molar flow of A in in minus the molar flow of A out  plus the molar rate A is generated is equal to zero at steady state. This is directly the equation we need to solve. We need the following relationship:
-&lt;/p&gt;
-
-&lt;ol&gt;
-&lt;li&gt;\(F_A = v0 C_A\)
-&lt;/li&gt;
-&lt;/ol&gt;
-
-&lt;div class="org-src-container"&gt;
-
-&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;from&lt;/span&gt; scipy.optimize &lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; fsolve
-
-Fa0 = 5.0
-v0 = 10.
-
-V = 66000.0  &lt;span style="color: #ff0000; font-weight: bold;"&gt;# reactor volume L^3&lt;/span&gt;
-k = 3.0      &lt;span style="color: #ff0000; font-weight: bold;"&gt;# rate constant L/mol/h&lt;/span&gt;
-
-&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;func&lt;/span&gt;(Ca):
-    &lt;span style="color: #228b22;"&gt;"Mole balance for a CSTR. Solve this equation for func(Ca)=0"&lt;/span&gt;
-    Fa = v0 * Ca     &lt;span style="color: #ff0000; font-weight: bold;"&gt;# exit molar flow of A&lt;/span&gt;
-    ra = -k * Ca**2  &lt;span style="color: #ff0000; font-weight: bold;"&gt;# rate of reaction of A L/mol/h&lt;/span&gt;
-    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; Fa0 - Fa + V * ra
-
-&lt;span style="color: #ff0000; font-weight: bold;"&gt;# CA guess that that 90 % is reacted away&lt;/span&gt;
-CA_guess = 0.1 * Fa0 / v0
-CA_sol, = fsolve(func, CA_guess)
-
-&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'The exit concentration is {0} mol/L'&lt;/span&gt;.format(CA_sol)
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;pre class="example"&gt;
-The exit concentration is 0.005 mol/L
-&lt;/pre&gt;
-
-&lt;p&gt;
-It is a little confusing why it is necessary to put a comma after the CA_sol in the fsolve command. If you do not put it there, you get brackets around the answer.
-&lt;/p&gt;
-&lt;p&gt;Copyright (C) 2013 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;&lt;p&gt;&lt;a href="/org/2013/02/18/Solving-CSTR-design-equations.org"&gt;org-mode source&lt;/a&gt;&lt;p&gt;]]></content:encoded>
+That is the same solution as reported at the Matlab site. Another use of autograd for the win here.
+&lt;/p&gt;
+&lt;p&gt;Copyright (C) 2019 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
+&lt;p&gt;&lt;a href="/org/2019/10/02/Using-autograd-to-plot-implicit-functions.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Org-mode version = 9.2.3&lt;/p&gt;]]></content:encoded>
     </item>
   </channel>
 </rss>
