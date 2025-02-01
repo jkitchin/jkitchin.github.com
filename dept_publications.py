@@ -28,7 +28,8 @@ for YEAR in [#'2005',
 #        '2021'
 #        '2022'
 #        '2023'
-'2024'
+'2024',
+'2025'
 ]:
 
     # this query includes Neil Donahue
