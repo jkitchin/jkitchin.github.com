@@ -102,10 +102,205 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Better-equation-numbering-in-LaTeX-fragments-in-org-mode"></div>
+      <h2 class="blog_post_title"><a href="/blog/2016/11/07/Better-equation-numbering-in-LaTeX-fragments-in-org-mode/" rel="bookmark" title="Permanent Link to Better equation numbering in LaTeX fragments in org-mode">Better equation numbering in LaTeX fragments in org-mode</a></h2>
+      <p><small><span class="blog_post_date">Posted November 07, 2016 at 07:02 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/latex/'>latex</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<p>
+In org-mode we can use LaTeX equations, and toggle an overlay that shows what the rendered equation will look like. One thing that has always bothered me though, is that each fragment is created in isolation. That means numbering is almost always wrong, and typically with each numbered equation starting with (1). Here we look at a way to fix that. Fixing it means we have to find a way to not create each fragment image in isolation; each one needs a context that enables the numbering to be correct. The idea we try here is simple: we just figure out in advance what the numbering for each equation should be, and then figure out how to get that information to the image generation.
+</p>
+
+<p>
+See this video of the post in action:
+</p>
+<iframe width="560" height="315" src="https://www.youtube.com/embed/pcMuJlUvKCw" frameborder="0" allowfullscreen></iframe>
+
+<p>
+Here are some example equations to see how it works.
+</p>
+
+<p>
+This should be numbered (1)
+</p>
+\begin{equation}
+\int x^2 dx
+\end{equation}
+
+<p>
+This is a numbered equation with a custom number. This should have (E1) as the number.
+</p>
+\begin{equation}\tag{E1}
+\int x^2 dx
+\end{equation}
+
+<p>
+But equation* is not numbered
+</p>
+\begin{equation*}
+\int x^2 dx
+\end{equation*}
+
+<p>
+LaTeX align environments are numbered. The first line is (2), the second line is not numbered (because we put <code>\nonumber</code> in the line), and the third line is (3).
+</p>
+\begin{align}
+a = 5 \\
+b=6 \nonumber \\
+c = 8
+\end{align}
+
+<p>
+But align* environments are not numbered.
+</p>
+\begin{align*}
+a = 5 \\
+b=6
+\end{align*}
+
+<p>
+This should be numbered (4).
+</p>
+
+\begin{equation}
+\int x^3 dx
+\end{equation}
+
+<p>
+These should be numbered (5), (6) and (7).
+</p>
+\begin{align}
+a = 5 \\
+b=6  \\
+c = 8
+\end{align}
+
+<p>
+This should be numbered with (E2).
+</p>
+\begin{equation}\tag{E2}
+\int x^2 dx 
+\end{equation}
+
+<p>
+And this should be numbered (8).
+</p>
+\begin{equation}
+\int x^2 dx 
+\end{equation}
+
+<p>
+Note: This will be numbered (1) because it is exactly the same equation as a previous one! 
+</p>
+\begin{equation}
+\int x^2 dx
+\end{equation}
+
+
+<p>
+We can change the numbering of an equation with code like this. After this code, the next equation will be numbered (5).
+</p>
+
+<p>
+The only fragments that should be numbered are equation environments, and align environments (these are the main ones that we consider here). The align environment is tricky since there is potentially more than one number in the environment. 
+</p>
+
+<p>
+So, we get all the fragments, and generate a list of which ones should be numbered, and if they should what the number should be. That means we will need to count the number of numbered equations in an align environment. We will do that by getting the number of line breaks, and subtracting the number of nonumbers.
+</p>
+
+<p>
+Here is the code block that does that, using advice again. A downside of this approach is that we generate the list for every fragment, which is not efficient, since it should not change in a synchronous approach to generating them.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">org-renumber-environment</span> (orig-func <span style="color: #6434A3;">&amp;rest</span> args)
+  (<span style="color: #0000FF;">let</span> ((results '()) 
+        (counter -1)
+        (numberp))
+
+    (<span style="color: #0000FF;">setq</span> results (<span style="color: #0000FF;">loop</span> for (begin .  env) in 
+                        (org-element-map (org-element-parse-buffer) 'latex-environment
+                          (<span style="color: #0000FF;">lambda</span> (env)
+                            (cons
+                             (org-element-property <span style="color: #006FE0;">:begin</span> env)
+                             (org-element-property <span style="color: #006FE0;">:value</span> env))))
+                        collect
+                        (<span style="color: #0000FF;">cond</span>
+                         ((<span style="color: #0000FF;">and</span> (string-match <span style="color: #008000;">"\\\\begin{equation}"</span> env)
+                               (not (string-match <span style="color: #008000;">"\\\\tag{"</span> env)))
+                          (<span style="color: #0000FF;">incf</span> counter)
+                          (cons begin counter))
+                         ((string-match <span style="color: #008000;">"\\\\begin{align}"</span> env)
+                          (<span style="color: #0000FF;">prog2</span>
+                              (<span style="color: #0000FF;">incf</span> counter)
+                              (cons begin counter)                          
+                            (<span style="color: #0000FF;">with-temp-buffer</span>
+                              (insert env)
+                              (goto-char (point-min))
+                              <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">\\ is used for a new line. Each one leads to a number</span>
+                              (<span style="color: #0000FF;">incf</span> counter (count-matches <span style="color: #008000;">"\\\\$"</span>))
+                              <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">unless there are nonumbers.</span>
+                              (goto-char (point-min))
+                              (<span style="color: #0000FF;">decf</span> counter (count-matches <span style="color: #008000;">"\\nonumber"</span>)))))
+                         (t
+                          (cons begin nil)))))
+
+    (<span style="color: #0000FF;">when</span> (<span style="color: #0000FF;">setq</span> numberp (cdr (assoc (point) results)))
+      (<span style="color: #0000FF;">setf</span> (car args)
+            (concat
+             (format <span style="color: #008000;">"\\setcounter{equation}{%s}\n"</span> numberp)
+             (car args)))))
+  
+  (apply orig-func args))
+
+(advice-add 'org-create-formula-image <span style="color: #006FE0;">:around</span> #'org-renumber-environment)
+</pre>
+</div>
+
+<p>
+You can remove the advice like this.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(advice-remove 'org-create-formula-image #'org-renumber-environment)
+</pre>
+</div>
+<p>Copyright (C) 2016 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2016/11/07/Better-equation-numbering-in-LaTeX-fragments-in-org-mode.org">org-mode source</a></p>
+<p>Org-mode version = 9.0</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+
+<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2016/11/07/Better-equation-numbering-in-LaTeX-fragments-in-org-mode">Discuss on Twitter</a>
+
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Justifying-LaTeX-preview-fragments-in-org-mode"></div>
       <h2 class="blog_post_title"><a href="/blog/2016/11/06/Justifying-LaTeX-preview-fragments-in-org-mode/" rel="bookmark" title="Permanent Link to Justifying LaTeX preview fragments in org-mode">Justifying LaTeX preview fragments in org-mode</a></h2>
       <p><small><span class="blog_post_date">Posted November 06, 2016 at 08:44 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/latex/'>latex</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/latex/'>latex</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
       </small></p>
     </header>
     <div class="post_prose">
@@ -1236,269 +1431,6 @@ On Twitter, this showed an image of the picture on the page, and linked directly
 <a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2016/08/26/Using-Twitter-cards-for-better-tweets">Discuss on Twitter</a>
 
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="Automated-bibtex-entry-tweeting"></div>
-      <h2 class="blog_post_title"><a href="/blog/2016/08/25/Automated-bibtex-entry-tweeting/" rel="bookmark" title="Permanent Link to Automated bibtex entry tweeting">Automated bibtex entry tweeting</a></h2>
-      <p><small><span class="blog_post_date">Posted August 25, 2016 at 12:14 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/twitter/'>twitter</a>, <a href='/blog/category/bibtex/'>bibtex</a></span> | tags: 
-      <p><small><span class="blog_post_date">Updated August 25, 2016 at 02:09 PM</span></small>
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<p>
-The goal in this post is to develop an elisp function that will tweet a bibtex entry. What I want is to be on a bibtex entry, and run a command that will generate a tweet and tweet it. Here is an example bibtex entry I will use in this post. Clearly, I couldn't simply tweet the entry, it is too long. What I want instead is to generate a picture of a formatted citation, to make a gist out of the bibtex entry so we can link to it, and then to provide links in the tweet to the doi, and the bibtex entry gist.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect <span style="color: #008000;">"~/Dropbox/bibliography/references.bib"</span>)
-  (goto-char (point-min))
-  (re-search-forward <span style="color: #008000;">"kitchin-2016-autom-data,"</span>)
-  (bibtex-copy-entry-as-kill)
-  (<span style="color: #0000FF;">with-temp-buffer</span>
-    (bibtex-yank 1)
-    (buffer-string)))
-</pre>
-</div>
-
-<p>
-First, we tackle making an image. Emacs has some capability to generate svg, and we can readily convert that to png for the tweet. Here we just go to the entry, and then generate a png. I build off the citation capability of org-ref to generate a pretty reasonably formatted entry. It isn't perfect; the volume is missing in the entry, so there is a blank space between two commas, but this is good enough for me. Note we need a png for twitter. It appears you cannot upload svg yet.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let*</span> ((entry (<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect <span style="color: #008000;">"~/Dropbox/bibliography/references.bib"</span>)
-                (goto-char (point-min))
-                (re-search-forward <span style="color: #008000;">"kitchin-2016-autom-data,"</span>)
-                (bibtex-beginning-of-entry)
-                (bibtex-parse-entry t)))
-       (formatted-entry (orhc-formatted-citation entry))
-       (lines (<span style="color: #0000FF;">with-temp-buffer</span>
-                (insert formatted-entry)
-                (fill-paragraph)
-                (split-string  (buffer-string) <span style="color: #008000;">"\n"</span>)))
-       (svg (svg-create 500 (* 20 (length lines)))))
-
-  (<span style="color: #0000FF;">loop</span> for i from 0
-        for line in lines
-        do
-        (svg-text svg line
-                  <span style="color: #006FE0;">:font-size</span> <span style="color: #008000;">"12"</span>
-                  <span style="color: #006FE0;">:stroke</span> <span style="color: #008000;">"black"</span>
-                  <span style="color: #006FE0;">:x</span> 0
-                  <span style="color: #006FE0;">:y</span> (+ 15 (* i 15))
-                  <span style="color: #006FE0;">:stroke-width</span> 0.3))
-
-  (<span style="color: #0000FF;">with-temp-file</span> <span style="color: #008000;">"authoring.svg"</span>
-    (svg-print svg)))
-
-(shell-command <span style="color: #008000;">"convert authoring.svg authoring.png"</span>)
-</pre>
-</div>
-
-<p>
-<img src="/media/authoring.png">
-</p>
-
-<p>
-It is easy enough to get the doi, and generate the url to it.
-</p>
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let*</span> ((entry (<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect <span style="color: #008000;">"~/Dropbox/bibliography/references.bib"</span>)
-                (goto-char (point-min))
-                (re-search-forward <span style="color: #008000;">"kitchin-2016-autom-data,"</span>)
-                (bibtex-beginning-of-entry)
-                (bibtex-parse-entry t))))
-  (format <span style="color: #008000;">"https://doi.org/%s"</span> (cdr (assoc <span style="color: #008000;">"doi"</span> entry ))))
-</pre>
-</div>
-
-<p>
-Next, we will put the entry as a gist on Github, so we can provide a link to it. I use the gist.el package, and here just do some trickery to put the entry in a temp-file named by the key so that the gist has a nice name. This returns the url to the gist, which we would want to incorporate into a tweet.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect <span style="color: #008000;">"~/Dropbox/bibliography/references.bib"</span>)
-  (goto-char (point-min))
-  (re-search-forward <span style="color: #008000;">"kitchin-2016-autom-data,"</span>)
-  (<span style="color: #0000FF;">save-restriction</span>
-    (bibtex-narrow-to-entry)
-    (bibtex-beginning-of-entry)
-    (<span style="color: #0000FF;">let*</span> ((entry-string (buffer-string))
-           (entry (bibtex-parse-entry))
-           (key (cdr (assoc <span style="color: #008000;">"=key="</span> entry)))
-           (tfile (expand-file-name (format <span style="color: #008000;">"%s.bib"</span> key) temporary-file-directory)))
-      (<span style="color: #0000FF;">with-temp-file</span> tfile
-        (insert entry-string))
-      (<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect tfile)
-        (gist-buffer)))
-    (<span style="color: #0000FF;">with-temp-buffer</span>
-      (yank)
-      (buffer-string))))
-</pre>
-</div>
-
-
-<p>
-Ok, All the pieces are in place. The only piece left is creating the tweet, and tweeting it. I couldn't see an obvious way to do this with twittering mode, since I didn't see where to add an image. There is a <a href="https://pypi.python.org/pypi/TwitterAPI/2.4.2">Python library</a> for this though, and it looks pretty easy to use. Here is an example usage.
-</p>
-
-
-<div class="org-src-container">
-
-<pre class="src src-python"><span style="color: #0000FF;">from</span> TwitterAPI <span style="color: #0000FF;">import</span> TwitterAPI
-<span style="color: #0000FF;">from</span> twitter_secrets <span style="color: #0000FF;">import</span> CONSUMER_KEY, CONSUMER_SECRET, ACCESS_TOKEN_KEY, ACCESS_TOKEN_SECRET
-
-<span style="color: #BA36A5;">api</span> = TwitterAPI(CONSUMER_KEY, CONSUMER_SECRET, ACCESS_TOKEN_KEY, ACCESS_TOKEN_SECRET)
-<span style="color: #006FE0;">file</span> = <span style="color: #006FE0;">open</span>(<span style="color: #008000;">'authoring.png'</span>, <span style="color: #008000;">'rb'</span>)
-<span style="color: #BA36A5;">data</span> = <span style="color: #006FE0;">file</span>.read()
-<span style="color: #BA36A5;">r</span> = api.request(<span style="color: #008000;">'statuses/update_with_media'</span>, {<span style="color: #008000;">'status'</span>:<span style="color: #008000;">'A test tweet using the TwitterAPI with an image.'</span>}, {<span style="color: #008000;">'media[]'</span>:data})
-<span style="color: #0000FF;">print</span>(r.status_code)
-</pre>
-</div>
-
-<p>
-200
-</p>
-
-<p>
-It will be a tad hacky, but the script is so simple we can just make a template, and run it. We need to do these things: 1) make the image, 2) make the gist 3) format and send the tweet. Here is the elisp function to do that.
-</p>
-
-<div class="org-src-container">
-
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">tweet-bibtex</span> ()
-  <span style="color: #036A07;">"Tweet the bibtex entry at point."</span>
-  (<span style="color: #0000FF;">interactive</span>)
-  (bibtex-beginning-of-entry)
-  (bibtex-set-field <span style="color: #008000;">"tweeted"</span> (current-time-string))
-
-  (<span style="color: #0000FF;">let*</span> ((entry-string (<span style="color: #0000FF;">save-restriction</span>
-                         (bibtex-beginning-of-entry)
-                         (bibtex-narrow-to-entry)
-                         (buffer-substring-no-properties (point-min) (point-max))))
-         (entry (bibtex-parse-entry t))
-         (key (cdr (assoc <span style="color: #008000;">"=key="</span> entry)))
-         (doi (cdr (assoc <span style="color: #008000;">"doi"</span> entry)))
-         (svg-file (expand-file-name (format <span style="color: #008000;">"%s.svg"</span> key) temporary-file-directory))
-         (png-file (expand-file-name (format <span style="color: #008000;">"%s.png"</span> key) temporary-file-directory))
-         (bib-file (expand-file-name (format <span style="color: #008000;">"%s.bib"</span> key) temporary-file-directory))
-         (py-file (expand-file-name (format <span style="color: #008000;">"%s.py"</span> key) temporary-file-directory))
-         (formatted-entry (orhc-formatted-citation entry))
-         (lines (<span style="color: #0000FF;">with-temp-buffer</span>
-                  (insert formatted-entry)
-                  (fill-paragraph)
-                  (split-string  (buffer-string) <span style="color: #008000;">"\n"</span>)))
-         (svg (svg-create 500 (* 20 (length lines))))
-         (tweet (read-string <span style="color: #008000;">"Tweet: "</span>))
-         gist-url
-         full-tweet)
-
-    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">delete buffers and files</span>
-    (<span style="color: #0000FF;">loop</span> for buf in (list (concat key <span style="color: #008000;">".bib"</span>)
-                           (concat key <span style="color: #008000;">".png"</span>)
-                           (concat key <span style="color: #008000;">".svg"</span>)
-                           (concat key <span style="color: #008000;">".py"</span>))
-          do
-          (<span style="color: #0000FF;">when</span> (get-buffer buf)
-            (kill-buffer (get-buffer buf))))
-
-    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Step 1 make the image</span>
-    (<span style="color: #0000FF;">loop</span> for i from 0
-          for line in lines
-          do
-          (svg-text svg line
-                    <span style="color: #006FE0;">:font-size</span> <span style="color: #008000;">"12"</span>
-                    <span style="color: #006FE0;">:stroke</span> <span style="color: #008000;">"black"</span>
-                    <span style="color: #006FE0;">:x</span> 0
-                    <span style="color: #006FE0;">:y</span> (+ 15 (* i 15))
-                    <span style="color: #006FE0;">:stroke-width</span> 0.3))
-
-    (<span style="color: #0000FF;">with-temp-file</span> svg-file
-      (svg-print svg))
-
-    (shell-command (format <span style="color: #008000;">"convert %s %s"</span> svg-file png-file))
-
-    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Step 2, make the gist. Make a temp-file so the gist has a reasonable name</span>
-    (<span style="color: #0000FF;">with-temp-file</span> bib-file
-      (insert entry-string))
-
-    (<span style="color: #0000FF;">let</span> ((bib-buffer (find-file-noselect bib-file)))
-      (<span style="color: #0000FF;">with-current-buffer</span> bib-buffer
-        (gist-buffer))
-      (kill-buffer bib-buffer))
-
-    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">get url off clipboard</span>
-    (<span style="color: #0000FF;">setq</span> gist-url (<span style="color: #0000FF;">with-temp-buffer</span>
-                     (yank)
-                     (buffer-string)))
-
-    <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Format and send the tweet:</span>
-    (<span style="color: #0000FF;">setq</span> full-tweet (format <span style="color: #008000;">"#publication %s\nhttps://doi.org/%s\nbibtex: %s"</span> tweet doi gist-url))
-
-    (<span style="color: #0000FF;">with-temp-file</span> py-file
-      (insert (format <span style="color: #008000;">"from TwitterAPI import TwitterAPI</span>
-<span style="color: #008000;">from twitter_secrets import CONSUMER_KEY, CONSUMER_SECRET, ACCESS_TOKEN_KEY, ACCESS_TOKEN_SECRET</span>
-
-<span style="color: #008000;">api = TwitterAPI(CONSUMER_KEY, CONSUMER_SECRET, ACCESS_TOKEN_KEY, ACCESS_TOKEN_SECRET)</span>
-<span style="color: #008000;">file = open('%s', 'rb')</span>
-<span style="color: #008000;">data = file.read()</span>
-<span style="color: #008000;">r = api.request('statuses/update_with_media', {'status':'''%s'''}, {'media[]':data})"</span>
-                      png-file
-                      full-tweet)))
-
-    (<span style="color: #0000FF;">if</span> (= 0 (shell-command (format <span style="color: #008000;">"python %s"</span> py-file)))
-        (message <span style="color: #008000;">"%s"</span> full-tweet)
-      (message <span style="color: #008000;">"tweet failed ;("</span>))))
-
-<span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Now, try it out.</span>
-(<span style="color: #0000FF;">with-current-buffer</span> (find-file-noselect <span style="color: #008000;">"~/Dropbox/bibliography/references.bib"</span>)
-  (goto-char (point-min))
-  (re-search-forward <span style="color: #008000;">"kitchin-2016-autom-data,"</span>)
-  (tweet-bibtex))
-</pre>
-</div>
-
-<p>
-You can see what this tweet looks like here:
-</p>
-
-<blockquote class="twitter-tweet" data-lang="en"><p lang="en" dir="ltr"><a href="https://twitter.com/hashtag/publication?src=hash">#publication</a> I tweeted this from a bibtex file.<a href="https://t.co/NGVlRGqKSJ">https://t.co/NGVlRGqKSJ</a><br>bibtex: <a href="https://t.co/0UEkvyBKAM">https://t.co/0UEkvyBKAM</a> <a href="https://t.co/OpbAt1h3OP">pic.twitter.com/OpbAt1h3OP</a></p>&mdash; John Kitchin (@johnkitchin) <a href="https://twitter.com/johnkitchin/status/768838551140261894">August 25, 2016</a></blockquote> <script async src="//platform.twitter.com/widgets.js" charset="utf-8"></script>
-
-<p>
-That seems pretty reasonable. Now I only need to use it about 48,000 times to benefit from the time-savings M-x tweet-bibtex offers compared to manually making all those tweets ;)
-</p>
-<p>Copyright (C) 2016 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2016/08/25/Automated-bibtex-entry-tweeting.org">org-mode source</a></p>
-<p>Org-mode version = 8.3.4</p>
-
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-
-<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2016/08/25/Automated-bibtex-entry-tweeting">Discuss on Twitter</a>
-
-  <hr class="interblog" />
  <a href="../26">« Previous Page</a>
   --  
  <a href="../28">Next Page »</a>
@@ -1540,11 +1472,11 @@ That seems pretty reasonable. Now I only need to use it about 48,000 times to be
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2025/02/03/New-publication-Multiscale-Optimization-of-Formic-Acid-Dehydrogenation-Process-via-Linear-Model-Decision-Tree-Surrogates/">New publication - Multiscale Optimization of Formic Acid Dehydrogenation Process via Linear Model Decision Tree Surrogates</a></li>
       <li><a href="/blog/2025/02/02/New-publication-Enumeration-of-surface-site-nuclearity-and-shape-in-a-database-of-intermetallic-low-index-surface-facets/">New publication - Enumeration of surface site nuclearity and shape in a database of intermetallic low-index surface facets</a></li>
       <li><a href="/blog/2025/02/01/New-publication-Improved-Uncertainty-Estimation-of-Graph-Neural-Network-Potentials-Using-Engineered-Latent-Space-Distance/">New publication - Improved Uncertainty Estimation of Graph Neural Network Potentials Using Engineered Latent Space Distance</a></li>
       <li><a href="/blog/2025/01/31/New-publication-AdsorbDiff-:-Adsorbate-Placement-via-Conditional-Denoising-Diffusion/">New publication - AdsorbDiff &#58; Adsorbate Placement via Conditional Denoising Diffusion</a></li>
       <li><a href="/blog/2025/01/30/New-publication-Unifying-theory-of-electronic-descriptors-of-metal-surfaces-upon-perturbation/">New publication - Unifying theory of electronic descriptors of metal surfaces upon perturbation</a></li>
-      <li><a href="/blog/2025/01/29/New-publication-The-Potential-of-Zero-Total-Charge-Predicts-Cation-Effects-for-the-Oxygen-Reduction-Reaction/">New publication - The Potential of Zero Total Charge Predicts Cation Effects for the Oxygen Reduction Reaction</a></li>
     </ul>
   </section>
 
