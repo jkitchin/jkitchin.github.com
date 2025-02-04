@@ -102,6 +102,258 @@
 <article>
   <div class="blog_post">
     <header>
+      <div id="Adding-numerical-methods-to-emacs-with-dynamic-modules"></div>
+      <h2 class="blog_post_title"><a href="/blog/2017/07/08/Adding-numerical-methods-to-emacs-with-dynamic-modules/" rel="bookmark" title="Permanent Link to Adding numerical methods to emacs with dynamic modules">Adding numerical methods to emacs with dynamic modules</a></h2>
+      <p><small><span class="blog_post_date">Posted July 08, 2017 at 10:12 AM</span> | categories:
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a></span> | tags: 
+      <p><small><span class="blog_post_date">Updated July 09, 2017 at 07:31 AM</span></small>
+      </small></p>
+    </header>
+    <div class="post_prose">
+      
+
+
+
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org35cb5dc">1. Using the GSL to calculate a Bessel function value</a></li>
+<li><a href="#orgfee9627">2. A GSL dynamic module for a Bessel function</a></li>
+<li><a href="#orgfedab6e">3. Summary</a></li>
+</ul>
+</div>
+</div>
+<p>
+There is a relatively new feature in Emacs 25 that allows you to extend Emacs using compiled libraries (<a href="http://diobla.info/blog-archive/modules-tut.html">http://diobla.info/blog-archive/modules-tut.html</a>). This could be very helpful in a few ways:
+</p>
+
+<ol class="org-ol">
+<li>To add functionality that exists in other libraries, e.g.
+<ol class="org-ol">
+<li><a href="https://github.com/syohex/emacs-libyaml">libyaml</a></li>
+<li><a href="https://github.com/syohex/emacs-memcached">libmemcached</a></li>
+<li><a href="https://github.com/syohex/emacs-mruby-test">Embedding Ruby in Emacs</a></li>
+</ol></li>
+<li>Interface Emacs with hardware, e.g. <a href="http://nullprogram.com/blog/2016/11/05/">a joystick</a>, or <a href="https://github.com/syohex/emacs-eject">ejecting a CD</a>.</li>
+<li>To speed up slow elisp functions
+<ol class="org-ol">
+<li>A c implementation of a fibonacci function is 150 times faster than an elisp version <a href="https://coldnew.github.io/2d16cc25/">here</a>.</li>
+<li>This <a href="https://github.com/syohex/emacs-parson">json parser</a> is up to 4 times faster than the json.el library for some operations.</li>
+</ol></li>
+</ol>
+
+<p>
+I am interested in this in particular to bring numerical methods into Emacs. It is fair to ask why. Even I think the numpy/scipy/matplotlib Python stack is currently unparalleled in functionality for scientific programming. But I like writing elisp code so much more! So, we will take a look today at a simple example of integrating a function from the GNU Scientific Library into Emacs.
+</p>
+
+<div id="outline-container-org35cb5dc" class="outline-2">
+<h2 id="org35cb5dc"><span class="section-number-2">1</span> Using the GSL to calculate a Bessel function value</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+A canonical example of using the GSL is given at <a href="https://www.gnu.org/software/gsl/manual/html_node/An-Example-Program.html">https://www.gnu.org/software/gsl/manual/html_node/An-Example-Program.html</a>. Here it is for reference. It just calculates a value for a Bessel function. We save this program in a file called example.c.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-C"><span style="color: #808080;">#include</span> <span style="color: #008000;">&lt;stdio.h&gt;</span>
+<span style="color: #808080;">#include</span> <span style="color: #008000;">&lt;gsl/gsl_sf_bessel.h&gt;</span>
+
+<span style="color: #6434A3;">int</span>
+<span style="color: #006699;">main</span> (<span style="color: #6434A3;">void</span>)
+{
+  <span style="color: #6434A3;">double</span> <span style="color: #BA36A5;">x</span> = 5.0;
+  <span style="color: #6434A3;">double</span> <span style="color: #BA36A5;">y</span> = gsl_sf_bessel_J0 (x);
+  printf (<span style="color: #008000;">"J0(%g) = %.18e\n"</span>, x, y);
+  <span style="color: #0000FF;">return</span> 0;
+}
+</pre>
+</div>
+
+<p>
+We have to compile and run this program. Here are the commands to do that.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh">gcc -Wall -I/usr/local/include/ -c example.c
+gcc -L/usr/local/include -lgsl example.o 
+./a.out
+</pre>
+</div>
+
+<p>
+That is a lot of code and steps to get one number. 
+</p>
+
+<p>
+What I would like to do instead is this:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">gsl-sf-bessel</span>)
+(gsl-sf-bessel-J0 5)
+</pre>
+</div>
+
+<p>
+So, enter the dynamic module!
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgfee9627" class="outline-2">
+<h2 id="orgfee9627"><span class="section-number-2">2</span> A GSL dynamic module for a Bessel function</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+To create the dynamic module we need a small c file that wraps the GSL function and adds it to the Emacs environment. Here is the smallest example I could come up with for this one function.  Basically, we create a function that takes the emacs environment and arguments, extract what we want from them, and use that to calculate what we need and return it to the environment. Then we register that function  and define what the module provides in emacs_module_init.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-c"><span style="color: #808080;">#include</span> <span style="color: #008000;">&lt;assert.h&gt;</span>
+<span style="color: #808080;">#include</span> <span style="color: #008000;">&lt;gsl/gsl_sf_bessel.h&gt;</span>
+<span style="color: #808080;">#include</span> <span style="color: #008000;">"emacs-module.h"</span>
+
+<span style="color: #6434A3;">int</span> <span style="color: #BA36A5;">plugin_is_GPL_compatible</span>;
+
+<span style="color: #0000FF;">static</span> <span style="color: #6434A3;">emacs_value</span>
+<span style="color: #006699;">F_gsl_sf_bessel_J0</span> (<span style="color: #6434A3;">emacs_env</span> *<span style="color: #BA36A5;">env</span>, <span style="color: #6434A3;">ptrdiff_t</span> <span style="color: #BA36A5;">nargs</span>, <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">args</span>[], <span style="color: #6434A3;">void</span> *<span style="color: #BA36A5;">data</span>)
+{
+  assert (nargs == 1);
+  <span style="color: #6434A3;">double</span> <span style="color: #BA36A5;">x</span> = env-&gt;extract_float (env, args[0]);
+  <span style="color: #0000FF;">return</span> env-&gt;make_float (env, gsl_sf_bessel_J0 (x));
+}
+
+<span style="color: #6434A3;">int</span>
+<span style="color: #006699;">emacs_module_init</span>(<span style="color: #0000FF;">struct</span> <span style="color: #6434A3;">emacs_runtime</span> *<span style="color: #BA36A5;">ert</span>)
+{
+        <span style="color: #6434A3;">emacs_env</span> *<span style="color: #BA36A5;">env</span> = ert-&gt;get_environment(ert);
+
+        <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">gsl_sf_bessel_J0_fn</span> = env-&gt;make_function(env, 1, 1, F_gsl_sf_bessel_J0, <span style="color: #008000;">"Regular cylindrical Bessel function of zeroth order, J_0(x)"</span>, <span style="color: #D0372D;">NULL</span>);
+
+        <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">Qfset</span> = env-&gt;intern(env, <span style="color: #008000;">"fset"</span>);
+        <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">Q_gsl_sf_bessel_J0</span> = env-&gt;intern(env, <span style="color: #008000;">"gsl-sf-bessel-J0"</span>);
+        <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">fset_args</span>[] = { Q_gsl_sf_bessel_J0, gsl_sf_bessel_J0_fn };
+        env-&gt;funcall(env, Qfset, 2, fset_args);
+
+        <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">Qprovide</span> = env-&gt;intern(env, <span style="color: #008000;">"provide"</span>);
+        <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">Q_gsl_sf_bessel</span> = env-&gt;intern(env, <span style="color: #008000;">"gsl-sf-bessel"</span>);
+        <span style="color: #6434A3;">emacs_value</span> <span style="color: #BA36A5;">provide_args</span>[] = { Q_gsl_sf_bessel };
+        env-&gt;funcall(env, Qprovide, 1, provide_args);
+
+        <span style="color: #0000FF;">return</span> 0;
+}
+</pre>
+</div>
+
+<p>
+Now we compile it into a shared library.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh">gcc -Wall -I/usr/local/include -fPIC -c gsl-sf-bessel.c
+gcc -shared -L/usr/local/include -lgsl -o gsl-sf-bessel.so gsl-sf-bessel.o
+</pre>
+</div>
+
+<p>
+That creates our shared library in gsl-sf-bessel.so.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh">ls *.so
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(add-to-list 'load-path <span style="color: #008000;">"/Users/jkitchin/vc/blogofile-jkitchin.github.com/_blog/dynamic-module/"</span>)
+(<span style="color: #0000FF;">require</span> '<span style="color: #D0372D;">gsl-sf-bessel</span>)
+(gsl-sf-bessel-J0 5.0)
+</pre>
+</div>
+
+<pre class="example">
+-0.17759677131433826
+
+</pre>
+
+<p>
+That is the same answer as we got before. Here is the documentation we defined. It could use some improvement, e.g. to note that the argument has to be a float, and that only one argument is allowed. I am not sure why the signature doesn't show a single argument.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(describe-function 'gsl-sf-bessel-J0)
+</pre>
+</div>
+
+<pre class="example">
+gsl-sf-bessel-J0 is a Lisp function.
+
+(gsl-sf-bessel-J0 &amp;rest ARGS)
+
+For more information check the manuals.
+
+Regular cylindrical Bessel function of zeroth order, J_0(x)
+
+</pre>
+
+<p>
+I am not a very skilled C-programmer yet, so I don't know how hard it would be to make this function accept integers as well, or to vectorize it so you could have an arbitrary number of args to it and return a list.
+</p>
+</div>
+</div>
+
+
+<div id="outline-container-orgfedab6e" class="outline-2">
+<h2 id="orgfedab6e"><span class="section-number-2">3</span> Summary</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+Dynamic modules look promising to extend Emacs with. This example is about the simplest function from the GSL there is. There are many more (<a href="https://www.gnu.org/software/gsl/doc/html/index.html">https://www.gnu.org/software/gsl/doc/html/index.html</a>) functions that do linear algebra on arrays, integration or optimization of functions, interpolation of data, etc. I don't have a sense yet of how easy it will be to integrate these into a module.
+</p>
+
+<p>
+It looks like you are not limited to writing these in C. There is an example of a plugin written in Rust <a href="https://github.com/lunaryorn/emacs-module.rs/blob/master/src/lib.rs">here</a>, and a framework to write them in <a href="https://github.com/sigma/go-emacs/">Go</a>. Maybe any language that can make a shared library with the required plugin_is_GPL_compatible symbol and emacs_module_init function would work. Those examples do not look significantly easier to write than the C versions though since I am not that fluent in those languages either.
+</p>
+
+<p>
+There are some challenges to figure out in developing and using dynamic modules. Here are a few:
+</p>
+
+<ol class="org-ol">
+<li>The documentation on what is possible is not that great yet, so there is a lot of exploring to do. There are a fair number of examples out there though to learn from (<a href="https://github.com/emacs-pe/emacs-modules">https://github.com/emacs-pe/emacs-modules</a>). The <a href="https://github.com/emacs-mirror/emacs/tree/emacs-25/modules/mod-test">official example</a> shows a lot of the functionality.</li>
+<li>I guess it will be tricky to distribute these. I don't know how easy it would be to build all the libraries for each platform for distribution on MELPA for example. I don't think there is a standard way to incorporate a compile step in elisp package installation. Also, you need an Emacs version of at least 25 with the dynamic module feature compiled in. It is not yet a default enabled option. The required emacs-module.h should be gotten from the emacs build, so people with binaries might not be able to build it anyway.</li>
+<li>Users will need the libraries the dynamic module uses. In this example, they will need libgsl.</li>
+<li>Once you require the module, it does not seem possible to modify it, rebuild it, and reload it. It appears you have to close Emacs and reload it. That is tedious.</li>
+</ol>
+
+<p>
+It would be nice to have a more generic foreign function interface that would allow you to develop more on the elisp side. One effort in that direction is <a href="https://github.com/tromey/emacs-ffi">https://github.com/tromey/emacs-ffi</a>. It looks like it might be a lot simpler to use than creating a dynamic module. Once it is installed, it looks like you can write elisp code to wrap the library functions. I will write about this on another day.
+</p>
+</div>
+</div>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/07/08/Adding-numerical-methods-to-emacs-with-dynamic-modules.org">org-mode source</a></p>
+<p>Org-mode version = 9.0.7</p>
+
+    </div>
+  </div>
+</article>
+
+
+
+<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+
+
+<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2017/07/08/Adding-numerical-methods-to-emacs-with-dynamic-modules">Discuss on Twitter</a>
+
+  <hr class="interblog" />
+  
+
+
+
+
+
+<article>
+  <div class="blog_post">
+    <header>
       <div id="Adding-keymaps-to-src-blocks-via-org-font-lock-hook"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/06/10/Adding-keymaps-to-src-blocks-via-org-font-lock-hook/" rel="bookmark" title="Permanent Link to Adding keymaps to src blocks via org-font-lock-hook">Adding keymaps to src blocks via org-font-lock-hook</a></h2>
       <p><small><span class="blog_post_date">Posted June 10, 2017 at 03:27 PM</span> | categories:
@@ -327,7 +579,7 @@ Thanks to those brave people alpha-testing this and helping refine the idea!
       <div id="Org-mode-and-ipython-enhancements-in-scimax"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/05/26/Org-mode-and-ipython-enhancements-in-scimax/" rel="bookmark" title="Permanent Link to Org-mode and ipython enhancements in scimax">Org-mode and ipython enhancements in scimax</a></h2>
       <p><small><span class="blog_post_date">Posted May 26, 2017 at 04:54 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/orgmode/'>orgmode</a>, <a href='/blog/category/ipython/'>ipython</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/ipython/'>ipython</a>, <a href='/blog/category/orgmode/'>orgmode</a></span> | tags: 
       </small></p>
     </header>
     <div class="post_prose">
@@ -781,7 +1033,7 @@ Occasionally you will run into an issue. You can clear the queue with <code>org-
       <div id="A-partial-symbolic-numeric-solver-in-emacs-lisp"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/05/21/A-partial-symbolic-numeric-solver-in-emacs-lisp/" rel="bookmark" title="Permanent Link to A partial symbolic numeric solver in emacs-lisp">A partial symbolic numeric solver in emacs-lisp</a></h2>
       <p><small><span class="blog_post_date">Posted May 21, 2017 at 11:33 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/math/'>math</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/emacs-lisp/'>emacs-lisp</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/emacs-lisp/'>emacs-lisp</a>, <a href='/blog/category/math/'>math</a></span> | tags: 
       </small></p>
     </header>
     <div class="post_prose">
@@ -1027,7 +1279,7 @@ This is an emacs-lisp implementation of Newton's method. It is a simple implemen
       <div id="A-new-and-improved-Emacs-gnuplot-DSL"></div>
       <h2 class="blog_post_title"><a href="/blog/2017/05/05/A-new-and-improved-Emacs-gnuplot-DSL/" rel="bookmark" title="Permanent Link to A new and improved Emacs gnuplot DSL">A new and improved Emacs gnuplot DSL</a></h2>
       <p><small><span class="blog_post_date">Posted May 05, 2017 at 10:26 AM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/lisp/'>lisp</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/plotting/'>plotting</a></span> | tags: 
+        <span class="blog_post_categories"><a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/lisp/'>lisp</a>, <a href='/blog/category/plotting/'>plotting</a></span> | tags: 
       <p><small><span class="blog_post_date">Updated February 04, 2018 at 05:07 PM</span></small>
       </small></p>
     </header>
@@ -1407,351 +1659,6 @@ The macro builds up an internal alist for the dot-names.
 <a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2017/05/05/A-new-and-improved-Emacs-gnuplot-DSL">Discuss on Twitter</a>
 
   <hr class="interblog" />
-  
-
-
-
-
-
-<article>
-  <div class="blog_post">
-    <header>
-      <div id="An-emacs-lisp-dsl-for-gnuplot"></div>
-      <h2 class="blog_post_title"><a href="/blog/2017/05/04/An-emacs-lisp-dsl-for-gnuplot/" rel="bookmark" title="Permanent Link to An emacs-lisp dsl for gnuplot">An emacs-lisp dsl for gnuplot</a></h2>
-      <p><small><span class="blog_post_date">Posted May 04, 2017 at 07:33 PM</span> | categories:
-        <span class="blog_post_categories"><a href='/blog/category/lisp/'>lisp</a>, <a href='/blog/category/emacs/'>emacs</a>, <a href='/blog/category/plotting/'>plotting</a></span> | tags: 
-      </small></p>
-    </header>
-    <div class="post_prose">
-      
-
-
-
-<div id="table-of-contents">
-<h2>Table of Contents</h2>
-<div id="text-table-of-contents">
-<ul>
-<li><a href="#orge24f7e9">1. Embedding Python or gnuplot</a></li>
-<li><a href="#orgfe7800b">2. An alternative approach using a DSL</a></li>
-<li><a href="#orga773a9d">3. Summary</a></li>
-</ul>
-</div>
-</div>
-<p>
-Plotting is a pretty general feature we need in scientific work. In this post we examine a way we could get at least minimal plotting into Emacs-lisp with as lispy a syntax as reasonable.
-</p>
-
-<div id="outline-container-orge24f7e9" class="outline-2">
-<h2 id="orge24f7e9"><span class="section-number-2">1</span> Embedding Python or gnuplot</h2>
-<div class="outline-text-2" id="text-1">
-<p>
-With org-mode we can fluidly integrate many languages in one document. That is not the goal here, where I want to integrate plotting into a program. You certainly could go this route to embed python programs in your lisp programs for plotting.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">python</span> (code)
-  (<span style="color: #0000FF;">let*</span> ((temporary-file-directory <span style="color: #008000;">"."</span>)
-        (tmpfile (make-temp-file <span style="color: #008000;">"py-"</span> nil <span style="color: #008000;">".py"</span>)))
-    (<span style="color: #0000FF;">with-temp-file</span> tmpfile
-      (insert code))
-    (shell-command-to-string (format <span style="color: #008000;">"python %s"</span> tmpfile))))
-</pre>
-</div>
-
-<p>
-Here is that function in action.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(python <span style="color: #008000;">"import matplotlib.pyplot as plt</span>
-<span style="color: #008000;">import numpy as np</span>
-<span style="color: #008000;">x = np.linspace(0, 1)</span>
-<span style="color: #008000;">y = np.exp(x)</span>
-<span style="color: #008000;">plt.plot(x, y, label='data')</span>
-<span style="color: #008000;">plt.title('A Title')</span>
-<span style="color: #008000;">plt.xlim([0, 1])</span>
-<span style="color: #008000;">plt.ylim([1, 2.75])</span>
-<span style="color: #008000;">plt.xlabel('x')</span>
-<span style="color: #008000;">plt.ylabel('y')</span>
-<span style="color: #008000;">plt.legend()</span>
-<span style="color: #008000;">plt.savefig('figpy.png')"</span>)
-</pre>
-</div>
-
-<p>
-And the corresponding figure:
-<img src="/media/figpy.png"> 
-</p>
-
-<p>
-This is irritating for a few reasons. One is it is annoying to write python programs in string form; you don't get much editor support for indentation or syntax highlighting, and you have to be careful with quotes. It is not that easy to switch that snippet to Python mode either. You are pretty limited in writing programs that expand and modify the code too. Basically you have to do that all by string manipulation.
-</p>
-
-<p>
-Along these lines, you could imagine a gnuplot function. It ends up not being much better.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defun</span> <span style="color: #006699;">gnuplot</span> (cmds)
-  (<span style="color: #0000FF;">let*</span> ((temporary-file-directory <span style="color: #008000;">"."</span>)
-         (cmdfile (make-temp-file <span style="color: #008000;">"gnuplot-cmds-"</span> nil <span style="color: #008000;">".gpl"</span>))
-         (shellcmd (format <span style="color: #008000;">"gnuplot --persist -c \"%s\""</span> cmdfile)))
-    (<span style="color: #0000FF;">with-temp-file</span> cmdfile
-      (insert cmds))
-    (shell-command shellcmd)
-    (delete-file cmdfile)))
-</pre>
-</div>
-
-<p>
-You use this the same way.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">gnuplot</span> <span style="color: #008000;">"set title \"Simple Plots\" font \",20\"</span>
-<span style="color: #008000;">set key left box</span>
-<span style="color: #008000;">set samples 50</span>
-<span style="color: #008000;">set style data points</span>
-<span style="color: #008000;">set terminal png</span>
-<span style="color: #008000;">set output \"gnuplot.png\"</span>
-
-<span style="color: #008000;">plot [-10:10] sin(x),atan(x),cos(atan(x))"</span>)
-</pre>
-</div>
-
-<p>
-<img src="/media/gnuplot.png"> 
-</p>
-
-<p>
-It has the same limitations as our string-based Python solution. The benefit of them is the native command structure for Python or gnuplot is used, so anything they can do you can too.
-</p>
-</div>
-</div>
-
-<div id="outline-container-orgfe7800b" class="outline-2">
-<h2 id="orgfe7800b"><span class="section-number-2">2</span> An alternative approach using a DSL</h2>
-<div class="outline-text-2" id="text-2">
-<p>
-As an alternative, we consider here a domain specific language (DSL) that maps onto gnuplot. Suppose we could do this instead.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">gnuplot</span>
- (set terminal png)
- (set output <span style="color: #008000;">"test.png"</span>)
- (set title <span style="color: #008000;">"Simple Plots"</span> font <span style="color: #008000;">",20"</span>)
- (set key left box)
- (set samples 50)
- (set style data points)
-
- (<span style="color: #0000FF;">plot</span> [-10:10] sin\(x\) \,atan\(x\) \,cos\(atan\(x\)\)))
-</pre>
-</div>
-
-<p>
-Here is the figure from that code. The most annoying part of this is in the plot function we have to escape all the parentheses and commas, but otherwise it looks pretty lispy. The output of that program is the gnuplot commands that were generated for making the plot.
-<img src="/media/test.png"> 
-</p>
-
-<p>
-This retains a lot of benefits of programming in lisp. <code>gnuplot</code> has to be a macro though because we do not want to evaluate the s-expressions inside as lisp. For starters they just look lispy, I don't actually use them as lisp at all. Instead we transform them to the gnuplot code.
-</p>
-
-<p>
-In the following code, I will develop the gnuplot macro. It has some sticky and tricky points, and it is not obvious it will support all the features of gnuplot, but I learned a lot doing it that I will share here.
-</p>
-
-<p>
-Starting with a simple form inside the macro, I wanted to convert (set output "test.png") to "set output \"test.png\"". For this DSL, I want to treat every symbol in the form as if it should be turned into a string, anything that is a string should be quoted, and anything that is in parentheses (i.e. it passes listp) should be evaluated and converted to a string. Then all those strings should be joined by spaces. Here is a macro that does that (adapted from a solution at <a href="https://emacs.stackexchange.com/questions/32558/eval-some-arguments-in-a-macro/32570?noredirect=1#comment50186_32570">https://emacs.stackexchange.com/questions/32558/eval-some-arguments-in-a-macro/32570?noredirect=1#comment50186_32570</a>).
-</p>
-
-<p>
-There are a couple of corner cases that are handled here. If the arg is a string, we quote it.  If the arg is not a symbol or string, then it is evaluated and converted to a string. Importantly, this is done in the run environment though, so we can inject variables into the gnuplot code.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defmacro</span> <span style="color: #006699;">gargs</span> (<span style="color: #6434A3;">&amp;rest</span> args)
-  <span style="color: #036A07;">"Convert symbols to strings, quote strings, and (expr) to what they evaluate to."</span>
-  `(s-join <span style="color: #008000;">" "</span> (list ,@(cl-mapcan
-                        (<span style="color: #0000FF;">lambda</span> (s)
-                          (list
-                           (<span style="color: #0000FF;">cond</span>
-                            ((symbolp s)
-                             (symbol-name s))
-                            ((stringp s)
-                             (format <span style="color: #008000;">"\"%s\""</span> s))
-                            (t
-                             `(<span style="color: #0000FF;">with-output-to-string</span>
-                                (princ ,s))))))
-                        args))))
-</pre>
-</div>
-
-<p>
-Here are a few examples of how it works. The loop is just to get a vertical table in org-mode for the blog post.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">loop</span> for s in
-      (list (<span style="color: #0000FF;">gargs</span> set key title <span style="color: #008000;">"before fit"</span> size \, (+ 5 5))
-            (<span style="color: #0000FF;">gargs</span> set title <span style="color: #008000;">"red"</span>)
-            (<span style="color: #0000FF;">gargs</span> set yrange [0:*])
-            (<span style="color: #0000FF;">gargs</span> <span style="color: #008000;">"5"</span>)
-            (<span style="color: #0000FF;">let</span> ((x 6)) (<span style="color: #0000FF;">gargs</span> (identity x)))
-            (<span style="color: #0000FF;">gargs</span> 'x)
-            (<span style="color: #0000FF;">gargs</span> '(x))
-            (<span style="color: #0000FF;">gargs</span> set label 1 <span style="color: #008000;">"plot for [n=2:10] sin(x*n)/n"</span> at graph .95\, graph .92 right))
-      collect
-      (list s))
-</pre>
-</div>
-
-<p>
-A limitation of this is that we either have quote things like parentheses, commas, semi-colons and sometimes square brackets:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">gargs</span> plot for [n=2:10] sin\(x*n\)/n notitle lw \(13-n\)/2)
-</pre>
-</div>
-
-<p>
-Or we have to use the string form instead; we can always fall back to that.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">gargs</span> <span style="color: #008000;">"plot for [n=2:10] sin(x*n)/n notitle lw (13-n)/2"</span>)
-</pre>
-</div>
-
-<p>
-The macro above will do the grunt work on each form in the gnuplot macro. Finally, for the gnuplot macro, I want to take all the forms, convert them to gnuplot commands, write them to a temporary file, and then run gnuplot on the file, and finally delete the temp file. I assume we start with a gui terminal so graphs pop up unless you change it in your macro body. Here is that macro. It returns the generated code so it easy to see if you got the right program.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">defmacro</span> <span style="color: #006699;">gnuplot</span> (<span style="color: #6434A3;">&amp;rest</span> forms)
-  (<span style="color: #0000FF;">let*</span> ((temporary-file-directory <span style="color: #008000;">"."</span>)
-         (cmdfile (make-temp-file <span style="color: #008000;">"gnuplot-cmds-"</span> nil <span style="color: #008000;">".gpl"</span>))
-         (shellcmd (format <span style="color: #008000;">"gnuplot --persist -c \"%s\""</span> cmdfile))
-         (cmd-string))
-    `(<span style="color: #0000FF;">let</span> ((cmd-string (s-join <span style="color: #008000;">"\n"</span> (list ,@(mapcar (<span style="color: #0000FF;">lambda</span> (x)
-                                                      (<span style="color: #0000FF;">if</span> (stringp x)
-                                                          x
-                                                        `(<span style="color: #0000FF;">gargs</span> ,@x)))
-                                                    forms)))))
-       (<span style="color: #0000FF;">with-temp-file</span> ,cmdfile
-         (insert <span style="color: #008000;">"set terminal qt\n"</span>)
-         (insert cmd-string)
-         (<span style="color: #0000FF;">setq</span> cmd-string (buffer-string)))
-       (shell-command ,shellcmd)
-       (delete-file ,cmdfile)
-       cmd-string)))
-</pre>
-</div>
-
-<p>
-Here is a figure adapted from <a href="http://gnuplot.sourceforge.net/demo/iterate.html">http://gnuplot.sourceforge.net/demo/iterate.html</a>. I use the string form for the last line to avoid escaping all the special characters.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">gnuplot</span>
- (set terminal png)
- (set output <span style="color: #008000;">"iteration.png"</span>)
- (set title <span style="color: #008000;">"Iteration within plot command"</span>)
- (set xrange [0:3])
- (set label 1 <span style="color: #008000;">"plot for [n=2:10] sin(x*n)/n"</span> at graph .95\, graph .92 right)
- <span style="color: #008000;">"plot for [n=2:10] sin(x*n)/n notitle lw (13-n)/2"</span>)
-</pre>
-</div>
-
-<p>
-Here is the resulting figure.
-</p>
-
-<p>
-<img src="/media/iteration.png"> 
-</p>
-
-<p>
-That is overall pretty sweet. There is a little dissonance between the strings, escaped comma, etc.., and it is not terribly ideal for integrating with regular lisp code inside the macro yet. That seems to be a feature of my choice to use (expr) as the syntax to evaluate a form. It means you have to do some gymnastics to get some s-expressions into the graphs. For example below I use a couple of variables to inject values. To get a string I have to use format to add the extra quotes, and to get the number I have to use the identity function. I also used escaped characters in the last line to see the difference.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((ts <span style="color: #008000;">"Iteration and substitution"</span>)
-      (x0 0)
-      (xf 3)
-      (g1 0.95)
-      (g2 0.92))
-  (<span style="color: #0000FF;">gnuplot</span>
-   (set terminal png)
-   (set output <span style="color: #008000;">"iteration-2.png"</span>)
-   (set title (format <span style="color: #008000;">"\"%s\""</span> ts))
-   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Note the escaped square brackets</span>
-   (set xrange \[ (identity x0) : (identity xf) \])
-   (set label 1 <span style="color: #008000;">"plot for [n=2:10] sin(x*n)/n"</span> at graph (identity g1) \, graph (identity g2) right)
-   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">note here I escaped the parentheses!</span>
-   (<span style="color: #0000FF;">plot</span> for [n=2:10] sin\(x*n\)/n notitle lw \(13-n\)/2)))
-</pre>
-</div>
-
-
-<p>
-<img src="/media/iteration-2.png"> 
-</p>
-</div>
-</div>
-
-
-
-<div id="outline-container-orga773a9d" class="outline-2">
-<h2 id="orga773a9d"><span class="section-number-2">3</span> Summary</h2>
-<div class="outline-text-2" id="text-3">
-<p>
-For the simple plots here, my DSL worked ok. There is a tradeoff in the syntax I chose that has some consequences. We cannot use the values of symbols in this DSL without resorting to hackery like (identity sym). We also cannot use the infix notation for sin(x) without quoting it as "sin(x)" or escaping the parentheses, e.g. <code>sin\(x\)</code>, likewise square brackets which lisp will read  as a vector. Commas have to be escaped, which is probably an emacs-lisp issue. To address that would require a reader macro which emacs-lisp does not have great support for. I am calling this experiment done for now. I have another syntax idea to try out another day.
-</p>
-
-<p>
-Here is a preview of what it might look like. It is basically the same but I reuse keywords to indicate that :x0 should be replaced by whatever x0 evaluates to, and (: - 1 0.05) should be evaluated. The special character escaping is still there of course, since that is a limitation of the emacs lisp reader I think. I might try using x0? and (? - 1 0.05) instead. That might be less confusing. I like that the keywords are syntax highlighted for free though, and you can't use them for anything else.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(<span style="color: #0000FF;">let</span> ((ts <span style="color: #008000;">"Iteration and substitution"</span>)
-      (x0 0)
-      (xf 3)
-      (g2 0.92))
-  (<span style="color: #0000FF;">gnuplot</span>
-   (set terminal png)
-   (set output <span style="color: #008000;">"iteration-2.png"</span>)
-   (set title <span style="color: #006FE0;">:ts</span>)
-   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">Note the escaped square brackets</span>
-   (set xrange \[ <span style="color: #006FE0;">:x0</span> : <span style="color: #006FE0;">:xf</span> \])
-   (set label 1 <span style="color: #008000;">"plot for [n=2:10] sin(x*n)/n"</span> at graph (<span style="color: #0000FF;">:</span> - 1 0.05) \, graph <span style="color: #006FE0;">:g2</span> right)
-   <span style="color: #8D8D84;">;; </span><span style="color: #8D8D84; font-style: italic;">note here I escaped the parentheses!</span>
-   (<span style="color: #0000FF;">plot</span> for [n=2:10] sin(x*n)/n notitle lw (13-n)/2)))
-</pre>
-</div>
-
-<p>
-This has the benefit of a little cleaner injection of variables and selective execution of parenthetical expressions, we will just ignore any that don't pass (= (car expr) :). That May not work for sin((: + 1 1) x) though, unless I escape the outer parentheses too.</p>
-</div>
-</div>
-<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
-<p><a href="/org/2017/05/04/An-emacs-lisp-dsl-for-gnuplot.org">org-mode source</a></p>
-<p>Org-mode version = 9.0.5</p>
-
-    </div>
-  </div>
-</article>
-
-
-
-<a href="https://twitter.com/share" class="twitter-share-button" data-via="johnkitchin">Share on Twitter</a> <script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
-
-
-<a href="https://twitter.com/search?q=https://kitchingroup.cheme.cmu.edu/blog/2017/05/04/An-emacs-lisp-dsl-for-gnuplot">Discuss on Twitter</a>
-
-  <hr class="interblog" />
  <a href="../20">« Previous Page</a>
   --  
  <a href="../22">Next Page »</a>
@@ -1793,11 +1700,11 @@ This has the benefit of a little cleaner injection of variables and selective ex
   <section>
     <h1 class="post_header_gradient theme_font">Latest Posts</h1>
     <ul>
+      <li><a href="/blog/2025/02/04/New-publication-Integrated-systems-To-Atoms-S2A-Framework-for-Designing-Resilient-and-Efficient-Hydrogen-Infrastructure-Solutions/">New publication - Integrated systems-To-Atoms (S2A) Framework for Designing Resilient and Efficient Hydrogen Infrastructure Solutions</a></li>
       <li><a href="/blog/2025/02/03/New-publication-Multiscale-Optimization-of-Formic-Acid-Dehydrogenation-Process-via-Linear-Model-Decision-Tree-Surrogates/">New publication - Multiscale Optimization of Formic Acid Dehydrogenation Process via Linear Model Decision Tree Surrogates</a></li>
       <li><a href="/blog/2025/02/02/New-publication-Enumeration-of-surface-site-nuclearity-and-shape-in-a-database-of-intermetallic-low-index-surface-facets/">New publication - Enumeration of surface site nuclearity and shape in a database of intermetallic low-index surface facets</a></li>
       <li><a href="/blog/2025/02/01/New-publication-Improved-Uncertainty-Estimation-of-Graph-Neural-Network-Potentials-Using-Engineered-Latent-Space-Distance/">New publication - Improved Uncertainty Estimation of Graph Neural Network Potentials Using Engineered Latent Space Distance</a></li>
       <li><a href="/blog/2025/01/31/New-publication-AdsorbDiff-:-Adsorbate-Placement-via-Conditional-Denoising-Diffusion/">New publication - AdsorbDiff &#58; Adsorbate Placement via Conditional Denoising Diffusion</a></li>
-      <li><a href="/blog/2025/01/30/New-publication-Unifying-theory-of-electronic-descriptors-of-metal-surfaces-upon-perturbation/">New publication - Unifying theory of electronic descriptors of metal surfaces upon perturbation</a></li>
     </ul>
   </section>
 
