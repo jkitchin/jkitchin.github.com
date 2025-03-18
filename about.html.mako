@@ -26,31 +26,16 @@ Parking: Park in the East Campus Garage. The following link contains a Google ma
 
 View [Carnegie Mellon University](http://maps.google.com/maps/ms?hl=en&ie=UTF8&msa=0&ll=40.4452,-79.941866&spn=0.006957,0.013733&t=h&msid=108165924109967550014.000467c27882aeba0e709&source=embed) in a larger map with directions to my office.
 
+Current Group
+-------------
 
-Current postdocs
-----------------
-
-    No positions available
-
-Current PhD students
---------------------
-
-  - Jenny Zhan
-  - Yilin Yang
-  - Mingjie Liu
-  - Maya Bhat
-
-Current Master's students
--------------------------
-
-   No positions available
-
-
-Current Undergraduates
------------------------
-
-  - Chetan Chilkunda
-
+  - Kareem Abdelmaqsoud (PhD 2022-present, co-advised with Andy Gellman)
+  - Ethan Sunshine* (PhD 2022-present, co-advised with Carl Laird)
+  - Carolina Colombo (PhD 2022-present, co-advised with Carl Laird)
+  - Suraj Botcha (MS, 2024-present)
+  - Eesha Kulkarni (MS, 2024-present)
+  - Naixin Lyu (MS, 2024-present)
+  - Shreya Pagaria (MS, 2024-present)
 
 Former Group members
 ------------------------
@@ -99,6 +84,20 @@ Former Group members
   - Gautham Swamina (M.S. 2018-2019). co-advised by Lynn Walker
   - Ankit Gautam (M.S. 2019-2020)
   - Dennis Loevlie (M.S. 2019-2020)
+  - Luyang Liu (2021-2022) co-advised with Liz Wayne
+  - Anayna Srivastava (2022-2023)
+  - Ankit Gautam (2019-2020)
+  - Karan Waghela (2022-2023) co-advised with Fernando Lima
+  - Unnatti Sharma (2024)
+  - Ni (Jenny) Zhan (PhD 2017-2022)
+  - Mingjie Liu (PhD 2017-2022)
+  - Yilin Yang (PhD 2017-2021)
+  - Maya Bhat (PhD 2019-2023)
+  - Kirby Broderick* (PhD 2022-2024)
+  - Rohan (Yuri) Sanspeur* (PhD 2022-2024)
+  - Brook Wander* (PhD 2022-2024)
+  - Adeesh Kolluru* (PhD 2022-2024)
+  - Joe Musielewicz* (PhD 2022-2025)
 
 
 
