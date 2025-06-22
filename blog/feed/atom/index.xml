@@ -8,7 +8,7 @@
   <title type="text">The Kitchin Research Group</title>
   <subtitle type="text">Chemical Engineering at Carnegie Mellon University</subtitle>
 
-  <updated>2025-06-17T17:25:43Z</updated>
+  <updated>2025-06-22T15:15:14Z</updated>
   <generator uri="http://blogofile.com/">Blogofile</generator>
 
   <link rel="alternate" type="text/html" href="https://kitchingroup.cheme.cmu.edu/blog" />
@@ -19,13 +19,220 @@
       <name></name>
       <uri>https://kitchingroup.cheme.cmu.edu/blog</uri>
     </author>
+    <title type="html"><![CDATA[Lies, damn lies, statistics and Bayesian statistics]]></title>
+    <link rel="alternate" type="text/html" href="https://kitchingroup.cheme.cmu.edu/blog/2025/06/22/Lies-damn-lies-statistics-and-Bayesian-statistics" />
+    <id>https://kitchingroup.cheme.cmu.edu/blog/2025/06/22/Lies-damn-lies-statistics-and-Bayesian-statistics</id>
+    <updated>2025-06-22T11:14:23Z</updated>
+    <published>2025-06-22T11:14:23Z</published>
+    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="machine-learning" />
+    <summary type="html"><![CDATA[Lies, damn lies, statistics and Bayesian statistics]]></summary>
+    <content type="html" xml:base="https://kitchingroup.cheme.cmu.edu/blog/2025/06/22/Lies-damn-lies-statistics-and-Bayesian-statistics"><![CDATA[
+
+
+&lt;div id="table-of-contents" role="doc-toc"&gt;
+&lt;h2&gt;Table of Contents&lt;/h2&gt;
+&lt;div id="text-table-of-contents" role="doc-toc"&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href="#orgf1f6c3a"&gt;1. The data&lt;/a&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href="#org5450f25"&gt;1.1. GPR with a RBF kernel&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#org7d62843"&gt;1.2. a better kernel solves these issues&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;a href="#orgd2a3f0f"&gt;2. Summary&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;p&gt;
+This post on LinkedIn (&lt;a href="https://www.linkedin.com/posts/activity-7341134401705041920-gaEd?utm_source=share&amp;amp;utm_medium=member_desktop&amp;amp;rcm=ACoAAAfqmO0BzyXpJw8w7yyHwkoMSiaKfGg-sKI"&gt;https://www.linkedin.com/posts/activity-7341134401705041920-gaEd?utm_source=share&amp;amp;utm_medium=member_desktop&amp;amp;rcm=ACoAAAfqmO0BzyXpJw8w7yyHwkoMSiaKfGg-sKI&lt;/a&gt;) reminded me of a quip I often make of "Lies, damn lies, statistics, and Bayesian statistics". I am frequently skeptical of claims about "Bayesian something something", especially when the claim is about uncertainty quantification. That skepticism comes from practical experience of mine that "Bayesian something something" is rarely as well behaved and informative as advertised (in my hands of course).
+&lt;/p&gt;
+
+&lt;p&gt;
+To illustrate, I will use some noisy, 1d data from a Lennard-Jones function and Gaussian process regression to fit the data.
+&lt;/p&gt;
+&lt;div id="outline-container-orgf1f6c3a" class="outline-2"&gt;
+&lt;h2 id="orgf1f6c3a"&gt;&lt;span class="section-number-2"&gt;1.&lt;/span&gt; The data&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-1"&gt;
+&lt;p&gt;
+We get our data by sampling a Lennard-Jones function, adding some noise, and removing a gap in the data. The gap in the middle might be classically considered an interpolation region.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF; font-weight: bold;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #0000FF; font-weight: bold;"&gt;as&lt;/span&gt; np
+&lt;span style="color: #0000FF; font-weight: bold;"&gt;import&lt;/span&gt; matplotlib.pyplot &lt;span style="color: #0000FF; font-weight: bold;"&gt;as&lt;/span&gt; plt
+
+&lt;span style="color: #BA36A5;"&gt;r&lt;/span&gt; = np.linspace(0.95, 3, 200)
+
+&lt;span style="color: #BA36A5;"&gt;eps&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;sig&lt;/span&gt; = 1, 1
+&lt;span style="color: #BA36A5;"&gt;y&lt;/span&gt; = 4 * eps * ((1 / r)**12 - (1 / r)**6) + np.random.normal(0, 0.03, size=r.shape)
+
+
+&lt;span style="color: #BA36A5;"&gt;ind&lt;/span&gt; = ((r &amp;gt; 1) &amp;amp; (r &amp;lt; 1.25)) | ((r &amp;gt; 2) &amp;amp; (r &amp;lt; 2.5))
+&lt;span style="color: #BA36A5;"&gt;_R&lt;/span&gt; = r[ind][:, &lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;]
+&lt;span style="color: #BA36A5;"&gt;_y&lt;/span&gt; = y[ind]
+plt.plot(_R, _y, &lt;span style="color: #008000;"&gt;'.'&lt;/span&gt;)
+plt.xlabel(&lt;span style="color: #008000;"&gt;'R'&lt;/span&gt;)
+plt.ylabel(&lt;span style="color: #008000;"&gt;'E'&lt;/span&gt;);
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+&lt;figure&gt;&lt;img src="/media/d53ba27c2f085871cd2832e3cf7a8256b00185dc.png"&gt;&lt;/figure&gt; 
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;div id="outline-container-org5450f25" class="outline-3"&gt;
+&lt;h3 id="org5450f25"&gt;&lt;span class="section-number-3"&gt;1.1.&lt;/span&gt; GPR with a RBF kernel&lt;/h3&gt;
+&lt;div class="outline-text-3" id="text-1-1"&gt;
+&lt;p&gt;
+The RBF kernel is the most standard kernel. It does an ok job fitting here, although I see evidence of overfitting (the wiggles are caused by the noise). You can reduce the overfitting by using a larger &lt;code&gt;alpha&lt;/code&gt; value in the gpr, but that requires you to know in advance how smooth it should be.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF; font-weight: bold;"&gt;from&lt;/span&gt; sklearn.gaussian_process &lt;span style="color: #0000FF; font-weight: bold;"&gt;import&lt;/span&gt; GaussianProcessRegressor
+&lt;span style="color: #0000FF; font-weight: bold;"&gt;from&lt;/span&gt; sklearn.gaussian_process.kernels &lt;span style="color: #0000FF; font-weight: bold;"&gt;import&lt;/span&gt; RBF, WhiteKernel
+&lt;span style="color: #BA36A5;"&gt;kernel&lt;/span&gt; = RBF() + WhiteKernel()
+&lt;span style="color: #BA36A5;"&gt;gpr&lt;/span&gt; = GaussianProcessRegressor(kernel=kernel,
+                               random_state=0, normalize_y=&lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;).fit(_R, _y)
+
+plt.plot(_R, _y, &lt;span style="color: #008000;"&gt;'b.'&lt;/span&gt;)
+plt.plot(r, y, &lt;span style="color: #008000;"&gt;'b.'&lt;/span&gt;, alpha=0.2)
+
+&lt;span style="color: #BA36A5;"&gt;yp&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;se&lt;/span&gt; = gpr.predict(r[:, &lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;], return_std=&lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;)
+plt.plot(r, yp)
+plt.plot(r, yp + 2 * se, &lt;span style="color: #008000;"&gt;'k--'&lt;/span&gt;, r, yp - 2 * se, &lt;span style="color: #008000;"&gt;'k--'&lt;/span&gt;);
+plt.plot(_R, _y, &lt;span style="color: #008000;"&gt;'.'&lt;/span&gt;)
+plt.xlabel(&lt;span style="color: #008000;"&gt;'R'&lt;/span&gt;)
+plt.ylabel(&lt;span style="color: #008000;"&gt;'E'&lt;/span&gt;);
+
+gpr.kernel_
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+RBF(length_scale=0.0773) + WhiteKernel(noise_level=0.00374)
+&lt;/pre&gt;
+
+&lt;p&gt;
+&lt;figure&gt;&lt;img src="/media/2157ad1d8cabe934b169557f729ee9af1d0d22e9.png"&gt;&lt;/figure&gt; 
+&lt;/p&gt;
+
+&lt;p&gt;
+The uncertainty here is primarily related to the model, i.e. it is constrained to be correct where there is data, but with no data, the model is not the right one.
+&lt;/p&gt;
+
+&lt;p&gt;
+The model does well in the region where there is data, but is qualitatively wrong in the gap (even though classically this would be considered interpolation), and overestimates the uncertainty in this region. The problem is the covariance kernel decays to 0 about two length scales away from the last point, which means there is no data to inform what the weights in that region should look like.  That causes the model to revert to the mean of the data.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;gpr.predict([[1.8]]), gpr.predict([[3.0]]), np.mean(_y)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides"&gt;
+
+
+&lt;colgroup&gt;
+&lt;col  class="org-left" /&gt;
+
+&lt;col  class="org-left" /&gt;
+
+&lt;col  class="org-left" /&gt;
+
+&lt;col  class="org-left" /&gt;
+
+&lt;col  class="org-right" /&gt;
+&lt;/colgroup&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td class="org-left"&gt;array&lt;/td&gt;
+&lt;td class="org-left"&gt;((-0.28266893))&lt;/td&gt;
+&lt;td class="org-left"&gt;array&lt;/td&gt;
+&lt;td class="org-left"&gt;((-0.28791865))&lt;/td&gt;
+&lt;td class="org-right"&gt;-0.2879186522487767&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;
+This kernel simply cannot be used for extrapolation, or any predictions more than about two length scales away from the nearest point. Calling it Bayesian doesn't make it better. For similar reasons, this model will not work well outside the data range.
+&lt;/p&gt;
+
+&lt;p&gt;
+A practical person would still consider using this model, and might even rely on the uncertainty being too large to identify regions of low reliability.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div id="outline-container-org7d62843" class="outline-3"&gt;
+&lt;h3 id="org7d62843"&gt;&lt;span class="section-number-3"&gt;1.2.&lt;/span&gt; a better kernel solves these issues&lt;/h3&gt;
+&lt;div class="outline-text-3" id="text-1-2"&gt;
+&lt;p&gt;
+Not all is lost, if we know more. In this case we can construct a kernel that reflects our understanding that the data came from a Lennard Jones like interaction model. You can construct kernels by adding and multiplying kernels. Here we consider a linear kernel, the &lt;code&gt;DotProduct&lt;/code&gt; kernel, and construct a new kernel that is a sum of the linear kernel to the 12&lt;sup&gt;th&lt;/sup&gt; power, a linear kernel to the 6&lt;sup&gt;th&lt;/sup&gt; power, and a &lt;code&gt;WhiteKernel&lt;/code&gt; for the noise. It is a little subtle that this kernel should work in \(1 / r\) space, so in addition to kernel engineering, we also do feature engineering.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF; font-weight: bold;"&gt;from&lt;/span&gt; sklearn.gaussian_process.kernels &lt;span style="color: #0000FF; font-weight: bold;"&gt;import&lt;/span&gt; DotProduct
+
+&lt;span style="color: #BA36A5;"&gt;kernel&lt;/span&gt; = DotProduct()**12 + DotProduct()**6 +  WhiteKernel()
+&lt;span style="color: #BA36A5;"&gt;gpr&lt;/span&gt; = GaussianProcessRegressor(kernel=kernel, normalize_y=&lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;).fit(1 / _R, _y)
+
+plt.plot(_R, _y, &lt;span style="color: #008000;"&gt;'b.'&lt;/span&gt;)
+plt.plot(r, y, &lt;span style="color: #008000;"&gt;'b.'&lt;/span&gt;, alpha=0.2)
+
+
+&lt;span style="color: #BA36A5;"&gt;yp&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;se&lt;/span&gt; = gpr.predict(1 / r[:, &lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;], return_std=&lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;)
+plt.plot(r, yp)
+plt.plot(r, yp + 2 * se, &lt;span style="color: #008000;"&gt;'k--'&lt;/span&gt;, r, yp - 2 * se, &lt;span style="color: #008000;"&gt;'k--'&lt;/span&gt;);
+
+plt.xlabel(&lt;span style="color: #008000;"&gt;'R'&lt;/span&gt;)
+plt.ylabel(&lt;span style="color: #008000;"&gt;'E'&lt;/span&gt;);
+
+gpr.kernel_
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+DotProduct(sigma_0=0.157) ** 12 + DotProduct(sigma_0=0.991) ** 6 + WhiteKernel(noise_level=0.00641)
+&lt;/pre&gt;
+
+&lt;p&gt;
+&lt;figure&gt;&lt;img src="/media/366a4d22ea40b1ec3b8fec4411230af7db8713a2.png"&gt;&lt;/figure&gt; 
+&lt;/p&gt;
+
+&lt;p&gt;
+Note that this GPR does fine in the gap, including the right level of uncertainty there. This model is better because we used the kernel to constrain what forms the model can have. This model actually extrapolates correctly outside the data. It is worth noting that although this model has great predictive and UQ properties, it does not tell us anything about the values of &amp;epsilon; and &amp;sigma; in the Lennard Jones model. Although we might say the kernel is physics-based, i.e. it is based on the relevant features and equation, it does not have physical parameters in it.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div id="outline-container-orgd2a3f0f" class="outline-2"&gt;
+&lt;h2 id="orgd2a3f0f"&gt;&lt;span class="section-number-2"&gt;2.&lt;/span&gt; Summary&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-2"&gt;
+&lt;p&gt;
+Naive use of GPR can provide useful models when you have enough data, but these models likely do not accurately capture uncertainty outside that data, nor is it likely they are reliable in extrapolation. It is possible to do better than this, when you know what to do. Through feature and kernel engineering, you can sometimes create situations where the problem essentially becomes linear regression, where a simple linear kernel is what you want, or you develop a kernel that represents the underlying model. Kernel engineering is generally hard, with limited opportunities to be flexible. See &lt;a href="https://www.cs.toronto.edu/~duvenaud/cookbook/"&gt;https://www.cs.toronto.edu/~duvenaud/cookbook/&lt;/a&gt; for examples of kernels and combining them.
+&lt;/p&gt;
+
+&lt;p&gt;
+You can see it is not adequate to say "we used Gaussian process regression". That is about as informative as saying linear regression without identifying the features, or nonlinear regression and not saying what model. You have to be specific about the kernel, and thoughtful about how you know if a prediction is reliable or not. Just because you get an uncertainty prediction doesn't mean its right.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;p&gt;Copyright (C) 2025 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
+&lt;p&gt;&lt;a href="/org/2025/06/22/Lies,-damn-lies,-statistics-and-Bayesian-statistics.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Org-mode version = 9.8-pre&lt;/p&gt;]]></content>
+  </entry>
+  <entry>
+    <author>
+      <name></name>
+      <uri>https://kitchingroup.cheme.cmu.edu/blog</uri>
+    </author>
     <title type="html"><![CDATA[New Publication - Solving an inverse problem with generative models]]></title>
     <link rel="alternate" type="text/html" href="https://kitchingroup.cheme.cmu.edu/blog/2025/06/17/New-Publication-Solving-an-inverse-problem-with-generative-models" />
     <id>https://kitchingroup.cheme.cmu.edu/blog/2025/06/17/New-Publication-Solving-an-inverse-problem-with-generative-models</id>
     <updated>2025-06-17T13:24:43Z</updated>
     <published>2025-06-17T13:24:43Z</published>
-    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="publication" />
     <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="news" />
+    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="publication" />
     <summary type="html"><![CDATA[New Publication - Solving an inverse problem with generative models]]></summary>
     <content type="html" xml:base="https://kitchingroup.cheme.cmu.edu/blog/2025/06/17/New-Publication-Solving-an-inverse-problem-with-generative-models"><![CDATA[
 
@@ -86,8 +293,8 @@ Inverse problems—where we aim to find inputs that produce a desired output—a
     <id>https://kitchingroup.cheme.cmu.edu/blog/2025/05/07/New-publication-The-Evolving-Role-of-Programming-and-Llms-in-the-Development-of-Self-Driving-Laboratories</id>
     <updated>2025-05-07T07:00:01Z</updated>
     <published>2025-05-07T06:58:27Z</published>
-    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="publication" />
     <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="news" />
+    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="publication" />
     <summary type="html"><![CDATA[New publication - The Evolving Role of Programming and Llms in the Development of Self-Driving Laboratories]]></summary>
     <content type="html" xml:base="https://kitchingroup.cheme.cmu.edu/blog/2025/05/07/New-publication-The-Evolving-Role-of-Programming-and-Llms-in-the-Development-of-Self-Driving-Laboratories"><![CDATA[
 
@@ -134,8 +341,8 @@ In this paper, I introduce Claude-Light, a lightweight self-driving lab prototyp
     <id>https://kitchingroup.cheme.cmu.edu/blog/2025/04/11/New-publication-A-Classification-based-Methodology-for-the-Estimation-of-Binary-Surfactant-Critical-Micelle-Concentrations</id>
     <updated>2025-04-11T09:27:37Z</updated>
     <published>2025-04-11T09:27:37Z</published>
-    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="publication" />
     <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="news" />
+    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="publication" />
     <summary type="html"><![CDATA[New publication - A Classification-based Methodology for the Estimation of Binary Surfactant Critical Micelle Concentrations]]></summary>
     <content type="html" xml:base="https://kitchingroup.cheme.cmu.edu/blog/2025/04/11/New-publication-A-Classification-based-Methodology-for-the-Estimation-of-Binary-Surfactant-Critical-Micelle-Concentrations"><![CDATA[
 
@@ -183,8 +390,8 @@ In our latest paper, we developed a high-throughput method to efficiently determ
     <id>https://kitchingroup.cheme.cmu.edu/blog/2025/03/17/New-publication-CatTsunami-Accelerating-Transition-State-Energy-Calculations-With-Pretrained-Graph-Neural-Networks</id>
     <updated>2025-03-17T21:06:55Z</updated>
     <published>2025-03-17T20:58:15Z</published>
-    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="publication" />
     <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="news" />
+    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="publication" />
     <summary type="html"><![CDATA[New publication - CatTsunami Accelerating Transition State Energy Calculations With Pretrained Graph Neural Networks]]></summary>
     <content type="html" xml:base="https://kitchingroup.cheme.cmu.edu/blog/2025/03/17/New-publication-CatTsunami-Accelerating-Transition-State-Energy-Calculations-With-Pretrained-Graph-Neural-Networks"><![CDATA[
 
@@ -231,8 +438,8 @@ In this work, we tackled the challenge of accelerating catalyst discovery by foc
     <id>https://kitchingroup.cheme.cmu.edu/blog/2025/02/11/New-publication-Accessing-Numerical-Energy-Hessians-With-Graph-Neural-Network-Potentials-and-Their-Application-in-Heterogeneous-Catalysis</id>
     <updated>2025-02-11T07:48:57Z</updated>
     <published>2025-02-11T07:48:57Z</published>
-    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="publication" />
     <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="news" />
+    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="publication" />
     <summary type="html"><![CDATA[New publication - Accessing Numerical Energy Hessians With Graph Neural Network Potentials and Their Application in Heterogeneous Catalysis]]></summary>
     <content type="html" xml:base="https://kitchingroup.cheme.cmu.edu/blog/2025/02/11/New-publication-Accessing-Numerical-Energy-Hessians-With-Graph-Neural-Network-Potentials-and-Their-Application-in-Heterogeneous-Catalysis"><![CDATA[
 
@@ -280,8 +487,8 @@ The ability to calculate energy Hessians has long been a cornerstone of understa
     <id>https://kitchingroup.cheme.cmu.edu/blog/2025/02/05/New-publication-Beyond-the-Fourth-Paradigm-of-Modeling-in-Chemical-Engineering</id>
     <updated>2025-02-05T07:16:31Z</updated>
     <published>2025-02-05T07:16:31Z</published>
-    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="publication" />
     <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="news" />
+    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="publication" />
     <summary type="html"><![CDATA[New publication - Beyond the Fourth Paradigm of Modeling in Chemical Engineering]]></summary>
     <content type="html" xml:base="https://kitchingroup.cheme.cmu.edu/blog/2025/02/05/New-publication-Beyond-the-Fourth-Paradigm-of-Modeling-in-Chemical-Engineering"><![CDATA[
 
@@ -335,8 +542,8 @@ However, leveraging these tools requires a workforce skilled in ML, data science
     <id>https://kitchingroup.cheme.cmu.edu/blog/2025/02/04/New-publication-Integrated-systems-To-Atoms-S2A-Framework-for-Designing-Resilient-and-Efficient-Hydrogen-Infrastructure-Solutions</id>
     <updated>2025-02-04T07:19:06Z</updated>
     <published>2025-02-04T07:19:06Z</published>
-    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="publication" />
     <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="news" />
+    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="publication" />
     <summary type="html"><![CDATA[New publication - Integrated systems-To-Atoms (S2A) Framework for Designing Resilient and Efficient Hydrogen Infrastructure Solutions]]></summary>
     <content type="html" xml:base="https://kitchingroup.cheme.cmu.edu/blog/2025/02/04/New-publication-Integrated-systems-To-Atoms-S2A-Framework-for-Designing-Resilient-and-Efficient-Hydrogen-Infrastructure-Solutions"><![CDATA[
 
@@ -387,8 +594,8 @@ The future of hydrogen infrastructure demands seamless integration of technology
     <id>https://kitchingroup.cheme.cmu.edu/blog/2025/02/03/New-publication-Multiscale-Optimization-of-Formic-Acid-Dehydrogenation-Process-via-Linear-Model-Decision-Tree-Surrogates</id>
     <updated>2025-02-03T06:50:27Z</updated>
     <published>2025-02-03T06:50:27Z</published>
-    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="publication" />
     <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="news" />
+    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="publication" />
     <summary type="html"><![CDATA[New publication - Multiscale Optimization of Formic Acid Dehydrogenation Process via Linear Model Decision Tree Surrogates]]></summary>
     <content type="html" xml:base="https://kitchingroup.cheme.cmu.edu/blog/2025/02/03/New-publication-Multiscale-Optimization-of-Formic-Acid-Dehydrogenation-Process-via-Linear-Model-Decision-Tree-Surrogates"><![CDATA[
 
@@ -443,8 +650,8 @@ Ethan M. Sunshine, Giovanna Bucci, Tanusree Chatterjeed, Shyam Deod, Victoria M.
     <id>https://kitchingroup.cheme.cmu.edu/blog/2025/02/02/New-publication-Enumeration-of-surface-site-nuclearity-and-shape-in-a-database-of-intermetallic-low-index-surface-facets</id>
     <updated>2025-02-02T07:49:45Z</updated>
     <published>2025-02-02T07:49:45Z</published>
-    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="publication" />
     <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="news" />
+    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="publication" />
     <summary type="html"><![CDATA[New publication - Enumeration of surface site nuclearity and shape in a database of intermetallic low-index surface facets]]></summary>
     <content type="html" xml:base="https://kitchingroup.cheme.cmu.edu/blog/2025/02/02/New-publication-Enumeration-of-surface-site-nuclearity-and-shape-in-a-database-of-intermetallic-low-index-surface-facets"><![CDATA[
 
@@ -481,59 +688,6 @@ Unnatti Sharma; Angela Nguyen; John Robert Kitchin; Zachary W Ulissi; Michael J 
 &lt;iframe title="Embed Player" src="https://play.libsyn.com/embed/episode/id/35111555/height/192/theme/modern/size/large/thumbnail/yes/custom-color/008080/time-start/00:00:00/hide-show/yes/hide-playlist/yes/hide-subscribe/yes/hide-share/yes/font-color/ffffff" height="192" width="100%" scrolling="no" allowfullscreen="" webkitallowfullscreen="true" mozallowfullscreen="true" oallowfullscreen="true" msallowfullscreen="true" style="border: none;"&gt;&lt;/iframe&gt;
 &lt;p&gt;Copyright (C) 2025 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
 &lt;p&gt;&lt;a href="/org/2025/02/02/New-publication---Enumeration-of-surface-site-nuclearity-and-shape-in-a-database-of-intermetallic-low-index-surface-facets.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
-&lt;p&gt;Org-mode version = 9.8-pre&lt;/p&gt;]]></content>
-  </entry>
-  <entry>
-    <author>
-      <name></name>
-      <uri>https://kitchingroup.cheme.cmu.edu/blog</uri>
-    </author>
-    <title type="html"><![CDATA[New publication - Improved Uncertainty Estimation of Graph Neural Network Potentials Using Engineered Latent Space Distance]]></title>
-    <link rel="alternate" type="text/html" href="https://kitchingroup.cheme.cmu.edu/blog/2025/02/01/New-publication-Improved-Uncertainty-Estimation-of-Graph-Neural-Network-Potentials-Using-Engineered-Latent-Space-Distance" />
-    <id>https://kitchingroup.cheme.cmu.edu/blog/2025/02/01/New-publication-Improved-Uncertainty-Estimation-of-Graph-Neural-Network-Potentials-Using-Engineered-Latent-Space-Distance</id>
-    <updated>2025-02-01T08:23:24Z</updated>
-    <published>2025-02-01T08:23:24Z</published>
-    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="publication" />
-    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="news" />
-    <summary type="html"><![CDATA[New publication - Improved Uncertainty Estimation of Graph Neural Network Potentials Using Engineered Latent Space Distance]]></summary>
-    <content type="html" xml:base="https://kitchingroup.cheme.cmu.edu/blog/2025/02/01/New-publication-Improved-Uncertainty-Estimation-of-Graph-Neural-Network-Potentials-Using-Engineered-Latent-Space-Distance"><![CDATA[
-
-
-&lt;p&gt;
-Machine learning has revolutionized materials discovery, but ensuring reliable predictions remains a challenge. The paper “Improved Uncertainty Estimation of Graph Neural Network Potentials Using Engineered Latent Space Distances” tackles this issue by introducing advanced uncertainty quantification (UQ) techniques for Graph Neural Networks (GNNs) used in catalyst discovery. Traditional models struggle with predicting uncertainty in relaxed energy calculations, a key factor in identifying promising catalytic materials. This work proposes a novel latent space distance approach, significantly improving calibration and reliability compared to standard ensemble methods. By leveraging distribution-free techniques and engineered latent representations, the study enables more accurate and interpretable confidence estimates, ensuring that machine learning-driven catalyst discovery is not just faster but also more trustworthy.
-&lt;/p&gt;
-
-
-&lt;p&gt;
-Musielewicz, Joseph; Lan, Janice; Uyttendaele, Matt; Kitchin, John, Improved Uncertainty Estimation of Graph Neural Network Potentials Using Engineered Latent Space Distance, J. Physical Chemistry C (2024). &lt;a href="https://doi.org/10.1021/acs.jpcc.4c04972"&gt;https://doi.org/10.1021/acs.jpcc.4c04972&lt;/a&gt;.
-&lt;/p&gt;
-
-&lt;div class="org-src-container"&gt;
-&lt;pre class="src src-bibtex"&gt;&lt;span style="color: #006699;"&gt;@article&lt;/span&gt;{&lt;span style="color: #D0372D;"&gt;musielewicz-2024-improv-uncer&lt;/span&gt;,
-  &lt;span style="color: #BA36A5;"&gt;author&lt;/span&gt; =       {Joseph Musielewicz and Janice Lan and Matt Uyttendaele and
-                  John R. Kitchin},
-  &lt;span style="color: #BA36A5;"&gt;title&lt;/span&gt; =        {Improved Uncertainty Estimation of Graph Neural Network
-                  Potentials Using Engineered Latent Space Distances},
-  &lt;span style="color: #BA36A5;"&gt;journal&lt;/span&gt; =      {The Journal of Physical Chemistry C},
-  &lt;span style="color: #BA36A5;"&gt;volume&lt;/span&gt; =       128,
-  &lt;span style="color: #BA36A5;"&gt;number&lt;/span&gt; =       49,
-  &lt;span style="color: #BA36A5;"&gt;pages&lt;/span&gt; =        {20799-20810},
-  &lt;span style="color: #BA36A5;"&gt;year&lt;/span&gt; =         2024,
-  &lt;span style="color: #BA36A5;"&gt;doi&lt;/span&gt; =          {&lt;span style="color: #006DAF; text-decoration: underline;"&gt;10.1021/acs.jpcc.4c04972&lt;/span&gt;},
-  &lt;span style="color: #BA36A5;"&gt;url&lt;/span&gt; =          {&lt;span style="color: #006DAF; text-decoration: underline;"&gt;http://dx.doi.org/10.1021/acs.jpcc.4c04972&lt;/span&gt;},
-  &lt;span style="color: #BA36A5;"&gt;DATE_ADDED&lt;/span&gt; =   {Sat Feb 1 08:18:45 2025},
-}
-&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;
-&lt;script type='text/javascript' src='https://d1bxh8uas1mnw7.cloudfront.net/assets/embed.js'&gt;&lt;/script&gt;
-&lt;div data-badge-type='medium-donut' class='altmetric-embed' data-badge-details='right' data-doi='10.1021/acs.jpcc.4c04972'&gt;&lt;/div&gt;
-&lt;/p&gt;
-
-&lt;iframe title="Embed Player" src="https://play.libsyn.com/embed/episode/id/35108470/height/192/theme/modern/size/large/thumbnail/yes/custom-color/008080/time-start/00:00:00/hide-show/yes/hide-playlist/yes/hide-subscribe/yes/hide-share/yes/font-color/ffffff" height="192" width="100%" scrolling="no" allowfullscreen="" webkitallowfullscreen="true" mozallowfullscreen="true" oallowfullscreen="true" msallowfullscreen="true" style="border: none;"&gt;&lt;/iframe&gt;
-&lt;p&gt;Copyright (C) 2025 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
-&lt;p&gt;&lt;a href="/org/2025/02/01/New-publication---Improved-Uncertainty-Estimation-of-Graph-Neural-Network-Potentials-Using-Engineered-Latent-Space-Distance.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
 &lt;p&gt;Org-mode version = 9.8-pre&lt;/p&gt;]]></content>
   </entry>
 </feed>
