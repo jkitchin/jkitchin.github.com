@@ -1,0 +1,200 @@
+---
+title: Lies, damn lies, statistics and Bayesian statistics
+date: 2025/06/22 11:14:23
+updated: 2025/06/22 11:14:23
+categories: machine-learning
+tags: 
+---
+
+
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgf1f6c3a">1. The data</a>
+<ul>
+<li><a href="#org5450f25">1.1. GPR with a RBF kernel</a></li>
+<li><a href="#org7d62843">1.2. a better kernel solves these issues</a></li>
+</ul>
+</li>
+<li><a href="#orgd2a3f0f">2. Summary</a></li>
+</ul>
+</div>
+</div>
+<p>
+This post on LinkedIn (<a href="https://www.linkedin.com/posts/activity-7341134401705041920-gaEd?utm_source=share&amp;utm_medium=member_desktop&amp;rcm=ACoAAAfqmO0BzyXpJw8w7yyHwkoMSiaKfGg-sKI">https://www.linkedin.com/posts/activity-7341134401705041920-gaEd?utm_source=share&amp;utm_medium=member_desktop&amp;rcm=ACoAAAfqmO0BzyXpJw8w7yyHwkoMSiaKfGg-sKI</a>) reminded me of a quip I often make of "Lies, damn lies, statistics, and Bayesian statistics". I am frequently skeptical of claims about "Bayesian something something", especially when the claim is about uncertainty quantification. That skepticism comes from practical experience of mine that "Bayesian something something" is rarely as well behaved and informative as advertised (in my hands of course).
+</p>
+
+<p>
+To illustrate, I will use some noisy, 1d data from a Lennard-Jones function and Gaussian process regression to fit the data.
+</p>
+<div id="outline-container-orgf1f6c3a" class="outline-2">
+<h2 id="orgf1f6c3a"><span class="section-number-2">1.</span> The data</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+We get our data by sampling a Lennard-Jones function, adding some noise, and removing a gap in the data. The gap in the middle might be classically considered an interpolation region.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-jupyter-python"><span style="color: #0000FF; font-weight: bold;">import</span> numpy <span style="color: #0000FF; font-weight: bold;">as</span> np
+<span style="color: #0000FF; font-weight: bold;">import</span> matplotlib.pyplot <span style="color: #0000FF; font-weight: bold;">as</span> plt
+
+<span style="color: #BA36A5;">r</span> = np.linspace(0.95, 3, 200)
+
+<span style="color: #BA36A5;">eps</span>, <span style="color: #BA36A5;">sig</span> = 1, 1
+<span style="color: #BA36A5;">y</span> = 4 * eps * ((1 / r)**12 - (1 / r)**6) + np.random.normal(0, 0.03, size=r.shape)
+
+
+<span style="color: #BA36A5;">ind</span> = ((r &gt; 1) &amp; (r &lt; 1.25)) | ((r &gt; 2) &amp; (r &lt; 2.5))
+<span style="color: #BA36A5;">_R</span> = r[ind][:, <span style="color: #D0372D;">None</span>]
+<span style="color: #BA36A5;">_y</span> = y[ind]
+plt.plot(_R, _y, <span style="color: #008000;">'.'</span>)
+plt.xlabel(<span style="color: #008000;">'R'</span>)
+plt.ylabel(<span style="color: #008000;">'E'</span>);
+</pre>
+</div>
+
+<p>
+<figure><img src="/media/d53ba27c2f085871cd2832e3cf7a8256b00185dc.png"></figure> 
+</p>
+</div>
+<div id="outline-container-org5450f25" class="outline-3">
+<h3 id="org5450f25"><span class="section-number-3">1.1.</span> GPR with a RBF kernel</h3>
+<div class="outline-text-3" id="text-1-1">
+<p>
+The RBF kernel is the most standard kernel. It does an ok job fitting here, although I see evidence of overfitting (the wiggles are caused by the noise). You can reduce the overfitting by using a larger <code>alpha</code> value in the gpr, but that requires you to know in advance how smooth it should be.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-jupyter-python"><span style="color: #0000FF; font-weight: bold;">from</span> sklearn.gaussian_process <span style="color: #0000FF; font-weight: bold;">import</span> GaussianProcessRegressor
+<span style="color: #0000FF; font-weight: bold;">from</span> sklearn.gaussian_process.kernels <span style="color: #0000FF; font-weight: bold;">import</span> RBF, WhiteKernel
+<span style="color: #BA36A5;">kernel</span> = RBF() + WhiteKernel()
+<span style="color: #BA36A5;">gpr</span> = GaussianProcessRegressor(kernel=kernel,
+                               random_state=0, normalize_y=<span style="color: #D0372D;">True</span>).fit(_R, _y)
+
+plt.plot(_R, _y, <span style="color: #008000;">'b.'</span>)
+plt.plot(r, y, <span style="color: #008000;">'b.'</span>, alpha=0.2)
+
+<span style="color: #BA36A5;">yp</span>, <span style="color: #BA36A5;">se</span> = gpr.predict(r[:, <span style="color: #D0372D;">None</span>], return_std=<span style="color: #D0372D;">True</span>)
+plt.plot(r, yp)
+plt.plot(r, yp + 2 * se, <span style="color: #008000;">'k--'</span>, r, yp - 2 * se, <span style="color: #008000;">'k--'</span>);
+plt.plot(_R, _y, <span style="color: #008000;">'.'</span>)
+plt.xlabel(<span style="color: #008000;">'R'</span>)
+plt.ylabel(<span style="color: #008000;">'E'</span>);
+
+gpr.kernel_
+</pre>
+</div>
+
+<pre class="example">
+RBF(length_scale=0.0773) + WhiteKernel(noise_level=0.00374)
+</pre>
+
+<p>
+<figure><img src="/media/2157ad1d8cabe934b169557f729ee9af1d0d22e9.png"></figure> 
+</p>
+
+<p>
+The uncertainty here is primarily related to the model, i.e. it is constrained to be correct where there is data, but with no data, the model is not the right one.
+</p>
+
+<p>
+The model does well in the region where there is data, but is qualitatively wrong in the gap (even though classically this would be considered interpolation), and overestimates the uncertainty in this region. The problem is the covariance kernel decays to 0 about two length scales away from the last point, which means there is no data to inform what the weights in that region should look like.  That causes the model to revert to the mean of the data.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-jupyter-python">gpr.predict([[1.8]]), gpr.predict([[3.0]]), np.mean(_y)
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">array</td>
+<td class="org-left">((-0.28266893))</td>
+<td class="org-left">array</td>
+<td class="org-left">((-0.28791865))</td>
+<td class="org-right">-0.2879186522487767</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+This kernel simply cannot be used for extrapolation, or any predictions more than about two length scales away from the nearest point. Calling it Bayesian doesn't make it better. For similar reasons, this model will not work well outside the data range.
+</p>
+
+<p>
+A practical person would still consider using this model, and might even rely on the uncertainty being too large to identify regions of low reliability.
+</p>
+</div>
+</div>
+<div id="outline-container-org7d62843" class="outline-3">
+<h3 id="org7d62843"><span class="section-number-3">1.2.</span> a better kernel solves these issues</h3>
+<div class="outline-text-3" id="text-1-2">
+<p>
+Not all is lost, if we know more. In this case we can construct a kernel that reflects our understanding that the data came from a Lennard Jones like interaction model. You can construct kernels by adding and multiplying kernels. Here we consider a linear kernel, the <code>DotProduct</code> kernel, and construct a new kernel that is a sum of the linear kernel to the 12<sup>th</sup> power, a linear kernel to the 6<sup>th</sup> power, and a <code>WhiteKernel</code> for the noise. It is a little subtle that this kernel should work in \(1 / r\) space, so in addition to kernel engineering, we also do feature engineering.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-jupyter-python"><span style="color: #0000FF; font-weight: bold;">from</span> sklearn.gaussian_process.kernels <span style="color: #0000FF; font-weight: bold;">import</span> DotProduct
+
+<span style="color: #BA36A5;">kernel</span> = DotProduct()**12 + DotProduct()**6 +  WhiteKernel()
+<span style="color: #BA36A5;">gpr</span> = GaussianProcessRegressor(kernel=kernel, normalize_y=<span style="color: #D0372D;">True</span>).fit(1 / _R, _y)
+
+plt.plot(_R, _y, <span style="color: #008000;">'b.'</span>)
+plt.plot(r, y, <span style="color: #008000;">'b.'</span>, alpha=0.2)
+
+
+<span style="color: #BA36A5;">yp</span>, <span style="color: #BA36A5;">se</span> = gpr.predict(1 / r[:, <span style="color: #D0372D;">None</span>], return_std=<span style="color: #D0372D;">True</span>)
+plt.plot(r, yp)
+plt.plot(r, yp + 2 * se, <span style="color: #008000;">'k--'</span>, r, yp - 2 * se, <span style="color: #008000;">'k--'</span>);
+
+plt.xlabel(<span style="color: #008000;">'R'</span>)
+plt.ylabel(<span style="color: #008000;">'E'</span>);
+
+gpr.kernel_
+</pre>
+</div>
+
+<pre class="example">
+DotProduct(sigma_0=0.157) ** 12 + DotProduct(sigma_0=0.991) ** 6 + WhiteKernel(noise_level=0.00641)
+</pre>
+
+<p>
+<figure><img src="/media/366a4d22ea40b1ec3b8fec4411230af7db8713a2.png"></figure> 
+</p>
+
+<p>
+Note that this GPR does fine in the gap, including the right level of uncertainty there. This model is better because we used the kernel to constrain what forms the model can have. This model actually extrapolates correctly outside the data. It is worth noting that although this model has great predictive and UQ properties, it does not tell us anything about the values of &epsilon; and &sigma; in the Lennard Jones model. Although we might say the kernel is physics-based, i.e. it is based on the relevant features and equation, it does not have physical parameters in it.
+</p>
+</div>
+</div>
+</div>
+<div id="outline-container-orgd2a3f0f" class="outline-2">
+<h2 id="orgd2a3f0f"><span class="section-number-2">2.</span> Summary</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+Naive use of GPR can provide useful models when you have enough data, but these models likely do not accurately capture uncertainty outside that data, nor is it likely they are reliable in extrapolation. It is possible to do better than this, when you know what to do. Through feature and kernel engineering, you can sometimes create situations where the problem essentially becomes linear regression, where a simple linear kernel is what you want, or you develop a kernel that represents the underlying model. Kernel engineering is generally hard, with limited opportunities to be flexible. See <a href="https://www.cs.toronto.edu/~duvenaud/cookbook/">https://www.cs.toronto.edu/~duvenaud/cookbook/</a> for examples of kernels and combining them.
+</p>
+
+<p>
+You can see it is not adequate to say "we used Gaussian process regression". That is about as informative as saying linear regression without identifying the features, or nonlinear regression and not saying what model. You have to be specific about the kernel, and thoughtful about how you know if a prediction is reliable or not. Just because you get an uncertainty prediction doesn't mean its right.
+</p>
+</div>
+</div>
+<p>Copyright (C) 2025 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2025/06/22/Lies,-damn-lies,-statistics-and-Bayesian-statistics.org">org-mode source</a></p>
+<p>Org-mode version = 9.8-pre</p>
