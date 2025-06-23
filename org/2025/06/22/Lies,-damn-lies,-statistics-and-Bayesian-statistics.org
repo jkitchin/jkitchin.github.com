@@ -2,7 +2,7 @@
 :PROPERTIES:
 :categories: machine-learning
 :date:     2025/06/22 11:14:23
-:updated:  2025/06/22 11:14:23
+:updated:  2025/06/23 13:28:52
 :org-url:  https://kitchingroup.cheme.cmu.edu/org/2025/06/22/Lies,-damn-lies,-statistics-and-Bayesian-statistics.org
 :permalink: https://kitchingroup.cheme.cmu.edu/blog/2025/06/22/Lies,-damn-lies,-statistics-and-Bayesian-statistics/index.html
 :END:
@@ -34,7 +34,7 @@ plt.ylabel('E');
 #+END_SRC
 
 #+RESULTS:
-[[file:./.ob-jupyter/d53ba27c2f085871cd2832e3cf7a8256b00185dc.png]]
+[[file:./.ob-jupyter/653165863df7654b10ddaca2f7645560768bd870.png]]
 
 *** GPR with a RBF kernel
 
@@ -62,8 +62,8 @@ gpr.kernel_
 
 #+RESULTS:
 :RESULTS:
-: RBF(length_scale=0.0773) + WhiteKernel(noise_level=0.00374)
-[[file:./.ob-jupyter/2157ad1d8cabe934b169557f729ee9af1d0d22e9.png]]
+: RBF(length_scale=0.0948) + WhiteKernel(noise_level=0.00635)
+[[file:./.ob-jupyter/6acc7dccc37ee773aeb4c97c62929401733a02f6.png]]
 :END:
 
 The uncertainty here is primarily related to the model, i.e. it is constrained to be correct where there is data, but with no data, the model is not the right one.
@@ -75,7 +75,26 @@ gpr.predict([[1.8]]), gpr.predict([[3.0]]), np.mean(_y)
 #+END_SRC
 
 #+RESULTS:
-| array | ((-0.28266893)) | array | ((-0.28791865)) | -0.2879186522487767 |
+| array | ((-0.2452041)) | array | ((-0.29363654)) | -0.2936364964541409 |
+
+Why is this happening? It is not that tricky. You can think of the GP as an expansion of the data in basis functions. The kernel trick effectively makes this expansion in the infinite limit. What are those basis functions? We can draw samples of them, which we show here. You can see that where there is no data, the basis functions are "wiggly". That means they are simply not good at making predictions here.
+
+#+BEGIN_SRC jupyter-python
+y_samples = gpr.sample_y(r[:, None], n_samples=15, random_state=0)
+
+plt.plot(r, yp)
+plt.plot(r, yp + 2 * se, 'k--', r, yp - 2 * se, 'k--');
+plt.plot(_R, _y, '.')
+
+plt.plot(r, y_samples, 'k', alpha=0.2);
+
+plt.xlabel('R')
+plt.ylabel('E');
+#+END_SRC
+
+#+RESULTS:
+[[file:./.ob-jupyter/cff4cfa5cacedcef6ecde8ec2b63dcee659949fb.png]]
+
 
 This kernel simply cannot be used for extrapolation, or any predictions more than about two length scales away from the nearest point. Calling it Bayesian doesn't make it better. For similar reasons, this model will not work well outside the data range.
 
@@ -107,12 +126,83 @@ gpr.kernel_
 
 #+RESULTS:
 :RESULTS:
-: DotProduct(sigma_0=0.157) ** 12 + DotProduct(sigma_0=0.991) ** 6 + WhiteKernel(noise_level=0.00641)
-[[file:./.ob-jupyter/366a4d22ea40b1ec3b8fec4411230af7db8713a2.png]]
+: DotProduct(sigma_0=0.0281) ** 12 + DotProduct(sigma_0=0.936) ** 6 + WhiteKernel(noise_level=0.0077)
+[[file:./.ob-jupyter/70e91f8419a473ed578a14442694e67a3409bd1e.png]]
 :END:
 
 Note that this GPR does fine in the gap, including the right level of uncertainty there. This model is better because we used the kernel to constrain what forms the model can have. This model actually extrapolates correctly outside the data. It is worth noting that although this model has great predictive and UQ properties, it does not tell us anything about the values of \epsilon and \sigma in the Lennard Jones model. Although we might say the kernel is physics-based, i.e. it is based on the relevant features and equation, it does not have physical parameters in it.
 
+How about those basis functions here? You can see that all of them basically look like the LJ potential. That means they are good basis functions to expand this data set in.
+
+#+BEGIN_SRC jupyter-python
+y_samples = gpr.sample_y(1 / r[:, None], n_samples=15, random_state=0)
+
+plt.plot(_R, _y, '.')
+
+plt.plot(r, y_samples, 'k', alpha=0.2);
+
+plt.xlabel('R')
+plt.ylabel('E');
+#+END_SRC
+
+#+RESULTS:
+[[file:./.ob-jupyter/e7fe34a01c52cb228cbbcde85e5f334e7f8237a1.png]]
+
+
+** How about with feature engineering?
+
+Can we do even better with feature engineering here? Motivated by [[https://www.linkedin.com/feed/update/urn:li:activity:7342573774774386688?commentUrn=urn%3Ali%3Acomment%3A%28activity%3A7342573774774386688%2C7342949865590530052%29&dashCommentUrn=urn%3Ali%3Afsd_comment%3A%287342949865590530052%2Curn%3Ali%3Aactivity%3A7342573774774386688%29][this comment]] by Cory Simon, we cast the problem as a linear regression in [1 / r^{6}, 1 / r^{12}] feature space. This is also a perfectly reasonable thing to do. Since our output is linear in these features, we simply use a linear kernel (aka the DotProduct kernel in sklearn).
+
+#+BEGIN_SRC jupyter-python
+r6 = 1 / _R**6
+r12 = r6**2
+
+kernel = DotProduct() + WhiteKernel()
+
+gpr = GaussianProcessRegressor(kernel=kernel, normalize_y=True).fit(np.hstack([r6, r12]), _y)
+
+plt.plot(_R, _y, 'b.')
+plt.plot(r, y, 'b.', alpha=0.2)
+
+fr6 = 1 / r[:, None]**6
+fr12 = fr6**2
+
+yp, se = gpr.predict(np.hstack([fr6, fr12]), return_std=True)
+plt.plot(r, yp)
+plt.plot(r, yp + 2 * se, 'k--', r, yp - 2 * se, 'k--');
+
+plt.xlabel('R')
+plt.ylabel('E');
+
+gpr.kernel_
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+: DotProduct(sigma_0=0.74) + WhiteKernel(noise_level=0.00654)
+[[file:./.ob-jupyter/d8769fe652b9e902e3d349ce26cdbd7d8050b190.png]]
+:END:
+
+We can't easily plot these basis functions the same way, so we reduce them to a 1-d plot. You can see here that these basis functions practically the same as the one with the advanced kernel.
+
+#+BEGIN_SRC jupyter-python
+y_samples = gpr.sample_y(np.hstack([fr6, fr12]),
+                         n_samples=15, random_state=0)
+
+plt.plot(_R, _y, '.')
+
+plt.plot(r, y_samples, 'k', alpha=0.2);
+
+plt.xlabel('R')
+plt.ylabel('E');
+#+END_SRC
+
+#+RESULTS:
+[[file:./.ob-jupyter/f777586bb8e17bac5ca3dadbfba97119addeb46b.png]]
+
+
+
+This also works quite well, and is another way to leverage knowledge about what we are building a model for.
 
 
 ** Summary
