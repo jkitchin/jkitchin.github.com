@@ -1,0 +1,164 @@
+* Make a list of org-files in all the subdirectories of the current working directory
+  :PROPERTIES:
+  :categories: org-mode,emacs,recursive
+  :date:     2014/03/23 15:36:56
+  :updated:  2014/03/23 15:36:56
+  :END:
+
+It would be helpful to get a listing of org-files in a directory tree in the form of clickable links. This would be useful, for example, to find all files associated with a project in a directory with a particular extension, or to do some action on all files that match a pattern. To do this, we will have to recursively walk through the directories and examine their contents. 
+
+Let us examine some of the commands we will need to use. One command is to get the contents of a directory. We will explore the contents of a directory called =literate= in my computer.
+
+#+BEGIN_SRC emacs-lisp
+;; list contents of the directory
+(let ((abspath nil)
+      (match nil)
+      (nosort t))
+  (directory-files "literate" abspath match nosort))
+#+END_SRC
+
+#+RESULTS:
+| makefile-main | Makefile | main.o | main.f90 | main | literate.org | hello.f90 | circle.o | circle.mod | circle.f90 | circle-area.png | archive | a.out | .. | . |
+
+Note the presence of =.= and =..=. Those stand for current directory and one directory up. We should remove those from the list. We can do that like this.
+
+#+BEGIN_SRC emacs-lisp
+;; remove . and ..
+(let ((abspath nil)
+      (match nil)
+      (nosort t))
+  (remove "." 
+	  (remove ".." 
+		  (directory-files "literate" abspath match nosort))))
+#+END_SRC
+
+#+RESULTS:
+| makefile-main | Makefile | main.o | main.f90 | main | literate.org | hello.f90 | circle.o | circle.mod | circle.f90 | circle-area.png | archive | a.out |
+
+Next, we need to know if a given entry in the directory files is a file or a directory. Emacs-lisp has a few functions for that. We use absolute filenames here since the paths are relative to the  "molecules" directory. Note we could use absolute paths in directory-files, but that makes it hard to remove "." and "..".
+
+#+BEGIN_SRC emacs-lisp :results output
+;; print types of files in the directory
+(let ((root "literate")
+      (abspath nil)
+      (match nil)
+      (nosort t))
+  (mapcar (lambda (x)
+	    (cond
+	     ((file-directory-p (expand-file-name x root))
+	      (print (format "%s is a directory" x)))
+	     ((file-regular-p (expand-file-name x root))
+	      (print (format "%s is a regular file" x)))))
+	  (remove "." 
+		  (remove ".." 
+			  (directory-files root abspath match nosort)))))
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+
+"makefile-main is a regular file"
+
+"Makefile is a regular file"
+
+"main.o is a regular file"
+
+"main.f90 is a regular file"
+
+"main is a regular file"
+
+"literate.org is a regular file"
+
+"hello.f90 is a regular file"
+
+"circle.o is a regular file"
+
+"circle.mod is a regular file"
+
+"circle.f90 is a regular file"
+
+"circle-area.png is a regular file"
+
+"archive is a directory"
+
+"a.out is a regular file"
+#+end_example
+
+Now, we are at the crux of this problem. We can differentiate between files and directories. For each directory in this directory, we need to recurse into it, and list the contents. There is some code at http://turingmachine.org/bl/2013-05-29-recursively-listing-directories-in-elisp.html which does this, but I found that I had to modify the code to not list directories, and here I want to show a simpler recursive code. 
+
+#+BEGIN_SRC emacs-lisp
+(defun os-walk (root)
+  "recursively walks through directories getting list of absolute paths of files"
+  (let ((files '()) ; empty list to store results
+	(current-list (directory-files root t)))
+    ;;process current-list
+    (while current-list
+      (let ((fn (car current-list))) ; get next entry
+	(cond 
+	 ;; regular files
+	 ((file-regular-p fn)
+	  (add-to-list 'files fn))
+	 ;; directories
+	 ((and
+	   (file-directory-p fn)
+	   ;; ignore . and ..
+	   (not (string-equal ".." (substring fn -2)))
+	   (not (string-equal "." (substring fn -1))))
+	  ;; we have to recurse into this directory
+	  (setq files (append files (os-walk fn))))
+	)
+      ;; cut list down by an element
+      (setq current-list (cdr current-list)))
+      )
+    files))
+
+(os-walk "literate")
+#+END_SRC
+
+#+RESULTS:
+| c:/Users/jkitchin/Dropbox/blogofile-jkitchin.github.com/_blog/literate/makefile-main | c:/Users/jkitchin/Dropbox/blogofile-jkitchin.github.com/_blog/literate/main.o | c:/Users/jkitchin/Dropbox/blogofile-jkitchin.github.com/_blog/literate/main.f90 | c:/Users/jkitchin/Dropbox/blogofile-jkitchin.github.com/_blog/literate/main | c:/Users/jkitchin/Dropbox/blogofile-jkitchin.github.com/_blog/literate/literate.org | c:/Users/jkitchin/Dropbox/blogofile-jkitchin.github.com/_blog/literate/hello.f90 | c:/Users/jkitchin/Dropbox/blogofile-jkitchin.github.com/_blog/literate/circle.o | c:/Users/jkitchin/Dropbox/blogofile-jkitchin.github.com/_blog/literate/circle.mod | c:/Users/jkitchin/Dropbox/blogofile-jkitchin.github.com/_blog/literate/circle.f90 | c:/Users/jkitchin/Dropbox/blogofile-jkitchin.github.com/_blog/literate/circle-area.png | c:/Users/jkitchin/Dropbox/blogofile-jkitchin.github.com/_blog/literate/a.out | c:/Users/jkitchin/Dropbox/blogofile-jkitchin.github.com/_blog/literate/Makefile | c:/Users/jkitchin/Dropbox/blogofile-jkitchin.github.com/_blog/literate/archive/empty-text-file.txt |
+
+Nice, that gives us a recursive listing of all the files in this directory tree. Let us take this a step further, and apply a function to that list to filter out a list of the org files. We will also create org-links out of these files.
+
+#+BEGIN_SRC emacs-lisp :results output org raw
+(defun os-walk (root)
+  (let ((files '()) ;empty list to store results
+	(current-list (directory-files root t)))
+    ;;process current-list
+    (while current-list
+      (let ((fn (car current-list))) ; get next entry
+	(cond 
+	 ;; regular files
+	 ((file-regular-p fn)
+	  (add-to-list 'files fn))
+	 ;; directories
+	 ((and
+	   (file-directory-p fn)
+	   ;; ignore . and ..
+	   (not (string-equal ".." (substring fn -2)))
+	   (not (string-equal "." (substring fn -1))))
+	  ;; we have to recurse into this directory
+	  (setq files (append files (os-walk fn))))
+	)
+      ;; cut list down by an element
+      (setq current-list (cdr current-list)))
+      )
+    files))
+
+(require 'cl)
+
+(mapcar 
+ (lambda (x) (princ (format "[[%s][%s]]\n" x (file-relative-name x "."))))
+ (remove-if-not 
+  (lambda (x) (string= (file-name-extension x) "org"))
+  (os-walk "literate")))
+#+END_SRC
+
+#+RESULTS:
+[[c:/Users/jkitchin/Dropbox/blogofile-jkitchin.github.com/_blog/literate/literate.org][literate/literate.org]]
+
+
+That is certainly functional. It might be nice to format the links a bit nicer to show their structure in a table of contents way, or to sort them in a nice order if there were many of these files. 
+
+
+

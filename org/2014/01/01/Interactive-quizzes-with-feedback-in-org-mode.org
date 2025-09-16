@@ -1,0 +1,114 @@
+* Interactive quizzes with feedback in org-mode
+  :PROPERTIES:
+  :categories: org-mode
+  :date:     2014/01/01 12:58:23
+  :updated:  2014/01/01 12:58:23
+  :END:
+
+I have been exploring ways to facilitate learning and grading. One way I like is to provide quizzes inline with text
+Here are some examples of "interactive" quizzes with feedback to the user in org-mode. The principle idea is to use a headline for the question, and use properties to hold the answer. The answers are coded into links that run lisp code to check if the link text matches the correct answer. The properties are folded, so you have to willfully cheat to look at the answer. For getting instant feedback, this isn't such an issue. These aren't for formal assessment, but for knowledge checkpoints in active learning.
+
+Blog alert: The links may only work in the actual org-file in Emacs, they will not function in html.  
+
+Here is an example in a subheading. These links play an amusing sound (crowd cheers for correct answer, a buzzer for a wrong answer). The sounds are stored locally with the file. This gives students immediate feedback on their answer. These might be incorporated into reading assignments.
+ 
+** What is 2 + 4?
+  :PROPERTIES:
+  :CORRECT-ANSWER: 6
+  :END:
+a) [[elisp:(if (string= "4" (org-entry-get (point) "CORRECT-ANSWER"))  (play-sound-file "sounds/99636__tomlija__small-crowd-yelling-yeah.wav" 0.91 nil) (play-sound-file "sounds/fail-buzzer-01.wav" 0.91 nil))][4]]
+
+b) [[elisp:(if (string= "6" (org-entry-get (point) "CORRECT-ANSWER"))  (play-sound-file "sounds/99636__tomlija__small-crowd-yelling-yeah.wav" 0.91 nil) (play-sound-file "sounds/fail-buzzer-01.wav" 0.91 nil))][6]]
+
+c) [[elisp:(if (string= "-2" (org-entry-get (point) "CORRECT-ANSWER"))  (play-sound-file "sounds/99636__tomlija__small-crowd-yelling-yeah.wav" 0.91 nil) (play-sound-file "sounds/fail-buzzer-01.wav" 0.91 nil))][-2]]
+
+** Lets make a custom link for this
+   :PROPERTIES:
+   :CORRECT-ANSWER: yes
+   :NUM-CORRECT: 4
+   :NUM-INCORRECT: 5
+   :END:
+Hand coding the links isn't very convenient. Let us write an org-link function that is more convenient. This new function will also record the number of correct and incorrect attempts. You could hard code some sound into them, but I did not do that here.
+
+#+BEGIN_SRC emacs-lisp
+(org-add-link-type 
+ "ans" 
+ (lambda (path) 
+   (let* ((correct-answer (org-entry-get (point) "CORRECT-ANSWER"))
+          (ncorrect (org-entry-get (point) "NUM-CORRECT"))
+          (num-correct (if ncorrect (string-to-number ncorrect) 0))
+          (nincorrect (org-entry-get (point) "NUM-INCORRECT"))
+          (num-incorrect (if nincorrect (string-to-number nincorrect) 0)))
+     (if (string= path correct-answer) 
+         (progn
+          (org-entry-put (point) "NUM-CORRECT" (number-to-string (+ num-correct 1)))
+          (message "correct"))
+       (org-entry-put (point) "NUM-INCORRECT" (number-to-string (+ num-incorrect 1)))
+       (message "incorrect")))))
+#+END_SRC
+
+#+RESULTS:
+
+That function was a bit trickier than I thought it would be. First, I used let* because the first time you click on a link the correct answer counters may not exist, so getting the property would return nil. If it is nil, then we should initialize to 0. If it is not nil, we need to convert the string that is returned to an integer so we can add to it later. Then, we need to convert that integer back to a string to store it as a property, otherwise it is stored as some strange control character. 
+
+Now, we can put our question in.
+question: Is 3 greater than 2?
+
+Here are the new links:  ans:yes  ans:no 
+
+
+That function goes along way to making it pretty easy to write the answers. One limitation here is that you can only put one question per section. We address that later. It is still easy to cheat if you want. We could do a few things to make that harder. One idea would be to encrypt the answers, and compare the hash of the answers. Another is to just record what was clicked on, and then grade it later. In the next section we try that out.
+
+** Storing quiz answers and number of attempts
+   :PROPERTIES:
+   :ANSWER:   yes
+   :ID:       fa6cc63f-e2da-47a7-9721-cb970dde335e
+   :NUM-ATTEMPTS: 5
+   :END:
+
+Here, we store the answer, and number of attempts. Students won't get feedback from this approach, but they cannot cheat either. They could just type answers in to the org-file, but this approach is like a Scantron multiple choice exam that could be automatically graded later. You could use something like this as an electronic clicker to quickly assess everyone's understanding of some concepts.
+
+Here is our new link function.
+#+BEGIN_SRC emacs-lisp
+(org-add-link-type 
+ "ans2" 
+ (lambda (path) 
+   (org-entry-put (point) "ANSWER" path)
+   (let* ((nattempts (org-entry-get (point) "NUM-ATTEMPTS"))
+          (num-attempts (if nattempts (string-to-number nattempts) 0)))
+     (org-entry-put (point) "NUM-ATTEMPTS" (number-to-string (+ num-attempts 1))))
+   (message "You selected %s for your answer" path)))
+#+END_SRC
+
+#+RESULTS:
+
+And now a question: Is 3 greater than 2?
+ans2:yes   ans2:no
+
+This way works very well. It might also be a good idea to give each question a unique id (org-id-get-create) so you can collect specific results. 
+
+** Using inline tasks instead of headings
+If you were integrating these into a book, it would be inconvenient to use headings because they would mess up the outline. We can use inline tasks instead.
+
+*************** Is 3 greater than 2?
+                :PROPERTIES:
+                :ANSWER:   yes
+                :NUM-ATTEMPTS: 3
+                :END:
+ans2:yes   ans2:no
+*************** END
+
+This adds some additional lines, but does not change the heading level. We can put multiple questions in then.
+
+*************** What is 4*4?
+                :PROPERTIES:
+                :ANSWER:   8
+                :NUM-ATTEMPTS: 2
+                :END:
+ ans2:16 ans2:18  [[ans2:8]]
+*************** END
+
+Interesing, I noticed in this last example that a link path must have at least two characters to be automatically recognized by org-mode. I had to put double square brackets to make it a link!
+
+** Concluding thoughts
+This seems like a pretty promising approach to getting structured input from students. You would have to invest some time training them to use emacs and org-mode, and not modify the file in ways they are not supposed to.  You would also have to invest some time in writing analysis code to collect all the answers and analyze them somehow. I do not think that would be too hard though, and the payoff could be large. By giving students quick feedback they could have a better understanding of what they know, and might ask better questions. This could be a useful approach to active learning activities that students work on while reading.

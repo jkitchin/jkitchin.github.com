@@ -1,0 +1,2405 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<feed
+  xmlns="http://www.w3.org/2005/Atom"
+  xmlns:thr="http://purl.org/syndication/thread/1.0"
+  xml:lang="en"
+  >
+  <title type="text">The Kitchin Research Group</title>
+  <subtitle type="text">Chemical Engineering at Carnegie Mellon University</subtitle>
+
+  <updated>2025-09-16T23:29:38Z</updated>
+  <generator uri="http://blogofile.com/">Blogofile</generator>
+
+  <link rel="alternate" type="text/html" href="https://kitchingroup.cheme.cmu.edu/blog" />
+  <id>https://kitchingroup.cheme.cmu.edu/blog/feed/atom/</id>
+  <link rel="self" type="application/atom+xml" href="https://kitchingroup.cheme.cmu.edu/blog/feed/atom/" />
+  <entry>
+    <author>
+      <name></name>
+      <uri>https://kitchingroup.cheme.cmu.edu/blog</uri>
+    </author>
+    <title type="html"><![CDATA[Adding new backends to hashcache]]></title>
+    <link rel="alternate" type="text/html" href="https://kitchingroup.cheme.cmu.edu/blog/2023/09/24/Adding-new-backends-to-hashcache" />
+    <id>https://kitchingroup.cheme.cmu.edu/blog/2023/09/24/Adding-new-backends-to-hashcache</id>
+    <updated>2023-09-24T13:14:40Z</updated>
+    <published>2023-09-24T13:14:40Z</published>
+    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="programming" />
+    <summary type="html"><![CDATA[Adding new backends to hashcache]]></summary>
+    <content type="html" xml:base="https://kitchingroup.cheme.cmu.edu/blog/2023/09/24/Adding-new-backends-to-hashcache"><![CDATA[
+
+
+&lt;div id="table-of-contents" role="doc-toc"&gt;
+&lt;h2&gt;Table of Contents&lt;/h2&gt;
+&lt;div id="text-table-of-contents" role="doc-toc"&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href="#org5fd57a7"&gt;1. Alternative backends for hashcache&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#orgac9f2ab"&gt;2. a shelve version&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#org3be8901"&gt;3. sqlite version&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#org32e7950"&gt;4. redis&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#org29b3384"&gt;5. Summary&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;p&gt;
+I have been working on hashcache to make it more flexible. I like the base functionality that uses the filesystem for caching. That still works.
+&lt;/p&gt;
+
+&lt;p&gt;
+Here I set up a timeit decorator to show how this works.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; pycse.hashcache &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; hashcache
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; time
+
+!rm -fr ./cache
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;timeit&lt;/span&gt;(func):
+    &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;wrapper&lt;/span&gt;(*args, **kwargs):
+        &lt;span style="color: #BA36A5;"&gt;t0&lt;/span&gt; = time.time()
+        &lt;span style="color: #BA36A5;"&gt;res&lt;/span&gt; = func(*args, **kwargs)
+        &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(f&lt;span style="color: #008000;"&gt;'Elapsed time = &lt;/span&gt;{time.time() - t0}&lt;span style="color: #008000;"&gt;s'&lt;/span&gt;)
+        &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; res
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; wrapper
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Now we decorate a function that is "expensive". The first time we run it, it takes a long time.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #6434A3;"&gt;@timeit&lt;/span&gt;
+&lt;span style="color: #6434A3;"&gt;@hashcache&lt;/span&gt;
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;expensive_func&lt;/span&gt;(x):
+    time.sleep(3)
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x
+
+expensive_func(2)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Elapsed time = 3.007030963897705s
+2
+&lt;/p&gt;
+
+&lt;p&gt;
+The second time is very fast, since we just look it up.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;expensive_func(2)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Elapsed time = 0.0012097358703613281s
+2
+&lt;/p&gt;
+
+&lt;p&gt;
+Where did we look it up from? It is stored on disk. You can see where by adding a verbose option to the decorator. This shows you all the data that was stored in the cache.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #6434A3;"&gt;@hashcache&lt;/span&gt;(verbose=&lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;)
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;expensive_func&lt;/span&gt;(x):
+    time.sleep(3)
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x
+
+expensive_func(2)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+{   'args': (2,),
+    'cwd': '/Users/jkitchin/Dropbox/emacs/journal/2023/09/23',
+    'elapsed_time': 3.0048787593841553,
+    'func': 'expensive_func',
+    'hash': 'b5436cc21714a7ea619729cc9768b8c5b3a03307',
+    'kwargs': {},
+    'module': '&lt;span class="underline"&gt;&lt;span class="underline"&gt;main&lt;/span&gt;&lt;/span&gt;',
+    'output': 2,
+    'run-at': 1695572717.2020931,
+    'run-at-human': 'Sun Sep 24 12:25:17 2023',
+    'standardized-kwargs': {'x': 2},
+    'user': 'jkitchin',
+    'version': '0.0.2'}
+2
+&lt;/p&gt;
+
+&lt;div id="outline-container-org5fd57a7" class="outline-2"&gt;
+&lt;h2 id="org5fd57a7"&gt;&lt;span class="section-number-2"&gt;1.&lt;/span&gt; Alternative backends for hashcache&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-1"&gt;
+&lt;p&gt;
+The file system is an amazing cache with many benefits. There are few reasons you might like something different though. For example, it is slow to search if you have to iterate over all the directories and read the files, and it might be slow to sync lots of directories to another place. 
+&lt;/p&gt;
+
+&lt;p&gt;
+hashcache is more flexible now, so you can define the functions that load and dump the cache. Here we use lmdb as a key-value database. lmdb expects the keys and values to be bytes, so we do some tricks with io.BytesIO to get these as strings from joblib.dump which expects to write to a file.
+&lt;/p&gt;
+
+&lt;p&gt;
+The load function has the signature (&lt;code&gt;hash&lt;/code&gt;, &lt;code&gt;verbose&lt;/code&gt;), and the dump function has the signature (&lt;code&gt;hash&lt;/code&gt;, &lt;code&gt;data&lt;/code&gt;, &lt;code&gt;verbose&lt;/code&gt;). In both cases, &lt;code&gt;hash&lt;/code&gt; will be a string for the key to save data in. &lt;code&gt;data&lt;/code&gt; will be a dictionary that should be saved in a way that it can be reloaded. &lt;code&gt;verbose&lt;/code&gt; is a flag that you can ignore or use to provide some kind of logging.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; pycse.hashcache &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; hashcache
+
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; io, joblib, lmdb
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;lmdb_dump&lt;/span&gt;(hsh, data, verbose=&lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;):
+    &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; verbose:
+        &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'running lmdb_dump'&lt;/span&gt;)
+    &lt;span style="color: #0000FF;"&gt;with&lt;/span&gt; io.BytesIO() &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; f:
+        joblib.dump(data, f)
+        value = f.getvalue()
+
+    db = lmdb.Environment(hashcache.cache)
+    &lt;span style="color: #0000FF;"&gt;with&lt;/span&gt; db.begin(write=&lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;) &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; txn:
+        txn.put(hsh.encode(&lt;span style="color: #008000;"&gt;'utf-8'&lt;/span&gt;), value)
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;lmdb_load&lt;/span&gt;(hsh, verbose=&lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;):
+    &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; verbose:
+        &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'running lmdb_load'&lt;/span&gt;)
+    db = lmdb.Environment(hashcache.cache)
+    &lt;span style="color: #0000FF;"&gt;with&lt;/span&gt; db.begin() &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; txn:
+        val = txn.get(hsh.encode(&lt;span style="color: #008000;"&gt;'utf-8'&lt;/span&gt;))
+        &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; val &lt;span style="color: #0000FF;"&gt;is&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;:
+            &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;, &lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;
+        &lt;span style="color: #0000FF;"&gt;else&lt;/span&gt;:
+            &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;, joblib.load(io.BytesIO(val))[&lt;span style="color: #008000;"&gt;'output'&lt;/span&gt;]
+                                    
+! rm -fr cache.lmdb
+
+hashcache.cache = &lt;span style="color: #008000;"&gt;'cache.lmdb'&lt;/span&gt;
+
+
+&lt;span style="color: #6434A3;"&gt;@hashcache&lt;/span&gt;(loader=lmdb_load, dumper=lmdb_dump, verbose=&lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;)
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f&lt;/span&gt;(x):
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x
+
+f(2)   
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+running lmdb_load
+running lmdb_dump
+2
+&lt;/p&gt;
+
+&lt;p&gt;
+And we can recall the result as easily.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;f(2)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+running lmdb_load
+2
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-orgac9f2ab" class="outline-2"&gt;
+&lt;h2 id="orgac9f2ab"&gt;&lt;span class="section-number-2"&gt;2.&lt;/span&gt; a shelve version&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-2"&gt;
+&lt;p&gt;
+Maybe you prefer a built in library like shelve. This is also quite simple.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; pycse.hashcache &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; hashcache
+
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; io, joblib, shelve
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;shlv_dump&lt;/span&gt;(hsh, data, verbose=&lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;):
+    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'running shlv_dump'&lt;/span&gt;)
+    &lt;span style="color: #0000FF;"&gt;with&lt;/span&gt; io.BytesIO() &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; f:
+        joblib.dump(data, f)
+        value = f.getvalue()
+
+    &lt;span style="color: #0000FF;"&gt;with&lt;/span&gt; shelve.&lt;span style="color: #006FE0;"&gt;open&lt;/span&gt;(hashcache.cache) &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; db:
+        db[&lt;span style="color: #BA36A5;"&gt;hsh&lt;/span&gt;] = value
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;shlv_load&lt;/span&gt;(hsh, verbose=&lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;):
+    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'running shlv_load'&lt;/span&gt;)
+    &lt;span style="color: #0000FF;"&gt;with&lt;/span&gt; shelve.&lt;span style="color: #006FE0;"&gt;open&lt;/span&gt;(hashcache.cache) &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; db:
+        &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; hsh &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; db:
+            &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;, joblib.load(io.BytesIO(db[hsh]))[&lt;span style="color: #008000;"&gt;'output'&lt;/span&gt;]
+        &lt;span style="color: #0000FF;"&gt;else&lt;/span&gt;:
+            &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;, &lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;
+
+hashcache.cache = &lt;span style="color: #008000;"&gt;'cache.shlv'&lt;/span&gt;
+! rm -f cache.shlv.db
+
+&lt;span style="color: #6434A3;"&gt;@hashcache&lt;/span&gt;(loader=shlv_load, dumper=shlv_dump)
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f&lt;/span&gt;(x):
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x
+
+f(2)
+    
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+running shlv_load
+running shlv_dump
+2
+&lt;/p&gt;
+
+&lt;p&gt;
+And again loading is easy.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;f(2)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+running shlv_load
+2
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-org3be8901" class="outline-2"&gt;
+&lt;h2 id="org3be8901"&gt;&lt;span class="section-number-2"&gt;3.&lt;/span&gt; sqlite version&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-3"&gt;
+&lt;p&gt;
+I am a big fan of sqlite. Here I use a simple table mapping a key to a value. I think it could be interesting to consider storing the value as &lt;a href="https://www.sqlite.org/json1.html"&gt;json&lt;/a&gt; that would make it more searchable, or you could make a more complex table, but here we keep it simple.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; pycse.hashcache &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; hashcache
+
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; io, joblib, sqlite3
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;sql_dump&lt;/span&gt;(hsh, data, verbose=&lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;):
+    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'running sql_dump'&lt;/span&gt;)
+    &lt;span style="color: #0000FF;"&gt;with&lt;/span&gt; io.BytesIO() &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; f:
+        joblib.dump(data, f)
+        value = f.getvalue()
+
+    &lt;span style="color: #0000FF;"&gt;with&lt;/span&gt; con:
+        con.execute(&lt;span style="color: #008000;"&gt;"INSERT INTO cache(hash, value) VALUES(?, ?)"&lt;/span&gt;,
+                    (hsh, value))
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;sql_load&lt;/span&gt;(hsh, verbose=&lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;):
+    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'running sql_load'&lt;/span&gt;)
+    &lt;span style="color: #0000FF;"&gt;with&lt;/span&gt; con:        
+        cur = con.execute(&lt;span style="color: #008000;"&gt;"SELECT value FROM cache WHERE hash = ?"&lt;/span&gt;,
+                          (hsh,))
+        value = cur.fetchone()
+        &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; value &lt;span style="color: #0000FF;"&gt;is&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;:
+            &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;, &lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;
+        &lt;span style="color: #0000FF;"&gt;else&lt;/span&gt;:
+            &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;, joblib.load(io.BytesIO(value[0]))[&lt;span style="color: #008000;"&gt;'output'&lt;/span&gt;]
+
+! rm -f cache.sql
+hashcache.cache = &lt;span style="color: #008000;"&gt;'cache.sql'&lt;/span&gt;
+con = sqlite3.connect(hashcache.cache)
+con.execute(&lt;span style="color: #008000;"&gt;"CREATE TABLE cache(hash TEXT unique, value BLOB)"&lt;/span&gt;)
+        
+&lt;span style="color: #6434A3;"&gt;@hashcache&lt;/span&gt;(loader=sql_load, dumper=sql_dump)
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f&lt;/span&gt;(x):
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x
+
+f(2)    
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+running sql_load
+running sql_dump
+2
+&lt;/p&gt;
+
+&lt;p&gt;
+Once again, running is easy.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;f(2)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+running sql_load
+2
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-org32e7950" class="outline-2"&gt;
+&lt;h2 id="org32e7950"&gt;&lt;span class="section-number-2"&gt;4.&lt;/span&gt; redis&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-4"&gt;
+&lt;p&gt;
+Finally, you might like a server to cache in. This opens the door to running the server remotely so it is accessible by multiple processes using the cache on different machines. We use redis for this example, but only run it locally. Make sure you run &lt;code&gt;redis-server --daemonize yes&lt;/code&gt;
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; pycse.hashcache &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; hashcache
+
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; io, joblib, redis
+
+&lt;span style="color: #BA36A5;"&gt;db&lt;/span&gt; = redis.Redis(host=&lt;span style="color: #008000;"&gt;'localhost'&lt;/span&gt;, port=6379)
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;redis_dump&lt;/span&gt;(hsh, data, verbose=&lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;):
+    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'running redis_dump'&lt;/span&gt;)
+    &lt;span style="color: #0000FF;"&gt;with&lt;/span&gt; io.BytesIO() &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; f:
+        joblib.dump(data, f)
+        value = f.getvalue()
+
+    db.&lt;span style="color: #006FE0;"&gt;set&lt;/span&gt;(hsh, value)
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;redis_load&lt;/span&gt;(hsh, verbose=&lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;):
+    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'running redis_load'&lt;/span&gt;)
+    &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; &lt;span style="color: #0000FF;"&gt;not&lt;/span&gt; hsh &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; db:
+        &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;, &lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;
+    &lt;span style="color: #0000FF;"&gt;else&lt;/span&gt;:
+        &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;, joblib.load(io.BytesIO(db.get(hsh)))[&lt;span style="color: #008000;"&gt;'output'&lt;/span&gt;]
+
+    
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; functools    
+hashcache_redis = functools.partial(hashcache,
+                                    loader=redis_load,
+                                    dumper=redis_dump)    
+
+&lt;span style="color: #6434A3;"&gt;@hashcache_redis&lt;/span&gt;
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f&lt;/span&gt;(x):
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; x
+
+f(2)    
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+running redis_load
+running redis_dump
+2
+&lt;/p&gt;
+
+&lt;p&gt;
+No surprise here, loading is the same as before.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;f(2)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+running redis_load
+2
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-org29b3384" class="outline-2"&gt;
+&lt;h2 id="org29b3384"&gt;&lt;span class="section-number-2"&gt;5.&lt;/span&gt; Summary&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-5"&gt;
+&lt;p&gt;
+I have refactored hashcache to make it much easier to add new backends. You might do that for performance, ease of backup or transferability, to add new capabilities for searching, etc. The new code is a little cleaner than it was before IMO. I am not sure it is API-stable yet, but it is getting there.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;p&gt;Copyright (C) 2023 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
+&lt;p&gt;&lt;a href="/org/2023/09/24/Adding-new-backends-to-hashcache.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Org-mode version = 9.7-pre&lt;/p&gt;]]></content>
+  </entry>
+  <entry>
+    <author>
+      <name></name>
+      <uri>https://kitchingroup.cheme.cmu.edu/blog</uri>
+    </author>
+    <title type="html"><![CDATA[A better manager for supervising Python functions]]></title>
+    <link rel="alternate" type="text/html" href="https://kitchingroup.cheme.cmu.edu/blog/2023/09/21/A-better-manager-for-supervising-Python-functions" />
+    <id>https://kitchingroup.cheme.cmu.edu/blog/2023/09/21/A-better-manager-for-supervising-Python-functions</id>
+    <updated>2023-09-21T13:43:17Z</updated>
+    <published>2023-09-21T13:42:13Z</published>
+    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="programming" />
+    <summary type="html"><![CDATA[A better manager for supervising Python functions]]></summary>
+    <content type="html" xml:base="https://kitchingroup.cheme.cmu.edu/blog/2023/09/21/A-better-manager-for-supervising-Python-functions"><![CDATA[
+
+
+&lt;div id="table-of-contents" role="doc-toc"&gt;
+&lt;h2&gt;Table of Contents&lt;/h2&gt;
+&lt;div id="text-table-of-contents" role="doc-toc"&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href="#org0250367"&gt;1. The previous examples with manager&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#orgbc4f0a8"&gt;2. Stateful supervision&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#org5218dd5"&gt;3. Handling exceptions&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#org677186e"&gt;4. Summary&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;p&gt;
+In the previous &lt;a href="https://kitchingroup.cheme.cmu.edu/blog/2023/09/20/Supervising-Python-functions/index.html"&gt;post&lt;/a&gt; I introduced a supervisor decorator to automate rerunning functions with new arguments to fix issues in them. Almost immediately after posting it, two things started bugging me. First, I thought it was annoying to have two separate arguments for results and exceptions. I would prefer one list of functions that do the right thing. Second, and most annoying, you have to be very careful in writing your checker functions to be consistent with how you called the function so you use exactly the same positional and keyword arguments. That is tedious and limits reusability/flexibility.
+&lt;/p&gt;
+
+&lt;p&gt;
+So, I wrote a new &lt;code&gt;manager&lt;/code&gt; decorator that solves these two problems. Now, you can write checker functions that work on all the arguments of a function. You decorate the checker functions to indicate if they are for results or exceptions. This was a little more of a rabbit hole than I anticipated, but I persevered, and got to a solution that works for these examples. You can find all the code &lt;a href="https://github.com/jkitchin/pycse/blob/master/pycse/supyrvisor.py#L99"&gt;here&lt;/a&gt;.
+&lt;/p&gt;
+
+&lt;p&gt;
+Here is an example where we have a test function that we want to run with new arguments until we get a positive result. We start in a way that it is possible to get a ZeroDivisionError, and we handle that too.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; pycse.supyrvisor &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; manager, check_result, check_exception
+
+&lt;span style="color: #6434A3;"&gt;@check_exception&lt;/span&gt;
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;check1&lt;/span&gt;(args, exc):
+    &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; &lt;span style="color: #006FE0;"&gt;isinstance&lt;/span&gt;(exc, &lt;span style="color: #6434A3;"&gt;ZeroDivisionError&lt;/span&gt;):
+        &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'ooo. caught 1/0, incrementing x'&lt;/span&gt;)
+        &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; {&lt;span style="color: #008000;"&gt;'x'&lt;/span&gt;: 1}
+
+&lt;span style="color: #6434A3;"&gt;@check_result&lt;/span&gt;
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;check2&lt;/span&gt;(args, result):
+    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(args)
+    &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; result &amp;lt; 0:
+        &lt;span style="color: #BA36A5;"&gt;args&lt;/span&gt;[&lt;span style="color: #008000;"&gt;'x'&lt;/span&gt;] += 1
+        &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; args
+        
+
+&lt;span style="color: #6434A3;"&gt;@manager&lt;/span&gt;(checkers=[check1, check2])
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;test&lt;/span&gt;(x, a=1):
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; a / x
+
+test(-1)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+{'x': -1, 'a': 1}
+ooo. caught 1/0, incrementing x
+{'x': 1}
+1.0
+&lt;/p&gt;
+
+&lt;p&gt;
+This also works, so you can see this is better than the previous version which would not work if you change the signature.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;test(a=1, x=-1)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+{'x': -1, 'a': 1}
+ooo. caught 1/0, incrementing x
+{'x': 1}
+1.0
+&lt;/p&gt;
+
+
+&lt;div id="outline-container-org0250367" class="outline-2"&gt;
+&lt;h2 id="org0250367"&gt;&lt;span class="section-number-2"&gt;1.&lt;/span&gt; The previous examples with manager&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-1"&gt;
+&lt;p&gt;
+Here is the new syntax with manager.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; scipy.optimize &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; minimize
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;objective&lt;/span&gt;(x):
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; np.exp(x**2) - 10 * np.exp(x)
+
+
+&lt;span style="color: #6434A3;"&gt;@check_result&lt;/span&gt;
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;maxIterationsExceeded&lt;/span&gt;(args, sol):
+    &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; sol.message == &lt;span style="color: #008000;"&gt;'Maximum number of iterations has been exceeded.'&lt;/span&gt;:
+        args[&lt;span style="color: #008000;"&gt;'maxiter'&lt;/span&gt;] *= 2
+        &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; args
+
+&lt;span style="color: #6434A3;"&gt;@manager&lt;/span&gt;(checkers=[maxIterationsExceeded], verbose=&lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;)
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;get_result&lt;/span&gt;(maxiter=2):
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; minimize(objective, 0.0, options={&lt;span style="color: #008000;"&gt;'maxiter'&lt;/span&gt;: maxiter})
+
+get_result(2)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example" id="orgc74758e"&gt;
+Proposed fix in wrapper: {'maxiter': 4}
+Proposed fix in wrapper: {'maxiter': 8}
+  message: Optimization terminated successfully.
+  success: True
+   status: 0
+      fun: -36.86307468296428
+        x: [ 1.662e+00]
+      nit: 5
+      jac: [-4.768e-07]
+ hess_inv: [[ 6.481e-03]]
+     nfev: 26
+     njev: 13
+&lt;/pre&gt;
+
+
+&lt;p&gt;
+It works!
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-orgbc4f0a8" class="outline-2"&gt;
+&lt;h2 id="orgbc4f0a8"&gt;&lt;span class="section-number-2"&gt;2.&lt;/span&gt; Stateful supervision&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-2"&gt;
+&lt;p&gt;
+In this example, we aim to find the steady state concentrations of two species by integrating a mass balance to steady state. This is visually easy to see below, the concentrations are essentially flat after 10 min or so. Computationally this is somewhat tricky to find though. A way to do it is to compare some windows of integration to see if the values are not changing very fast. For instance you could average the values from 10 to 11, and compare that to the values in 11 to 12, and keep doing that until they are close enough to the same.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;ode&lt;/span&gt;(t, C):
+    &lt;span style="color: #BA36A5;"&gt;Ca&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;Cb&lt;/span&gt; = C
+    &lt;span style="color: #BA36A5;"&gt;dCadt&lt;/span&gt; = -0.2 * Ca + 0.3 * Cb
+    &lt;span style="color: #BA36A5;"&gt;dCbdt&lt;/span&gt; = -0.3 * Cb + 0.2 * Ca
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; dCadt, dCbdt
+
+&lt;span style="color: #BA36A5;"&gt;tspan&lt;/span&gt; = (0, 20)
+
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; scipy.integrate &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; solve_ivp
+&lt;span style="color: #BA36A5;"&gt;sol&lt;/span&gt; = solve_ivp(ode, tspan, (1, 0))
+
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; matplotlib.pyplot &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; plt
+plt.plot(sol.t, sol.y.T)
+plt.xlabel(&lt;span style="color: #008000;"&gt;'t (min)'&lt;/span&gt;)
+plt.ylabel(&lt;span style="color: #008000;"&gt;'C'&lt;/span&gt;)
+plt.legend([&lt;span style="color: #008000;"&gt;'A'&lt;/span&gt;, &lt;span style="color: #008000;"&gt;'B'&lt;/span&gt;]);
+sol.y.T[-1]
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+array([0.60003278, 0.39996722])
+&lt;/pre&gt;
+
+&lt;p&gt;
+&lt;figure&gt;&lt;img src="/media/f3c33e97d249f9a4832ababa88b2ee4e697c9cad.png"&gt;&lt;/figure&gt; 
+&lt;/p&gt;
+
+
+&lt;p&gt;
+It is not crucial to use a class here; you could also use global variables, or function attributes. A class is a standard way of encapsulating state though. We just have to make the class callable so it acts like a function when we need it to.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;class&lt;/span&gt; &lt;span style="color: #6434A3;"&gt;ReachedSteadyState&lt;/span&gt;:        
+    &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;__init__&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;, tolerance=0.01):
+        &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.tolerance = tolerance
+        &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.last_solution = &lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;
+        &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.count = 0
+
+    &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;__str__&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;):
+        &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; &lt;span style="color: #008000;"&gt;'ReachedSteadyState'&lt;/span&gt;
+
+    &lt;span style="color: #6434A3;"&gt;@check_result&lt;/span&gt;
+    &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;__call__&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;, args, sol):
+        &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.last_solution &lt;span style="color: #0000FF;"&gt;is&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;:
+            &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.last_solution = sol
+            &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.count += 1
+            args[&lt;span style="color: #008000;"&gt;'C0'&lt;/span&gt;] = sol.y.T[-1]
+            &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; args
+
+        &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;we have a previous solution&lt;/span&gt;
+        &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; &lt;span style="color: #0000FF;"&gt;not&lt;/span&gt; np.allclose(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.last_solution.y.mean(axis=1),
+                           sol.y.mean(axis=1),
+                           rtol=&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.tolerance,
+                           atol=&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.tolerance):
+            &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.last_solution = sol
+            &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.count += 1
+            args[&lt;span style="color: #008000;"&gt;'C0'&lt;/span&gt;] = sol.y.T[-1]
+            &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; args
+
+rss = ReachedSteadyState(0.0001)
+
+&lt;span style="color: #6434A3;"&gt;@manager&lt;/span&gt;(checkers=[rss], max_errors=20, verbose=&lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;)        
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;get_sol&lt;/span&gt;(C0=(1, 0), window=1):
+    sol = solve_ivp(ode, t_span=(0, window), y0=C0)
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; sol
+
+sol = get_sol((1, 0), window=2)
+sol
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Proposed fix in ReachedSteadyState: {'C0': array([0.74716948, 0.25283052]), 'window': 2}
+Proposed fix in ReachedSteadyState: {'C0': array([0.65414484, 0.34585516]), 'window': 2}
+Proposed fix in ReachedSteadyState: {'C0': array([0.61992776, 0.38007224]), 'window': 2}
+Proposed fix in ReachedSteadyState: {'C0': array([0.60733496, 0.39266504]), 'window': 2}
+Proposed fix in ReachedSteadyState: {'C0': array([0.60269957, 0.39730043]), 'window': 2}
+Proposed fix in ReachedSteadyState: {'C0': array([0.60099346, 0.39900654]), 'window': 2}
+Proposed fix in ReachedSteadyState: {'C0': array([0.60036557, 0.39963443]), 'window': 2}
+Proposed fix in ReachedSteadyState: {'C0': array([0.60013451, 0.39986549]), 'window': 2}
+Proposed fix in ReachedSteadyState: {'C0': array([0.60004949, 0.39995051]), 'window': 2}
+&lt;/p&gt;
+&lt;pre class="example" id="orgee266a9"&gt;
+  message: The solver successfully reached the end of the integration interval.
+  success: True
+   status: 0
+        t: [ 0.000e+00  7.179e-01  2.000e+00]
+        y: [[ 6.000e-01  6.000e-01  6.000e-01]
+            [ 4.000e-01  4.000e-01  4.000e-01]]
+      sol: None
+ t_events: None
+ y_events: None
+     nfev: 14
+     njev: 0
+      nlu: 0
+&lt;/pre&gt;
+
+&lt;p&gt;
+We can plot the two solutions to see how different they are. This shows they are close.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; matplotlib.pyplot &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; plt
+plt.plot(rss.last_solution.t, rss.last_solution.y.T, label=[&lt;span style="color: #008000;"&gt;'A previous'&lt;/span&gt; ,&lt;span style="color: #008000;"&gt;'B previous'&lt;/span&gt;])
+plt.plot(sol.t, sol.y.T, &lt;span style="color: #008000;"&gt;'--'&lt;/span&gt;, label=[&lt;span style="color: #008000;"&gt;'A current'&lt;/span&gt;, &lt;span style="color: #008000;"&gt;'B current'&lt;/span&gt;])
+plt.legend()
+plt.xlabel(&lt;span style="color: #008000;"&gt;'relative t'&lt;/span&gt;)
+plt.ylabel(&lt;span style="color: #008000;"&gt;'C'&lt;/span&gt;);
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+&lt;figure&gt;&lt;img src="/media/3c544cf4265650554cef24240a0c6272dcc8fdae.png"&gt;&lt;/figure&gt; 
+&lt;/p&gt;
+
+&lt;p&gt;
+Those look pretty similar on this graph.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-org5218dd5" class="outline-2"&gt;
+&lt;h2 id="org5218dd5"&gt;&lt;span class="section-number-2"&gt;3.&lt;/span&gt; Handling exceptions&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-3"&gt;
+&lt;p&gt;
+Suppose you have a function that randomly fails. This could be because something does not converge with a randomly chosen initial guess, converges to an unphysical answer, etc. In these cases, it makes sense to simply try again with a new initial guess.
+&lt;/p&gt;
+
+&lt;p&gt;
+For this example, say we have this objective function with two minima. We will say that any solution above 0.5 is unphysical.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f&lt;/span&gt;(x):
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; -(np.exp(-50 * (x - 0.25)**2) + 0.5 * np.exp(-100 * (x - 0.75)**2))
+
+
+&lt;span style="color: #BA36A5;"&gt;x&lt;/span&gt; = np.linspace(0, 1)
+plt.plot(x, f(x))
+plt.xlabel(&lt;span style="color: #008000;"&gt;'x'&lt;/span&gt;)
+plt.ylabel(&lt;span style="color: #008000;"&gt;'y'&lt;/span&gt;);
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+&lt;figure&gt;&lt;img src="/media/1749ee4492947f204b2e25cc2f9059edd2929869.png"&gt;&lt;/figure&gt; 
+&lt;/p&gt;
+
+&lt;p&gt;
+Here we define a function that takes a guess, and gets a solution. If the solution is unphysical, we raise an exception. We define a custom exception so we can handle it specifically.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;class&lt;/span&gt; &lt;span style="color: #6434A3;"&gt;UnphysicalSolution&lt;/span&gt;(&lt;span style="color: #6434A3;"&gt;Exception&lt;/span&gt;):
+    &lt;span style="color: #0000FF;"&gt;pass&lt;/span&gt;
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;get_minima&lt;/span&gt;(guess):
+    &lt;span style="color: #BA36A5;"&gt;sol&lt;/span&gt; = minimize(f, guess)
+
+    &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; sol.x &amp;gt; 0.5:
+        &lt;span style="color: #0000FF;"&gt;raise&lt;/span&gt; UnphysicalSolution
+    &lt;span style="color: #0000FF;"&gt;else&lt;/span&gt;:
+        &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; sol
+
+&lt;span style="color: #6434A3;"&gt;@check_exception&lt;/span&gt;
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;try_again&lt;/span&gt;(args, exc):
+    &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; &lt;span style="color: #006FE0;"&gt;isinstance&lt;/span&gt;(exc, UnphysicalSolution):
+        args[&lt;span style="color: #008000;"&gt;'guess'&lt;/span&gt;] = np.random.random()
+        &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; args
+  
+&lt;span style="color: #6434A3;"&gt;@manager&lt;/span&gt;(checkers=(try_again,), verbose=&lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;)    
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;get_minima&lt;/span&gt;(guess):
+    sol = minimize(f, guess)
+
+    &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; sol.x &amp;gt; 0.5:
+        &lt;span style="color: #0000FF;"&gt;raise&lt;/span&gt; UnphysicalSolution
+    &lt;span style="color: #0000FF;"&gt;else&lt;/span&gt;:
+        &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; sol
+
+get_minima(np.random.random())
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example" id="org6d987ce"&gt;
+Proposed fix in wrapper: {'guess': 0.03789731690063758}
+  message: Optimization terminated successfully.
+  success: True
+   status: 0
+      fun: -1.0000000000069411
+        x: [ 2.500e-01]
+      nit: 4
+      jac: [ 0.000e+00]
+ hess_inv: [[ 1.000e-02]]
+     nfev: 18
+     njev: 9
+&lt;/pre&gt;
+
+
+&lt;p&gt;
+You can see it took four iterations to find a solution. Other times it might take zero or one, or maybe more, it depends on where the guesses fall.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-org677186e" class="outline-2"&gt;
+&lt;h2 id="org677186e"&gt;&lt;span class="section-number-2"&gt;4.&lt;/span&gt; Summary&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-4"&gt;
+&lt;p&gt;
+This solution works as well as &lt;code&gt;supervisor&lt;/code&gt; did. It was a little deeper rabbit hole to go down, mostly because of some subtlety in making the result and exception decorators work for both functions and class methods. I think it is more robust now, as it should not matter how you call the function, and any combination of args and kwargs should be working.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;p&gt;Copyright (C) 2023 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
+&lt;p&gt;&lt;a href="/org/2023/09/21/A-better-manager-for-supervising-Python-functions.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Org-mode version = 9.7-pre&lt;/p&gt;]]></content>
+  </entry>
+  <entry>
+    <author>
+      <name></name>
+      <uri>https://kitchingroup.cheme.cmu.edu/blog</uri>
+    </author>
+    <title type="html"><![CDATA[Supervising Python functions]]></title>
+    <link rel="alternate" type="text/html" href="https://kitchingroup.cheme.cmu.edu/blog/2023/09/20/Supervising-Python-functions" />
+    <id>https://kitchingroup.cheme.cmu.edu/blog/2023/09/20/Supervising-Python-functions</id>
+    <updated>2023-09-21T13:44:28Z</updated>
+    <published>2023-09-20T19:55:50Z</published>
+    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="programming" />
+    <summary type="html"><![CDATA[Supervising Python functions]]></summary>
+    <content type="html" xml:base="https://kitchingroup.cheme.cmu.edu/blog/2023/09/20/Supervising-Python-functions"><![CDATA[
+
+
+&lt;div id="table-of-contents" role="doc-toc"&gt;
+&lt;h2&gt;Table of Contents&lt;/h2&gt;
+&lt;div id="text-table-of-contents" role="doc-toc"&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href="#org4c1f8b0"&gt;1. Stateful supervision&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#orgb670b33"&gt;2. Handling exceptions&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#org5b8b358"&gt;3. Summary&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;p&gt;
+[UPDATE &lt;span class="timestamp-wrapper"&gt;&lt;span class="timestamp"&gt;[2023-09-21 Thu]&lt;/span&gt;&lt;/span&gt;]: See this &lt;a href="https://kitchingroup.cheme.cmu.edu/blog/2023/09/21/A-better-manager-for-supervising-Python-functions/index.html"&gt;new post&lt;/a&gt; for an update and improved version of this post.
+&lt;/p&gt;
+
+&lt;p&gt;
+In the last &lt;a href="https://kitchingroup.cheme.cmu.edu/blog/2023/09/19/Using-Custodian-to-help-converge-an-optimization-problem/"&gt;post&lt;/a&gt; I talked about using custodian to supervise Python functions. I noted it felt a little heavy, so I wrote a new decorator that does basically the same thing. TL;DR I am not sure this is less heavy, but I learned some things doing it. The code I used is part of pycse at &lt;a href="https://github.com/jkitchin/pycse/blob/master/pycse/supyrvisor.py"&gt;https://github.com/jkitchin/pycse/blob/master/pycse/supyrvisor.py&lt;/a&gt;. Check out the code to see how this works.
+&lt;/p&gt;
+
+&lt;p&gt;
+Here is the prototype problem it solves. This code runs, but does not succeed because it exceeds the maximum iterations. 
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; scipy.optimize &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; minimize
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;objective&lt;/span&gt;(x):
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; np.exp(x**2) - 10 * np.exp(x)
+
+minimize(objective, 0.0, options={&lt;span style="color: #008000;"&gt;'maxiter'&lt;/span&gt;: 2})
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example" id="org6c6a887"&gt;
+  message: Maximum number of iterations has been exceeded.
+  success: False
+   status: 1
+      fun: -36.86289091418059
+        x: [ 1.661e+00]
+      nit: 2
+      jac: [-2.374e-01]
+ hess_inv: [[ 6.889e-03]]
+     nfev: 20
+     njev: 10
+&lt;/pre&gt;
+
+&lt;p&gt;
+The solution is simple, you increase the number of iterations. That is tedious to do manually though, and not practical if you do this hundreds of times in a study. Enter &lt;code&gt;pycse.supyrvisor&lt;/code&gt;. It provides a decorator to do this. Similar to custodian, we have to define a function that has arguments to change this. We do this here. This function still does not succeed yet.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;get_result&lt;/span&gt;(maxiter=2):
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; minimize(objective, 0.0, options={&lt;span style="color: #008000;"&gt;'maxiter'&lt;/span&gt;: maxiter})
+
+get_result(2)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example" id="org78a23db"&gt;
+  message: Maximum number of iterations has been exceeded.
+  success: False
+   status: 1
+      fun: -36.86289091418059
+        x: [ 1.661e+00]
+      nit: 2
+      jac: [-2.374e-01]
+ hess_inv: [[ 6.889e-03]]
+     nfev: 20
+     njev: 10
+&lt;/pre&gt;
+
+&lt;p&gt;
+Next, we need a "checker" function. The role of this function is to check the output of the function, determine if it is ok, and if not, to return a new set of arguments to run the function with. There are some subtleties in this. You can call your function with a combination of args and kwargs, and you have to write this function in a way that is consistent with how you call the function. In the example above, we called &lt;code&gt;get_result(2)&lt;/code&gt; where the 2 is a positional argument. In this checker function we write it with that in mind. If we detect that the minimizer failed because of exceeding the maximum number of iterations, we get the argument and double it. Then, we return the new args and kwargs. Otherwise this function returns None, indicating the solution is fine as far as this function is concerned.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;maxIterationsExceeeded&lt;/span&gt;(args, kwargs, sol):
+    &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; sol.message == &lt;span style="color: #008000;"&gt;'Maximum number of iterations has been exceeded.'&lt;/span&gt;:
+        maxiter = args[0]
+        maxiter *= 2
+        &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; (maxiter,), kwargs
+        
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Finally, we get the supervisor decorator, and decorate the function.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; pycse.supyrvisor &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; supervisor
+
+&lt;span style="color: #BA36A5;"&gt;get_result&lt;/span&gt; = supervisor(check_funcs=[maxIterationsExceeeded], verbose=&lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;)(get_result)
+
+get_result(2)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example" id="org8a27ad8"&gt;
+Proposed fix in maxIterationsExceeeded: ((4,), {})
+Proposed fix in maxIterationsExceeeded: ((8,), {})
+  message: Optimization terminated successfully.
+  success: True
+   status: 0
+      fun: -36.86307468296428
+        x: [ 1.662e+00]
+      nit: 5
+      jac: [-4.768e-07]
+ hess_inv: [[ 6.481e-03]]
+     nfev: 26
+     njev: 13
+&lt;/pre&gt;
+
+&lt;p&gt;
+It works!
+&lt;/p&gt;
+
+&lt;div id="outline-container-org4c1f8b0" class="outline-2"&gt;
+&lt;h2 id="org4c1f8b0"&gt;&lt;span class="section-number-2"&gt;1.&lt;/span&gt; Stateful supervision&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-1"&gt;
+&lt;p&gt;
+In this example, we aim to find the steady state concentrations of two species by integrating a mass balance to steady state. This is visually easy to see below, the concentrations are essentially flat after 10 min or so. Computationally this is somewhat tricky to find though. A way to do it is to compare some windows of integration to see if the values are not changing very fast. For instance you could average the values from 10 to 11, and compare that to the values in 11 to 12, and keep doing that until they are close enough to the same.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;ode&lt;/span&gt;(t, C):
+    &lt;span style="color: #BA36A5;"&gt;Ca&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;Cb&lt;/span&gt; = C
+    &lt;span style="color: #BA36A5;"&gt;dCadt&lt;/span&gt; = -0.2 * Ca + 0.3 * Cb
+    &lt;span style="color: #BA36A5;"&gt;dCbdt&lt;/span&gt; = -0.3 * Cb + 0.2 * Ca
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; dCadt, dCbdt
+
+&lt;span style="color: #BA36A5;"&gt;tspan&lt;/span&gt; = (0, 20)
+
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; scipy.integrate &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; solve_ivp
+&lt;span style="color: #BA36A5;"&gt;sol&lt;/span&gt; = solve_ivp(ode, tspan, (1, 0))
+
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; matplotlib.pyplot &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; plt
+plt.plot(sol.t, sol.y.T)
+plt.xlabel(&lt;span style="color: #008000;"&gt;'t (min)'&lt;/span&gt;)
+plt.ylabel(&lt;span style="color: #008000;"&gt;'C'&lt;/span&gt;)
+plt.legend([&lt;span style="color: #008000;"&gt;'A'&lt;/span&gt;, &lt;span style="color: #008000;"&gt;'B'&lt;/span&gt;]);
+sol.y.T[-1]
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+array([0.60003278, 0.39996722])
+&lt;/pre&gt;
+
+&lt;p&gt;
+&lt;figure&gt;&lt;img src="/media/f3c33e97d249f9a4832ababa88b2ee4e697c9cad.png"&gt;&lt;/figure&gt; 
+&lt;/p&gt;
+
+&lt;p&gt;
+The goal then is to have a supervisor function that will keep track of the last solution and the current one, and compare the average of them. You could do something more sophisticated, but this is simple enough to try out now. If the difference between two integrations is small enough, we will say we have hit steady state, and if not, we integrate from the end of the last solution forward again. That means we have to store some state information so we can compare a current solution to the last solution.
+&lt;/p&gt;
+
+&lt;p&gt;
+Let's start by defining a function that returns a solution from some initial condition. Next, we show that if you run it 12ish times, initializing from the last state, we get something that appears steady-stateish in the sense that the y values only changing in the second decimal place. You might consider that close enough to steady state.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;get_sol&lt;/span&gt;(C0=(1, 0), window=1):
+    sol = solve_ivp(ode, t_span=(0, window), y0=C0)
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; sol
+
+sol = get_sol()
+sol = get_sol(sol.y.T[-1])
+sol = get_sol(sol.y.T[-1])
+sol = get_sol(sol.y.T[-1])
+sol = get_sol(sol.y.T[-1])
+sol = get_sol(sol.y.T[-1])
+sol = get_sol(sol.y.T[-1])
+sol = get_sol(sol.y.T[-1])
+sol = get_sol(sol.y.T[-1])
+sol = get_sol(sol.y.T[-1])
+sol = get_sol(sol.y.T[-1])
+sol = get_sol(sol.y.T[-1])
+sol
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example" id="orgb06e483"&gt;
+  message: The solver successfully reached the end of the integration interval.
+  success: True
+   status: 0
+        t: [ 0.000e+00  3.565e-01  1.000e+00]
+        y: [[ 6.016e-01  6.014e-01  6.010e-01]
+            [ 3.984e-01  3.986e-01  3.990e-01]]
+      sol: None
+ t_events: None
+ y_events: None
+     nfev: 14
+     njev: 0
+      nlu: 0
+&lt;/pre&gt;
+
+&lt;p&gt;
+That is obviously tedious, so now we devise a supervisor function to do it for us. Since we will save state between calls, I will use a class here. We will define a tolerance that we want the difference of the average of two sequential solutions to be less than. We have to be a little careful here. There are many ways to call get_sol, e.g. all of these are correct, but when the checker function is called, it will get different arguments.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;get_sol()           &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;no args: args=(), kwargs={} &lt;/span&gt;
+get_sol((1, 0), 2)  &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;all positional args: args=((1, 0), 2), kwargs={}&lt;/span&gt;
+get_sol((1, 0))     &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;one positional arg:  args=((1, 0),), kwargs={}&lt;/span&gt;
+get_sol((1, 0), window=2) &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;a positional and kwarg: args =((1, 0),), kwargs={'window': 2}&lt;/span&gt;
+&lt;/pre&gt;
+&lt;/div&gt;
+
+
+&lt;p&gt;
+We have to either assume one of these, or write a function that can handle any of them. I am going to &lt;i&gt;assume&lt;/i&gt; here that args will always just be the initial condition, and anything else will be in kwargs. That is a convention we use for this problem, and if you break the convention, you will have errors. For example, &lt;code&gt;get_sol(C0=(1, 0))&lt;/code&gt; will cause an error because you will not have a positional argument for C0 but instead a keyword argument for C0.
+&lt;/p&gt;
+
+&lt;p&gt;
+It is not crucial to use a class here; you could also use global variables, or function attributes. A class is a standard way of encapsulating state though. We just have to make the class callable so it acts like a function when we need it to.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;class&lt;/span&gt; &lt;span style="color: #6434A3;"&gt;ReachedSteadyState&lt;/span&gt;:        
+    &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;__init__&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;, tolerance=0.01):
+        &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.tolerance = tolerance
+        &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.last_solution = &lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;
+        &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.count = 0
+
+    &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;__str__&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;):
+        &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; &lt;span style="color: #008000;"&gt;'ReachedSteadyState'&lt;/span&gt;
+        
+    &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;__call__&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;, args, kwargs, sol):
+        &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.last_solution &lt;span style="color: #0000FF;"&gt;is&lt;/span&gt; &lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;:
+            &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.last_solution = sol
+            &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.count += 1
+            C0 = sol.y.T[-1]
+            &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; (C0,), kwargs
+
+        &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;we have a previous solution&lt;/span&gt;
+        &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; &lt;span style="color: #0000FF;"&gt;not&lt;/span&gt; np.allclose(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.last_solution.y.mean(axis=1),
+                           sol.y.mean(axis=1),
+                           rtol=&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.tolerance,
+                           atol=&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.tolerance):
+            &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.last_solution = sol
+            &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.count += 1
+            C0 = sol.y.T[-1]            
+            &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; (C0,), kwargs
+
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Now, we decorate the &lt;code&gt;get_sol&lt;/code&gt; function, and then run it. Since we used a bigger window, it only takes 9 iterations to get to an approximate steady state.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;get_sol&lt;/span&gt;(C0=(1, 0), window=1):
+    sol = solve_ivp(ode, t_span=(0, window), y0=C0)
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; sol
+
+rss = ReachedSteadyState(0.0001)
+get_sol = supervisor(check_funcs=(rss,), verbose=&lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;, max_errors=20)(get_sol)
+sol = get_sol((1, 0), window=2)
+sol
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Proposed fix in ReachedSteadyState: ((array([0.74716948, 0.25283052]),), {'window': 2})
+Proposed fix in ReachedSteadyState: ((array([0.65414484, 0.34585516]),), {'window': 2})
+Proposed fix in ReachedSteadyState: ((array([0.61992776, 0.38007224]),), {'window': 2})
+Proposed fix in ReachedSteadyState: ((array([0.60733496, 0.39266504]),), {'window': 2})
+Proposed fix in ReachedSteadyState: ((array([0.60269957, 0.39730043]),), {'window': 2})
+Proposed fix in ReachedSteadyState: ((array([0.60099346, 0.39900654]),), {'window': 2})
+Proposed fix in ReachedSteadyState: ((array([0.60036557, 0.39963443]),), {'window': 2})
+Proposed fix in ReachedSteadyState: ((array([0.60013451, 0.39986549]),), {'window': 2})
+Proposed fix in ReachedSteadyState: ((array([0.60004949, 0.39995051]),), {'window': 2})
+&lt;/p&gt;
+&lt;pre class="example" id="org76b54b4"&gt;
+  message: The solver successfully reached the end of the integration interval.
+  success: True
+   status: 0
+        t: [ 0.000e+00  7.179e-01  2.000e+00]
+        y: [[ 6.000e-01  6.000e-01  6.000e-01]
+            [ 4.000e-01  4.000e-01  4.000e-01]]
+      sol: None
+ t_events: None
+ y_events: None
+     nfev: 14
+     njev: 0
+      nlu: 0
+&lt;/pre&gt;
+
+
+&lt;p&gt;
+We can plot the two solutions to see how different they are. This shows they are close.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; matplotlib.pyplot &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; plt
+plt.plot(rss.last_solution.t, rss.last_solution.y.T, label=[&lt;span style="color: #008000;"&gt;'A previous'&lt;/span&gt; ,&lt;span style="color: #008000;"&gt;'B previous'&lt;/span&gt;])
+plt.plot(sol.t, sol.y.T, &lt;span style="color: #008000;"&gt;'--'&lt;/span&gt;, label=[&lt;span style="color: #008000;"&gt;'A current'&lt;/span&gt;, &lt;span style="color: #008000;"&gt;'B current'&lt;/span&gt;])
+plt.legend()
+plt.xlabel(&lt;span style="color: #008000;"&gt;'relative t'&lt;/span&gt;)
+plt.ylabel(&lt;span style="color: #008000;"&gt;'C'&lt;/span&gt;);
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+&lt;figure&gt;&lt;img src="/media/3c544cf4265650554cef24240a0c6272dcc8fdae.png"&gt;&lt;/figure&gt; 
+&lt;/p&gt;
+
+&lt;p&gt;
+Those look pretty similar on this graph.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-orgb670b33" class="outline-2"&gt;
+&lt;h2 id="orgb670b33"&gt;&lt;span class="section-number-2"&gt;2.&lt;/span&gt; Handling exceptions&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-2"&gt;
+&lt;p&gt;
+Suppose you have a function that randomly fails. This could be because something does not converge with a randomly chosen initial guess, converges to an unphysical answer, etc. In these cases, it makes sense to simply try again with a new initial guess.
+&lt;/p&gt;
+
+&lt;p&gt;
+For this example, say we have this objective function with two minima. We will say that any solution above 0.5 is unphysical.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;f&lt;/span&gt;(x):
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; -(np.exp(-50 * (x - 0.25)**2) + 0.5 * np.exp(-100 * (x - 0.75)**2))
+
+
+&lt;span style="color: #BA36A5;"&gt;x&lt;/span&gt; = np.linspace(0, 1)
+plt.plot(x, f(x))
+plt.xlabel(&lt;span style="color: #008000;"&gt;'x'&lt;/span&gt;)
+plt.ylabel(&lt;span style="color: #008000;"&gt;'y'&lt;/span&gt;);
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+&lt;figure&gt;&lt;img src="/media/1749ee4492947f204b2e25cc2f9059edd2929869.png"&gt;&lt;/figure&gt; 
+&lt;/p&gt;
+
+&lt;p&gt;
+Here we define a function that takes a guess, and gets a solution. If the solution is unphysical, we raise an exception. We define a custom exception so we can handle it specifically.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;class&lt;/span&gt; &lt;span style="color: #6434A3;"&gt;UnphysicalSolution&lt;/span&gt;(&lt;span style="color: #6434A3;"&gt;Exception&lt;/span&gt;):
+    &lt;span style="color: #0000FF;"&gt;pass&lt;/span&gt;
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;get_minima&lt;/span&gt;(guess):
+    &lt;span style="color: #BA36A5;"&gt;sol&lt;/span&gt; = minimize(f, guess)
+
+    &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; sol.x &amp;gt; 0.5:
+        &lt;span style="color: #0000FF;"&gt;raise&lt;/span&gt; UnphysicalSolution
+    &lt;span style="color: #0000FF;"&gt;else&lt;/span&gt;:
+        &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; sol
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Some initial guesses work fine.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;get_minima(0.2)    
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example" id="orgc9b6264"&gt;
+  message: Optimization terminated successfully.
+  success: True
+   status: 0
+      fun: -1.0000000000069416
+        x: [ 2.500e-01]
+      nit: 4
+      jac: [ 4.470e-08]
+ hess_inv: [[ 1.000e-02]]
+     nfev: 14
+     njev: 7
+&lt;/pre&gt;
+
+&lt;p&gt;
+But, others don't.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;get_minima(0.8)    
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;hr /&gt;
+&lt;p&gt;
+UnphysicalSolution                        Traceback (most recent call last)
+Cell In[16], line 1
+-&amp;#x2014;&amp;gt; 1 get_minima(0.8)
+&lt;/p&gt;
+
+&lt;p&gt;
+Cell In[14], line 8, in get_minima(guess)
+      5 sol = minimize(f, guess)
+      7 if sol.x &amp;gt; 0.5:
+-&amp;#x2014;&amp;gt; 8     raise UnphysicalSolution
+      9 else:
+     10     return sol
+&lt;/p&gt;
+
+&lt;p&gt;
+UnphysicalSolution: 
+&lt;/p&gt;
+
+&lt;p&gt;
+Here is an example where we can simply rerun with a new guess. That is done here.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;try_again&lt;/span&gt;(args, kwargs, exc):
+    &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; &lt;span style="color: #006FE0;"&gt;isinstance&lt;/span&gt;(exc, UnphysicalSolution):
+        &lt;span style="color: #BA36A5;"&gt;args&lt;/span&gt; = (np.random.random(),)
+        &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; args, kwargs
+  
+&lt;span style="color: #6434A3;"&gt;@supervisor&lt;/span&gt;(exception_funcs=(try_again,), verbose=&lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;)    
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;get_minima&lt;/span&gt;(guess):
+    sol = minimize(f, guess)
+
+    &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; sol.x &amp;gt; 0.5:
+        &lt;span style="color: #0000FF;"&gt;raise&lt;/span&gt; UnphysicalSolution
+    &lt;span style="color: #0000FF;"&gt;else&lt;/span&gt;:
+        &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; sol
+
+get_minima(np.random.random())
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example" id="orgad7b6a5"&gt;
+Proposed fix in try_again: ((0.7574152313004273,), {})
+Proposed fix in try_again: ((0.39650554857922415,), {})
+  message: Optimization terminated successfully.
+  success: True
+   status: 0
+      fun: -1.0000000000069411
+        x: [ 2.500e-01]
+      nit: 3
+      jac: [ 0.000e+00]
+ hess_inv: [[ 1.000e-02]]
+     nfev: 14
+     njev: 7
+&lt;/pre&gt;
+
+
+&lt;p&gt;
+You can see it took two iterations to find a solution. Other times it might take zero or one, or maybe more, it depends on where the guesses fall.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id="outline-container-org5b8b358" class="outline-2"&gt;
+&lt;h2 id="org5b8b358"&gt;&lt;span class="section-number-2"&gt;3.&lt;/span&gt; Summary&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-3"&gt;
+&lt;p&gt;
+This solution works pretty well, similar to custodian. It is a little simpler than custodian I think, as you can do simple things with functions, and don't really need to make classes for everything. Probably it does less than custodian, and also probably there are some corner issues I haven't uncovered yet. It was a nice exercise in building a decorator though, and thinking through all the ways this can be done.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;p&gt;Copyright (C) 2023 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
+&lt;p&gt;&lt;a href="/org/2023/09/20/Supervising-Python-functions.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Org-mode version = 9.7-pre&lt;/p&gt;]]></content>
+  </entry>
+  <entry>
+    <author>
+      <name></name>
+      <uri>https://kitchingroup.cheme.cmu.edu/blog</uri>
+    </author>
+    <title type="html"><![CDATA[Using Custodian to help converge an optimization problem]]></title>
+    <link rel="alternate" type="text/html" href="https://kitchingroup.cheme.cmu.edu/blog/2023/09/19/Using-Custodian-to-help-converge-an-optimization-problem" />
+    <id>https://kitchingroup.cheme.cmu.edu/blog/2023/09/19/Using-Custodian-to-help-converge-an-optimization-problem</id>
+    <updated>2023-09-19T15:35:08Z</updated>
+    <published>2023-09-19T15:34:21Z</published>
+    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="programming" />
+    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="optimization" />
+    <summary type="html"><![CDATA[Using Custodian to help converge an optimization problem]]></summary>
+    <content type="html" xml:base="https://kitchingroup.cheme.cmu.edu/blog/2023/09/19/Using-Custodian-to-help-converge-an-optimization-problem"><![CDATA[
+
+
+&lt;p&gt;
+In high-throughput calculations, some fraction of them usually fail for some reason. Sometimes it is easy to fix these calculations and re-run them successfully, for example, you might just need a different initialization, or to increase memory or the number of allowed steps, etc.  &lt;a href="http://materialsproject.github.io/custodian/"&gt;custodian&lt;/a&gt; is a tool that is designed for this purpose. 
+&lt;/p&gt;
+
+&lt;p&gt;
+The idea is we make a function to do what we want that has arguments that control that. We need a function that can examine the output of the function and determine if it succeeded, and if it didn't succeed to say what new arguments to try next. Then we run the function in custodian and let it take care of rerunning with new arguments until it either succeeds, or tries too many times.
+&lt;/p&gt;
+
+&lt;p&gt;
+The goal here is to use &lt;a href="http://materialsproject.github.io/custodian/"&gt;custodian&lt;/a&gt; to fix a problem optimization. The example is a little contrived, we set a number of iterations artificially low so that the minimization fails by reaching the maximum number of iterations. Custodian will catch this, and increase the number of iterations until it succeeds. Here is the objective function:
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; matplotlib.pyplot &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; plt
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;objective&lt;/span&gt;(x):
+    &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; np.exp(x**2) - 10*np.exp(x)
+
+&lt;span style="color: #BA36A5;"&gt;x&lt;/span&gt; = np.linspace(0, 2)
+plt.plot(x, objective(x))
+plt.xlabel(&lt;span style="color: #008000;"&gt;'x'&lt;/span&gt;)
+plt.ylabel(&lt;span style="color: #008000;"&gt;'y'&lt;/span&gt;);
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+&lt;figure&gt;&lt;img src="/media/354616de80c1f529dd249d03f96e5bc023bbd321.png"&gt;&lt;/figure&gt; 
+&lt;/p&gt;
+
+&lt;p&gt;
+Clearly there is a minimum near 1.75, but with a bad initial guess, and not enough iterations, an optimizer fails here. We can tell it fails from the message here, and the solution is run it again with more iterations.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; scipy.optimize &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; minimize
+
+minimize(objective, 0.0, options={&lt;span style="color: #008000;"&gt;'maxiter'&lt;/span&gt;: 2})
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example" id="org27fcdb3"&gt;
+:RESULTS:
+  message: Maximum number of iterations has been exceeded.
+  success: False
+   status: 1
+      fun: -36.86289091418059
+        x: [ 1.661e+00]
+      nit: 2
+      jac: [-2.374e-01]
+ hess_inv: [[ 6.889e-03]]
+     nfev: 20
+     njev: 10
+:END:
+&lt;/pre&gt;
+
+&lt;p&gt;
+With Custodian you define a "Job". This is a class with  &lt;code&gt;params&lt;/code&gt; that contain the adjustable arguments in a dictionary, and a &lt;code&gt;run&lt;/code&gt; method that stores the results in the params attribute. This is an important step, because the error handlers only get the params, so you need the results in there to inspect them.
+&lt;/p&gt;
+
+&lt;p&gt;
+The error handlers are another class with a &lt;code&gt;check&lt;/code&gt; method that returns True if you should rerun, and a &lt;code&gt;correct&lt;/code&gt; method that sets the params to new values to try next. It seems to return some information about what happened. In the &lt;code&gt;correct&lt;/code&gt; method, we double the maximum number of iterations allowed, and use the last solution point that failed as the initial guess for the next run.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; custodian.custodian &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; Custodian, Job, ErrorHandler
+
+&lt;span style="color: #0000FF;"&gt;class&lt;/span&gt; &lt;span style="color: #6434A3;"&gt;Minimizer&lt;/span&gt;(Job):
+    &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;__init__&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;, params=&lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;):
+        &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.params = params &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; params &lt;span style="color: #0000FF;"&gt;else&lt;/span&gt; {&lt;span style="color: #008000;"&gt;'maxiter'&lt;/span&gt;: 2, &lt;span style="color: #008000;"&gt;'x0'&lt;/span&gt;: 0}
+        
+    &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;run&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;):
+        sol = minimize(objective,
+                       &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.params[&lt;span style="color: #008000;"&gt;'x0'&lt;/span&gt;],
+                       options={&lt;span style="color: #008000;"&gt;'maxiter'&lt;/span&gt;: &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.params[&lt;span style="color: #008000;"&gt;'maxiter'&lt;/span&gt;]})
+        &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.params[&lt;span style="color: #008000;"&gt;'sol'&lt;/span&gt;] = sol
+
+&lt;span style="color: #0000FF;"&gt;class&lt;/span&gt; &lt;span style="color: #6434A3;"&gt;MaximumIterationsExceeded&lt;/span&gt;(ErrorHandler):
+    &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;__init__&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;, params):
+        &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.params = params
+
+    &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;check&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;):
+        &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.params[&lt;span style="color: #008000;"&gt;'sol'&lt;/span&gt;].message == &lt;span style="color: #008000;"&gt;'Maximum number of iterations has been exceeded.'&lt;/span&gt;
+
+    &lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;correct&lt;/span&gt;(&lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;):
+        &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.params[&lt;span style="color: #008000;"&gt;'maxiter'&lt;/span&gt;] *= 2
+        &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.params[&lt;span style="color: #008000;"&gt;'x0'&lt;/span&gt;] = &lt;span style="color: #0000FF;"&gt;self&lt;/span&gt;.params[&lt;span style="color: #008000;"&gt;'sol'&lt;/span&gt;].x        
+        &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; {&lt;span style="color: #008000;"&gt;'errors'&lt;/span&gt;: &lt;span style="color: #008000;"&gt;'MaximumIterations Exceeded'&lt;/span&gt;,
+                &lt;span style="color: #008000;"&gt;'actions'&lt;/span&gt;: &lt;span style="color: #008000;"&gt;'maxiter = {self.params["maxiter"]}, x0 = {self.params["x0"]}'&lt;/span&gt;}
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Now we setup the initial params to try, create a Custodian object with the handler and job, and then run it. The results and final params are stored in the params object.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-jupyter-python"&gt;&lt;span style="color: #BA36A5;"&gt;params&lt;/span&gt; = {&lt;span style="color: #008000;"&gt;'maxiter'&lt;/span&gt;: 1, &lt;span style="color: #008000;"&gt;'x0'&lt;/span&gt;: 0}
+
+&lt;span style="color: #BA36A5;"&gt;c&lt;/span&gt; = Custodian([MaximumIterationsExceeded(params)],
+              [Minimizer(params)],
+               max_errors=5)
+
+c.run()
+&lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; key &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; params:
+    &lt;span style="color: #006FE0;"&gt;print&lt;/span&gt;(key, params[key])
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example" id="orgca61279"&gt;
+MaximumIterationsExceeded
+MaximumIterationsExceeded
+maxiter 4
+x0 [1.66250127]
+sol   message: Optimization terminated successfully.
+  success: True
+   status: 0
+      fun: -36.86307468296398
+        x: [ 1.662e+00]
+      nit: 1
+      jac: [-9.060e-06]
+ hess_inv: [[1]]
+     nfev: 6
+     njev: 3
+&lt;/pre&gt;
+
+
+
+&lt;p&gt;
+Note that params is modified, and finally has the maxiter value that worked, and the solution in it. You can see we had to rerun this problem  twice before it succeeded, but this happened automatically after the setup. This example is easy because we can simply increase the maxiter value, and no serious logic is needed. Other use cases might include try it again with another solver, try again with a different initial guess, etc. 
+&lt;/p&gt;
+
+&lt;p&gt;
+It feels a little heavyweight to define the classes, and to store the results in params here, but this was overall under an hour of work to put it all together, starting from scratch with the &lt;a href="http://materialsproject.github.io/custodian/"&gt;Custodian documentation&lt;/a&gt; from the example on the front page. You can do more sophisticated things, including having multiple error handlers. Overall, for a package designed for molecular simulations, this worked well for a different kind of problem.
+&lt;/p&gt;
+&lt;p&gt;Copyright (C) 2023 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
+&lt;p&gt;&lt;a href="/org/2023/09/19/Using-Custodian-to-help-converge-an-optimization-problem.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Org-mode version = 9.7-pre&lt;/p&gt;]]></content>
+  </entry>
+  <entry>
+    <author>
+      <name></name>
+      <uri>https://kitchingroup.cheme.cmu.edu/blog</uri>
+    </author>
+    <title type="html"><![CDATA[for-else loops]]></title>
+    <link rel="alternate" type="text/html" href="https://kitchingroup.cheme.cmu.edu/blog/2013/07/08/for-else-loops" />
+    <id>https://kitchingroup.cheme.cmu.edu/blog/2013/07/08/for-else-loops</id>
+    <updated>2013-07-08T21:12:17Z</updated>
+    <published>2013-07-08T21:12:05Z</published>
+    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="programming" />
+    <summary type="html"><![CDATA[for-else loops]]></summary>
+    <content type="html" xml:base="https://kitchingroup.cheme.cmu.edu/blog/2013/07/08/for-else-loops"><![CDATA[
+
+
+
+&lt;p&gt;
+I just learned of for/else loops (&lt;a href="http://pyvideo.org/video/1780/transforming-code-into-beautiful-idiomatic-pytho"&gt;http://pyvideo.org/video/1780/transforming-code-into-beautiful-idiomatic-pytho&lt;/a&gt;). They are interesting enough to write about. The idea is that there is an "else" clause of a for loop that is only executed if the loop completes without a break statement. The use case is to avoid using a flag. For example, let us say we want to loop through a list and determine if a number exists. Here is a typical way you might think to do it:
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+
+&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;f&lt;/span&gt;():
+    flag = &lt;span style="color: #8b0000;"&gt;False&lt;/span&gt;
+    &lt;span style="color: #8b0000;"&gt;for&lt;/span&gt; i &lt;span style="color: #8b0000;"&gt;in&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;range&lt;/span&gt;(10):
+        &lt;span style="color: #8b0000;"&gt;if&lt;/span&gt; i == 5:
+            flag = &lt;span style="color: #8b0000;"&gt;True&lt;/span&gt;
+            &lt;span style="color: #8b0000;"&gt;break&lt;/span&gt;
+
+    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; flag
+
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; f()
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+True
+&lt;/pre&gt;
+
+&lt;p&gt;
+A for/else loop does this in a different way. Essentially, the else clause runs if the loop completes, otherwise if the break occurs it is skipped. In this example the break statement occurs, so the else statement is skipped.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+
+&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;f&lt;/span&gt;():
+    &lt;span style="color: #8b0000;"&gt;for&lt;/span&gt; i &lt;span style="color: #8b0000;"&gt;in&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;range&lt;/span&gt;(10):
+        &lt;span style="color: #8b0000;"&gt;if&lt;/span&gt; i == 5:
+            &lt;span style="color: #8b0000;"&gt;break&lt;/span&gt;
+    &lt;span style="color: #8b0000;"&gt;else:&lt;/span&gt;
+        &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;False&lt;/span&gt;
+
+    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;True&lt;/span&gt;
+
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; f()
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+True
+&lt;/pre&gt;
+
+&lt;p&gt;
+In this example no break statement occurs, so the else clause is executed.
+&lt;/p&gt;
+&lt;div class="org-src-container"&gt;
+
+&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;f&lt;/span&gt;():
+    &lt;span style="color: #8b0000;"&gt;for&lt;/span&gt; i &lt;span style="color: #8b0000;"&gt;in&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;range&lt;/span&gt;(10):
+        &lt;span style="color: #8b0000;"&gt;if&lt;/span&gt; i == 15:
+            &lt;span style="color: #8b0000;"&gt;break&lt;/span&gt;
+    &lt;span style="color: #8b0000;"&gt;else:&lt;/span&gt;
+        &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;False&lt;/span&gt;
+
+    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;True&lt;/span&gt;
+
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; f()
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+False
+&lt;/pre&gt;
+
+&lt;p&gt;
+It is hard to say if this is an improvement over the flag. They both use the same number of lines of code, and I find it debatable if the else statement is intuitive in its meaning. Maybe if there were multiple potential breaks this would be better.
+&lt;/p&gt;
+
+&lt;p&gt;
+Needless to say, go watch &lt;a href="http://pyvideo.org/video/1780/transforming-code-into-beautiful-idiomatic-pytho"&gt;http://pyvideo.org/video/1780/transforming-code-into-beautiful-idiomatic-pytho&lt;/a&gt;. You will learn a lot of interesting things!
+&lt;/p&gt;
+&lt;p&gt;Copyright (C) 2013 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;&lt;p&gt;&lt;a href="/org/2013/07/08/for-else-loops.org"&gt;org-mode source&lt;/a&gt;&lt;p&gt;]]></content>
+  </entry>
+  <entry>
+    <author>
+      <name></name>
+      <uri>https://kitchingroup.cheme.cmu.edu/blog</uri>
+    </author>
+    <title type="html"><![CDATA[The and-or trick in python]]></title>
+    <link rel="alternate" type="text/html" href="https://kitchingroup.cheme.cmu.edu/blog/2013/07/07/The-and-or-trick-in-python" />
+    <id>https://kitchingroup.cheme.cmu.edu/blog/2013/07/07/The-and-or-trick-in-python</id>
+    <updated>2013-07-08T09:03:40Z</updated>
+    <published>2013-07-07T08:38:39Z</published>
+    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="logic" />
+    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="programming" />
+    <summary type="html"><![CDATA[The and-or trick in python]]></summary>
+    <content type="html" xml:base="https://kitchingroup.cheme.cmu.edu/blog/2013/07/07/The-and-or-trick-in-python"><![CDATA[
+
+
+&lt;div id="table-of-contents"&gt;
+&lt;h2&gt;Table of Contents&lt;/h2&gt;
+&lt;div id="text-table-of-contents"&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href="#sec-1"&gt;1. Using more modern python syntax than the and-or trick&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#sec-2"&gt;2. using defaultdict&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+The boolean logic commands &lt;code&gt;and&lt;/code&gt; and &lt;code&gt;or&lt;/code&gt; have return values in python. Let us first review briefly what these operators do by examples. The typical usage is in conditional statements. First, we look at what kind of values evaluate to "True" or "False" in python. Anything that is "empty" usually evaluates to False, along with the integer 0 and the boolean value of False.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+
+&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;for&lt;/span&gt; value &lt;span style="color: #8b0000;"&gt;in&lt;/span&gt; (&lt;span style="color: #228b22;"&gt;''&lt;/span&gt;, 0, &lt;span style="color: #8b0000;"&gt;None&lt;/span&gt;, [], (), {}, &lt;span style="color: #8b0000;"&gt;False&lt;/span&gt;):
+    &lt;span style="color: #8b0000;"&gt;if&lt;/span&gt; value:
+        &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; value, &lt;span style="color: #228b22;"&gt;"True"&lt;/span&gt;
+    &lt;span style="color: #8b0000;"&gt;else:&lt;/span&gt;
+        &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; value, &lt;span style="color: #228b22;"&gt;"False"&lt;/span&gt;
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+ False
+0 False
+None False
+[] False
+() False
+{} False
+False False
+&lt;/pre&gt;
+
+&lt;p&gt;
+Objects that are not empty evaluate to "True", along with numbers not equal to 0, and the boolean value True.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+
+&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;for&lt;/span&gt; value &lt;span style="color: #8b0000;"&gt;in&lt;/span&gt; (&lt;span style="color: #228b22;"&gt;' '&lt;/span&gt;, 2, 1, &lt;span style="color: #228b22;"&gt;"a"&lt;/span&gt;, [1], (3,), &lt;span style="color: #8b0000;"&gt;True&lt;/span&gt;):
+    &lt;span style="color: #8b0000;"&gt;if&lt;/span&gt; value:
+        &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; value, &lt;span style="color: #228b22;"&gt;"True"&lt;/span&gt;
+    &lt;span style="color: #8b0000;"&gt;else:&lt;/span&gt;
+        &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; value, &lt;span style="color: #228b22;"&gt;"False"&lt;/span&gt;
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+  True
+2 True
+1 True
+a True
+[1] True
+(3,) True
+True True
+&lt;/pre&gt;
+
+&lt;p&gt;
+The &lt;code&gt;and&lt;/code&gt; and &lt;code&gt;or&lt;/code&gt; operators compare two objects. &lt;code&gt;and&lt;/code&gt; evaluates to "True" if both objects evaluate to "True" and &lt;code&gt;or&lt;/code&gt; evaluates to "True" if either object evaluates to "True". Here are some examples.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+
+&lt;pre class="src src-python"&gt;a = &lt;span style="color: #8b0000;"&gt;None&lt;/span&gt;
+b = 5
+
+&lt;span style="color: #8b0000;"&gt;if&lt;/span&gt; a &lt;span style="color: #8b0000;"&gt;and&lt;/span&gt; b:
+    &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;True&lt;/span&gt;
+&lt;span style="color: #8b0000;"&gt;else:&lt;/span&gt;
+    &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;False&lt;/span&gt;
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+False
+&lt;/pre&gt;
+
+&lt;div class="org-src-container"&gt;
+
+&lt;pre class="src src-python"&gt;a = &lt;span style="color: #8b0000;"&gt;None&lt;/span&gt;
+b = 5
+
+&lt;span style="color: #8b0000;"&gt;if&lt;/span&gt; a &lt;span style="color: #8b0000;"&gt;or&lt;/span&gt; b:
+    &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;True&lt;/span&gt;
+&lt;span style="color: #8b0000;"&gt;else:&lt;/span&gt;
+    &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;False&lt;/span&gt;
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+True
+&lt;/pre&gt;
+
+&lt;p&gt;
+Now the interesting part. The &lt;code&gt;and&lt;/code&gt; and &lt;code&gt;or&lt;/code&gt; operators actually return values! With the &lt;code&gt;and&lt;/code&gt; operator, each argument is evaluated, and if they all evaluate to True, the last argument is returned. Otherwise the first False argument is returned.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+
+&lt;pre class="src src-python"&gt;a = 1
+b = 5
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; a &lt;span style="color: #8b0000;"&gt;and&lt;/span&gt; b
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; b &lt;span style="color: #8b0000;"&gt;and&lt;/span&gt; a
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; a &lt;span style="color: #8b0000;"&gt;and&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;False&lt;/span&gt;
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; a &lt;span style="color: #8b0000;"&gt;and&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;True&lt;/span&gt;
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; a &lt;span style="color: #8b0000;"&gt;and&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;None&lt;/span&gt;
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;False&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;and&lt;/span&gt; a
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;None&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;and&lt;/span&gt; a
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;True&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;and&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'a'&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;and&lt;/span&gt; 0 &lt;span style="color: #8b0000;"&gt;and&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;True&lt;/span&gt; &lt;span style="color: #ff0000; font-weight: bold;"&gt;# &lt;/span&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;first False item is zero&lt;/span&gt;
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+5
+1
+False
+True
+None
+False
+None
+0
+&lt;/pre&gt;
+
+&lt;p&gt;
+The &lt;code&gt;or&lt;/code&gt; operator returns the first True value or the last value if nothing is True. Note that if a True value is found, the values in the expressions after that value are not evaluated.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+
+&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; 2 &lt;span style="color: #8b0000;"&gt;or&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;False&lt;/span&gt;
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; 0 &lt;span style="color: #8b0000;"&gt;or&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;False&lt;/span&gt;
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; 0 &lt;span style="color: #8b0000;"&gt;or&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;False&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;or&lt;/span&gt; 4 &lt;span style="color: #8b0000;"&gt;or&lt;/span&gt; {}
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+2
+False
+4
+&lt;/pre&gt;
+
+&lt;p&gt;
+One way you might see this is to set variables depending on what command-line arguments were used in a script. For example:
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+
+&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; sys
+
+&lt;span style="color: #ff0000; font-weight: bold;"&gt;# &lt;/span&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;replace this:&lt;/span&gt;
+&lt;span style="color: #8b0000;"&gt;if&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'plot'&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;in&lt;/span&gt; sys.argv:
+    PLOT = &lt;span style="color: #8b0000;"&gt;True&lt;/span&gt;
+&lt;span style="color: #8b0000;"&gt;else:&lt;/span&gt;
+    PLOT = &lt;span style="color: #8b0000;"&gt;False&lt;/span&gt;
+
+&lt;span style="color: #ff0000; font-weight: bold;"&gt;# &lt;/span&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;with this&lt;/span&gt;
+PLOT = &lt;span style="color: #228b22;"&gt;'plot'&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;in&lt;/span&gt; sys.argv &lt;span style="color: #8b0000;"&gt;or&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;False&lt;/span&gt;
+
+&lt;span style="color: #ff0000; font-weight: bold;"&gt;# &lt;/span&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;later in your code:&lt;/span&gt;
+&lt;span style="color: #8b0000;"&gt;if&lt;/span&gt; PLOT: 
+    &lt;span style="color: #ff0000; font-weight: bold;"&gt;# &lt;/span&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;do something to make a plot&lt;/span&gt;
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Now we get to the &lt;a href="http://www.diveintopython.net/power_of_introspection/and_or.html"&gt;and-or&lt;/a&gt; trick. The trick is to assign a variable one value if some boolean value is True, and another value if the expression is False. 
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+
+&lt;pre class="src src-python"&gt;a = &lt;span style="color: #8b0000;"&gt;True&lt;/span&gt;
+b = &lt;span style="color: #8b0000;"&gt;True&lt;/span&gt;
+
+&lt;span style="color: #8b0000;"&gt;if&lt;/span&gt; a &lt;span style="color: #8b0000;"&gt;and&lt;/span&gt; b:
+    c = &lt;span style="color: #228b22;"&gt;"value1"&lt;/span&gt;
+&lt;span style="color: #8b0000;"&gt;else:&lt;/span&gt; 
+    c = &lt;span style="color: #228b22;"&gt;"value2"&lt;/span&gt;
+
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; c
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+value1
+&lt;/pre&gt;
+
+&lt;p&gt;
+We can replace the if/else code above with this one line expression:
+&lt;/p&gt;
+&lt;div class="org-src-container"&gt;
+
+&lt;pre class="src src-python"&gt;a = &lt;span style="color: #8b0000;"&gt;True&lt;/span&gt;
+b = &lt;span style="color: #8b0000;"&gt;True&lt;/span&gt;
+
+c = (a &lt;span style="color: #8b0000;"&gt;and&lt;/span&gt; b) &lt;span style="color: #8b0000;"&gt;and&lt;/span&gt; &lt;span style="color: #228b22;"&gt;"value1"&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;or&lt;/span&gt; &lt;span style="color: #228b22;"&gt;"value2"&lt;/span&gt;
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; c
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+value1
+&lt;/pre&gt;
+
+&lt;p&gt;
+There is a problem. If the first value evaluates to False, you will not get what you expect:
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+
+&lt;pre class="src src-python"&gt;a = &lt;span style="color: #8b0000;"&gt;True&lt;/span&gt;
+b = &lt;span style="color: #8b0000;"&gt;True&lt;/span&gt;
+
+c = (a &lt;span style="color: #8b0000;"&gt;and&lt;/span&gt; b) &lt;span style="color: #8b0000;"&gt;and&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;None&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;or&lt;/span&gt; &lt;span style="color: #228b22;"&gt;"value2"&lt;/span&gt;
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; c
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+value2
+&lt;/pre&gt;
+
+&lt;p&gt;
+In this case, (a &lt;code&gt;and&lt;/code&gt; b) evaluates to True, so we would expect the value of c to be the first value. However, None evaluates to False, so the &lt;code&gt;or&lt;/code&gt; operator returns the first "True" value, which is the second value. We have to modify the code so that both the or arguments are True. We do this by putting both arguments inside a list, which will then always evaluate to True. This will assign the first list to c if the expression is True, and the second list if it is False. We wrap the whole thing in parentheses, and then index the returned list to get the contents of the list.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+
+&lt;pre class="src src-python"&gt;a = &lt;span style="color: #8b0000;"&gt;True&lt;/span&gt;
+b = &lt;span style="color: #8b0000;"&gt;True&lt;/span&gt;
+
+c = ((a &lt;span style="color: #8b0000;"&gt;and&lt;/span&gt; b) &lt;span style="color: #8b0000;"&gt;and&lt;/span&gt; [&lt;span style="color: #8b0000;"&gt;None&lt;/span&gt;] &lt;span style="color: #8b0000;"&gt;or&lt;/span&gt; [&lt;span style="color: #228b22;"&gt;"value2"&lt;/span&gt;])[0]
+
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; c
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+None
+&lt;/pre&gt;
+
+&lt;div class="org-src-container"&gt;
+
+&lt;pre class="src src-python"&gt;a = &lt;span style="color: #8b0000;"&gt;True&lt;/span&gt;
+b = &lt;span style="color: #8b0000;"&gt;True&lt;/span&gt;
+
+c = (&lt;span style="color: #8b0000;"&gt;not&lt;/span&gt; (a &lt;span style="color: #8b0000;"&gt;and&lt;/span&gt; b) &lt;span style="color: #8b0000;"&gt;and&lt;/span&gt; [&lt;span style="color: #8b0000;"&gt;None&lt;/span&gt;] &lt;span style="color: #8b0000;"&gt;or&lt;/span&gt; [&lt;span style="color: #228b22;"&gt;"value2"&lt;/span&gt;])[0]
+
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; c
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+value2
+&lt;/pre&gt;
+
+&lt;p&gt;
+This is definitely a trick. I find the syntax difficult to read, especially compared to the more verbose if/else statements. It is interesting though, and there might be places where the return value of the boolean operators might be useful, now that you know you can get them.
+&lt;/p&gt;
+
+&lt;p&gt;
+Here is a tough example of using this to update a dictionary entry. Previously we used a dictionary to &lt;a href="http://jkitchin.github.io/blog/2013/05/29/Getting-a-dictionary-of-counts/"&gt;count&lt;/a&gt; unique entries in a list. 
+&lt;/p&gt;
+&lt;div class="org-src-container"&gt;
+
+&lt;pre class="src src-python"&gt;d = {}
+
+d[&lt;span style="color: #228b22;"&gt;'key'&lt;/span&gt;] = (d.get(&lt;span style="color: #228b22;"&gt;'key'&lt;/span&gt;, &lt;span style="color: #8b0000;"&gt;None&lt;/span&gt;) &lt;span style="color: #8b0000;"&gt;and&lt;/span&gt; [d[&lt;span style="color: #228b22;"&gt;'key'&lt;/span&gt;] + 1] &lt;span style="color: #8b0000;"&gt;or&lt;/span&gt; [1])[0]
+
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; d
+
+d[&lt;span style="color: #228b22;"&gt;'key'&lt;/span&gt;] = (d.get(&lt;span style="color: #228b22;"&gt;'key'&lt;/span&gt;, &lt;span style="color: #8b0000;"&gt;None&lt;/span&gt;) &lt;span style="color: #8b0000;"&gt;and&lt;/span&gt; [d[&lt;span style="color: #228b22;"&gt;'key'&lt;/span&gt;] + 1] &lt;span style="color: #8b0000;"&gt;or&lt;/span&gt; [1])[0]
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; d
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+{'key': 1}
+{'key': 2}
+&lt;/pre&gt;
+
+&lt;p&gt;
+This works because the .get function on a dictionary returns None if the key does not exist, resulting in assigning the value of 1 to that key, or it returns something that evaluates to True if the key does exist, so the key gets incremented. 
+&lt;/p&gt;
+
+&lt;p&gt;
+Let us see this trick in action. Before we used if/else statements to achieve our goal, checking if the key is in the dictionary and incrementing by one if it is, and if not, setting the key to 1.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+
+&lt;pre class="src src-python"&gt;L = [&lt;span style="color: #228b22;"&gt;'a'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'a'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'b'&lt;/span&gt;,&lt;span style="color: #228b22;"&gt;'d'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'e'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'b'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'e'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'a'&lt;/span&gt;]
+
+&lt;span style="color: #ff0000; font-weight: bold;"&gt;# &lt;/span&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;old method&lt;/span&gt;
+d = {}
+&lt;span style="color: #8b0000;"&gt;for&lt;/span&gt; el &lt;span style="color: #8b0000;"&gt;in&lt;/span&gt; L:
+    &lt;span style="color: #8b0000;"&gt;if&lt;/span&gt; el &lt;span style="color: #8b0000;"&gt;in&lt;/span&gt; d:
+        d[el] += 1
+    &lt;span style="color: #8b0000;"&gt;else:&lt;/span&gt;
+        d[el] = 1
+
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; d
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+{'a': 3, 'b': 2, 'e': 2, 'd': 1}
+&lt;/pre&gt;
+
+&lt;p&gt;
+Here is the new method:
+&lt;/p&gt;
+&lt;div class="org-src-container"&gt;
+
+&lt;pre class="src src-python"&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;# &lt;/span&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;new method:&lt;/span&gt;
+L = [&lt;span style="color: #228b22;"&gt;'a'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'a'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'b'&lt;/span&gt;,&lt;span style="color: #228b22;"&gt;'d'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'e'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'b'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'e'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'a'&lt;/span&gt;]
+d = {}
+&lt;span style="color: #8b0000;"&gt;for&lt;/span&gt; el &lt;span style="color: #8b0000;"&gt;in&lt;/span&gt; L:
+    d[el] = (d.get(el, &lt;span style="color: #8b0000;"&gt;None&lt;/span&gt;) &lt;span style="color: #8b0000;"&gt;and&lt;/span&gt; [d[el] + 1] &lt;span style="color: #8b0000;"&gt;or&lt;/span&gt; [1])[0]
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; d
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+{'a': 3, 'b': 2, 'e': 2, 'd': 1}
+&lt;/pre&gt;
+
+&lt;p&gt;
+We have in (an admittedly hard to read) a single single line replaced the if/else statement! I have for a long time thought this should possible. I am somewhat disappointed that it is not easier to read though.
+&lt;/p&gt;
+
+
+&lt;p&gt;
+&lt;b&gt;Update 7/8/2013&lt;/b&gt;
+&lt;/p&gt;
+&lt;div id="outline-container-sec-1" class="outline-2"&gt;
+&lt;h2 id="sec-1"&gt;&lt;span class="section-number-2"&gt;1&lt;/span&gt; Using more modern python syntax than the and-or trick&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-1"&gt;
+&lt;p&gt;
+@&lt;sub&gt;Mark&lt;/sub&gt;_ pointed out in a comment the &lt;a href="http://docs.python.org/2/reference/expressions.html#conditional-expressions"&gt;more modern syntax&lt;/a&gt; in python is "value1" if a else "value2". Here is how it works.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+
+&lt;pre class="src src-python"&gt;a = &lt;span style="color: #8b0000;"&gt;True&lt;/span&gt;
+c = &lt;span style="color: #228b22;"&gt;"value1"&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;if&lt;/span&gt; a &lt;span style="color: #8b0000;"&gt;else&lt;/span&gt; &lt;span style="color: #228b22;"&gt;"value2"&lt;/span&gt;
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; c
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+value1
+&lt;/pre&gt;
+
+&lt;div class="org-src-container"&gt;
+
+&lt;pre class="src src-python"&gt;a = &lt;span style="color: #228b22;"&gt;''&lt;/span&gt;
+c = &lt;span style="color: #228b22;"&gt;"value1"&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;if&lt;/span&gt; a &lt;span style="color: #8b0000;"&gt;else&lt;/span&gt; &lt;span style="color: #228b22;"&gt;"value2"&lt;/span&gt;
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; c
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+value2
+&lt;/pre&gt;
+
+&lt;p&gt;
+This is indeed very clean to read. This leads to a cleaner and easier to read implementation of the counting code.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+
+&lt;pre class="src src-python"&gt;L = [&lt;span style="color: #228b22;"&gt;'a'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'a'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'b'&lt;/span&gt;,&lt;span style="color: #228b22;"&gt;'d'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'e'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'b'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'e'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'a'&lt;/span&gt;]
+d = {}
+&lt;span style="color: #8b0000;"&gt;for&lt;/span&gt; el &lt;span style="color: #8b0000;"&gt;in&lt;/span&gt; L:
+    d[el] = (d[el] + 1) &lt;span style="color: #8b0000;"&gt;if&lt;/span&gt; (el &lt;span style="color: #8b0000;"&gt;in&lt;/span&gt; d) &lt;span style="color: #8b0000;"&gt;else&lt;/span&gt; 1
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; d
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+{'a': 3, 'b': 2, 'e': 2, 'd': 1}
+&lt;/pre&gt;
+
+&lt;p&gt;
+See the next section for an even cleaner implementation.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div id="outline-container-sec-2" class="outline-2"&gt;
+&lt;h2 id="sec-2"&gt;&lt;span class="section-number-2"&gt;2&lt;/span&gt; using defaultdict&lt;/h2&gt;
+&lt;div class="outline-text-2" id="text-2"&gt;
+&lt;p&gt;
+@&lt;sub&gt;Mark&lt;/sub&gt;_ also suggested the use of &lt;a href="http://docs.python.org/2/library/collections.html#collections.defaultdict"&gt;defaultdict&lt;/a&gt; for the counting code. That is pretty concise! It is not obvious that the default value is equal to zero, but int() returns zero. This is much better than the and-or trick.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+
+&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;from&lt;/span&gt; collections &lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; defaultdict
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; int()
+
+L = [&lt;span style="color: #228b22;"&gt;'a'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'a'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'b'&lt;/span&gt;,&lt;span style="color: #228b22;"&gt;'d'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'e'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'b'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'e'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'a'&lt;/span&gt;]
+d = defaultdict(int)
+&lt;span style="color: #8b0000;"&gt;for&lt;/span&gt; el &lt;span style="color: #8b0000;"&gt;in&lt;/span&gt; L:
+    d[el] += 1
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; d
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+0
+defaultdict(&amp;lt;type 'int'&amp;gt;, {'a': 3, 'b': 2, 'e': 2, 'd': 1})
+&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;p&gt;Copyright (C) 2013 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;&lt;p&gt;&lt;a href="/org/2013/07/07/The-and-or-trick-in-python.org"&gt;org-mode source&lt;/a&gt;&lt;p&gt;]]></content>
+  </entry>
+  <entry>
+    <author>
+      <name></name>
+      <uri>https://kitchingroup.cheme.cmu.edu/blog</uri>
+    </author>
+    <title type="html"><![CDATA[Memoizing instance methods in a class]]></title>
+    <link rel="alternate" type="text/html" href="https://kitchingroup.cheme.cmu.edu/blog/2013/06/26/Memoizing-instance-methods-in-a-class" />
+    <id>https://kitchingroup.cheme.cmu.edu/blog/2013/06/26/Memoizing-instance-methods-in-a-class</id>
+    <updated>2013-06-28T19:10:00Z</updated>
+    <published>2013-06-26T18:32:35Z</published>
+    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="programming" />
+    <summary type="html"><![CDATA[Memoizing instance methods in a class]]></summary>
+    <content type="html" xml:base="https://kitchingroup.cheme.cmu.edu/blog/2013/06/26/Memoizing-instance-methods-in-a-class"><![CDATA[
+
+
+&lt;p&gt;
+Suppose you have a module that you import a class from, and the class defines some methods that you want to memoize. You do not want to modify the source code, maybe because it is not your code, or because you do not want to maintain it, etc&amp;#x2026; Here is one way to modify the class functions at runtime. We will use the memoize decorator and replace the class function definition with the wrapped function that caches the results. We also allow arbitrary arguments and keyword arguments. A subtle wrinkle here is that you cannot use a dictionary as a key to a dictionary because dictionaries are not hashable. We use the pickle module to created a string that should uniquely represent the args and keyword args, and we use that string as the key.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+
+&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;class&lt;/span&gt; &lt;span style="color: #4682b4;"&gt;Calculator&lt;/span&gt;:
+    &lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;__init__&lt;/span&gt;(&lt;span style="color: #8b0000;"&gt;self&lt;/span&gt;):
+        &lt;span style="color: #8b0000;"&gt;pass&lt;/span&gt;
+
+    &lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;calculate&lt;/span&gt;(&lt;span style="color: #8b0000;"&gt;self&lt;/span&gt;, a):
+        &lt;span style="color: #228b22;"&gt;'returns the answer to everything'&lt;/span&gt;
+        &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; 42
+
+    &lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;method_2&lt;/span&gt;(&lt;span style="color: #8b0000;"&gt;self&lt;/span&gt;, *args, **kwargs):
+        &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; (args, kwargs)
+
+
+&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; pickle
+
+&lt;span style="color: #8b0000;"&gt;from&lt;/span&gt; functools &lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; wraps
+&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;memoize&lt;/span&gt;(func):
+    cache = {}
+    &lt;span style="color: #8b0000;"&gt;@wraps&lt;/span&gt;(func)
+    &lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;wrap&lt;/span&gt;(*args,**kwargs):
+        key = pickle.dumps((args, kwargs))
+        &lt;span style="color: #8b0000;"&gt;if&lt;/span&gt; key &lt;span style="color: #8b0000;"&gt;not&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;in&lt;/span&gt; cache:
+            &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'Running func with '&lt;/span&gt;, args
+            cache[key] = func(*args, **kwargs)
+        &lt;span style="color: #8b0000;"&gt;else:&lt;/span&gt;
+            &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'result in cache'&lt;/span&gt;
+        &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; cache[key]
+    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; wrap
+
+&lt;span style="color: #ff0000; font-weight: bold;"&gt;# &lt;/span&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;now monkey patch/decorate the class function&lt;/span&gt;
+Calculator.calculate = memoize(Calculator.calculate)
+Calculator.method_2 = memoize(Calculator.method_2)
+
+calc = Calculator()
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; calc.calculate(3)
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; calc.calculate(3)
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; calc.calculate(4)
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; calc.calculate(3)
+
+
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; calc.method_2()
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; calc.method_2()
+
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; calc.method_2(1,2)
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; calc.method_2(1,2)
+
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; calc.method_2(1,2,a=5)
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; calc.method_2(1,2,a=5)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+Running func with  (&amp;lt;__main__.Calculator instance at 0x0000000001E9B3C8&amp;gt;, 3)
+42
+result in cache
+42
+Running func with  (&amp;lt;__main__.Calculator instance at 0x0000000001E9B3C8&amp;gt;, 4)
+42
+result in cache
+42
+Running func with  (&amp;lt;__main__.Calculator instance at 0x0000000001E9B3C8&amp;gt;,)
+((), {})
+result in cache
+((), {})
+Running func with  (&amp;lt;__main__.Calculator instance at 0x0000000001E9B3C8&amp;gt;, 1, 2)
+((1, 2), {})
+result in cache
+((1, 2), {})
+Running func with  (&amp;lt;__main__.Calculator instance at 0x0000000001E9B3C8&amp;gt;, 1, 2)
+((1, 2), {'a': 5})
+result in cache
+((1, 2), {'a': 5})
+&lt;/pre&gt;
+
+&lt;p&gt;
+This particular memoize decorator is not persistent; the data is only stored in memory. You would have to write the data out to a file and reread the file to make it persistent.
+&lt;/p&gt;
+
+&lt;p&gt;
+It is not obvious this practice is good; you have in essence changed the behavior of the original function in a way that may be hard to debug, and could conceivably be incompatible with the documentation of the function.
+&lt;/p&gt;
+
+&lt;p&gt;
+An alternative approach is writing another function that wraps the code you want, and memoize that function.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+
+&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;class&lt;/span&gt; &lt;span style="color: #4682b4;"&gt;Calculator&lt;/span&gt;:
+    &lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;__init__&lt;/span&gt;(&lt;span style="color: #8b0000;"&gt;self&lt;/span&gt;):
+        &lt;span style="color: #8b0000;"&gt;pass&lt;/span&gt;
+
+    &lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;calculate&lt;/span&gt;(&lt;span style="color: #8b0000;"&gt;self&lt;/span&gt;, a):
+        &lt;span style="color: #228b22;"&gt;'returns the answer to everything'&lt;/span&gt;
+        &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; 42
+
+
+
+&lt;span style="color: #8b0000;"&gt;from&lt;/span&gt; functools &lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; wraps
+&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;memoize&lt;/span&gt;(func):
+    cache = {}
+    &lt;span style="color: #8b0000;"&gt;@wraps&lt;/span&gt;(func)
+    &lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;wrap&lt;/span&gt;(*args):
+        &lt;span style="color: #8b0000;"&gt;if&lt;/span&gt; args &lt;span style="color: #8b0000;"&gt;not&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;in&lt;/span&gt; cache:
+            &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'Running func with '&lt;/span&gt;, args
+            cache[args] = func(*args)
+        &lt;span style="color: #8b0000;"&gt;else:&lt;/span&gt;
+            &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'result in cache'&lt;/span&gt;
+        &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; cache[args]
+    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; wrap
+
+calc = Calculator()
+
+&lt;span style="color: #8b0000;"&gt;@memoize&lt;/span&gt;
+&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;my_calculate&lt;/span&gt;(a):
+    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; calc.calculate(a)
+
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; my_calculate(3)
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; my_calculate(3)
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; my_calculate(4)
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; my_calculate(3)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+Running func with  (3,)
+42
+result in cache
+42
+Running func with  (4,)
+42
+result in cache
+42
+&lt;/pre&gt;
+
+&lt;p&gt;
+It is debatable whether this is cleaner. One argument for this is that it does not monkey with the original code at all.
+&lt;/p&gt;
+&lt;p&gt;Copyright (C) 2013 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;&lt;p&gt;&lt;a href="/org/2013/06/26/Memoizing-instance-methods-in-a-class.org"&gt;org-mode source&lt;/a&gt;&lt;p&gt;]]></content>
+  </entry>
+  <entry>
+    <author>
+      <name></name>
+      <uri>https://kitchingroup.cheme.cmu.edu/blog</uri>
+    </author>
+    <title type="html"><![CDATA[Memoizing expensive functions in python and saving results]]></title>
+    <link rel="alternate" type="text/html" href="https://kitchingroup.cheme.cmu.edu/blog/2013/06/20/Memoizing-expensive-functions-in-python-and-saving-results" />
+    <id>https://kitchingroup.cheme.cmu.edu/blog/2013/06/20/Memoizing-expensive-functions-in-python-and-saving-results</id>
+    <updated>2013-06-20T13:29:22Z</updated>
+    <published>2013-06-20T13:29:22Z</published>
+    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="programming" />
+    <summary type="html"><![CDATA[Memoizing expensive functions in python and saving results]]></summary>
+    <content type="html" xml:base="https://kitchingroup.cheme.cmu.edu/blog/2013/06/20/Memoizing-expensive-functions-in-python-and-saving-results"><![CDATA[
+
+
+&lt;p&gt;
+Sometimes a function is expensive (time-consuming) to run, and you would like to save all the results of the function having been run to avoid having to rerun them. This is called &lt;a href="http://en.wikipedia.org/wiki/Memoization"&gt;memoization&lt;/a&gt;. A wrinkle on this problem is to save the results in a file so that later you can come back to a function and not have to run simulations over again.
+&lt;/p&gt;
+
+&lt;p&gt;
+In python, a good way to do this is to "decorate" your function. This way, you write the function to do what you want, and then "decorate" it. The decoration wraps your function and in this case checks if the arguments you passed to the function are already stored in the cache. If so, it returns the result, if not it runs the function. The memoize decorator below was adapted from &lt;a href="http://stackoverflow.com/questions/4669391/python-anyone-have-a-memoizing-decorator-that-can-handle-unhashable-arguments"&gt;here&lt;/a&gt;.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+
+&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;from&lt;/span&gt; functools &lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; wraps
+&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;memoize&lt;/span&gt;(func):
+    cache = {}
+    &lt;span style="color: #8b0000;"&gt;@wraps&lt;/span&gt;(func)
+    &lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;wrap&lt;/span&gt;(*args):
+        &lt;span style="color: #8b0000;"&gt;if&lt;/span&gt; args &lt;span style="color: #8b0000;"&gt;not&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;in&lt;/span&gt; cache:
+            &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'Running func'&lt;/span&gt;
+            cache[args] = func(*args)
+        &lt;span style="color: #8b0000;"&gt;else:&lt;/span&gt;
+            &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'result in cache'&lt;/span&gt;
+        &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; cache[args]
+    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; wrap
+
+&lt;span style="color: #8b0000;"&gt;@memoize&lt;/span&gt;
+&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;myfunc&lt;/span&gt;(a):
+    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; a**2
+
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; myfunc(2)
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; myfunc(2)
+
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; myfunc(3)
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; myfunc(2)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+Running func
+4
+result in cache
+4
+Running func
+9
+result in cache
+4
+&lt;/pre&gt;
+
+&lt;p&gt;
+The example above shows the principle, but each time you run that script you start from scratch. If those were expensive calculations that would not be desirable. Let us now write out the cache to a file. We use a simple pickle file to store the results. 
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+
+&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; os, pickle
+&lt;span style="color: #8b0000;"&gt;from&lt;/span&gt; functools &lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; wraps
+&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;memoize&lt;/span&gt;(func):
+    &lt;span style="color: #8b0000;"&gt;if&lt;/span&gt; os.path.exists(&lt;span style="color: #228b22;"&gt;'memoize.pkl'&lt;/span&gt;):
+        &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'reading cache file'&lt;/span&gt;
+        &lt;span style="color: #8b0000;"&gt;with&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;open&lt;/span&gt;(&lt;span style="color: #228b22;"&gt;'memoize.pkl'&lt;/span&gt;) &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; f:
+            cache = pickle.load(f)
+    &lt;span style="color: #8b0000;"&gt;else:&lt;/span&gt;
+        cache = {}
+    &lt;span style="color: #8b0000;"&gt;@wraps&lt;/span&gt;(func)
+    &lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;wrap&lt;/span&gt;(*args):
+        &lt;span style="color: #8b0000;"&gt;if&lt;/span&gt; args &lt;span style="color: #8b0000;"&gt;not&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;in&lt;/span&gt; cache:
+            &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'Running func'&lt;/span&gt;
+            cache[args] = func(*args)
+            &lt;span style="color: #ff0000; font-weight: bold;"&gt;# &lt;/span&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;update the cache file&lt;/span&gt;
+            &lt;span style="color: #8b0000;"&gt;with&lt;/span&gt; &lt;span style="color: #8b0000;"&gt;open&lt;/span&gt;(&lt;span style="color: #228b22;"&gt;'memoize.pkl'&lt;/span&gt;, &lt;span style="color: #228b22;"&gt;'wb'&lt;/span&gt;) &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; f:
+                pickle.dump(cache, f)
+        &lt;span style="color: #8b0000;"&gt;else:&lt;/span&gt;
+            &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'result in cache'&lt;/span&gt;
+        &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; cache[args]
+    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; wrap
+
+&lt;span style="color: #8b0000;"&gt;@memoize&lt;/span&gt;
+&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;myfunc&lt;/span&gt;(a):
+    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; a**2
+
+
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; myfunc(2)
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; myfunc(2)
+
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; myfunc(3)
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; myfunc(2)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+reading cache file
+result in cache
+4
+result in cache
+4
+result in cache
+9
+result in cache
+4
+&lt;/pre&gt;
+
+&lt;p&gt;
+Now you can see if we run this script a few times, the results are read from the cache file.
+&lt;/p&gt;
+&lt;p&gt;Copyright (C) 2013 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;&lt;p&gt;&lt;a href="/org/2013/06/20/Memoizing-expensive-functions-in-python-and-saving-results.org"&gt;org-mode source&lt;/a&gt;&lt;p&gt;]]></content>
+  </entry>
+  <entry>
+    <author>
+      <name></name>
+      <uri>https://kitchingroup.cheme.cmu.edu/blog</uri>
+    </author>
+    <title type="html"><![CDATA[Using an external solver with Aspen]]></title>
+    <link rel="alternate" type="text/html" href="https://kitchingroup.cheme.cmu.edu/blog/2013/06/17/Using-an-external-solver-with-Aspen" />
+    <id>https://kitchingroup.cheme.cmu.edu/blog/2013/06/17/Using-an-external-solver-with-Aspen</id>
+    <updated>2013-06-17T09:49:27Z</updated>
+    <published>2013-06-17T09:49:27Z</published>
+    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="programming" />
+    <summary type="html"><![CDATA[Using an external solver with Aspen]]></summary>
+    <content type="html" xml:base="https://kitchingroup.cheme.cmu.edu/blog/2013/06/17/Using-an-external-solver-with-Aspen"><![CDATA[
+
+
+&lt;p&gt;
+One reason to interact with Aspen via python is to use external solvers to drive the simulations. Aspen has some built-in solvers, but it does not have everything. You may also want to integrate additional calculations, e.g. capital costs, water usage, etc&amp;#x2026; and integrate those results into a report. 
+&lt;/p&gt;
+
+&lt;p&gt;
+Here is a simple example where we use fsolve to find the temperature of the flash tank that will give a vapor phase mole fraction of ethanol of 0.8. It is a simple example, but it illustrates the possibility.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+
+&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; os
+&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; win32com.client &lt;span style="color: #8b0000;"&gt;as&lt;/span&gt; win32
+aspen = win32.Dispatch(&lt;span style="color: #228b22;"&gt;'Apwn.Document'&lt;/span&gt;)
+
+aspen.InitFromArchive2(os.path.abspath(&lt;span style="color: #228b22;"&gt;'data\Flash_Example.bkp'&lt;/span&gt;))
+
+&lt;span style="color: #8b0000;"&gt;from&lt;/span&gt; scipy.optimize &lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; fsolve
+
+&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;func&lt;/span&gt;(flashT):
+    flashT = &lt;span style="color: #8b0000;"&gt;float&lt;/span&gt;(flashT) &lt;span style="color: #ff0000; font-weight: bold;"&gt;# &lt;/span&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;COM objects do not understand numpy types&lt;/span&gt;
+    aspen.Tree.FindNode(&lt;span style="color: #228b22;"&gt;'\Data\Blocks\FLASH\Input\TEMP'&lt;/span&gt;).Value = flashT
+    aspen.Engine.Run2()
+    y = aspen.Tree.FindNode(&lt;span style="color: #228b22;"&gt;'\Data\Streams\VAPOR\Output\MOLEFRAC\MIXED\ETHANOL'&lt;/span&gt;).Value
+    &lt;span style="color: #8b0000;"&gt;return&lt;/span&gt; y - 0.8
+
+sol, = fsolve(func, 150.0)
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'A flash temperature of {0:1.2f} degF will have y_ethanol = 0.8'&lt;/span&gt;.format(sol)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+A flash temperature of 157.38 degF will have y_ethanol = 0.8
+&lt;/pre&gt;
+
+&lt;p&gt;
+One unexpected detail was that the Aspen COM objects cannot be assigned numpy number types, so it was necessary to recast the argument as a float. Otherwise, this worked about as expected for an fsolve problem.
+&lt;/p&gt;
+&lt;p&gt;Copyright (C) 2013 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;&lt;p&gt;&lt;a href="/org/2013/06/17/Using-an-external-solver-with-Aspen.org"&gt;org-mode source&lt;/a&gt;&lt;p&gt;]]></content>
+  </entry>
+  <entry>
+    <author>
+      <name></name>
+      <uri>https://kitchingroup.cheme.cmu.edu/blog</uri>
+    </author>
+    <title type="html"><![CDATA[Automatic, temporary directory changing]]></title>
+    <link rel="alternate" type="text/html" href="https://kitchingroup.cheme.cmu.edu/blog/2013/06/16/Automatic-temporary-directory-changing" />
+    <id>https://kitchingroup.cheme.cmu.edu/blog/2013/06/16/Automatic-temporary-directory-changing</id>
+    <updated>2013-06-16T09:09:22Z</updated>
+    <published>2013-06-16T09:09:22Z</published>
+    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="programming" />
+    <summary type="html"><![CDATA[Automatic, temporary directory changing]]></summary>
+    <content type="html" xml:base="https://kitchingroup.cheme.cmu.edu/blog/2013/06/16/Automatic-temporary-directory-changing"><![CDATA[
+
+
+&lt;p&gt;
+If you are doing some analysis that requires you to change directories, e.g. to read a file, and then change back to another directory to read another file, you have probably run into problems if there is an error somewhere. You would like to make sure that the code changes back to the original directory after each error. We will look at a few ways to accomplish that here.
+&lt;/p&gt;
+
+&lt;p&gt;
+The try/except/finally method is the traditional way to handle exceptions, and make sure that some code "finally" runs. Let us look at two examples here. In the first example, we try to change into a directory that does not exist.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+
+&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; os, sys
+
+CWD = os.getcwd() &lt;span style="color: #ff0000; font-weight: bold;"&gt;# &lt;/span&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;store initial position&lt;/span&gt;
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'initially inside {0}'&lt;/span&gt;.format(os.getcwd())
+TEMPDIR = &lt;span style="color: #228b22;"&gt;'data/run1'&lt;/span&gt; &lt;span style="color: #ff0000; font-weight: bold;"&gt;# &lt;/span&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;this does not exist&lt;/span&gt;
+
+&lt;span style="color: #8b0000;"&gt;try:&lt;/span&gt;
+    os.chdir(TEMPDIR)
+    &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'inside {0}'&lt;/span&gt;.format(os.getcwd())
+&lt;span style="color: #8b0000;"&gt;except:&lt;/span&gt;
+    &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'Exception caught: '&lt;/span&gt;,sys.exc_info()[0]
+&lt;span style="color: #8b0000;"&gt;finally:&lt;/span&gt;
+    &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'Running final code'&lt;/span&gt;
+    os.chdir(CWD)
+    &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'finally inside {0}'&lt;/span&gt;.format(os.getcwd())
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+initially inside c:\users\jkitchin\Dropbox\pycse
+Exception caught:  &amp;lt;type 'exceptions.WindowsError'&amp;gt;
+Running final code
+finally inside c:\users\jkitchin\Dropbox\pycse
+&lt;/pre&gt;
+
+
+&lt;p&gt;
+Now, let us look at an example where the directory does exist. We will change into the directory, run some code, and then raise an Exception.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+
+&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; os, sys
+
+CWD = os.getcwd() &lt;span style="color: #ff0000; font-weight: bold;"&gt;# &lt;/span&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;store initial position&lt;/span&gt;
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'initially inside {0}'&lt;/span&gt;.format(os.getcwd())
+TEMPDIR = &lt;span style="color: #228b22;"&gt;'data'&lt;/span&gt;
+
+&lt;span style="color: #8b0000;"&gt;try:&lt;/span&gt;
+    os.chdir(TEMPDIR)
+    &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'inside {0}'&lt;/span&gt;.format(os.getcwd())
+    &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; os.listdir(&lt;span style="color: #228b22;"&gt;'.'&lt;/span&gt;)
+    &lt;span style="color: #8b0000;"&gt;raise&lt;/span&gt; &lt;span style="color: #cd0000;"&gt;Exception&lt;/span&gt;(&lt;span style="color: #228b22;"&gt;'boom'&lt;/span&gt;)
+&lt;span style="color: #8b0000;"&gt;except:&lt;/span&gt;
+    &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'Exception caught: '&lt;/span&gt;,sys.exc_info()[0]
+&lt;span style="color: #8b0000;"&gt;finally:&lt;/span&gt;
+    &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'Running final code'&lt;/span&gt;
+    os.chdir(CWD)
+    &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'finally inside {0}'&lt;/span&gt;.format(os.getcwd())
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+initially inside c:\users\jkitchin\Dropbox\pycse
+inside c:\users\jkitchin\Dropbox\pycse\data
+['antoine_data.dat', 'antoine_database.mat', 'commonshellsettings.xml', 'cstr-zeroth-order.xlsx', 'debug-2.txt', 'debug-3.txt', 'debug-4.txt', 'debug.txt', 'example.xlsx', 'example2.xls', 'example3.xls', 'example4.xls', 'example4.xlsx', 'Flash_Example.apw', 'Flash_Example.bkp', 'Flash_Example.def', 'gc-data-21.txt', 'PT.txt', 'raman.txt', 'testdata.txt']
+Exception caught:  &amp;lt;type 'exceptions.Exception'&amp;gt;
+Running final code
+finally inside c:\users\jkitchin\Dropbox\pycse
+&lt;/pre&gt;
+
+&lt;p&gt;
+You can see that we changed into the directory, ran some code, and then caught an exception. Afterwards, we changed back to our original directory. This code works fine, but it is somewhat verbose, and tedious to write over and over. We can get a cleaner syntax with a context manager. The context manager uses the &lt;code&gt;with&lt;/code&gt; keyword in python. In a context manager some code is executed on entering the "context", and code is run on exiting the context. We can use that to automatically change directory, and when done, change back to the original directory. We use the &lt;code&gt;contextlib.contextmanager&lt;/code&gt; decorator on a function. With a function, the code up to a &lt;code&gt;yield&lt;/code&gt; statement is run on entering the context, and the code after the yield statement is run on exiting. We wrap the yield statement in try/except/finally block to make sure our final code gets run.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+
+&lt;pre class="src src-python"&gt;&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; contextlib
+&lt;span style="color: #8b0000;"&gt;import&lt;/span&gt; os, sys
+
+&lt;span style="color: #8b0000;"&gt;@contextlib&lt;/span&gt;.contextmanager
+&lt;span style="color: #8b0000;"&gt;def&lt;/span&gt; &lt;span style="color: #8b2323;"&gt;cd&lt;/span&gt;(path):
+    &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'initially inside {0}'&lt;/span&gt;.format(os.getcwd())
+    CWD = os.getcwd()
+    
+    os.chdir(path)
+    &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'inside {0}'&lt;/span&gt;.format(os.getcwd())
+    &lt;span style="color: #8b0000;"&gt;try:&lt;/span&gt;
+        &lt;span style="color: #8b0000;"&gt;yield&lt;/span&gt;
+    &lt;span style="color: #8b0000;"&gt;except:&lt;/span&gt;
+        &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'Exception caught: '&lt;/span&gt;,sys.exc_info()[0]
+    &lt;span style="color: #8b0000;"&gt;finally:&lt;/span&gt;
+        &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; &lt;span style="color: #228b22;"&gt;'finally inside {0}'&lt;/span&gt;.format(os.getcwd())
+        os.chdir(CWD)
+
+&lt;span style="color: #ff0000; font-weight: bold;"&gt;# &lt;/span&gt;&lt;span style="color: #ff0000; font-weight: bold;"&gt;Now we use the context manager&lt;/span&gt;
+&lt;span style="color: #8b0000;"&gt;with&lt;/span&gt; cd(&lt;span style="color: #228b22;"&gt;'data'&lt;/span&gt;):
+    &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; os.listdir(&lt;span style="color: #228b22;"&gt;'.'&lt;/span&gt;)
+    &lt;span style="color: #8b0000;"&gt;raise&lt;/span&gt; &lt;span style="color: #cd0000;"&gt;Exception&lt;/span&gt;(&lt;span style="color: #228b22;"&gt;'boom'&lt;/span&gt;)
+
+&lt;span style="color: #8b0000;"&gt;print&lt;/span&gt;
+&lt;span style="color: #8b0000;"&gt;with&lt;/span&gt; cd(&lt;span style="color: #228b22;"&gt;'data/run2'&lt;/span&gt;):
+    &lt;span style="color: #8b0000;"&gt;print&lt;/span&gt; os.listdir(&lt;span style="color: #228b22;"&gt;'.'&lt;/span&gt;)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+One case that is not handled well with this code is if the directory you want to change into does not exist. In that case an exception is raised on entering the context when you try change into a directory that does not exist. An alternative class based context manager can be found &lt;a href="http://code.activestate.com/recipes/576620-changedirectory-context-manager/"&gt;here&lt;/a&gt;. 
+&lt;/p&gt;
+&lt;p&gt;Copyright (C) 2013 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;&lt;p&gt;&lt;a href="/org/2013/06/16/Automatic,-temporary-directory-changing.org"&gt;org-mode source&lt;/a&gt;&lt;p&gt;]]></content>
+  </entry>
+</feed>

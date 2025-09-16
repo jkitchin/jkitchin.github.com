@@ -1,0 +1,304 @@
+* DONE Automated bibtex entry tweeting
+  CLOSED: [2016-08-25 Thu 12:23]
+  :PROPERTIES:
+  :categories: twitter,bibtex
+  :date:     2016/08/25 12:14:31
+  :updated:  2016/08/25 14:09:50
+  :END:
+
+The goal in this post is to develop an elisp function that will tweet a bibtex entry. What I want is to be on a bibtex entry, and run a command that will generate a tweet and tweet it. Here is an example bibtex entry I will use in this post. Clearly, I couldn't simply tweet the entry, it is too long. What I want instead is to generate a picture of a formatted citation, to make a gist out of the bibtex entry so we can link to it, and then to provide links in the tweet to the doi, and the bibtex entry gist.
+
+#+BEGIN_SRC emacs-lisp
+(with-current-buffer (find-file-noselect "~/Dropbox/bibliography/references.bib")
+  (goto-char (point-min))
+  (re-search-forward "kitchin-2016-autom-data,")
+  (bibtex-copy-entry-as-kill)
+  (with-temp-buffer
+    (bibtex-yank 1)
+    (buffer-string)))
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+@article{kitchin-2016-autom-data,
+  abstract =	 "In the current scientific publishing landscape, there is a
+                  need for an authoring workflow that easily integrates data and
+                  code into manuscripts and that enables the data and code to be
+                  published in reusable form. Automated embedding of data and
+                  code into published output will enable superior communication
+                  and data archiving. In this work, we demonstrate a proof of
+                  concept for a workflow, org-mode, which successfully provides
+                  this authoring capability and workflow integration. We
+                  illustrate this concept in a series of examples for potential
+                  uses of this workflow. First, we use data on citation counts
+                  to compute the h-index of an author, and show two code
+                  examples for calculating the h-index. The source for each
+                  example is automatically embedded in the PDF during the export
+                  of the document. We demonstrate how data can be embedded in
+                  image files, which themselves are embedded in the document.
+                  Finally, metadata about the embedded files can be
+                  automatically included in the exported PDF, and accessed by
+                  computer programs. In our customized export, we embedded
+                  metadata about the attached files in the PDF in an Info field.
+                  A computer program could parse this output to get a list of
+                  embedded files and carry out analyses on them. Authoring tools
+                  such as Emacs + org-mode can greatly facilitate the
+                  integration of data and code into technical writing. These
+                  tools can also automate the embedding of data into document
+                  formats intended for consumption.",
+  author =	 "Kitchin, John R. and Van Gulick, Ana E. and Zilinski, Lisa D.",
+  keywords = 	 {orgmode},
+  doi =		 "10.1007/s00799-016-0173-7",
+  issn =	 "1432-1300",
+  journal =	 "International Journal on Digital Libraries",
+  pages =	 "1--6",
+  title =	 {Automating Data Sharing Through Authoring Tools},
+  url =		 "https://doi.org/10.1007/s00799-016-0173-7",
+  year =	 2016,
+}
+
+#+end_example
+
+First, we tackle making an image. Emacs has some capability to generate svg, and we can readily convert that to png for the tweet. Here we just go to the entry, and then generate a png. I build off the citation capability of org-ref to generate a pretty reasonably formatted entry. It isn't perfect; the volume is missing in the entry, so there is a blank space between two commas, but this is good enough for me. Note we need a png for twitter. It appears you cannot upload svg yet.
+
+#+BEGIN_SRC emacs-lisp
+(let* ((entry (with-current-buffer (find-file-noselect "~/Dropbox/bibliography/references.bib")
+		(goto-char (point-min))
+		(re-search-forward "kitchin-2016-autom-data,")
+		(bibtex-beginning-of-entry)
+		(bibtex-parse-entry t)))
+       (formatted-entry (orhc-formatted-citation entry))
+       (lines (with-temp-buffer
+		(insert formatted-entry)
+		(fill-paragraph)
+		(split-string  (buffer-string) "\n")))
+       (svg (svg-create 500 (* 20 (length lines)))))
+
+  (loop for i from 0
+	for line in lines
+	do
+	(svg-text svg line
+		  :font-size "12"
+		  :stroke "black"
+		  :x 0
+		  :y (+ 15 (* i 15))
+		  :stroke-width 0.3))
+
+  (with-temp-file "authoring.svg"
+    (svg-print svg)))
+
+(shell-command "convert authoring.svg authoring.png")
+#+END_SRC
+
+#+RESULTS:
+: 0
+
+[[./authoring.png]]
+
+It is easy enough to get the doi, and generate the url to it.
+#+BEGIN_SRC emacs-lisp
+(let* ((entry (with-current-buffer (find-file-noselect "~/Dropbox/bibliography/references.bib")
+		(goto-char (point-min))
+		(re-search-forward "kitchin-2016-autom-data,")
+		(bibtex-beginning-of-entry)
+		(bibtex-parse-entry t))))
+  (format "https://doi.org/%s" (cdr (assoc "doi" entry ))))
+#+END_SRC
+
+#+RESULTS:
+: https://doi.org/10.1007/s00799-016-0173-7
+
+Next, we will put the entry as a gist on Github, so we can provide a link to it. I use the gist.el package, and here just do some trickery to put the entry in a temp-file named by the key so that the gist has a nice name. This returns the url to the gist, which we would want to incorporate into a tweet.
+
+#+BEGIN_SRC emacs-lisp
+(with-current-buffer (find-file-noselect "~/Dropbox/bibliography/references.bib")
+  (goto-char (point-min))
+  (re-search-forward "kitchin-2016-autom-data,")
+  (save-restriction
+    (bibtex-narrow-to-entry)
+    (bibtex-beginning-of-entry)
+    (let* ((entry-string (buffer-string))
+	   (entry (bibtex-parse-entry))
+	   (key (cdr (assoc "=key=" entry)))
+	   (tfile (expand-file-name (format "%s.bib" key) temporary-file-directory)))
+      (with-temp-file tfile
+	(insert entry-string))
+      (with-current-buffer (find-file-noselect tfile)
+	(gist-buffer)))
+    (with-temp-buffer
+      (yank)
+      (buffer-string))))
+#+END_SRC
+
+#+RESULTS:
+: https://gist.github.com/1ae494865edda9f0a18a088796f52016
+
+
+Ok, All the pieces are in place. The only piece left is creating the tweet, and tweeting it. I couldn't see an obvious way to do this with twittering mode, since I didn't see where to add an image. There is a [[https://pypi.python.org/pypi/TwitterAPI/2.4.2][Python library]] for this though, and it looks pretty easy to use. Here is an example usage.
+
+
+#+BEGIN_SRC python :results output org drawer
+from TwitterAPI import TwitterAPI
+from twitter_secrets import CONSUMER_KEY, CONSUMER_SECRET, ACCESS_TOKEN_KEY, ACCESS_TOKEN_SECRET
+
+api = TwitterAPI(CONSUMER_KEY, CONSUMER_SECRET, ACCESS_TOKEN_KEY, ACCESS_TOKEN_SECRET)
+file = open('authoring.png', 'rb')
+data = file.read()
+r = api.request('statuses/update_with_media', {'status':'A test tweet using the TwitterAPI with an image.'}, {'media[]':data})
+print(r.status_code)
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+200
+:END:
+
+It will be a tad hacky, but the script is so simple we can just make a template, and run it. We need to do these things: 1) make the image, 2) make the gist 3) format and send the tweet. Here is the elisp function to do that.
+
+#+BEGIN_SRC emacs-lisp
+(defun tweet-bibtex ()
+  "Tweet the bibtex entry at point."
+  (interactive)
+  (bibtex-beginning-of-entry)
+  (bibtex-set-field "tweeted" (current-time-string))
+
+  (let* ((entry-string (save-restriction
+			 (bibtex-beginning-of-entry)
+			 (bibtex-narrow-to-entry)
+			 (buffer-substring-no-properties (point-min) (point-max))))
+	 (entry (bibtex-parse-entry t))
+	 (key (cdr (assoc "=key=" entry)))
+	 (doi (cdr (assoc "doi" entry)))
+	 (svg-file (expand-file-name (format "%s.svg" key) temporary-file-directory))
+	 (png-file (expand-file-name (format "%s.png" key) temporary-file-directory))
+	 (bib-file (expand-file-name (format "%s.bib" key) temporary-file-directory))
+	 (py-file (expand-file-name (format "%s.py" key) temporary-file-directory))
+	 (formatted-entry (orhc-formatted-citation entry))
+	 (lines (with-temp-buffer
+		  (insert formatted-entry)
+		  (fill-paragraph)
+		  (split-string  (buffer-string) "\n")))
+	 (svg (svg-create 500 (* 20 (length lines))))
+	 (tweet (read-string "Tweet: "))
+	 gist-url
+	 full-tweet)
+
+    ;; delete buffers and files
+    (loop for buf in (list (concat key ".bib")
+			   (concat key ".png")
+			   (concat key ".svg")
+			   (concat key ".py"))
+	  do
+	  (when (get-buffer buf)
+	    (kill-buffer (get-buffer buf))))
+
+    ;; Step 1 make the image
+    (loop for i from 0
+	  for line in lines
+	  do
+	  (svg-text svg line
+		    :font-size "12"
+		    :stroke "black"
+		    :x 0
+		    :y (+ 15 (* i 15))
+		    :stroke-width 0.3))
+
+    (with-temp-file svg-file
+      (svg-print svg))
+
+    (shell-command (format "convert %s %s" svg-file png-file))
+
+    ;; Step 2, make the gist. Make a temp-file so the gist has a reasonable name
+    (with-temp-file bib-file
+      (insert entry-string))
+
+    (let ((bib-buffer (find-file-noselect bib-file)))
+      (with-current-buffer bib-buffer
+	(gist-buffer))
+      (kill-buffer bib-buffer))
+
+    ;; get url off clipboard
+    (setq gist-url (with-temp-buffer
+		     (yank)
+		     (buffer-string)))
+
+    ;; Format and send the tweet:
+    (setq full-tweet (format "#publication %s\nhttps://doi.org/%s\nbibtex: %s" tweet doi gist-url))
+
+    (with-temp-file py-file
+      (insert (format "from TwitterAPI import TwitterAPI
+from twitter_secrets import CONSUMER_KEY, CONSUMER_SECRET, ACCESS_TOKEN_KEY, ACCESS_TOKEN_SECRET
+
+api = TwitterAPI(CONSUMER_KEY, CONSUMER_SECRET, ACCESS_TOKEN_KEY, ACCESS_TOKEN_SECRET)
+file = open('%s', 'rb')
+data = file.read()
+r = api.request('statuses/update_with_media', {'status':'''%s'''}, {'media[]':data})"
+		      png-file
+		      full-tweet)))
+
+    (if (= 0 (shell-command (format "python %s" py-file)))
+	(message "%s" full-tweet)
+      (message "tweet failed ;("))))
+
+;; Now, try it out.
+(with-current-buffer (find-file-noselect "~/Dropbox/bibliography/references.bib")
+  (goto-char (point-min))
+  (re-search-forward "kitchin-2016-autom-data,")
+  (tweet-bibtex))
+
+#+END_SRC
+
+#+RESULTS:
+: 0
+
+You can see what this tweet looks like here:
+
+#+BEGIN_HTML
+<blockquote class="twitter-tweet" data-lang="en"><p lang="en" dir="ltr"><a href="https://twitter.com/hashtag/publication?src=hash">#publication</a> I tweeted this from a bibtex file.<a href="https://t.co/NGVlRGqKSJ">https://t.co/NGVlRGqKSJ</a><br>bibtex: <a href="https://t.co/0UEkvyBKAM">https://t.co/0UEkvyBKAM</a> <a href="https://t.co/OpbAt1h3OP">pic.twitter.com/OpbAt1h3OP</a></p>&mdash; John Kitchin (@johnkitchin) <a href="https://twitter.com/johnkitchin/status/768838551140261894">August 25, 2016</a></blockquote> <script async src="//platform.twitter.com/widgets.js" charset="utf-8"></script>
+#+END_HTML
+
+That seems pretty reasonable. Now I only need to use it about 48,000 times to benefit from the time-savings M-x tweet-bibtex offers compared to manually making all those tweets ;)
+
+** pastebin							   :noexport:
+Next, we consider how to put the bibtex entry on Pastebin. There is an Emacs pastebin package on Melpa, but it didn't exactly work for me (it seems the api has changed a bit and the MELPA package is not current). I adapted the function so it does what I need here.
+
+#+BEGIN_SRC emacs-lisp
+(defun pastebin-bibtex ()
+  "Send the bibtex entry to pastebin.com and return the url."
+  (interactive)
+  (bibtex-beginning-of-entry)
+
+  (let* ((params (concat "api_option=paste"
+			 "&api_dev_key=%s"
+			 "&api_paste_private=0"
+			 "&api_paste_expire_date=N"
+			 "&api_paste_format=bibtex"
+			 "&api_paste_name=%s"
+			 "&api_paste_code=%s"))
+         (data (save-restriction
+		 (bibtex-narrow-to-entry)
+		 (buffer-string)))
+         (pastebin-url "http://pastebin.com/api/api_post.php")
+         (url-request-method "POST")
+         (url-request-extra-headers
+          '(("Content-Type" . "application/x-www-form-urlencoded")))
+         (url-request-data
+          (concat (format params
+			  API_DEV_KEY
+			  (url-hexify-string (user-full-name))
+			  (url-hexify-string data))))	 )
+    (with-current-buffer (url-retrieve-synchronously pastebin-url)
+      (goto-char url-http-end-of-headers)
+      (buffer-substring (point) (point-max)))))
+
+(with-current-buffer (find-file-noselect "~/Dropbox/bibliography/references.bib")
+  (goto-char (point-min))
+  (re-search-forward "kitchin-2016-autom-data,")
+  (pastebin-bibtex))
+#+END_SRC
+
+#+RESULTS:
+:
+: http://pastebin.com/GMgrf0j9
+
+Interestingly, pastebin seems to be concerned these pastes are spam. I have to solve some kind recaptcha.

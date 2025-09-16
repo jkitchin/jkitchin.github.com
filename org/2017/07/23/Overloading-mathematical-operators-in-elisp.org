@@ -1,0 +1,334 @@
+* DONE Overloading mathematical operators in elisp
+  CLOSED: [2017-07-23 Sun 14:13]
+  :PROPERTIES:
+  :categories: emacs,elisp
+  :date:     2017/07/23 14:13:41
+  :updated:  2017/07/23 16:03:40
+  :org-url:  http://kitchingroup.cheme.cmu.edu/org/2017/07/23/Overloading-mathematical-operators-in-elisp.org
+  :permalink: http://kitchingroup.cheme.cmu.edu/blog/2017/07/23/Overloading-mathematical-operators-in-elisp/index.html
+  :END:
+  
+In Python I am used to some simple idioms like this:
+
+#+BEGIN_SRC python :results output org drawer
+print([1, 2, 3] * 2)
+print("ab" * 3)
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+[1, 2, 3, 1, 2, 3]
+ababab
+:END:
+
+There is even such fanciness as defining operators for objects, as long as they have the appropriate dunder methods defined:
+
+#+BEGIN_SRC python :results output org drawer
+class Point:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+    def __str__(self):
+        return "Point ({}, {})".format(self.x, self.y)
+
+    def __mul__(self, a):
+        return Point(self.x * a, self.y * a)
+
+    def __rmul__(self, a):
+        return Point(self.x * a, self.y * a)
+    
+p = Point(1, 1)
+print(p * 2)
+print(3 * p)
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+Point (2, 2)
+Point (3, 3)
+:END:
+
+Out of the box, these things are not possible in elisp. Operators like  * in elisp only take numbers or markers. We have a few options to change this. The worst option is to simply redefine these functions. That is bad because it is not reversible. We could define new functions that have the behavior we want, but then we lose the semantic meaning of "*" that we were aiming for. A better option is to [[https://www.gnu.org/software/emacs/manual/html_node/elisp/Advising-Functions.html][advise]] these functions. This is reversible, because you can later unadvise them. Today we look at some strategies to do this.
+
+We will use "around" advise because it will let us bypass the original intent of the function when we want to, or use it when we do. First, we create a function that will be the advice and add it to the * function. This first draft won't actually change the behavior of *; if all the args are numbers or markers it will simply use the original function as before.
+
+#+BEGIN_SRC emacs-lisp
+(require 'dash)
+
+(defun *--*-around (orig-fun &rest args)
+  "if every arg is a number do *, else do something else."
+  (cond
+   ((-every? (lambda (x) (or (numberp x) (markerp x))) args)
+    (apply orig-fun args))))
+
+(advice-add '* :around #'*--*-around)
+#+END_SRC
+
+#+RESULTS:
+
+Let's just confirm
+#+BEGIN_SRC emacs-lisp
+(* 1 2 3)
+#+END_SRC
+
+#+RESULTS:
+: 6
+
+Now, we can start modifying our function to handle some other cases. Let's do the list and string first. The * function is variadic, but in these cases it makes sense to limit to two arguments. We need two cases for each type since we can write (* 2 list) or (* list 2). We also should create a fall-through case that raises an error to alert us we can't multiply things.
+
+#+BEGIN_SRC emacs-lisp
+(defun *--*-around (orig-fun &rest args)
+  "if every arg is a number do *, else do something else."
+  (cond
+   ;; The original behavior
+   ((-every? (lambda (x) (or (numberp x) (markerp x))) args)
+    (apply orig-fun args))
+
+   ;; create repeated copies of list
+   ((and (listp (first args))
+	 (integerp (second args))
+	 (= 2 (length args)))
+    (loop for i from 0 below (second args) append (copy-list (first args))))
+
+   ((and (integerp (first args))
+	 (listp (second args))
+	 (= 2 (length args)))
+    (loop for i from 0 below (first args) append (copy-list (second args))))
+
+   ;; Make repeated string
+   ((and (stringp (first args))
+	 (integerp (second args))
+	 (= 2 (length args)))
+    (loop for i from 0 below (second args) concat (first args)))
+
+   ((and (integerp (first args))
+	 (stringp (second args))
+	 (= 2 (length args)))
+    (loop for i from 0 below (first args) concat (second args)))
+
+   (t
+    (error "You cannot * %s" args))))
+#+END_SRC
+
+#+RESULTS:
+: *--*-around
+
+Here is the new advice in action. 
+
+#+BEGIN_SRC emacs-lisp
+(list
+ (* '(a b) 2)
+ (* 2 '(c d))
+ (* 2 "ab")
+ (* "cd" 2))
+#+END_SRC
+
+#+RESULTS:
+| (a b a b) | (c d c d) | abab | cdcd |
+
+That captures the spirit of overloading * for lists and strings. What about that object example? We have to make some assumptions here. Python looks for an uses a dunder __mul__ method. We will assume a double dash method (--mul--) in a similar spirit. We have to modify the advice one final time. We just add a condition to check if one of the arguments is an eieio-object, and then call the --mul-- function on the arguments.
+
+#+BEGIN_SRC emacs-lisp
+(defun *--*-around (orig-fun &rest args)
+  "if every arg is a number do *, else do something else."
+  (cond
+   ;; The original behavior
+   ((-every? (lambda (x) (or (numberp x) (markerp x))) args)
+    (apply orig-fun args))
+
+   ;; create repeated copies of list
+   ((and (listp (first args))
+	 (integerp (second args))
+	 (= 2 (length args)))
+    (loop for i from 0 below (second args) append (copy-list (first args))))
+
+   ((and (integerp (first args))
+	 (listp (second args))
+	 (= 2 (length args)))
+    (loop for i from 0 below (first args) append (copy-list (second args))))
+
+   ;; Make repeated string
+   ((and (stringp (first args))
+	 (integerp (second args))
+	 (= 2 (length args)))
+    (loop for i from 0 below (second args) concat (first args)))
+
+   ((and (integerp (first args))
+	 (stringp (second args))
+	 (= 2 (length args)))
+    (loop for i from 0 below (first args) concat (second args)))
+
+   ;; Handle object
+   ((or (and (eieio-object-p (first args))
+	     (numberp (second args)))
+	(and (numberp (first args))
+	     (eieio-object-p (second args))))
+    (apply '--mul-- args))
+
+   (t
+    (error "You cannot * %s" args))))
+#+END_SRC
+
+#+RESULTS:
+: *--*-around
+
+Now, we can define a class and the --mul-- function and show that our overloaded * function works. Note we can define two signatures of --mul-- so it is not necessary to define an --rmul-- in this case as it was with Python (although we still create two functions in the end).
+
+#+BEGIN_SRC emacs-lisp
+(require 'eieio)
+
+(defclass Point ()
+  ((x :initarg :x)
+   (y :initarg :y)))
+
+(cl-defmethod --mul-- ((p Point) a)
+  (Point :x (* (oref p :x) a) :y (* (oref p :y) a)))
+
+(cl-defmethod --mul-- (a (p Point))
+  (Point :x (* (oref p :x) a) :y (* (oref p :y) a)))
+
+(cl-defmethod --str-- ((p Point))
+  (format "Point (%s, %s)" (oref p :x) (oref p :y)))
+
+(let ((P (Point :x 1 :y 1)))
+  (list
+   (--str-- (* P 2))
+   (--str-- (* 3 P))))
+#+END_SRC
+
+#+RESULTS:
+| Point (2, 2) | Point (3, 3) |
+
+That is pretty awesome. Before going on, here is how you remove the advice:
+
+#+BEGIN_SRC emacs-lisp
+(advice-remove '* '*--*-around)
+#+END_SRC
+
+#+RESULTS:
+
+This example has been pretty instructive. You have to handle overloading for all the intrinsic types. We did lists and strings here; you might also consider vectors. For objects, it looks like we can at least try using a generic method like --mul--. One detail I neglected to consider here is that * is natively variadic. For these special cases, we did not implement variadic versions. This isn't a feature of Python which uses infix notation, so every call is with two arguments. In some cases it might make sense to support variadic args, but that seems like a generally challenging thing to do. While (* "a" 2 3) might be expected to create a string of "aaaaaa", (* "a" 2 '(3)) doesn't make sense at all.
+
+It would be straightforward to extend this to other operators like '+ to concatenate strings, lists and vectors, or '- to remove chars or elements, including extensions to objects using double-dash functions like --add--, --subtract--, etc. Another nice idea might be to advise print to use --str-- on objects.
+
+On the surface this looks useful so far. Python defines /a lot/ of dunder methods that cover all kinds of scenarios including logical comparisons, bit shifting, mod, incrementing operators, casting, comparisons, right/left operations, indexing and assignment, length and others. That would be a lot of advices. This approach is moderately tedious to expand though; you have to keep adding conditional cases. 
+
+An alternative to the big conditional statement used in the advice might be the use of a [[https://www.gnu.org/software/emacs/manual/html_node/elisp/Generic-Functions.html][generic function]]. With this approach we define a generic function that just does multiplication by default. Then we define specific cases with specific signatures that are used for lists, strings, objects, etc. That is basically all our conditional above was doing, matching signatures and executing a chunk of code accordingly.
+
+Here is our default case that does the original behavior. We still use advice to apply the function.
+
+#+BEGIN_SRC emacs-lisp
+(cl-defgeneric generic-multiply (orig-fun &rest args)
+  "Generic multiply for when no specific case exists."
+  (apply orig-fun args))
+
+(defun *--*-around-generic (orig-fun &rest args)
+  (apply 'generic-multiply orig-fun args))
+
+(advice-add '* :around #'*--*-around-generic)
+#+END_SRC
+
+#+RESULTS:
+
+That should just work as usual for regular multiplication.
+
+#+BEGIN_SRC emacs-lisp
+(* 1 2 3 4)
+#+END_SRC
+
+#+RESULTS:
+: 24
+
+Sure enough it does. Now, we can define a specific method for a string. We need a specialized method for each signature, e.g. pre and post multiplication.
+
+#+BEGIN_SRC emacs-lisp
+(cl-defmethod generic-multiply ((orig-fun subr) (s string) (n integer))
+  (loop for i from 0 below n concat s))
+
+(cl-defmethod generic-multiply ((orig-fun subr) (n integer) (s string))
+  (loop for i from 0 below n concat s))
+
+(list
+ (* "Ac" 2)
+ (* 2 "Ad"))
+#+END_SRC
+
+#+RESULTS:
+| AcAc | AdAd |
+
+That works fine, and we did not have to modify our original advice function at all! Next the  list:
+
+#+BEGIN_SRC emacs-lisp
+(cl-defmethod generic-multiply ((orig-fun subr) (L list) (n integer))
+  (loop for i from 0 below n append (copy-list L)))
+
+(cl-defmethod generic-multiply ((orig-fun subr) (n integer) (L list))
+  (loop for i from 0 below n append (copy-list L)))
+
+(list (* '(1 2) 2)
+      (* 2 '(3 4)))
+#+END_SRC
+
+#+RESULTS:
+| 1 | 2 | 1 | 2 |
+| 3 | 4 | 3 | 4 |
+
+That also works fine. Last, our class example. This should work on all objects I think (unless there is some way to make classes that do not inherit the default superclass).
+
+#+BEGIN_SRC emacs-lisp
+(cl-defmethod generic-multiply ((orig-fun subr) (n integer) (obj eieio-default-superclass))
+  (--mul-- n obj))
+
+(cl-defmethod generic-multiply ((orig-fun subr) (obj eieio-default-superclass) (n integer))
+  (--mul-- n obj))
+
+(let ((P (Point :x 1 :y 1)))
+  (list
+   (--str-- (* P 2))
+   (--str-- (* 3 P))))
+#+END_SRC
+
+#+RESULTS:
+| Point (2, 2) | Point (3, 3) |
+
+This is a much better approach to extending the multiplication operator! If I continue this path in the future I would probably take this one.  This could be useful to make elisp more like some more popular contemporary languages like Python, as well as to add linear algebra like notation or mathematical operations on objects in elisp. It kind of feels like these operations ought to be generic functions to start with to make this kind of overloading easier from the beginning.  Functions like "*" are currently defined in the C source code though, maybe for performance reasons. It is not obvious what the consequences of making them generic might be.
+
+** Addendum
+
+Christopher Wellons [[http://disq.us/p/1kr76r9][pointed out]] an important limitation of advice: they don't work on byte-compiled functions. Let's see what he means. Here is a simple function that will just multiply a Point object by an integer:
+
+#+BEGIN_SRC emacs-lisp
+(defun to-be-bytten (p1 n)
+  (* p1 n))
+#+END_SRC
+
+#+RESULTS:
+: to-be-bytten
+
+Here it is in action, and here it works fine.
+
+#+BEGIN_SRC emacs-lisp
+(to-be-bytten (Point :x 1 :y 1) 2)
+#+END_SRC
+
+#+RESULTS:
+: [eieio-class-tag--Point 2 2]
+
+Now, let's byte-compile that function and try it again:
+
+#+BEGIN_SRC emacs-lisp
+(byte-compile 'to-be-bytten)
+
+(condition-case err
+    (to-be-bytten (Point :x 1 :y 1) 2)
+  ((error r)
+   (message "Doh! Christopher was right. It did not work...\n%s" err)))
+#+END_SRC
+
+#+RESULTS:
+: Doh! Christopher was right. It did not work...
+: (wrong-type-argument number-or-marker-p [eieio-class-tag--Point 1 1])
+
+So the advice is pretty limited since most of the functions in Emacs core are likely to be byte-compiled, and it might mean you have to redefine * completely, or define some new function that looks like it. Too bad, the advice was pretty easy! 
+

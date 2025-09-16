@@ -1,0 +1,211 @@
+* Generate emacs-lisp documentation
+  :PROPERTIES:
+  :categories: emacs_lisp
+  :date:     2014/10/17 14:39:49
+  :updated:  2014/10/17 14:39:49
+  :END:
+
+Emacs has some pretty amazing features to get help on a function (describe-function), to navigate quickly to functions in an elisp file (speedbar and imenu). Other languages have tools for generating documentation for all the functions in a file, e.g. epydoc, javadoc, Doxygen,... I have not found an equivalent to this in emacs-lisp. Here, we explore some options to get something similar to this. Our goal will be to take an emacs-lisp file, and generate an org-file of documentation, and then convert that to PDF for reading.
+
+Say we have a function, jmax-bibtex-next-entry, and we want some information about it. Here are three functions that give us the argument list, documentation string, and function definition.
+
+#+BEGIN_SRC emacs-lisp
+(help-function-arglist 'jmax-bibtex-next-entry)
+#+END_SRC
+
+#+RESULTS:
+| &optional | n |
+
+#+BEGIN_SRC emacs-lisp
+(documentation 'jmax-bibtex-next-entry)
+#+END_SRC
+
+#+RESULTS:
+: Jump to the beginning of the next bibtex entry. N is a prefix
+: argument. If it is numeric, jump that many entries
+: forward. Negative numbers do nothing.
+
+#+BEGIN_SRC emacs-lisp
+(symbol-function 'jmax-bibtex-next-entry)
+#+END_SRC
+
+#+RESULTS:
+| lambda | (&optional n) | Jump to the beginning of the next bibtex entry. N is a prefix\nargument. If it is numeric, jump that many entries\nforward. Negative numbers do nothing. | (interactive P) | (if (= (point) (save-excursion (bibtex-beginning-of-entry))) (progn (forward-char) (bibtex-next-entry))) | (if (re-search-forward bibtex-entry-head nil t (and (numberp n) n)) (progn (bibtex-beginning-of-entry))) |
+
+That will not always be the code we wrote, but it is functionally similar.
+
+So we could create an org-entry like this:
+
+#+BEGIN_SRC emacs-lisp :results org
+(defun fun2org (function-symbol)
+  (let ((args (help-function-arglist function-symbol))
+	(doc  (documentation function-symbol))
+	(code (symbol-function function-symbol)))
+    (format "** %s %s
+%s
+
+,#+BEGIN_SRC emacs-lisp
+%S
+,#+END_SRC
+" function-symbol args doc code)))
+
+(fun2org 'jmax-bibtex-next-entry)
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+,** jmax-bibtex-next-entry (&optional n)
+Jump to the beginning of the next bibtex entry. N is a prefix
+argument. If it is numeric, jump that many entries
+forward. Negative numbers do nothing.
+
+,#+BEGIN_SRC emacs-lisp
+(lambda (&optional n) "Jump to the beginning of the next bibtex entry. N is a prefix
+argument. If it is numeric, jump that many entries
+forward. Negative numbers do nothing." (interactive "P") (if (= (point) (save-excursion (bibtex-beginning-of-entry))) (progn (forward-char) (bibtex-next-entry))) (if (re-search-forward bibtex-entry-head nil t (and (numberp n) n)) (progn (bibtex-beginning-of-entry))))
+,#+END_SRC
+#+END_SRC
+
+The code is not that beautifully indented, but it is optional. 
+
+For variables, there are similar functions to get their documentation:
+
+#+BEGIN_SRC emacs-lisp
+(documentation-property 'jmax-bibtex-journal-abbreviations 'variable-documentation)
+#+END_SRC
+
+#+RESULTS:
+: List of (string journal-full-name journal-abbreviation). Find abbreviations at http://cassi.cas.org/search.jsp.
+
+The problem still is, you have to know the variable and function names in advance. I want to take a file, and generate this for each function, and variable. 
+
+I posted a question on [[http://stackoverflow.com/questions/26330363/how-do-i-get-a-list-of-functions-defined-in-an-emacs-lisp-file/26360946?iemail=1&noredirect=1#26360946][StackOverflow]] on how to get the functions defined in a file. The most feasible suggestion was to use the variable load-history, which contains a history of the variables and functions loaded, and the files they are in.
+
+Here is an example of getting the entries associated with jmax-bibtex.el
+
+#+BEGIN_SRC emacs-lisp :results code
+(cdr (assoc "/Users/jkitchin/Dropbox/kitchingroup/jmax/jmax-bibtex.el" load-history ))
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC emacs-lisp
+(jmax-bibtex-journal-abbreviations
+ (defun . jmax-bibtex-generate-longtitles)
+ (defun . jmax-bibtex-generate-shorttitles)
+ (defun . jmax-stringify-journal-name)
+ (defun . jmax-set-journal-string)
+ jmax-nonascii-latex-replacements
+ (defun . jmax-replace-nonascii)
+ jmax-lower-case-words
+ (defun . jmax-title-case-article)
+ (defun . jmax-sentence-case-article)
+ (defun . jmax-bibtex-next-entry)
+ (defun . jmax-bibtex-previous-entry)
+ (defun . jmax-bibtex-mode-keys)
+ (provide . jmax-bibtex))
+#+END_SRC
+
+Each element in this case is either a variable, defun or provide. Here, we can use this to print some information about the variables defined in this file. I think it is sufficient to check if the element in the list is a symbol, because all the other elements are cons elements. I suppose there are other possibilities, including defcustom, defgroup, defalias, defsubst, and maybe others.
+
+#+BEGIN_SRC emacs-lisp :results output
+(dolist (element (cdr
+		  (assoc
+		   "/Users/jkitchin/Dropbox/kitchingroup/jmax/jmax-bibtex.el"
+		   load-history )))
+  (when (symbolp element)
+    (princ 
+    (format "%s
+Documentation: %s
+
+" element (documentation-property element 'variable-documentation)))))
+#+END_SRC
+
+#+RESULTS:
+: jmax-bibtex-journal-abbreviations
+: Documentation: List of (string journal-full-name journal-abbreviation). Find abbreviations at http://cassi.cas.org/search.jsp.
+: 
+: jmax-nonascii-latex-replacements
+: Documentation: Cons list of non-ascii characters and their LaTeX representations
+: 
+: jmax-lower-case-words
+: Documentation: List of words to keep lowercase
+: 
+
+We can handle functions by checking if an element is a cons cell with a first element of defun.
+
+#+BEGIN_SRC emacs-lisp :results output
+(dolist (element (cdr
+		  (assoc
+		   "/Users/jkitchin/Dropbox/kitchingroup/jmax/jmax-bibtex.el"
+		   load-history )))
+  (when (and (consp element)
+	     (eq (car element) 'defun))
+    (princ (format "%s is a function\n" (cdr element))))))
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+jmax-bibtex-generate-longtitles is a function
+jmax-bibtex-generate-shorttitles is a function
+jmax-stringify-journal-name is a function
+jmax-set-journal-string is a function
+jmax-replace-nonascii is a function
+jmax-title-case-article is a function
+jmax-sentence-case-article is a function
+jmax-bibtex-next-entry is a function
+jmax-bibtex-previous-entry is a function
+jmax-bibtex-mode-keys is a function
+#+end_example
+
+
+So, we have the important pieces to mash up what I am looking for. Let us refine the goal. I want to create a PDF documentation of what is in an elisp file with a section on variables, and a section on functions. 
+
+#+BEGIN_SRC emacs-lisp :results output
+(let* ((elements (cdr
+		  (assoc
+		   "/Users/jkitchin/Dropbox/kitchingroup/jmax/jmax-bibtex.el"
+		   load-history)))
+       (vars (-filter 'symbolp elements))
+       (funcons (-filter (lambda (x)
+			   (and (consp x)
+				(eq 'defun (car x))))
+			 elements))
+       (funcs (mapcar 'cdr funcons)))
+  (switch-to-buffer "*org-doc*")
+  (erase-buffer)
+  (insert (format "#+TITLE: Documentation for %s
+#+OPTIONS: toc:nil
+\\maketitle
+\\tableofcontents
+" "/Users/jkitchin/Dropbox/kitchingroup/jmax/jmax-bibtex.el"))
+  (insert "* Variables\n")
+  (dolist (var (sort vars 'string-lessp))
+    (insert (format "** %s
+Documentation: %s\n\n" var  (documentation-property var 'variable-documentation))))
+
+  (insert "* Functions\n\n")
+  (dolist (funcs (sort funcs 'string-lessp))
+    (insert (format "** %s %s
+Documentation: %s
+
+Code:
+,#+BEGIN_SRC emacs-lisp
+%S
+,#+END_SRC
+"
+		    funcs
+		    (or (help-function-arglist funcs) "")
+		    (documentation funcs)
+		    (symbol-function funcs))))
+
+  (org-mode)
+  (write-file "jmax-bibtex-doc.org")
+  (org-export-to-file 'latex "jmax-bibtex-doc.tex")
+  (org-latex-compile "jmax-bibtex-doc.tex")
+  (kill-buffer "*org-doc*")
+  (kill-buffer "jmax-bibtex-doc.org"))
+#+END_SRC
+
+#+RESULTS:
+
+Here is the resulting pdf: file:jmax-bibtex-doc.pdf. It is not too bad. The code is not beautiful, and it would take some work to get that looking nice. It might be nice to find all instances of '` and replace them with links to variable names, but I leave that for another day. There is also no information about the header comments, but I leave this for another day to.

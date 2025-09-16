@@ -1,0 +1,170 @@
+* Caching searches using biblio and only seeing new results
+  :PROPERTIES:
+  :categories: elisp,arxiv,biblio
+  :date:     2018/04/11 20:46:56
+  :updated:  2018/04/11 20:46:56
+  :org-url:  http://kitchingroup.cheme.cmu.edu/org/2018/04/11/Caching-searches-using-biblio-and-only-seeing-new-results.org
+  :permalink: http://kitchingroup.cheme.cmu.edu/blog/2018/04/11/Caching-searches-using-biblio-and-only-seeing-new-results/index.html
+  :END:
+
+In this [[https://github.com/jkitchin/scimax/issues/196][issue]] in scimax, Robert asked if it was possible to save searches, and then to repeat them every so often and only see the new results. This needs some persistent caching of the records, and a comparison of the current search results with the previous search results.
+
+[[https://github.com/cpitclaudel/biblio.el][biblio]] provides a nice interface to searching a range of resources for bibliographic references. In this post, I will focus on arxiv. Out of the box, biblio does not seem to support this use case, but as you will see, it has many of the pieces required to achieve it. Let's start picking those pieces apart.
+
+#+BEGIN_SRC emacs-lisp
+(require 'biblio)
+#+END_SRC
+
+#+RESULTS:
+: biblio
+
+Here is the first piece we need: a way to run a query, and get results back as a data structure. Here we just look at the first result.
+
+#+BEGIN_SRC emacs-lisp :results code
+(let* ((query "alloy segregration")
+       (backend 'biblio-arxiv-backend)
+       (cb (url-retrieve-synchronously (funcall backend 'url query)))
+       (results (with-current-buffer cb
+		  (funcall backend 'parse-buffer))))
+  (car results))
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC emacs-lisp
+((doi . "10.1103/PhysRevB.76.014112")
+ (identifier . "0704.2752v2")
+ (year . "2007")
+ (title . "Modelling Thickness-Dependence of Ferroelectric Thin Film Properties")
+ (authors nil nil nil nil nil nil nil nil nil nil nil nil nil "L. Palova" nil "P. Chandra" nil "K. M. Rabe" nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil)
+ (container . "PRB 76, 014112 (2007)")
+ (category . "cond-mat.mtrl-sci")
+ (references "10.1103/PhysRevB.76.014112" "0704.2752v2")
+ (type . "eprint")
+ (url . "https://doi.org/10.1103/PhysRevB.76.014112")
+ (direct-url . "http://arxiv.org/pdf/0704.2752v2"))
+#+END_SRC
+
+Next, we need a database to store the results in. I will just use a flat file database with a file for each record. The filename will be the md5 hash of the doi or the record itself. Why is that a good idea? Well, the doi is a constant, so if it exists the md5 will also be a constant. The doi itself is not a good filename in general, but the md5 is. The md5 of the record itself will be fragile to any changes, so if it has a doi, we should use it. If it doesn't and later gets one, we should see it again since that could mean it has been published. Also, if it changes because of some new version we might want to see it again. In any case, the existence of that file will be evidence we have seen that record before, and will indicate we need to remove it from the current view.
+
+The flat file database is not super inspired. It is modeled a little after elfeed, but other solutions might work better for large sets of records, but this approach will work fine for this post.
+
+Here is a function that returns nil if the record has been seen, and if not, saves the record and returns it.
+
+#+BEGIN_SRC emacs-lisp
+(defvar db-dir "~/.arxiv-db/")
+
+(unless (f-dir? db-dir) (make-directory db-dir t))
+
+(defun unseen-record-p (record)
+  "Given a RECORD return it if it is unseen.
+Also, save the record so next time it will be marked seen. A
+record is seen if we have seen the DOI or the record as a string
+before."
+  (let* ((doi (cdr (assoc 'doi record)))
+	 (contents (with-temp-buffer
+		     (prin1 record (current-buffer))
+		     (buffer-string)))
+	 (hash (md5 (or doi contents)))
+	 (fname (expand-file-name hash db-dir)))
+
+    (if (f-exists? fname)
+	nil
+      (with-temp-file fname
+	(insert contents))
+      record)))
+#+END_SRC
+
+#+RESULTS:
+: unseen-record-p
+
+Now we can use that as a filter that saves records by side effect.
+
+#+BEGIN_SRC emacs-lisp
+(defun scimax-arxiv (query)
+  (interactive "Query: ")
+
+  (let* ((backend 'biblio-arxiv-backend)
+	 (cb (url-retrieve-synchronously (funcall backend 'url query)))
+	 (results (-filter 'unseen-record-p (with-current-buffer cb
+					      (funcall backend 'parse-buffer))))
+	 (results-buffer (biblio--make-results-buffer (current-buffer) query backend)))
+    (with-current-buffer results-buffer
+      (biblio-insert-results results ""))
+    (pop-to-buffer results-buffer)))
+
+(scimax-arxiv "alloy segregation")
+#+END_SRC
+
+#+RESULTS:
+: #<buffer *arXiv search*>
+
+Now, when I run that once I see something like this:
+
+#+attr_org: :width 300
+[[./screenshots/date-11-04-2018-time-20-19-52.png]]
+
+
+and if I run it again:
+
+#+BEGIN_SRC emacs-lisp
+(scimax-arxiv "alloy segregation")
+#+END_SRC
+
+#+RESULTS:
+: #<buffer *arXiv search*>
+
+Then the buffer is empty, since we have seen all the entries before.
+
+
+#+attr_org: :width 300
+[[./screenshots/date-11-04-2018-time-20-20-37.png]]
+
+Here are the files in our database:
+
+#+BEGIN_SRC sh
+ls ~/.arxiv-db/
+#+END_SRC
+
+#+RESULTS:
+| 18085fe2512e15d66addc7dfb71f7cd2 |
+| 2279123459312af2c2a2470ea947471e |
+| 2a75103fc70dfcd761510528130f2ea2 |
+| 402b62e7c0e2e82134afcd65d17f8682 |
+| 519e1fcdf7b5f4c3fde497bec9598432 |
+| 56193c60d03e35e2de54aed8aceafc6a |
+| 5ade82b32eac0f0ac426b2e5dc90f427 |
+| d0ee10b336557e3914216bc0575644a9 |
+| d4475edbd01f5051b6a6a900d666c719 |
+| e1d005b383c2a5f005a618fee28bd0c8 |
+
+Here are the contents of one of those files:
+
+#+BEGIN_SRC emacs-lisp
+(with-temp-buffer
+ (insert-file-contents "~/.arxiv-db/18085fe2512e15d66addc7dfb71f7cd2")
+ (read (buffer-string)))
+#+END_SRC
+
+#+RESULTS:
+: ((doi) (identifier . 1101.3464v3) (year . 2011) (title . Characterizing Solute Segregation and Grain Boundary Energy in a Binary
+:   Alloy Phase Field Crystal Model) (authors nil nil nil nil nil nil nil nil nil nil nil nil nil Jonathan Stolle nil Nikolas Provatas nil nil nil nil nil nil nil nil nil nil nil) (container) (category . cond-mat.mtrl-sci) (references nil 1101.3464v3) (type . eprint) (url . http://arxiv.org/abs/1101.3464v3) (direct-url . http://arxiv.org/pdf/1101.3464v3))
+
+So, if you need to read this in again later, no problem.
+
+Now, what could go wrong? I don't know much about how the search results from arxiv are returned. For example, this query returns 10 hits.
+
+#+BEGIN_SRC emacs-lisp
+(let* ((query "alloy segregration")
+       (backend 'biblio-arxiv-backend)
+       (cb (url-retrieve-synchronously (funcall backend 'url query)))
+       (results (with-current-buffer cb
+		  (funcall backend 'parse-buffer))))
+  (length results))
+#+END_SRC
+
+#+RESULTS:
+: 10
+
+There is just no way there are only 10 hits for this query. So, there must be a bunch more that you get by either changing the requested number in some argument, or by using subsequent queries to get the rest of them. I don't know if there are more advanced query options with biblio, e.g. to find entries newer than the last time it was run. On the advanced search [[https://arxiv.org/find][page]] for arxiv, it looks like there is only a by year option.
+
+This is still a good idea, and a lot of the pieces are here,

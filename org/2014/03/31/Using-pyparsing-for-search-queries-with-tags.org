@@ -1,0 +1,159 @@
+* Using pyparsing for search  queries with tags
+  :PROPERTIES:
+  :categories: python
+  :date:     2014/03/31 13:21:16
+  :updated:  2014/03/31 13:21:16
+  :END:
+
+A few times I  have wanted  to use  a more natural search string like "A and pw and 350 and not  kpt". The trouble  is figuring out how to parse that string and turn it  into search code. There  may  be nested logic,  e.g. "(A xor B)  and  (pw and (200 or 300))". This means we have  to recursively parse  the sstring. Rather  than invent this from  scratch, we  use pyparsing which is designed for that. There is   some code in "Getting started with pyparsing" that provides an example on parsing search strings. I want to see how I can turn the parsed output into search code. Here, we parse the search string and generate something that looks like lisp code. 
+
+** Parsing simple string and generating lisp
+
+We define  a  hiearchy of classes that codifythe operators, and which print representations of the logic. The grammar we implement is basically words or  strings separatedd by logic operators.
+
+#+BEGIN_SRC python
+from pyparsing import *
+
+class UnaryOperation(object):
+    'takes one operand,e.g. not'
+    def __init__(self, tokens):
+        self.op, self.operands = tokens[0]
+
+class BinaryOperation(object):
+    'takes two or more operands, e.g. and, or'
+    def __init__(self, tokens):
+        self.op = tokens[0][1]
+        self.operands = tokens[0][0::2]
+
+class SearchAnd(BinaryOperation):
+    def __repr__(self):
+        return '(AND {0})'.format(' '.join(str(oper) for oper in self.operands))
+        
+class SearchOr(BinaryOperation):
+    def __repr__(self):
+        return '(OR {0})'.format(' '.join(str(oper) for oper in self.operands))
+
+class SearchNot(UnaryOperation):
+    def __repr__(self):
+        return '(NOT {0})'.format(self.operands)
+
+class SearchTerm(object):
+    'represents a termthat is being searched. here just a word'                         
+    def __init__(self, tokens):
+        self.term = tokens[0]
+
+    def __repr__(self):
+        return self.term
+
+# the grammar
+and_ = CaselessLiteral("and")
+or_ = CaselessLiteral("or")
+not_ = CaselessLiteral("not")
+
+searchTerm = Word(alphanums) | quotedString.setParseAction(removeQuotes)
+searchTerm.setParseAction(SearchTerm)
+
+searchExpr = operatorPrecedence( searchTerm,
+                                 [(not_, 1, opAssoc.RIGHT, SearchNot),
+                                  (and_, 2, opAssoc.LEFT, SearchAnd),
+                                  (or_, 2, opAssoc.LEFT, SearchOr)])
+
+
+print searchExpr.parseString('not kpt')[0]
+print searchExpr.parseString('not (kpt and eos)')[0]
+print searchExpr.parseString('wood and blue or red')[0]
+print searchExpr.parseString('wood and blue and heavy or red')[0]
+#+END_SRC
+
+#+RESULTS:
+: (NOT kpt)
+: (NOT (AND kpt eos))
+: (OR (AND wood blue) red)
+: (OR (AND wood blue heavy) red)
+
+That works pretty well, and does not seem overly complicated to me. There is a lot of class definition, but that would presumably get buried in a module as a one time investment, and some function interface would look like this: =search('wood and blue or red')=.
+
+Now, let us try python notation. 
+
+** Parsing a search string to generate python set notations
+I will use a similar idea as I used before with TAGS. We will use set operations with the binary logical operators to do the actual searching. Finally, we wrap the code in a little function to search a dictionary we previously made.
+
+#+BEGIN_SRC python
+from pyparsing import *
+
+class UnaryOperation(object):
+    def __init__(self, tokens):
+        self.op, self.operands = tokens[0]
+
+class BinaryOperation(object):
+    def __init__(self, tokens):
+        self.op = tokens[0][1]
+        self.operands = tokens[0][0::2]
+
+class SearchAnd(BinaryOperation):
+    def __repr__(self):
+        return '(' + ' & '.join(['{}'.format(oper) for oper in self.operands]) + ')'
+        
+class SearchOr(BinaryOperation):
+    def __repr__(self):
+        return '(' + ' | '.join(['{}'.format(oper) for oper in self.operands]) +')'
+
+class SearchXor(BinaryOperation):
+    def __repr__(self):
+        return '(' + ' ^ '.join(['{}'.format(oper) for oper in self.operands]) + ')'
+
+class SearchNot(UnaryOperation):
+    def __repr__(self):
+        return 'TAGS[\'all\'] - {}'.format(self.operands)
+
+class SearchTerm(object):
+    def __init__(self, tokens):
+        self.term = tokens[0]
+
+    def __repr__(self):
+        'instead of just the  term, we represent it as TAGS[term]'
+        return 'TAGS[\'{0}\']'.format(self.term)
+
+# the grammar
+and_ = CaselessLiteral("and")
+or_ = CaselessLiteral("or")
+xor_ = CaselessLiteral("xor")
+not_ = CaselessLiteral("not")
+
+searchTerm = Word(alphanums) | quotedString.setParseAction(removeQuotes)
+searchTerm.setParseAction(SearchTerm)
+
+searchExpr = operatorPrecedence( searchTerm,
+                                 [(not_, 1, opAssoc.RIGHT, SearchNot),
+                                  (and_, 2, opAssoc.LEFT, SearchAnd),
+                                  (xor_, 2, opAssoc.LEFT, SearchXor),
+                                  (or_, 2, opAssoc.LEFT, SearchOr)])
+
+print searchExpr.parseString('not kpt')[0]
+print searchExpr.parseString('not (kpt and eos)')[0]
+print searchExpr.parseString('kpt or not eos)')[0]
+print searchExpr.parseString('wood and blue or red')[0]
+print searchExpr.parseString('wood and blue xor red')[0]
+
+# check it out on tags.
+def search_tags(srch):
+    'function to  search the TAGS  file'
+    import pickle
+
+    with open('TAGS.pkl', 'r') as f:
+        TAGS = pickle.loads(f.read())
+    
+    s = searchExpr.parseString(srch)[0]
+    return eval(str(s))
+print search_tags('pw and A and not 300')
+#+END_SRC
+
+#+RESULTS:
+: TAGS['all'] - TAGS['kpt']
+: TAGS['all'] - (TAGS['kpt'] & TAGS['eos'])
+: (TAGS['kpt'] | TAGS['all'] - TAGS['eos'])
+: ((TAGS['wood'] & TAGS['blue']) | TAGS['red'])
+: ((TAGS['wood'] & TAGS['blue']) ^ TAGS['red'])
+: set(['tags\\A\\pw\\350', 'tags\\A\\pw', 'tags\\A\\pw\\200', 'tags\\A\\pw\\400', 'tags\\A\\pw\\250'])
+
+That is pretty nice. It looks like a nice syntax for queries. One day I will try incorporating this into a database application.

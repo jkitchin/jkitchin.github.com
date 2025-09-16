@@ -1,0 +1,309 @@
+* Operator precedence in infix notation by automatic parenthesizing
+  :PROPERTIES:
+  :categories: hylang
+  :date:     2016/04/10 13:32:00
+  :updated:  2016/04/10 13:32:00
+  :END:
+I am continuing some investigation in getting operator precedence right with infix notation. You can fully parenthesize your expressions for this, but it is tedious and hard to read. Apparently in Fortran I (yep, one) the compiler would expand each operator in an expression with a sequence of parentheses to get the precedence right (https://en.wikipedia.org/wiki/Operator-precedence_parser)!
+
+Roughly, these were the rules.
+
+- replace + and – with ))+(( and ))-((, respectively;
+- replace * and / with )*( and )/(, respectively;
+- add (( at the beginning of each expression and after each left parenthesis in the original expression; and
+- add )) at the end of the expression and before each right parenthesis in the original expression.
+
+So this
+#+BEGIN_EXAMPLE
+a * b + c ^ d / e
+#+END_EXAMPLE
+
+becomes
+
+#+BEGIN_EXAMPLE
+((((a))*((b)))+(((c)^(d))/((e))))
+#+END_EXAMPLE
+
+Not too pretty, but correct! The wikipedia page provides an example C program to implement this, and we adapt it here for hy. The idea is to take an expression as a string, parenthesize it, and then we could eval it.
+
+#+BEGIN_SRC hy :tangle infix.hy
+(defn parenthesize [input]
+  "Fully parenthize the input string."
+  (let [s ""]
+    (+= s "((((")
+    (for [(, i char) (enumerate input)]
+      (cond
+       [(= char "(")
+        (+= s "((((")]
+       [(= char ")")
+        (+= s "))))")]
+       ;; rewrite ^ to **
+       [(= char "^")
+        (+= s ")**(")]
+       [(= char "*")
+        (+= s "))*((")]
+       [(= char "/")
+        (+= s "))/((")]
+       [(= char "+")
+        (if (or (= 0 i) (in (get input (- i 1)) ["(" "^" "*" "/" "+" "-"]))
+          (+= s "+ ")
+          (+= s ")))+((("))]
+       [(= char "-")
+        (if (or (= 0 i) (in (get input (- i 1)) ["(" "^" "*" "/" "+" "-"]))
+          (+= s "- ")
+          (+= s ")))-((("))]
+       [true
+        (+= s char)]))
+    (+= s "))))")
+    s))
+#+END_SRC
+
+Let's try it out.
+#+BEGIN_SRC hy
+(import [infix [*]])
+
+(print (parenthesize "a * b + c ^ d / e"))
+#+END_SRC
+#+RESULTS:
+: ((((a ))*(( b )))+((( c )**( d ))/(( e))))
+
+For comparison:
+
+  ((((a))*((b)))+(((c)^(d))/((e))))
+
+Spaces aside, it looks like we got that right. The spaces should not be a problem for lisp. This is another strategy to get infix notation with operator precedence! Let's see some examples.
+
+#+BEGIN_SRC hy
+(import [infix [*]])
+(require infix)
+
+(print (eval (nfx (read-str (parenthesize "1 + 2 * 5")))))
+(print (eval (nfx (read-str (parenthesize "1 * 2 + 5")))))
+(print (eval (nfx (read-str (parenthesize "1 * 2 + 2^2")))))
+#+END_SRC
+
+#+RESULTS:
+: 11
+: 7
+: 6
+
+We can get that string representation easy enough.
+
+#+BEGIN_SRC hy
+(import [infix [*]])
+(require infix)
+
+(print (eval (nfx (read-str (parenthesize (stringify `(1 + 2)))))))
+#+END_SRC
+
+#+RESULTS:
+: 3
+
+This too is worthy of simplifying the notation with a function.
+
+#+BEGIN_SRC hy
+(defn NFX [code &optional [globals (globals)]]
+  "Evaluate the infix CODE.
+CODE is stringified, parenthesized, read back and infixed."
+  (import infix)
+  (import serialize)
+  (eval (infix.nfx
+         (read-str
+          (infix.parenthesize
+           (serialize.stringify code)))) globals))
+#+END_SRC
+
+#+BEGIN_SRC hy :tangle infix.hy
+(defmacro NFX [code]
+  "Evaluate the infix CODE.
+CODE is stringified, parenthesized, read back and infixed."
+  `(do
+    (import infix)
+    (import serialize)
+    (eval (infix.nfx
+           (read-str
+            (infix.parenthesize
+             (serialize.stringify ~code)))))))
+#+END_SRC
+
+Here is a simple example.
+#+BEGIN_SRC hy
+;(import [infix [*]])
+(require infix)
+
+(print (NFX `(1 + 2 * 5)))
+(print (NFX `((1 + 2) * 5)))
+
+(import [numpy :as np])
+(print (NFX `(1 + (np.exp 2))))
+
+; not working because of infix
+;(print (NFX `(1 + (np.linspace 0 1 5))))
+
+;; But this is ok since no infix mangling happens.
+(let [a (np.linspace 0 1 5)]
+  (print (NFX `(1 + a))))
+#+END_SRC
+
+#+RESULTS:
+: 11
+: 15
+: 8.38905609893
+: [ 1.    1.25  1.5   1.75  2.  ]
+
+That is slightly heavy still, and we can fix it with a new reader macro.
+
+#+BEGIN_SRC hy :tangle infix.hy
+(defreader m [code]
+ `(do
+    (import infix)
+    (import serialize)
+    (eval (infix.nfx
+           (read-str
+            (infix.parenthesize
+             (serialize.stringify ~code)))))))
+#+END_SRC
+
+Since we return code in that reader macro, we have to quote the code. This is debatably more concise than the NFX macro.
+
+#+BEGIN_SRC hy
+(require infix)
+
+(print #m`(1 + 2 + 5))
+(print #m`(1 + 2 * 5))
+(print #m`((1 + 2) * 5))
+
+(import [numpy :as np])
+(print #m`((1 + (np.exp 2))))
+
+;; these are all the same
+(print (+ 1 (np.exp 2) (* 2 5)))
+(print #m(`(1 + (np.exp 2) + 2 * 5)))
+(print (NFX `(1 + (np.exp 2) + 2 * 5)))
+#+END_SRC
+
+#+RESULTS:
+: 8
+: 11
+: 15
+: 8.38905609893
+: 18.3890560989
+: 18.3890560989
+: 18.3890560989
+
+
+** Another test of a real problem
+
+Here is another test of using an infix notation, this time with operator precedence. Note the use of ^ for exponentiation. The parenthesize function assumes single character operators, and would take some work to use **. Note we still need the space between - and x to avoid a mangling issue with _x in hy.
+
+#+BEGIN_SRC hy
+(import [numpy :as np])
+(import [scipy.integrate [odeint]])
+(import [scipy.special [jn]])
+(import [matplotlib.pyplot :as plt])
+
+(import [infix [*]])
+(require infix)
+
+(defn fbessel [Y x]
+  "System of 1st order ODEs for the Bessel equation."
+  (setv nu 0.0
+        y (get Y 0)
+        z (get Y 1))
+
+  ;; define the derivatives
+  (setv dydx z
+        ;; the Python way is: "1.0 / x**2 * (-x * z - (x**2 - nu**2) * y)"
+        dzdx #m`((1.0 / x^2) * ((- x) * z - (x^2 - nu^2) * y)))
+  ;; Here is what it was with prefix notation
+  ;; dzdx (* (/ 1.0 (** x 2)) (- (* (* -1 x) z) (* (- (** x 2) (** nu 2)) y))))
+  ;; return derivatives
+  [dydx dzdx])
+
+(setv x0 1e-15
+      y0 1.0
+      z0 0.0
+      Y0 [y0 z0])
+
+(setv xspan (np.linspace 1e-15 10)
+      sol (odeint fbessel Y0 xspan))
+
+(plt.plot xspan (. sol [[Ellipsis 0]]) :label "Numerical solution")
+(plt.plot xspan (jn 0 xspan) "r--" :label "Analytical solution")
+(plt.legend :loc "best")
+
+(plt.savefig "bessel-infix-m.png")
+#+END_SRC
+
+#+RESULTS:
+
+[[./bessel-infix-m.png]]
+
+I wonder if there is actually some ambiguity in the expression or how it is parenthesized. We get the right answer with:
+
+#+BEGIN_EXAMPLE
+(1.0 / x^2) * ((- x) * z - (x^2 - nu^2) * y)
+#+END_EXAMPLE
+
+but not with:
+
+#+BEGIN_EXAMPLE
+1.0 / x^2 * ((- x) * z - (x^2 - nu^2) * y))
+#+END_EXAMPLE
+
+Let's see if we can see why. Consider 1 / x * a. This should probably be evaluated as (1 / x) * a. This shows the algorithm does not do that.
+
+#+BEGIN_SRC hy
+(import [infix [*]])
+
+(print
+ (nfx
+ (read-str
+ (parenthesize
+  (stringify `(1 / x * a))))))
+;   `(1.0 / x^2 * ((- x) * z - (x^2 - nu^2) * y)))))))
+#+END_SRC
+
+#+RESULTS:
+: (u'/' 1L (u'*' u'x' u'a'))
+
+That reads: 1 / (x * a)
+
+If we had a layer of parentheses we get the right answer.
+
+#+BEGIN_SRC hy
+(import [infix [*]])
+
+(print
+ (nfx
+ (read-str
+ (parenthesize
+  (stringify `((1 / x) * a))))))
+;   `((1.0 / x^2) * ((- x) * z - (x^2 - nu^2) * y)))))))
+#+END_SRC
+
+#+RESULTS:
+: (u'*' (u'/' 1L u'x') u'a')
+
+This reads (1 / x) * a. Our algorithm doesn't do exactly what we expect here. I guess this could be a general issue of neighboring operators with equal precedence.
+
+Related to this, the Wikipedia page points out this example:
+
+#+BEGIN_EXAMPLE
+- a ^ 2
+#+END_EXAMPLE
+
+What does this mean? It is either (-a)^2 or -(a^2). The second is correct based on normal precedence, but the algorithm gives the unary operator - a higher precedence.
+
+#+BEGIN_SRC hy
+(import [infix [parenthesize]])
+
+(print (parenthesize "- a ^ 2"))
+(print (parenthesize "- (a ^ 2)"))
+#+END_SRC
+#+RESULTS:
+: ((((-  a )**( 2))))
+: ((((-  ((((a )**( 2))))))))
+
+To get the right thing, you need to use parentheses. Sometimes I do that in real code anyway to make sure what I want to happen does. Maybe some of this can be fixed in our parser function. Probably for another day.
+

@@ -1,0 +1,136 @@
+* A context-sensitive file link menu in org-mode
+  :PROPERTIES:
+  :categories: org
+  :date:     2014/11/08 10:24:14
+  :updated:  2014/11/08 10:26:22
+  :END:
+I am still interested in various ways to get more functionality of org-links. For example, we looked at:
+1. [[http://kitchingroup.cheme.cmu.edu/blog/2013/10/21/Enabling-right-clicks-in-org-mode-links/][enabling right clicks]] on links
+2. [[http://kitchingroup.cheme.cmu.edu/blog/2014/11/02/A-generalized-org-link-with-an-extendable-menu-of-actions/][new links with menus]]
+
+When you click on a link, the function org-open-at-point runs, which is a /large/ function that does a lot of things. One of them is to check if the link is defined in org-link-protocols, and to run the function definition there if it is. Here is a list of links defined for me. I defined a lot of these in org-ref, and my own init files, so you may not see these on your system.
+
+#+BEGIN_SRC emacs-lisp
+(mapcar 'car org-link-protocols)
+#+END_SRC
+
+#+RESULTS:
+| google | ResearcherID | orcid | message | mac-outlook | skim | addressbook | x-together-item | rmail | mhe | irc | info | gnus | docview | bibtex | bbdb | ans | exercise | solution | assignment | doi | bibentry | Autocites | autocites | supercites | Textcites | textcites | Smartcites | smartcites | footcitetexts | footcites | Parencites | parencites | Cites | cites | fnotecite | Pnotecite | pnotecite | Notecite | notecite | footfullcite | fullcite | citeurl | citedate* | citedate | citetitle* | citetitle | Citeauthor* | Autocite* | autocite* | Autocite | autocite | supercite | parencite* | cite* | Smartcite | smartcite | Textcite | textcite | footcitetext | footcite | Parencite | parencite | Cite | Citeauthor | Citealp | Citealt | Citep | Citet | citeyear* | citeyear | citeauthor* | citeauthor | citetext | citenum | citealp* | citealp | citealt* | citealt | citep* | citep | citet* | citet | nocite | cite | eqref | nameref | pageref | ref | label | list-of-tables | list-of-figures | addbibresource | bibliographystyle | printbibliography | nobibliography | bibliography | pydoc | index | attachfile | msx | id | file+emacs | file+sys |
+
+Interestingly, file links are not defined in org-link-protocols, they are handled separately. I would like to change the behavior of file+emacs links. Instead of just opening the file, I want a menu to give me the option to create the file if it does not exist, and to open it in emacs, or with a system program if the file does exist. Let us see what this link does.
+
+#+BEGIN_SRC emacs-lisp
+(assoc "file+emacs" org-link-protocols)
+#+END_SRC
+
+#+RESULTS:
+| file+emacs | org-open-file-with-emacs | nil |
+
+When you click on the link, it runs org-open-file-with-emacs, and there is no formatting function defined.
+
+So, let us define a list of functions that could make a menu. A new variation we use in this post is that each element of the list will be a (key menu-name action-func visible-p) list. visible-p will be a function that determines if the function is listed in the menu. That way, our menu will be context specific.
+
+We want an option to create a file if it does not exist, and if it does exist, a choice to open in emacs, or a system program. So the idea here is to create the menu in a variable (so it easy to add to later), then when you click on the link it will run a menu function that  filters the functions to run, and then prompt you for a selection.
+
+#+BEGIN_SRC emacs-lisp
+(defvar file+emacs-menu '()
+  "list of menu entries. (key name action visible).
+key is a character to select.
+name is what shows in the menu as [key]name
+action is a function that takes a path
+visible is a function that determines if the entry is in the menu.")
+
+(setq file+emacs-menu
+      '(("c" "reate"
+	 find-file ; action function
+	 (lambda (x) (not (file-exists-p x)))) ; visible-p
+	("o" "pen"
+	 org-open-file-with-emacs
+	 (lambda (x) (file-exists-p x)))
+	("e" "xternal open"
+	 (lambda (x) (org-open-file path '(16)))
+	 (lambda (x) (file-exists-p x)))))
+
+
+(defun file+emacs-menu (path)
+  "menu command for file+emacs links"
+  (interactive)
+  (let* ((filtered-menu-list (-filter
+			      (lambda (x) (funcall (car (last x)) path))
+			      file+emacs-menu))
+	 (menu-string (concat
+		       (mapconcat
+			(lambda (tup)
+			  (concat "[" (elt tup 0) "]"
+				  (elt tup 1) " "))
+			filtered-menu-list
+			"") ": "))
+	 (input (read-char-exclusive menu-string nil 1))
+	 (selected-func (and
+			 input
+			 (elt
+			  (assoc
+			   (char-to-string input) filtered-menu-list)
+			  2))))
+    (when selected-func
+      (funcall selected-func path))))
+#+END_SRC
+
+#+RESULTS:
+: file+emacs-menu
+
+Now we need to change the link definition in org-link-protocols. setf comes to the rescue. We just get the whole entry, and then setf the second position in it like this.
+
+#+BEGIN_SRC emacs-lisp
+(setf (elt (assoc "file+emacs" org-link-protocols) 1)
+  'file+emacs-menu)
+#+END_SRC
+
+#+RESULTS:
+: file+emacs-menu
+
+Here we just confirm we set it.
+
+#+BEGIN_SRC emacs-lisp
+(assoc "file+emacs" org-link-protocols)
+#+END_SRC
+
+#+RESULTS:
+| file+emacs | file+emacs-menu | nil |
+
+Now, when we click on these links, we get our context specific menu. When
+
+This file exists: file+emacs:ase-db.org  so we see this menu:
+#+attr_html: :width 200
+[[./images/open-menu.png]]
+
+This file does not exist: file+emacs:test.noext
+So we see:
+#+attr_html: :width 200
+[[./images/create-menu.png]]
+
+For these, we can select to open them in a pdf reader or MS Word from our new menu.
+file+emacs:attaching-code-blocks-to-a-pdf.pdf
+
+file+emacs:org-to-word.docx
+
+I admit this example was a little contrived. You can do most of these things with prefix commands, or more specific commands in emacs. But, I rarely remember those. I would have preferred to use the file link in this example, but it is not defined in org-link-protocols, so this style of modification would not work, and I did not want to add it to org-link-protocols just to show how to change it this way.
+
+This general approach would be very useful for links where there may be multiple contexts or actions that make sense. For file links, you may want do different things if the file already exists, or if it does not exist. As another example, my [[https://github.com/jkitchin/jmax/blob/master/org/doi-utils.org#a-new-doi-link-for-org-mode][doi link]] gives me a menu to:
+1. open in https://doi.org
+2. open the doi in Web of Science
+3. find citing articles in Web of Science
+4. search the doi in Google Scholar
+5. open the doi in CrossRef
+6. open the doi in Pubmed
+7. find the doi in my bibtex file
+8. get a bibtex entry for the doi
+
+I get all that from a click! org-ref offers similar functionality for cite links, where you might want to do different things from a click:
+1. See preview of the citation
+2. open the bibtex entry
+3. open the pdf if you have it
+4. open the url for the entry
+5. any of the things I listed for the doi example above.
+
+I am sure there are many other things that might be useful to do!

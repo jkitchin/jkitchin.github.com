@@ -1,0 +1,312 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<feed
+  xmlns="http://www.w3.org/2005/Atom"
+  xmlns:thr="http://purl.org/syndication/thread/1.0"
+  xml:lang="en"
+  >
+  <title type="text">The Kitchin Research Group</title>
+  <subtitle type="text">Chemical Engineering at Carnegie Mellon University</subtitle>
+
+  <updated>2025-09-16T23:29:38Z</updated>
+  <generator uri="http://blogofile.com/">Blogofile</generator>
+
+  <link rel="alternate" type="text/html" href="https://kitchingroup.cheme.cmu.edu/blog" />
+  <id>https://kitchingroup.cheme.cmu.edu/blog/feed/atom/</id>
+  <link rel="self" type="application/atom+xml" href="https://kitchingroup.cheme.cmu.edu/blog/feed/atom/" />
+  <entry>
+    <author>
+      <name></name>
+      <uri>https://kitchingroup.cheme.cmu.edu/blog</uri>
+    </author>
+    <title type="html"><![CDATA[Using autograd in nonlinear regression]]></title>
+    <link rel="alternate" type="text/html" href="https://kitchingroup.cheme.cmu.edu/blog/2017/11/17/Using-autograd-in-nonlinear-regression" />
+    <id>https://kitchingroup.cheme.cmu.edu/blog/2017/11/17/Using-autograd-in-nonlinear-regression</id>
+    <updated>2017-11-17T07:49:03Z</updated>
+    <published>2017-11-17T07:49:03Z</published>
+    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="autograd" />
+    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="regression" />
+    <category scheme="https://kitchingroup.cheme.cmu.edu/blog" term="python" />
+    <summary type="html"><![CDATA[Using autograd in nonlinear regression]]></summary>
+    <content type="html" xml:base="https://kitchingroup.cheme.cmu.edu/blog/2017/11/17/Using-autograd-in-nonlinear-regression"><![CDATA[
+
+
+&lt;p&gt;
+Table &lt;a href="#raw-data"&gt;raw-data&lt;/a&gt; contains the energy as a function of volume for some solid material from a set of density functional theory calculations. Our goal is to fit the Murnaghan equation of state to this data. The model is moderately nonlinear. I have previously done this with the standard nonlinear regression functions in scipy, so today we will use autograd along with a builtin optimizer to minimize an objective function to achieve the same thing. 
+&lt;/p&gt;
+
+&lt;p&gt;
+The basic idea is we define an objective function, in this case the summed squared errors between predicted values from the model and known values from our data. The objective function takes two arguments: the model parameters, and the "step". This function signature is a consequence of the built in optimizer we use; it expects that signature (it is useful for batch training, but we will not use that here).  We use autograd to create a gradient of the objective function which the adam optimizer will use to vary the parameters with the goal of minimizing the objective function.
+&lt;/p&gt;
+
+&lt;p&gt;
+The adam optimizer function takes as one argument a callback function, which we call &lt;code&gt;summary&lt;/code&gt; to print out intermediate results during the convergence. We run the optimizer in a loop because the optimizer runs a fixed number of steps on each call. We check if the objective function is sufficiently small, and if it is we break out. 
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org7bbe046"&gt;&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; autograd.numpy &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; np
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; autograd &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; grad
+&lt;span style="color: #0000FF;"&gt;from&lt;/span&gt; autograd.misc.optimizers &lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; adam
+
+np.set_printoptions(precision=3, suppress=&lt;span style="color: #D0372D;"&gt;True&lt;/span&gt;)
+
+&lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;input data&lt;/span&gt;
+&lt;span style="color: #BA36A5;"&gt;Vinput&lt;/span&gt; = np.array([row[0] &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; row &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; data]) 
+&lt;span style="color: #BA36A5;"&gt;Eknown&lt;/span&gt; = np.array([row[1] &lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; row &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; data])
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;Murnaghan&lt;/span&gt;(pars, vol):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #036A07;"&gt;'''&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;&lt;span style="color: #036A07;"&gt;   given a vector of parameters and volumes, return a vector of energies.&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;&lt;span style="color: #036A07;"&gt;   equation From PRB 28,5480 (1983)&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;&lt;span style="color: #036A07;"&gt;   '''&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;E0&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;B0&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;BP&lt;/span&gt;, &lt;span style="color: #BA36A5;"&gt;V0&lt;/span&gt; = pars
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;E&lt;/span&gt; = E0 + B0 * vol / BP * (((V0 / vol)**BP) / (BP - 1.0) + 1.0) - V0 * B0 / (BP - 1.)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; E
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;objective&lt;/span&gt;(pars, step):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #036A07;"&gt;"This is what we want to minimize by varying the pars."&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;predicted&lt;/span&gt; = Murnaghan(pars, Vinput)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;Note Eknown is not defined in this function scope&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;errors&lt;/span&gt; = Eknown - predicted
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;return&lt;/span&gt; np.&lt;span style="color: #006FE0;"&gt;sum&lt;/span&gt;(errors**2)
+
+&lt;span style="color: #BA36A5;"&gt;objective_grad&lt;/span&gt; = grad(objective)
+
+&lt;span style="color: #0000FF;"&gt;def&lt;/span&gt; &lt;span style="color: #006699;"&gt;summary&lt;/span&gt;(pars, step, gradient):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;Note i, N are not defined in this function scope&lt;/span&gt;
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; step % N == 0: 
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'step {0:5d}: {1:1.3e}'&lt;/span&gt;.&lt;span style="color: #006FE0;"&gt;format&lt;/span&gt;(i * N + step, 
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;objective(pars, step)))
+
+&lt;span style="color: #BA36A5;"&gt;pars&lt;/span&gt; = np.array([-400, 0.5, 2, 210]) &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;The initial guess&lt;/span&gt;
+&lt;span style="color: #BA36A5;"&gt;N&lt;/span&gt; = 200 &lt;span style="color: #8D8D84;"&gt;# &lt;/span&gt;&lt;span style="color: #8D8D84; font-style: italic;"&gt;num of steps to take on each optimization&lt;/span&gt;
+&lt;span style="color: #BA36A5;"&gt;learning_rate&lt;/span&gt; = 0.001
+&lt;span style="color: #0000FF;"&gt;for&lt;/span&gt; i &lt;span style="color: #0000FF;"&gt;in&lt;/span&gt; &lt;span style="color: #006FE0;"&gt;range&lt;/span&gt;(100):
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;pars&lt;/span&gt; = adam(objective_grad, pars, step_size=learning_rate, 
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   num_iters=N, callback=summary)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #BA36A5;"&gt;SSE&lt;/span&gt; = objective(pars, &lt;span style="color: #D0372D;"&gt;None&lt;/span&gt;)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;if&lt;/span&gt; SSE &amp;lt; 0.00002:
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(&lt;span style="color: #008000;"&gt;'Tolerance met.'&lt;/span&gt;, SSE)
+&lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #9B9B9B; background-color: #EDEDED;"&gt; &lt;/span&gt;   &lt;span style="color: #0000FF;"&gt;break&lt;/span&gt;
+&lt;span style="color: #0000FF;"&gt;print&lt;/span&gt;(pars)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;pre class="example"&gt;
+step     0: 3.127e+02
+step   200: 1.138e+02
+step   400: 2.011e+01
+step   600: 1.384e+00
+step   800: 1.753e-01
+step  1000: 2.044e-03
+step  1200: 1.640e-03
+step  1400: 1.311e-03
+step  1600: 1.024e-03
+step  1800: 7.765e-04
+step  2000: 5.698e-04
+step  2200: 4.025e-04
+step  2400: 2.724e-04
+step  2600: 1.762e-04
+step  2800: 1.095e-04
+step  3000: 6.656e-05
+step  3200: 3.871e-05
+step  3400: 2.359e-05
+('Tolerance met.', 1.5768901008364176e-05)
+[-400.029    0.004    4.032  211.847]
+
+&lt;/pre&gt;
+
+&lt;p&gt;
+There are some subtleties in the code above. One is the variables that are used kind of all over the place, which is noted in a few places. Those could get tricky to keep track of. Another is the variable I called learning_rate. I borrowed that terminology from the machine learning community. It is the &lt;code&gt;step_size&lt;/code&gt; in this implementation of the optimizer. If you make it too large, the objective function doesn't converge, but if you set it too small, it will take a long time to converge. Note that it took at about 3400 steps of "training". This is a lot more than is typically required by something like &lt;code&gt;pycse.nlinfit&lt;/code&gt;. This isn't the typical application for this approach to regression. More on that another day.
+&lt;/p&gt;
+
+&lt;p&gt;
+As with any fit, it is wise to check it out at least graphically. Here is the fit and data.
+&lt;/p&gt;
+
+&lt;div class="org-src-container"&gt;
+&lt;pre class="src src-ipython" id="org0d237fb"&gt;%matplotlib inline
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; matplotlib
+matplotlib.rc(&lt;span style="color: #008000;"&gt;'axes.formatter'&lt;/span&gt;, useoffset=&lt;span style="color: #D0372D;"&gt;False&lt;/span&gt;)
+&lt;span style="color: #0000FF;"&gt;import&lt;/span&gt; matplotlib.pyplot &lt;span style="color: #0000FF;"&gt;as&lt;/span&gt; plt
+
+plt.plot(Vinput, Eknown, &lt;span style="color: #008000;"&gt;'ko'&lt;/span&gt;, label=&lt;span style="color: #008000;"&gt;'known'&lt;/span&gt;)
+
+&lt;span style="color: #BA36A5;"&gt;vinterp&lt;/span&gt; = np.linspace(Vinput.&lt;span style="color: #006FE0;"&gt;min&lt;/span&gt;(), Vinput.&lt;span style="color: #006FE0;"&gt;max&lt;/span&gt;(), 200)
+
+plt.plot(vinterp, Murnaghan(pars, vinterp), &lt;span style="color: #008000;"&gt;'r-'&lt;/span&gt;, label=&lt;span style="color: #008000;"&gt;'predicted'&lt;/span&gt;)
+plt.xlabel(&lt;span style="color: #008000;"&gt;'Vol'&lt;/span&gt;)
+plt.ylabel(&lt;span style="color: #008000;"&gt;'E'&lt;/span&gt;)
+&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+&lt;img src="/media/ob-ipython-f106274e2be904c3f20c4c20ec425ebd.png"&gt; 
+&lt;/p&gt;
+
+&lt;p&gt;
+The fit looks pretty good.
+&lt;/p&gt;
+
+
+&lt;table id="org71d3fa4" border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides"&gt;
+&lt;caption class="t-above"&gt;&lt;span class="table-number"&gt;Table 1:&lt;/span&gt; Volume-Energy data for a solid state system.&lt;/caption&gt;
+
+&lt;colgroup&gt;
+&lt;col  class="org-right" /&gt;
+
+&lt;col  class="org-right" /&gt;
+&lt;/colgroup&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th scope="col" class="org-right"&gt;volume&lt;/th&gt;
+&lt;th scope="col" class="org-right"&gt;energy&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td class="org-right"&gt;324.85990899&lt;/td&gt;
+&lt;td class="org-right"&gt;-399.9731688470&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-right"&gt;253.43999457&lt;/td&gt;
+&lt;td class="org-right"&gt;-400.0172393178&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-right"&gt;234.03826687&lt;/td&gt;
+&lt;td class="org-right"&gt;-400.0256270548&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-right"&gt;231.12159387&lt;/td&gt;
+&lt;td class="org-right"&gt;-400.0265690700&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-right"&gt;228.40609504&lt;/td&gt;
+&lt;td class="org-right"&gt;-400.0273551120&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-right"&gt;225.86490337&lt;/td&gt;
+&lt;td class="org-right"&gt;-400.0280030862&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-right"&gt;223.47556626&lt;/td&gt;
+&lt;td class="org-right"&gt;-400.0285313450&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-right"&gt;221.21992353&lt;/td&gt;
+&lt;td class="org-right"&gt;-400.0289534593&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-right"&gt;219.08319566&lt;/td&gt;
+&lt;td class="org-right"&gt;-400.0292800709&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-right"&gt;217.05369547&lt;/td&gt;
+&lt;td class="org-right"&gt;-400.0295224970&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-right"&gt;215.12089909&lt;/td&gt;
+&lt;td class="org-right"&gt;-400.0296863867&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-right"&gt;213.27525144&lt;/td&gt;
+&lt;td class="org-right"&gt;-400.0297809256&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-right"&gt;211.51060823&lt;/td&gt;
+&lt;td class="org-right"&gt;-400.0298110000&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-right"&gt;203.66743321&lt;/td&gt;
+&lt;td class="org-right"&gt;-400.0291665573&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-right"&gt;197.07888649&lt;/td&gt;
+&lt;td class="org-right"&gt;-400.0275017142&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-right"&gt;191.39717952&lt;/td&gt;
+&lt;td class="org-right"&gt;-400.0250998136&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-right"&gt;186.40163591&lt;/td&gt;
+&lt;td class="org-right"&gt;-400.0221371852&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-right"&gt;181.94435510&lt;/td&gt;
+&lt;td class="org-right"&gt;-400.0187369863&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-right"&gt;177.92077043&lt;/td&gt;
+&lt;td class="org-right"&gt;-400.0149820198&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-right"&gt;174.25380090&lt;/td&gt;
+&lt;td class="org-right"&gt;-400.0109367042&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-right"&gt;170.88582166&lt;/td&gt;
+&lt;td class="org-right"&gt;-400.0066495100&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-right"&gt;167.76711189&lt;/td&gt;
+&lt;td class="org-right"&gt;-400.0021478258&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-right"&gt;164.87096104&lt;/td&gt;
+&lt;td class="org-right"&gt;-399.9974753449&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-right"&gt;159.62553397&lt;/td&gt;
+&lt;td class="org-right"&gt;-399.9876885136&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-right"&gt;154.97005460&lt;/td&gt;
+&lt;td class="org-right"&gt;-399.9774175487&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-right"&gt;150.78475335&lt;/td&gt;
+&lt;td class="org-right"&gt;-399.9667603369&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-right"&gt;146.97722201&lt;/td&gt;
+&lt;td class="org-right"&gt;-399.9557686286&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td class="org-right"&gt;143.49380641&lt;/td&gt;
+&lt;td class="org-right"&gt;-399.9445262604&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;Copyright (C) 2017 by John Kitchin. See the &lt;a href="/copying.html"&gt;License&lt;/a&gt; for information about copying.&lt;p&gt;
+&lt;p&gt;&lt;a href="/org/2017/11/17/Using-autograd-in-nonlinear-regression.org"&gt;org-mode source&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Org-mode version = 9.1.2&lt;/p&gt;]]></content>
+  </entry>
+</feed>

@@ -1,0 +1,134 @@
+* Sharing data via JSON files
+  :PROPERTIES:
+  :categories: dft,ase
+  :date:     2013/10/22 14:39:56
+  :updated:  2013/10/22 14:39:56
+  :END:
+In a previous [[http://jkitchin.github.io/blog/2013/10/19/Serializing-jasp-calculations-as-json-data/][post]] I discussed how to represent a single DFT calculation in a JSON file that could easily be shared, and reanalyzed. Here I look at sharing a series of calculations. I had previously run calculations to analyze an equation of state for Cu. Here we create a list of the JSON representations of each calculation, and save it in one overall JSON file. We will give the data some structure and documentation. JSON represents dictionaries very well, so we build a dictionary of the results and then "dump" that dictionary to a JSON file.
+
+
+#+BEGIN_SRC python :results output org raw
+from jasp import *
+
+LC = [3.5, 3.55, 3.6, 3.65, 3.7, 3.75]
+
+data = {'doc':'JSON file containing a set of calculations for the equation of state of Cu'}
+
+data['calculations'] = []
+
+for a in LC:
+    with jasp('../bulk/Cu-{0}'.format(a)) as calc:
+        data['calculations'].append(calc.dict)
+
+import json
+with open('eos.json', 'wb') as f:
+    f.write(json.dumps(data))
+#+END_SRC
+
+#+RESULTS:
+
+Now, you can view this [[./eos.json]] file, and analyze it yourself as follows. In python we read the file in and convert it to a data structure using the =json= module.
+
+#+BEGIN_SRC python
+import json
+
+with open('eos.json', 'rb') as f:
+    d = json.loads(f.read())
+
+volumes =  [entry['data']['volume'] for entry in d['calculations']]
+energies = [entry['data']['total_energy'] for entry in d['calculations']]
+
+import matplotlib.pyplot as plt
+plt.plot(volumes, energies)
+plt.xlabel('Volume ($\AA$)')
+plt.ylabel('Total energy (eV)')
+plt.savefig('eos-from-json.png')
+plt.show()
+#+END_SRC
+
+#+RESULTS:
+
+If you wanted to do further analysis you could. Suppose you wanted to know more detail about how that calculation was done? You can retrieve the INCAR, KPOINT, and POTCAR details for each calculation. Any parameter not listed here was not specified in the calculations.
+
+#+BEGIN_SRC python
+import json
+
+with open('eos.json', 'rb') as f:
+    d = json.loads(f.read())
+
+# print details for the first calculation in the list
+print d['calculations'][0]['incar']
+print d['calculations'][0]['input']
+print d['calculations'][0]['potcar']
+#+END_SRC
+
+#+RESULTS:
+: {u'doc': u'INCAR parameters', u'nbands': 9, u'encut': 350.0, u'prec': u'Normal'}
+: {u'kpts': [8, 8, 8], u'reciprocal': False, u'xc': u'PBE', u'kpts_nintersections': None, u'setups': None, u'txt': u'-', u'gamma': False}
+: [[u'Cu', u'potpaw_PBE/Cu/POTCAR', u'a44c591415026f53deb16a99ca3f06b1e69be10b']]
+
+The POTCAR information contains the species, the path to the POTCAR, and a git-hash of the POTCAR file. That way you can tell if you used exactly the same file that I did. You can compute a git hash like [[http://git-scm.com/book/en/Git-Internals-Git-Objects#Object-Storage][this]]:
+
+#+BEGIN_SRC sh
+cat /home-research/jkitchin/src/vasp/potpaw_PBE/Cu/POTCAR | git hash-object --stdin
+#+END_SRC
+
+#+RESULTS:
+: a44c591415026f53deb16a99ca3f06b1e69be10b
+
+If you want to get the details of the geometry of some calculation, you do it this way:
+
+#+BEGIN_SRC python
+import json
+
+with open('eos.json', 'rb') as f:
+    d = json.loads(f.read())
+
+print d['calculations'][0]['atoms'].keys()
+print 'cell = ', d['calculations'][0]['atoms']['cell']
+print 'syms = ', d['calculations'][0]['atoms']['symbols']
+print 'cpos = ', d['calculations'][0]['atoms']['positions']
+#+END_SRC
+
+#+RESULTS:
+: [u'cell', u'symbols', u'positions', u'pbc', u'tags']
+: cell =  [[1.75, 1.75, 0.0], [0.0, 1.75, 1.75], [1.75, 0.0, 1.75]]
+: syms =  [u'Cu']
+: cpos =  [[0.0, 0.0, 0.0]]
+
+You can do further analysis from there.
+
+** Summary
+This looks ok as a data sharing mechanism. The json file here is pretty small (6.8 kb), and pretty easy to work with. Clearly some thought must go into how the data is structured so you know what to get, and how you get it. That could even be documented in the json file itself. For instance, each calculator has a doc element that describes what is in it. The json file we made above also has that data. 
+#+BEGIN_SRC python
+import json
+
+with open('eos.json', 'rb') as f:
+    d = json.loads(f.read())
+
+print d['doc']
+print
+print d['calculations'][0]['doc']
+
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+JSON file containing a set of calculations for the equation of state of Cu
+
+JSON representation of a VASP calculation.
+
+energy is in eV
+forces are in eV/\AA
+stress is in GPa (sxx, syy, szz,  syz, sxz, sxy)
+magnetic moments are in Bohr-magneton
+The density of states is reported with E_f at 0 eV.
+Volume is reported in \AA^3
+Coordinates and cell parameters are reported in \AA
+
+If atom-projected dos are included they are in the form:
+{ados:{energy:data, {atom index: {orbital : dos}}}
+
+#+end_example
+
+For archival purposes you may want to put a creation date, contact data, etc... in the file too.

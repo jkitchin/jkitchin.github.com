@@ -1,0 +1,121 @@
+* Creating a transportable zip-archive of an org-file 
+  :PROPERTIES:
+  :categories: org-mode
+  :date:     2014/03/05 10:49:14
+  :updated:  2014/03/05 12:31:34
+  :END:
+
+This post explores a method to save an org-buffer to a zip archive, with all the referencing files. The challenge is that you may want to share the org-file with someone, but the links break if you send them the file, and it is not that trivial to find all the links and change them, and to copy the files to a place where the new links work. 
+
+The idea is to export the buffer to an org-file and process all the links to copy the files to a new directory, and change the links to point to these new files. For example, [[./blog.pdf]] would be copied to the temporary directory, given a unique name, and then relinked. The text below includes some examples of the links that need to be modified.
+
+A figure looks like:
+
+[[./images/cos-plot.png]]
+
+Alternatively, we might use a [[./images/eos.png][link]] to a file. We do not want to change urls, such as this one: http://kitchingroup.cheme.cmu.edu/blog/2013/09/28/Changing-links-to-files-so-they-work-in-a-blog/. As in that example, we will create a list of all the links in the buffer, but only modify the links that are files. We can parse the buffer and get the links like this.
+
+#+BEGIN_SRC emacs-lisp :results output
+(let ((parsetree (org-element-parse-buffer))
+      (counter 0))
+  (org-element-map parsetree 'link
+    (lambda (link) 
+      (let ((type (nth 0 link))
+            (plist (nth 1 link))
+            (content (nth 2 link)))
+        (princ (format "%s %s: %s %s\n" 
+		       counter 
+		       (plist-get plist ':type) 
+		       (plist-get plist :path) 
+		       content))
+        (setq counter (+ counter 1))))))
+#+END_SRC
+#+RESULTS:
+: 0 file: ./blog.pdf nil
+: 1 file: ./images/cos-plot.png nil
+: 2 file: ./images/eos.png link
+: 3 http: //kitchingroup.cheme.cmu.edu/blog/2013/09/28/Changing-links-to-files-so-they-work-in-a-blog/ nil
+
+So, our overall strategy will be to create a new directory to store the new versions of the files in. Then, we will copy the files that links point to into that directory, and give them new unique names. We will rename the links to point to these new names. We do this because you may, for some reason have links to files with the same name but in different directories. We want to make sure we do not clobber the files by overwriting them. We use a simple method here, based on unique, temporary filenames. There are other ways to do it to, this way worked first. Finally, we will zip that new directory, and delete the new directory.
+
+
+#+BEGIN_SRC emacs-lisp :results value raw
+;; directory to save all exports in, using the current date
+(setq org-archive (concat "org-archive-" (format-time-string "%Y-%m-%d" (current-time))))
+
+;; delete directory and zip file if it exists
+(when (file-exists-p (concat org-archive ".zip")) 
+    (delete-file (concat org-archive ".zip") t))
+
+(when (file-exists-p org-archive) 
+    (delete-directory org-archive t))
+
+;; make directory
+(make-directory org-archive t)
+
+;; get list of links, copy files and save names
+(setq link-list (let ((parsetree (org-element-parse-buffer))
+                     (counter 0))
+                 (org-element-map parsetree 'link
+                   (lambda (link) 
+                     (let* ((type (nth 0 link))
+                            (plist (nth 1 link))
+                            (content (nth 2 link))
+                            (path (plist-get plist :path))
+                            (type (plist-get plist ':type))
+                            (fname (car (last (split-string path "/"))))
+			    (temporary-file-directory org-archive)
+			    (new-file)
+                            )     
+                       (cond
+                        ;; regular file with content
+                        ((and (string= type "file")  content)
+			 (setq new-file  (make-temp-file (file-name-sans-extension fname) nil 
+							 (concat "." (file-name-extension fname))))
+			 (with-temp-file new-file
+			   (insert-file-contents path))
+			 (format "[[./%s][%s]] " (file-name-nondirectory new-file) content))
+                        ;; regular file with no content
+                        ((and (string= type "file"))
+			 (setq new-file  (make-temp-file (file-name-sans-extension fname) nil 
+							 (concat "." (file-name-extension fname))))
+			 (with-temp-file new-file
+			   (insert-file-contents path))
+			 (format "[[./%s]] " (file-name-nondirectory new-file)))
+			(t nil)))))))
+
+;; save current buffer name
+(setq current-name (buffer-name))
+
+;; create filter for links and export org buffer
+(let ((counter 0))
+  (defun ox-mrkup-filter-link (text back-end info)
+    (let ((link (nth counter link-list)))
+      (if (not (string= link "nil")) (setq output   (format "%s" link))
+        (setq output (format "%s" text)))
+      (setq counter (+ counter 1))
+      output))
+
+  (let ((org-export-filter-link-functions '(ox-mrkup-filter-link)))
+    (org-org-export-as-org)))
+
+(switch-to-buffer "*Org ORG Export*")
+(write-file (expand-file-name current-name org-archive))
+(shell-command (concat "zip -R " org-archive ".zip  *"))
+(rename-file (concat org-archive ".zip") (concat "../"org-archive ".zip"))
+(kill-buffer)
+
+(switch-to-buffer current-name)
+(delete-directory org-archive t)  ;; get rid of temp-dir
+#+END_SRC
+
+
+
+This example works fine! The result is here: [[./org-archive-2014-03-05.zip]] This code would ideally be put into a function, and cleaned up a little so there are not global variables being set here and there. A subsequent function might make it easy to attach this file to an email. That code might look something like this:
+
+#+BEGIN_SRC emacs-lisp
+(mail)
+(mail-to)
+(insert "jkitchin@andrew.cmu.edu")
+(mml-attach-file "./org-archive-2014-03-05.zip")
+#+END_SRC

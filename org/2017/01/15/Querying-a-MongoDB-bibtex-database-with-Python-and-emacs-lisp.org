@@ -1,0 +1,295 @@
+* Querying a MongoDB bibtex database with Python and emacs-lisp
+  :PROPERTIES:
+  :categories: database,mongodb,emacs,python
+  :date:     2017/01/15 10:36:22
+  :updated:  2017/01/15 10:36:22
+  :END:
+I have been exploring [[http://kitchingroup.cheme.cmu.edu/blog/2017/01/03/Find-stuff-in-org-mode-anywhere/][using databases]] to help with searching my data. In this post we explore using MongoDB for bibtex entries. I am choosing bibtex entries because it is easy to parse bibtex files, I already have a lot of them, and I have several kinds of queries I regularly use. So, they are a good candidate to test out a new database on!
+
+MongoDB is a noSQL database that is pretty easy to use. I installed it from homebrew, and then followed the directions to run the server.
+
+With pymongo you can make a database as easy as this:
+
+#+BEGIN_SRC python :results output org drawer
+import bibtexparser
+
+# Read the bibtex file to get entries
+with open('../../../Dropbox/bibliography/references.bib', 'r') as bibfile:
+    bp = bibtexparser.load(bibfile)
+    entries = bp.entries
+
+print("N = ", len(entries))
+
+print(entries[0])
+
+import pymongo
+from pymongo import MongoClient
+client = MongoClient('localhost', 27017)
+
+# This creates the "entries" collection
+db = client['bibtex'].entries
+
+# add each entry
+for entry in entries:
+    db.insert_one(entry)
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+N =  1671
+{'keyword': 'test, word', 'year': '2006', 'publisher': 'American Chemical Society (ACS)', 'title': 'The ACS Style Guide', 'ENTRYTYPE': 'book', 'editor': 'Janet S. Dodd', 'address': 'Washington, D.C.', 'ID': '2006-acs-style-guide', 'doi': '10.1021/bk-2006-styg', 'link': 'https://doi.org/10.1021/bk-2006-STYG', 'date_added': 'Wed Apr  1 10:17:54 2015', 'pages': 'nil'}
+:END:
+
+That was easy. We have a database with 1671 documents in it, and each document is essentially a dictionary of key-value pairs. You might even argue it was too easy. I didn't specify any structure to the entries at all. No required fields, no validation that the keys are spelled correctly, no validation on the values, e.g. you can see the year looks like a string. The benefit of that is that every entry went in, with no issues. On the other hand, the authors went in as a single string, as did the keywords, which affects our ability to search a little bit later. Note if you run that twice, it will add each entry again, since we do not check if the entry already exists.
+
+A database is only useful though if it is easy to get stuff out of it. So, let's consider some test queries. First we find entries that have years less than 1950. The query is basically a little json bundle that describes a field and condition that we want to match. Here we use a less than operator, ""$lt"The results come back as a list of dictionaries. This is in stark contrast to a SQL query which is an expression in its own declarative language. A query here is a chunk of data that must get converted to code by the server. I am not 100% clear if the less than here is in the string sense or numeric sense, but for years it probably does not matter for a long time.
+
+#+BEGIN_SRC python :results output org drawer
+import pymongo
+from pymongo import MongoClient
+client = MongoClient('localhost', 27017)
+
+db = client['bibtex'].entries
+
+for i, result in enumerate(db.find({"year" : {"$lt": "1950"}})):
+    print('{i: 2d}. {author}, {title}, {journal}, {year}.'.format(i=i+1, **result))
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+ 1. Birch, Francis, Finite Elastic Strain of Cubic Crystals, Phys. Rev., 1947.
+ 2. Ditchburn, R. W. and Gilmour, J. C., The Vapor Pressures of Monatomic Vapors, Rev. Mod. Phys., 1941.
+ 3. J. Korringa, On the Calculation of the Energy of a Bloch Wave in a Metal, Physica, 1947.
+ 4. Nix, F. C. and MacNair, D., The Thermal Expansion of Pure Metals. {II}: Molybdenum, Palladium, Silver, Tantalum, Tungsten, Platinum, and Lead, Phys. Rev., 1942.
+:END:
+
+
+That seems easy enough, and those strings could easily be used as candidates for a selection tool like helm.
+
+How about articles published by myself and my student Jacob Boes? This requires "and" logic. Apparently that is the default, so we just add three queries. One is an exact match on articles, and the other two are case-insensitive regular expression matches.  I guess this has to be done on every document, since there probably is no way to index a regex match! This search was very fast, but it is not clear how fast it would be for a million entries. This matching is necessary because we stored all authors in a single field rather than splitting them into an array. We might still have to match strings for this even in an array since an author might then be "John R. Kitchin", rather than further decomposed into first and last names.
+
+#+BEGIN_SRC python :results output org drawer
+import pymongo
+from pymongo import MongoClient
+client = MongoClient('localhost', 27017)
+
+db = client['bibtex']
+entries = db['entries']
+
+for i, result in enumerate(entries.find({"ENTRYTYPE": "article",
+                                         "author" : {"$regex": "kitchin", '$options' : 'i'},
+                                         "author" : {"$regex": "boes", '$options' : 'i'}})):
+    if result.get('doi', None):
+        result['doi'] = 'https://doi.org/{doi}'.format(doi=result['doi'])
+    else:
+        result['doi'] = ''
+    print('{i: 2d}. {author}, {title}, {journal}, {year}. {doi}'.format(i=i+1, **result).replace("\n", ""))
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+ 1. Jacob R. Boes and Peter Kondratyuk and Chunrong Yin and JamesB. Miller and Andrew J. Gellman and John R. Kitchin, Core Level Shifts in {Cu-Pd} Alloys As a Function of BulkComposition and Structure, Surface Science, 2015. https://doi.org/10.1016/j.susc.2015.02.011
+ 2. Jacob R. Boes and Gamze Gumuslu and James B. Miller and AndrewJ. Gellman and John R. Kitchin, Estimating Bulk-Composition-Dependent \ce{H2} AdsorptionEnergies on \ce{Cu_{x}Pd_{1-x}} Alloy (111) Surfaces, ACS Catalysis, 2015. https://doi.org/10.1021/cs501585k
+ 3. Jacob R. Boes and Gamze Gumuslu and James B. Miller and AndrewJ. Gellman and John R. Kitchin, Supporting Information: Estimating Bulk-Composition-Dependent\ce{H2} Adsorption Energies on \ce{Cu_{x}Pd_{1-x}} Alloy (111)Surfaces, ACS Catalysis, 2015. https://doi.org/10.1021/cs501585k
+ 4. G. Gumuslu and P. Kondratyuk and J. R. Boes and B. Morrealeand J. B. Miller and J. R. Kitchin and A. J. Gellman, Correlation of Electronic Structure With Catalytic Activity:\ce{H2}-\ce{D2} Exchange Across \ce{Cu_{x}Pd_{1-x}}Composition Space, ACS Catalysis, 2015. https://doi.org/10.1021/cs501586t
+ 5. John D. Michael and Ethan L. Demeter and Steven M. Illes andQingqi Fan and Jacob R. Boes and John R. Kitchin, Alkaline Electrolyte and {Fe} Impurity Effects on thePerformance and Active-Phase Structure of {NiOOH} Thin Filmsfor {OER} Catalysis Applications, J. Phys. Chem. C, 2015. https://doi.org/10.1021/acs.jpcc.5b02458
+ 6. Jacob R. Boes and Mitchell C. Groenenboom and John A. Keithand John R. Kitchin, Neural Network and {Reaxff} Comparison for {Au} Properties, Int. J. Quantum Chem., 2016. https://doi.org/10.1002/qua.25115
+ 7. Jacob R. Boes and John R. Kitchin, Neural Network Predictions of Oxygen Interactions on a Dynamic Pd Surface, Molecular Simulation, Accepted 12/2016. https://doi.org/10.1080/08927022.2016.1274984
+ 8. Jacob R. Boes and John R. Kitchin, Modeling Segregation on {AuPd}(111) Surfaces With DensityFunctional Theory and Monte Carlo Simulations, Submitted to J. Phys. Chem. C, 2016.
+:END:
+
+We can find out how many different entry types we have, as well as how many distinct keyword entries there are. The documents do not separate the keywords though, so this is just the unique strings of comma-separated keywords values. We would have had to split those in advance to have a list of keywords to search for a specific one beyond string matching. Curiously, in my bibtex entries, these are in a field called "keywords". It appears the bibtex parser may have changed the name to "keyword".
+
+#+BEGIN_SRC python :results output org drawer
+import pymongo
+from pymongo import MongoClient
+client = MongoClient('localhost', 27017)
+
+db = client['bibtex']
+entries = db['entries']
+
+print(entries.distinct("ENTRYTYPE"))
+print(len(entries.distinct("keyword")))
+print(entries.find({"keyword": {"$exists": "true"}})[22]['keyword'])
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+['book', 'article', 'techreport', 'phdthesis', 'inproceedings', 'inbook', 'mastersthesis', 'misc', 'incollection']
+176
+Bildungsw{\"a}rmen, Dichtefunktionalrechnungen, Perowskite, Thermochemie
+:END:
+
+** text searching
+
+You can do text search as well. You first have to create an index on one or more fields, and then use the $text and $search operators. Here I made an index on a few fields, and then searched on it. Note that you can only have one text index, so think about it in advance! This simplifies the query a bit, we do not have to use the regex syntax for matching on a field.
+
+#+BEGIN_SRC python :results output org drawer
+import pymongo
+from pymongo import MongoClient
+client = MongoClient('localhost', 27017)
+
+db = client['bibtex']
+entries = db['entries']
+
+entries.create_index([('author', pymongo.TEXT),
+                      ('title', pymongo.TEXT),
+                      ('keyword', pymongo.TEXT)], sparse=True)
+
+for i, result in enumerate(entries.find({"$text" : {"$search": "kitchin", "$search": "boes"}})):
+    print('{i: 2d}. {author}, {title}, {journal}, {year}.'.format(i=i, **result).replace("\n", ""))
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+ 0. G. Gumuslu and P. Kondratyuk and J. R. Boes and B. Morrealeand J. B. Miller and J. R. Kitchin and A. J. Gellman, Correlation of Electronic Structure With Catalytic Activity:\ce{H2}-\ce{D2} Exchange Across \ce{Cu_{x}Pd_{1-x}}Composition Space, ACS Catalysis, 2015.
+ 1. Jacob R. Boes and Peter Kondratyuk and Chunrong Yin and JamesB. Miller and Andrew J. Gellman and John R. Kitchin, Core Level Shifts in {Cu-Pd} Alloys As a Function of BulkComposition and Structure, Surface Science, 2015.
+ 2. Jacob R. Boes and Gamze Gumuslu and James B. Miller and AndrewJ. Gellman and John R. Kitchin, Estimating Bulk-Composition-Dependent \ce{H2} AdsorptionEnergies on \ce{Cu_{x}Pd_{1-x}} Alloy (111) Surfaces, ACS Catalysis, 2015.
+ 3. Jacob R. Boes and John R. Kitchin, Neural Network Predictions of Oxygen Interactions on a Dynamic Pd Surface, Molecular Simulation, Accepted 12/2016.
+ 4. Jacob R. Boes and John R. Kitchin, Modeling Segregation on {AuPd}(111) Surfaces With DensityFunctional Theory and Monte Carlo Simulations, Submitted to J. Phys. Chem. C, 2016.
+ 5. Jacob R. Boes and Gamze Gumuslu and James B. Miller and AndrewJ. Gellman and John R. Kitchin, Supporting Information: Estimating Bulk-Composition-Dependent\ce{H2} Adsorption Energies on \ce{Cu_{x}Pd_{1-x}} Alloy (111)Surfaces, ACS Catalysis, 2015.
+ 6. John D. Michael and Ethan L. Demeter and Steven M. Illes andQingqi Fan and Jacob R. Boes and John R. Kitchin, Alkaline Electrolyte and {Fe} Impurity Effects on thePerformance and Active-Phase Structure of {NiOOH} Thin Filmsfor {OER} Catalysis Applications, J. Phys. Chem. C, 2015.
+ 7. Jacob R. Boes and Mitchell C. Groenenboom and John A. Keithand John R. Kitchin, Neural Network and {Reaxff} Comparison for {Au} Properties, Int. J. Quantum Chem., 2016.
+:END:
+
+We can use this to search for documents with orgmode in a keyword or title too.
+
+#+BEGIN_SRC python :results output org drawer
+import pymongo
+from pymongo import MongoClient
+client = MongoClient('localhost', 27017)
+
+db = client['bibtex']
+entries = db['entries']
+
+entries.create_index([('author', pymongo.TEXT),
+                      ('title', pymongo.TEXT),
+                      ('keyword', pymongo.TEXT)], sparse=True)
+
+for i, result in enumerate(entries.find({"$text" : {"$search": "orgmode"}})):
+    print('{i: 2d}. {author}, {title}, {journal}, {year}.'.format(i=i, **result).replace("\n", ""))
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+ 0. John R. Kitchin, Data Sharing in Surface Science, Surface Science, 2016.
+ 1. Zhongnan Xu and John R. Kitchin, Probing the Coverage Dependence of Site and AdsorbateConfigurational Correlations on (111) Surfaces of LateTransition Metals, J. Phys. Chem. C, 2014.
+ 2. Xu, Zhongnan and Rossmeisl, Jan and Kitchin, John R., A Linear Response {DFT}+{U} Study of Trends in the OxygenEvolution Activity of Transition Metal Rutile Dioxides, The Journal of Physical Chemistry C, 2015.
+ 3. Prateek Mehta and Paul A. Salvador and John R. Kitchin, Identifying Potential \ce{BO2} Oxide Polymorphs for EpitaxialGrowth Candidates, ACS Appl. Mater. Interfaces, 2015.
+ 4. Xu, Zhongnan and Joshi, Yogesh V. and Raman, Sumathy andKitchin, John R., Accurate Electronic and Chemical Properties of 3d TransitionMetal Oxides Using a Calculated Linear Response {U} and a {DFT+ U(V)} Method, The Journal of Chemical Physics, 2015.
+ 5. Zhongnan Xu and John R. Kitchin, Relationships Between the Surface Electronic and ChemicalProperties of Doped 4d and 5d Late Transition Metal Dioxides, The Journal of Chemical Physics, 2015.
+ 6. Zhongnan Xu and John R Kitchin, Tuning Oxide Activity Through Modification of the Crystal andElectronic Structure: From Strain To Potential Polymorphs, Phys. Chem. Chem. Phys., 2015.
+ 7. Jacob R. Boes and Gamze Gumuslu and James B. Miller and AndrewJ. Gellman and John R. Kitchin, Supporting Information: Estimating Bulk-Composition-Dependent\ce{H2} Adsorption Energies on \ce{Cu_{x}Pd_{1-x}} Alloy (111)Surfaces, ACS Catalysis, 2015.
+ 8. Kitchin, John R., Examples of Effective Data Sharing in Scientific Publishing, ACS Catalysis, 2015.
+ 9. Curnan, Matthew T. and Kitchin, John R., Effects of Concentration, Crystal Structure, Magnetism, andElectronic Structure Method on First-Principles Oxygen VacancyFormation Energy Trends in Perovskites, The Journal of Physical Chemistry C, 2014.
+ 10. Kitchin, John R. and Van Gulick, Ana E. and Zilinski, Lisa D., Automating Data Sharing Through Authoring Tools, International Journal on Digital Libraries, 2016.
+ 11. Jacob R. Boes and Gamze Gumuslu and James B. Miller and AndrewJ. Gellman and John R. Kitchin, Estimating Bulk-Composition-Dependent \ce{H2} AdsorptionEnergies on \ce{Cu_{x}Pd_{1-x}} Alloy (111) Surfaces, ACS Catalysis, 2015.
+ 12. Zhongnan Xu and John R. Kitchin, Relating the Electronic Structure and Reactivity of the 3dTransition Metal Monoxide Surfaces, Catalysis Communications, 2014.
+ 13. Spencer D. Miller and Vladimir V. Pushkarev and AndrewJ. Gellman and John R. Kitchin, Simulating Temperature Programmed Desorption of Oxygen on{P}t(111) Using {DFT} Derived Coverage Dependent DesorptionBarriers, Topics in Catalysis, 2014.
+ 14. Hallenbeck, Alexander P. and Kitchin, John R., Effects of \ce{O_2} and \ce{SO_2} on the Capture Capacity of aPrimary-Amine Based Polymeric \ce{CO_2} Sorbent, Industrial \& Engineering Chemistry Research, 2013.
+:END:
+
+** Querying from emacs-lisp
+
+It is hard to get too excited about this if it is not easy to query from emacs and get data in a form we can use in emacs ;) The json library allows us to convert lisp data structures to json pretty easily. For example:
+
+#+BEGIN_SRC emacs-lisp
+(require 'json)
+
+(json-encode '((ENTRYTYPE . article)
+	       (author . (($regex . kitchin)
+			  ($options . i)))
+	       (author . (($regex . boes)
+			  ($options . i)))))
+#+END_SRC
+
+#+RESULTS:
+: {"ENTRYTYPE":"article","author":{"$regex":"kitchin","$options":"i"},"author":{"$regex":"boes","$options":"i"}}
+
+So, we can use an a-list syntax to build up the query. Then we can send it to mongo using mongoexport that will return a json string that we can read back into emacs to get lisp data. Here is an example that returns a query. We print the first element here.
+
+#+BEGIN_SRC emacs-lisp
+(pp
+ (aref (json-read-from-string
+	(shell-command-to-string
+	 (format "mongoexport --quiet --jsonArray -d bibtex -c entries -q '%s'"
+		 (json-encode '((ENTRYTYPE . article)
+				(author . (($regex . kitchin)
+					   ($options . i)))
+				(author . (($regex . boes)
+					   ($options . i))))))))
+       0))
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+((_id
+  ($oid . "5878d9644c114f59fe86cb36"))
+ (author . "Jacob R. Boes and Peter Kondratyuk and Chunrong Yin and James\nB. Miller and Andrew J. Gellman and John R. Kitchin")
+ (year . "2015")
+ (title . "Core Level Shifts in {Cu-Pd} Alloys As a Function of Bulk\nComposition and Structure")
+ (ENTRYTYPE . "article")
+ (ID . "boes-2015-core-cu")
+ (keyword . "DESC0004031, early-career")
+ (volume . "640")
+ (doi . "10.1016/j.susc.2015.02.011")
+ (link . "https://doi.org/10.1016/j.susc.2015.02.011")
+ (issn . "0039-6028")
+ (journal . "Surface Science")
+ (pages . "127-132"))
+#+end_example
+
+That is pretty sweet, we get a lisp data structure we can use. We can wrap that into a reasonable looking function here:
+
+#+BEGIN_SRC emacs-lisp
+(defun mongo-find (db collection query)
+  (json-read-from-string
+   (shell-command-to-string
+    (format "mongoexport --quiet --jsonArray -d %s -c %s -q '%s'"
+	    db collection (json-encode query)))))
+#+END_SRC
+
+#+RESULTS:
+: mongo-find
+
+Now we can use the function to query the database, and then format the results. Here we look at the example of articles with authors that match "kitchin" and "boes".
+
+#+BEGIN_SRC emacs-lisp
+(loop for counter from 1 for entry across
+      (mongo-find "bibtex" "entries" '((ENTRYTYPE . article)
+				       (author . (($regex . kitchin)
+						  ($options . i)))
+				       (author . (($regex . boes)
+						  ($options . i)))))
+      do
+      (setq entry (append `(,(cons "counter" counter)) entry))
+      ;; make sure we have a doi field.
+      (if (assoc 'doi entry)
+	  (push (cons "doi" (format "https://doi.org/%s" (cdr (assoc 'doi entry)))) entry)
+	(push (cons "doi" "") entry))
+      concat
+      (concat (replace-regexp-in-string
+	       "\n" " "
+	       (s-format "${counter}. ${author}, ${title} (${year}). ${doi}"
+			 'aget entry)) "\n"))
+#+END_SRC
+
+#+RESULTS:
+: 1. Jacob R. Boes and Peter Kondratyuk and Chunrong Yin and James B. Miller and Andrew J. Gellman and John R. Kitchin, Core Level Shifts in {Cu-Pd} Alloys As a Function of Bulk Composition and Structure (2015). https://doi.org/10.1016/j.susc.2015.02.011
+: 2. Jacob R. Boes and Gamze Gumuslu and James B. Miller and Andrew J. Gellman and John R. Kitchin, Estimating Bulk-Composition-Dependent \ce{H2} Adsorption Energies on \ce{Cu_{x}Pd_{1-x}} Alloy (111) Surfaces (2015). https://doi.org/10.1021/cs501585k
+: 3. Jacob R. Boes and Gamze Gumuslu and James B. Miller and Andrew J. Gellman and John R. Kitchin, Supporting Information: Estimating Bulk-Composition-Dependent \ce{H2} Adsorption Energies on \ce{Cu_{x}Pd_{1-x}} Alloy (111) Surfaces (2015). https://doi.org/10.1021/cs501585k
+: 4. G. Gumuslu and P. Kondratyuk and J. R. Boes and B. Morreale and J. B. Miller and J. R. Kitchin and A. J. Gellman, Correlation of Electronic Structure With Catalytic Activity: \ce{H2}-\ce{D2} Exchange Across \ce{Cu_{x}Pd_{1-x}} Composition Space (2015). https://doi.org/10.1021/cs501586t
+: 5. John D. Michael and Ethan L. Demeter and Steven M. Illes and Qingqi Fan and Jacob R. Boes and John R. Kitchin, Alkaline Electrolyte and {Fe} Impurity Effects on the Performance and Active-Phase Structure of {NiOOH} Thin Films for {OER} Catalysis Applications (2015). https://doi.org/10.1021/acs.jpcc.5b02458
+: 6. Jacob R. Boes and Mitchell C. Groenenboom and John A. Keith and John R. Kitchin, Neural Network and {Reaxff} Comparison for {Au} Properties (2016). https://doi.org/10.1002/qua.25115
+: 7. Jacob R. Boes and John R. Kitchin, Neural Network Predictions of Oxygen Interactions on a Dynamic Pd Surface (Accepted 12/2016). https://doi.org/10.1080/08927022.2016.1274984
+: 8. Jacob R. Boes and John R. Kitchin, Modeling Segregation on {AuPd}(111) Surfaces With Density Functional Theory and Monte Carlo Simulations (2016).
+
+Wow, that looks like a pretty lispy way to query the database and use the results. It is probably pretty easy to do similar things for inserting and updating documents. I will save that for another day.
+
+** Summary thoughts
+
+This is not an exhaustive study of Mongo for a bibtex database. It does illustrate that it is potentially useful. Imagine a group of users can enter bibtex entries, and then share them through a central server. Or you query the server for entries and then select them using helm/ivy. That is probably faster than parsing large bibtex files (note, in org-ref I already cache the files in parsed form for performance reasons!).
+
+It would make sense to split the authors, and keywords in another version of this database. It also could make sense to have a field that is the bibtex string, and to do text search on that string. That way you get everything in the entry for searching, and an easy way to generate bibtex files without having to reconstruct them.
+
+It is especially interesting to run the queries through emacs-lisp since we get the benefit of editing lisp code while writing the query, e.g. parenthesis navigation, less quoting, etc... and we get back lisp data that can be used to construct helm/ivy queries, or other emacs things. That makes this look competitive with emacsql at least for the syntax. I predict that there will be more posts on this in the future.

@@ -1,0 +1,226 @@
+** Redirecting the print function
+   :PROPERTIES:
+   :categories: programming
+   :date:     2013/05/19 11:19:36
+   :updated:  2013/05/29 20:17:48
+   :END:
+Ordinarily a print statement prints to stdout, or your terminal/screen. You can redirect this so that printing is done to a file, for example. This might be helpful if you use print statements for debugging, and later want to save what is printed to a file. Here we make a simple function that prints some things.
+
+#+BEGIN_SRC python :session
+def debug():
+    print 'step 1'
+    print 3 + 4
+    print 'finished'
+
+debug()
+#+END_SRC
+
+#+RESULTS:
+: 
+: ... ... ... >>> step 1
+: 7
+: finished
+
+Now, let us redirect the printed lines to a file. We create a file object, and set sys.stdout equal to that file object.
+#+BEGIN_SRC python :session
+import sys
+print >> sys.__stdout__, '__stdout__ before = ', sys.__stdout__
+print >> sys.__stdout__, 'stdout before = ', sys.stdout
+
+f = open('data/debug.txt', 'w')
+sys.stdout = f
+
+# note that sys.__stdout__ does not change, but stdout does.
+print >> sys.__stdout__, '__stdout__ after = ', sys.__stdout__
+print >> sys.__stdout__, 'stdout after = ', sys.stdout
+
+debug()
+
+# reset stdout back to console
+sys.stdout = sys.__stdout__
+
+print f
+f.close() # try to make it a habit to close files
+print f
+#+END_SRC
+
+#+RESULTS:
+: 
+: __stdout__ before =  <open file '<stdout>', mode 'w' at 0x2ae7d70e01e0>
+: stdout before =  <open file '<stdout>', mode 'w' at 0x2ae7d70e01e0>
+: >>> >>> >>> >>> ... __stdout__ after =  <open file '<stdout>', mode 'w' at 0x2ae7d70e01e0>
+: stdout after =  <open file 'data/debug.txt', mode 'w' at 0x2ae7dbcbbb70>
+: >>> >>> >>> ... >>> >>> >>> <open file 'data/debug.txt', mode 'w' at 0x2ae7dbcbbb70>
+: >>> <closed file 'data/debug.txt', mode 'w' at 0x2ae7dbcbbb70>
+
+Note it can be important to close files. If you are looping through large numbers of files, you will eventually run out of file handles, causing an error. We can use a context manager to automatically close the file like this
+
+#+BEGIN_SRC python :session
+import sys
+
+# use the open context manager to automatically close the file
+with open('data/debug.txt', 'w') as f:
+    sys.stdout = f
+    debug()
+    print >> sys.__stdout__, f
+
+# reset stdout
+sys.stdout = sys.__stdout__
+print f
+#+END_SRC
+
+#+RESULTS:
+: 
+: >>> ... ... ... ... ... <open file 'data/debug.txt', mode 'w' at 0x0000000002071C00>
+: ... >>> <closed file 'data/debug.txt', mode 'w' at 0x0000000002071C00>
+
+See, the file is closed for us! We can see the contents of our file like this.
+#+BEGIN_SRC sh
+cat data/debug.txt
+#+END_SRC
+
+#+RESULTS:
+: step 1
+: 7
+: finished
+
+The approaches above are not fault safe. Suppose our debug function raised an exception. Then, it could be possible the line to reset the stdout would not be executed. We can solve this with try/finally code.
+
+#+BEGIN_SRC python :session
+import sys
+
+print 'before: ', sys.stdout
+try:
+    with open('data/debug-2.txt', 'w') as f:
+        sys.stdout = f
+        # print to the original stdout
+        print >> sys.__stdout__, 'during: ', sys.stdout
+        debug()
+        raise Exception('something bad happened')
+finally:
+    # reset stdout
+    sys.stdout = sys.__stdout__
+
+print 'after: ', sys.stdout
+print f # verify it is closed
+print sys.stdout # verify this is reset
+#+END_SRC
+
+#+RESULTS:
+: 
+: >>> before:  <open file '<stdout>', mode 'w' at 0x2ae7d70e01e0>
+: ... ... ... ... ... ... ... ... ... ... during:  <open file 'data/debug-2.txt', mode 'w' at 0x2ae7dbcbbf60>
+: Traceback (most recent call last):
+:   File "<stdin>", line 7, in <module>
+: Exception: something bad happened
+: after:  <open file '<stdout>', mode 'w' at 0x2ae7d70e01e0>
+: <closed file 'data/debug-2.txt', mode 'w' at 0x2ae7dbcbbf60>
+: <open file '<stdout>', mode 'w' at 0x2ae7d70e01e0>
+
+#+BEGIN_SRC sh
+cat data/debug-2.txt
+#+END_SRC
+
+#+RESULTS:
+: step 1
+: 7
+: finished
+
+This is the kind of situation where a context manager is handy. Context managers are typically a class that executes some code when you "enter" the context, and then execute some code when you "exit" the context. Here we want to change sys.stdout to a new value inside our context, and change it back when we exit the context. We will store the value of sys.stdout going in, and restore it on the way out.
+
+#+BEGIN_SRC python :session
+import sys
+
+class redirect:
+    def __init__(self, f=sys.stdout):
+        "redirect print statement to f. f must be a file-like object"
+        self.f = f
+        self.stdout = sys.stdout
+        print >> sys.__stdout__, 'init stdout: ', sys.stdout        
+    def __enter__(self): 
+        sys.stdout = self.f
+        print >> sys.__stdout__,  'stdout in context-manager: ',sys.stdout
+    def __exit__(self, *args):
+        sys.stdout = self.stdout
+        print '__stdout__ at exit = ',sys.__stdout__        
+
+# regular printing
+with redirect():
+    debug()
+
+# write to a file
+with open('data/debug-3.txt', 'w') as f:
+    with redirect(f):
+        debug()
+
+# mixed regular and 
+with open('data/debug-4.txt', 'w') as f:
+    with redirect(f):
+        print 'testing redirect'
+        with redirect():
+            print 'temporary console printing'
+            debug()
+        print 'Now outside the inner context. this should go to data/debug-4.txt'
+        debug()
+        raise Exception('something else bad happened')
+
+print sys.stdout
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+
+>>> ... ... ... ... ... ... ... ... ... ... ... ... >>> ... ... ... init stdout:  <open file '<stdout>', mode 'w' at 0x2ae7d70e01e0>
+stdout in context-manager:  <open file '<stdout>', mode 'w' at 0x2ae7d70e01e0>
+step 1
+7
+finished
+__stdout__ at exit =  <open file '<stdout>', mode 'w' at 0x2ae7d70e01e0>
+... ... ... ... init stdout:  <open file '<stdout>', mode 'w' at 0x2ae7d70e01e0>
+stdout in context-manager:  <open file 'data/debug-3.txt', mode 'w' at 0x2ae7dbcbbb70>
+__stdout__ at exit =  <open file '<stdout>', mode 'w' at 0x2ae7d70e01e0>
+... ... ... ... ... ... ... ... ... ... init stdout:  <open file '<stdout>', mode 'w' at 0x2ae7d70e01e0>
+stdout in context-manager:  <open file 'data/debug-4.txt', mode 'w' at 0x2ae7dca4d030>
+init stdout:  <open file 'data/debug-4.txt', mode 'w' at 0x2ae7dca4d030>
+stdout in context-manager:  <open file '<stdout>', mode 'w' at 0x2ae7d70e01e0>
+temporary console printing
+step 1
+7
+finished
+__stdout__ at exit =  <open file '<stdout>', mode 'w' at 0x2ae7d70e01e0>
+Traceback (most recent call last):
+  File "<stdin>", line 10, in <module>
+Exception: something else bad happened
+<open file '<stdout>', mode 'w' at 0x2ae7d70e01e0>
+#+end_example
+
+Here are the contents of the debug file. 
+#+BEGIN_SRC sh
+cat data/debug-3.txt
+#+END_SRC
+
+#+RESULTS:
+: step 1
+: 7
+: finished
+
+The contents of the other debug file have some additional lines, because we printed some things while in the redirect context.
+#+BEGIN_SRC sh
+cat data/debug-4.txt
+#+END_SRC
+
+#+RESULTS:
+: testing redirect
+: __stdout__ at exit =  <open file '<stdout>', mode 'w' at 0x2ae7d70e01e0>
+: Now outside the inner context. this should go to data/debug-4.txt
+: step 1
+: 7
+: finished
+
+See http://www.python.org/dev/peps/pep-0343/ (number 5) for another example of redirecting using a function decorator. I think it is harder to understand, because it uses a generator.
+
+There were a couple of points in this section:
+
+1. You can control where things are printed in your programs by modifying the value of sys.stdout
+2. You can use try/except/finally blocks to make sure code gets executed in the event an exception is raised
+3. You can use context managers to make sure files get closed, and code gets executed if exceptions are raised.

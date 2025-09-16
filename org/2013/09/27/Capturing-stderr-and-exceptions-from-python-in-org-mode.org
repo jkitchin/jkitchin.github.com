@@ -1,0 +1,132 @@
+* Capturing stderr and exceptions from python in org-mode
+  :PROPERTIES:
+  :categories: org-mode,python
+  :date:     2013/09/27 19:37:05
+  :updated:  2013/09/27 19:47:53
+  :END:
+I have used org-mode extensively to create examples of using python using the code blocks. For example to illustrate the difference between integer and float division you can do this:
+
+#+BEGIN_SRC python
+print 1 / 3
+print 1.0 / 3.0
+#+END_SRC
+
+#+RESULTS:
+: 0
+: 0.333333333333
+
+There are some limitations to showing output though. For example, the code blocks do not capture anything from stderr.
+
+#+BEGIN_SRC python
+import sys
+
+print >>sys.stderr, 'message to stderr'
+#+END_SRC
+
+#+RESULTS:
+
+And exceptions result in no output whatsoever. That is not helpful if you are trying to teach about exceptions! 
+
+I discovered a way around this. The key is using a python sandbox that redirects stdout, stderr and that captures anything sent to those channels. You can also capture any exceptions, and redirect them to a variable. Finally, you can construct the output anyway you see fit. 
+
+Below is the code that runs python code in a sandbox, with redirected outputs. I defined a function that temporarily redirects the output to stdout and stderr, so they can be captured. I execute the code wrapped in a try/except block to capture any exceptions that occur. Finally, I construct a string formatted in a way that lets you know what was on stdout, stderr, and what was an exception.
+
+#+BEGIN_SRC python :tangle sandbox.py
+#!/usr/bin/env python
+from cStringIO import StringIO
+import os, sys
+
+def Sandbox(code):
+    '''Given code as a string, execute it in a sandboxed python environment
+
+    return the output, stderr, and any exception code
+    '''
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    redirected_output = sys.stdout = StringIO()
+    redirected_error = sys.stderr = StringIO()
+
+    ns_globals = {}
+    ns_locals = {}
+    out, err, exc = None, None, None
+
+    try:
+        exec(code, ns_globals, ns_locals)
+    except:
+        import traceback
+        exc = traceback.format_exc()
+
+    out = redirected_output.getvalue()
+    err = redirected_error.getvalue()
+
+    # reset outputs to the original values
+    sys.stdout = old_stdout
+    sys.stderr = old_stderr
+
+    return out, err, exc
+
+
+if __name__ == '__main__':
+    content = sys.stdin.read()
+    out, err, exc =  Sandbox(content)
+
+    s = '''---stdout-----------------------------------------------------------
+{0}
+'''.format(out)
+
+    if err:
+        s += '''---stderr-----------------------------------------------------------
+{0}
+'''.format(err)
+
+    if exc:
+        s += '''---Exception--------------------------------------------------------
+{0}
+'''.format(exc)
+
+    print s
+
+#+END_SRC
+
+To use this, we have to put this file (sandbox.py) in our PYTHONPATH. Then, we tell org-babel to run python using our new sandbox.py module. org-babel pipes the code in a src block to stdin of the python command, which will be intercepted by our sandbox module. If you put this in your init.el, or other customization location, then subsequent uses of python in org-mode will use your sandbox module. I usually only run this for a session as needed.
+
+#+BEGIN_SRC emacs-lisp
+(setq org-babel-python-command "python -m sandbox")
+#+END_SRC
+
+Now, when we use python, we can capture output to stderr!
+
+#+BEGIN_SRC python
+import sys
+
+print >>sys.stderr, 'message to stderr'
+#+END_SRC
+
+#+RESULTS:
+: ---stdout-----------------------------------------------------------
+: 
+: ---stderr-----------------------------------------------------------
+: message to stderr
+: 
+: 
+And, we can capture exceptions!
+
+#+BEGIN_SRC python
+print 1 / 0
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+---stdout-----------------------------------------------------------
+
+---Exception--------------------------------------------------------
+Traceback (most recent call last):
+  File "c:\Users\jkitchin\Dropbox\blogofile-jkitchin.github.com\_blog\sandbox.py", line 20, in Sandbox
+    exec(code, ns_globals, ns_locals)
+  File "<string>", line 1, in <module>
+ZeroDivisionError: integer division or modulo by zero
+
+
+#+end_example
+
+There is a little obfuscation in the exception, since it technically occurs in the Sandbox, but this is better than getting no output whatsoever! I have not tested the sandbox.py code extensively, so I don't know if there will be things that do not work as expected. If you find any, please let me know!

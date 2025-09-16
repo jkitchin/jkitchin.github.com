@@ -1,0 +1,109 @@
+* Finding the box root directory on a local machine
+  :PROPERTIES:
+  :categories: box
+  :date:     2013/12/22 10:26:24
+  :updated:  2013/12/22 10:26:24
+  :END:
+I am working to automate some aspects of box.com, specifically to create collaborations in folders and tasks on files on my local computer at the command-line. I use Box Sync to mirror folders and files on my local computer, and I would like to open a prompt in one of these folders and type something like:
+#+BEGIN_EXAMPLE
+box collaborate --role editor someone@gmail.com
+#+END_EXAMPLE
+to add that person as an editor to my box folder. 
+
+The challenge is that I need to know the =id= of that folder on box. Box stores the files on their server by id, not by name, and the root box folder has an id of =0=. On my local computer, the box root folder is where =Box Sync= puts my synchronized files. In my box_course python module I wrote a function that will return the =id= of an item in box given the /box path/ which is relative to the box root directory. For example, here we can get the =id= for a folder called group-course.
+
+#+BEGIN_SRC python
+from box_course import box
+
+print box.get_item('/group-course')
+#+END_SRC
+
+#+RESULTS:
+: {u'sequence_id': u'1', u'etag': u'1', u'type': u'folder', u'id': u'1328895168', u'name': u'group-course'}
+
+On my local computer, group course is located at C:\Users\jkitchin\Box Sync\group-course, and C:\Users\jkitchin\Box Sync is like the box root directory. So, the challenge is, if I am on the local computer in some directory, how do I determine the box path to that directory? 
+
+What I worked out is to start in the current directory, and check directories above this for a file that indicates you are in the box root directory. With Box Sync 3, that file was "Box Sync ReadMe.pdf", but Box Sync 4 does not include that file anymore. I just put a folder of that name in the Box Sync 4 root directory [fn:1].
+
+Here is a way to start in a box directory, and walk up the path to look for the file. We get the path, and then split each directory off the end, checking for the existence of the file, until the path is gone.
+#+BEGIN_SRC python
+import os
+# change into a box directory
+os.chdir('C:\Users\jkitchin\Box Sync\group-course')
+
+wd, last = os.getcwd(), True
+while last:
+    wd, last = os.path.split(wd)
+    
+    cfile = os.path.join(wd, 'Box Sync ReadMe.pdf')
+    if os.path.exists(cfile):
+        # we found box root
+        break
+
+print wd
+#+END_SRC
+
+#+RESULTS:
+: C:\Users\jkitchin\Box Sync
+
+That gets us the box root directory. Now, we need to strip this off of the current working directory. We also need to replace all the backslashes that Windows uses with forward slashes so that we can get the id. 
+
+#+BEGIN_SRC python
+import os
+os.chdir('C:\Users\jkitchin\Box Sync\group-course')
+
+cwd = os.getcwd()
+
+wd, last = os.getcwd(), True
+while last:
+    wd, last = os.path.split(wd)
+    
+    cfile = os.path.join(wd, 'Box Sync ReadMe.pdf')
+    if os.path.exists(cfile):
+        # we found box root
+        break
+
+print wd
+print cwd
+print cwd.replace(wd, '').replace('\\','/')
+#+END_SRC
+
+#+RESULTS:
+: C:\Users\jkitchin\Box Sync
+: C:\Users\jkitchin\Box Sync\group-course
+: /group-course
+
+This seems to work pretty well, but on some Windows machines, the drive letter is lower case, and then this does not work. In that case, we use =os.path.normcase= to make everything consistent.
+
+#+BEGIN_SRC python
+import os
+os.chdir('C:\Users\jkitchin\Box Sync\group-course')
+
+from box_course import box
+
+cwd = os.getcwd()
+
+wd, last = os.getcwd(), True
+while last:
+    wd, last = os.path.split(wd)
+    
+    cfile = os.path.join(wd, 'Box Sync ReadMe.pdf')
+    if os.path.exists(cfile):
+        # we found box root
+        break
+
+print wd
+print cwd
+bpath = os.path.normcase(cwd).replace(os.path.normcase(wd), '').replace('\\','/')
+
+print bpath
+print box.get_item(bpath)
+#+END_SRC
+
+#+RESULTS:
+: C:\Users\jkitchin\Box Sync
+: C:\Users\jkitchin\Box Sync\group-course
+: /group-course
+: {u'sequence_id': u'1', u'etag': u'1', u'type': u'folder', u'id': u'1328895168', u'name': u'group-course'}
+
+This seems to work so far. Something similar this is probably done in git repositories, to find the .git file. This is also a useful way to find a config file higher up the path.
