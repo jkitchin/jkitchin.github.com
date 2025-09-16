@@ -1,125 +1,0 @@
-* DONE Integrating swish-e and Emacs
-  CLOSED: [2015-06-25 Thu 10:37]
-  :PROPERTIES:
-  :categories: emacs,orgmode
-  :date:     2015/06/25 10:37:05
-  :updated:  2015/06/25 11:10:22
-  :END:
-
-[[http://swish-e.org][swish-e]] is a software package that indexes files on your computer, and then allows you to search the index. Spotlight on my Mac is not working too well (sometimes not at all), and I want some more flexibility so today we try getting swish-e up and running and integrated with Emacs. I don't know that swish-e is the best tool for this available, but it has been on my radar a /long/ time (probably since 2003 from this [[http://joshr.com/src/docs/HowToIndexAnything.pdf][article]]), and it was easy to setup and use.
-
-I use homebrew, so installation was this simple:
-
-#+BEGIN_SRC sh
-brew install swish-e
-#+END_SRC
-
-To test things out, I will only index org-files. I have these all over the place, and they are not all in my org-mode agenda. So, finding them quickly would be awesome.
-
-#+BEGIN_SRC text :tangle ~/.swish-e/swish.conf
-# Example configuration file
-
-# Tell Swish-e what to directories to index
-IndexDir /Users/jkitchin/Dropbox
-IndexDir "/Users/jkitchin/Box Sync"
-IndexDir /Users/jkitchin/blogofile-jkitchin.github.com
-
-# where to save the index
-IndexFile /Users/jkitchin/.swish-e/index.swish-e
-
-# What to index
-IndexOnly .org
-
-# Tell Swish-e that .txt files are to use the text parser.
-IndexContents TXT* .org
-
-# Otherwise, use the HTML parser
-DefaultContents HTML*
-
-# Ask libxml2 to report any parsing errors and warnings or
-# any UTF-8 to 8859-1 conversion errors
-ParserWarnLevel 9
-#+END_SRC
-
-Now, we create our index.
-
-#+BEGIN_SRC sh
-swish-e -c ~/.swish-e/swish.conf
-#+END_SRC
-
-#+RESULTS:
-#+begin_example
-Indexing Data Source: "File-System"
-Indexing "/Users/jkitchin/Dropbox"
-Indexing "/Users/jkitchin/Box Sync"
-Indexing "/Users/jkitchin/blogofile-jkitchin.github.com"
-Removing very common words...
-no words removed.
-Writing main index...
-Sorting words ...
-Sorting 130,109 words alphabetically
-Writing header ...
-Writing index entries ...
-  Writing word text: ...  Writing word text:  10%  Writing word text:  20%  Writing word text:  30%  Writing word text:  40%  Writing word text:  50%  Writing word text:  60%  Writing word text:  70%  Writing word text:  80%  Writing word text:  90%  Writing word text: 100%  Writing word text: Complete
-  Writing word hash: ...  Writing word hash:  10%  Writing word hash:  20%  Writing word hash:  30%  Writing word hash:  40%  Writing word hash:  50%  Writing word hash:  60%  Writing word hash:  70%  Writing word hash:  80%  Writing word hash:  90%  Writing word hash: 100%  Writing word hash: Complete
-  Writing word data: ...  Writing word data:   9%  Writing word data:  19%  Writing word data:  29%  Writing word data:  39%  Writing word data:  49%  Writing word data:  59%  Writing word data:  69%  Writing word data:  79%  Writing word data:  89%  Writing word data:  99%  Writing word data: Complete
-130,109 unique words indexed.
-Sorting property: swishdocpath                            Sorting property: swishtitle                              Sorting property: swishdocsize                            Sorting property: swishlastmodified                       4 properties sorted.
-3,208 files indexed.  54,104,974 total bytes.  8,038,594 total words.
-Elapsed time: 00:00:16 CPU time: 00:00:13
-Indexing done!
-#+end_example
-
-
-Now an example search. I have been looking into the Energy frontier research centers, and I want to find my notes on it. Here is a little query. I use a special output format to keep things simple for the parsing later, just the rank and path, separated by a tab.
-
-#+BEGIN_SRC sh
-swish-e -f ~/.swish-e/index.swish-e -x '%r\t%p\n' -w efrc
-#+END_SRC
-#+RESULTS:
-#+begin_example
-# SWISH format: 2.4.7
-# Search words: efrc
-# Removed stopwords:
-# Number of hits: 2
-# Search time: 0.000 seconds
-# Run time: 0.008 seconds
-1000	/Users/jkitchin/Dropbox/org-mode/journal.org
-471	/Users/jkitchin/Dropbox/org-mode/proposals.org
-.
-#+end_example
-
-Now, for the integration with Emacs. We just get that output in a string, split it, and get the parts we want.  I think I will use helm to provide a selection buffer to these results. We need a list of cons cells (string . candidate). Then we write an interactive helm function. We provide two sources. One for the initial query, and another to start a new search, in case you don't find what you want.
-
-#+BEGIN_SRC emacs-lisp
-(defun helm-swish-e-candidates (query)
-  "Generate a list of cons cells (swish-e result . path)."
-  (let* ((result (shell-command-to-string
-		  (format "swish-e -f ~/.swish-e/index.swish-e -x \"%%r\t%%p\n\" -w %s"
-			  (shell-quote-argument query))))
-	 (lines (s-split "\n" result t))
-	 (candidates '()))
-    (loop for line in lines
-	  unless (or  (s-starts-with? "#" line)
-		      (s-starts-with? "." line))
-	  collect (cons line (cdr (s-split "\t" line))))))
-
-
-(defun helm-swish-e (query)
-  "Run a swish-e query and provide helm selection buffer of the results."
-  (interactive "sQuery: ")
-  (helm :sources `(((name . ,(format "swish-e: %s" query))
-		    (candidates . ,(helm-swish-e-candidates query))
-		    (action . (("open" . (lambda (f)
-					   (find-file (car f)))))))
-		   ((name . "New search")
-		    (dummy)
-		    (action . (("search" . (lambda (f)
-					     (helm-swish-e helm-pattern)))))))))
-#+END_SRC
-
-#+RESULTS:
-: helm-swish-e
-
-Now I can run M-x helm-swish-e and enter "efrc AND computing infrastructure" to find org files containing those words, then press enter to find the file. Nice and easy. I have not tested the query syntax very fully, but so far it is working fine!
-
