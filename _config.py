@@ -112,3 +112,19 @@ site.slugify = slugify
 
 #controllers.photo_gallery.enabled = False
 #controllers.bibtex_controller.enabled = True
+
+
+# Keep build/tooling artifacts out of _site. The defaults only ignore
+# leading-underscore paths and VCS dirs, so the uv virtualenv and friends
+# would otherwise be copied into the deployed site.
+site.file_ignore_patterns = site.file_ignore_patterns + [
+    r".*/\.venv$",
+    r".*/\.direnv$",
+    r".*/__pycache__$",
+    r".*/node_modules$",
+    r".*/\.python-version$",
+    r".*/\.envrc$",
+    r".*/\.DS_Store$",
+    r".*/\.jupyter_ystore\.db$",
+    r".*\.pyc$",
+]
