@@ -30,6 +30,7 @@ REPLACED = {
     "research.html",
     "publications.html",
     "404.html",
+    "about.html",  # the new About page replaces the old one (archive/ keeps its source)
     "robots.txt",  # Quarto adds a Sitemap line; the old file allowed everything too
 }
 
