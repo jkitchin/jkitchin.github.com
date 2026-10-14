@@ -38,6 +38,16 @@ def sources():
             yield p
 
 
+def is_page(p):
+    """Only files the site renders (see project.render in _quarto.yml)."""
+    rel = p.relative_to(ROOT)
+    if p.name.startswith("_") or p.suffix not in PAGES:
+        return False
+    if len(rel.parts) == 1:
+        return p.suffix == ".qmd"  # top-level pages; README.md is not one
+    return rel.parts[0] in ("posts", "papers")
+
+
 def snapshot():
     return {p: p.stat().st_mtime for p in sources()}
 
@@ -60,8 +70,8 @@ def watch():
         seen = now
         if not changed:
             continue
-        pages = [p for p in changed if p.suffix in PAGES and not p.name.startswith("_")]
-        if any(p.suffix in EVERYTHING or p.name.startswith("_") for p in changed):
+        pages = [p for p in changed if is_page(p)]
+        if any(p.suffix in EVERYTHING or p.name == "_quarto.yml" for p in changed):
             render()
         else:
             for p in pages:

@@ -183,7 +183,7 @@ def courses():
         name, order = TERMS.get(letter, ("", 3))
         return year, order, f"{name} {year}"
 
-    rows.sort(key=lambda c: term(c)[:2])
+    rows.sort(key=lambda c: term(c)[:2], reverse=True)  # most recent first
     out = ["```{=html}", '<ol class="course-list">']
     for c in rows:
         links = [f'<a href="https://github.com/jkitchin/{esc(c["repo"])}"><i class="bi bi-github"></i> materials</a>']
