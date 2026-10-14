@@ -145,20 +145,27 @@ def timeline():
         for key, label, _ in AREAS + [("other", "Other", set())] if counts[key])
     cols = []
     for y in years:
+        # Each year column is one link to that year in the publication list,
+        # big enough to be a usable target; the dots are its picture, with a
+        # hover tooltip each for pointer users.
         dots = []
         for a, p in sorted(by_year.get(y, []), key=lambda ap: (order.get(ap[0], 9), str(ap[1].get("date")))):
-            doi = p.get("doi", "").lower()
-            href = summaries.get(doi) or f"https://doi.org/{doi}"
-            dots.append(f'<a class="tl-dot tl-{a}" href="{esc(href)}" data-title="{esc(p["title"])}" '
-                        f'data-meta="{esc(p.get("journal", ""))} ({y})" aria-label="{esc(p["title"])} ({y})"></a>')
-        label = f'<span class="tl-year">{y}</span>' if y % 5 == 0 or y in (years[0], years[-1]) else ""
-        cols.append(f'<div class="tl-col" title="{y}: {len(dots)} paper{"" if len(dots) == 1 else "s"}">{"".join(dots)}{label}</div>')
+            dots.append(f'<span class="tl-dot tl-{a}" data-title="{esc(p["title"])}" '
+                        f'data-meta="{esc(p.get("journal", ""))} ({y})"></span>')
+        n = len(dots)
+        label = f'<span class="tl-year" aria-hidden="true">{y}</span>' if y % 5 == 0 or y in (years[0], years[-1]) else ""
+        if n:
+            words = f"{y}: {n} paper{'' if n == 1 else 's'}"
+            cols.append(f'<a class="tl-col" href="publications.html#y{y}" aria-label="{words}, go to the list" '
+                        f'data-summary="{words}">{"".join(dots)}{label}</a>')
+        else:
+            cols.append(f'<div class="tl-col" aria-hidden="true">{label}</div>')
     return "\n".join([
         "```{=html}",
         f'<div class="tl-legend">{legend}</div>',
         f'<div class="tl" role="group" aria-label="Publications by year, {len(pubs)} papers">{"".join(cols)}</div>',
         '<p class="tl-caption">Each dot is one paper, colored by the OpenAlex field of its main topic. '
-        'Hover or focus a dot for the title, and click to open its summary or the paper. '
+        'Hover over a dot for the paper, or select a year to see its papers. '
         'The full list is on the <a href="publications.html">publications</a> page.</p>',
         '<div class="tl-tip" hidden></div>',
         "```",
@@ -231,6 +238,7 @@ def software():
            f'<p class="sw-summary"><i class="bi bi-star-fill"></i> <b id="sw-total">{total:,}</b> '
            'GitHub stars across these packages. Numbers update live from GitHub, PyPI and crates.io.</p>']
     if featured:
+        out.append('<h2 class="visually-hidden">Featured</h2>')
         out.append('<div class="pkg-featured-row">')
         out += [card(p, stats.get(p["repo"], {})) for p in featured]
         out.append("</div>")

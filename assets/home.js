@@ -16,30 +16,45 @@
   var chart = document.querySelector(".tl");
   if (!tip || !chart) return;
 
-  function show(dot) {
-    tip.textContent = "";
-    var t = document.createElement("strong");
-    t.textContent = dot.dataset.title;
-    var m = document.createElement("span");
-    m.textContent = dot.dataset.meta;
-    tip.appendChild(t);
-    tip.appendChild(m);
+  function place(el) {
     tip.hidden = false;
-    var r = dot.getBoundingClientRect();
+    var r = el.getBoundingClientRect();
     var tw = tip.offsetWidth;
     var left = Math.min(Math.max(8, r.left + r.width / 2 - tw / 2), window.innerWidth - tw - 8);
     tip.style.left = left + window.scrollX + "px";
     tip.style.top = r.top + window.scrollY - tip.offsetHeight - 10 + "px";
   }
 
+  function fill(title, meta) {
+    tip.textContent = "";
+    var t = document.createElement("strong");
+    t.textContent = title;
+    tip.appendChild(t);
+    if (meta) {
+      var m = document.createElement("span");
+      m.textContent = meta;
+      tip.appendChild(m);
+    }
+  }
+
   function hide() { tip.hidden = true; }
 
+  // pointer: one paper per dot
   chart.addEventListener("mouseover", function (e) {
-    if (e.target.classList.contains("tl-dot")) show(e.target);
+    if (e.target.classList.contains("tl-dot")) {
+      fill(e.target.dataset.title, e.target.dataset.meta);
+      place(e.target);
+    }
   });
   chart.addEventListener("mouseleave", hide);
+  // keyboard: one year per column
   chart.addEventListener("focusin", function (e) {
-    if (e.target.classList.contains("tl-dot")) show(e.target);
+    var col = e.target.closest(".tl-col");
+    if (col && col.dataset.summary) {
+      fill(col.dataset.summary, "Press Enter to see them");
+      place(col);
+    }
   });
   chart.addEventListener("focusout", hide);
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") hide(); });
 })();

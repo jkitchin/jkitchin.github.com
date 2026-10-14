@@ -19,6 +19,7 @@ removed first, so deleting an article in the crucible removes its page.
 
 import json
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -103,8 +104,28 @@ def link_files(text, here, wiki):
     return FILE_LINK.sub(rep, text)
 
 
+def find_pandoc():
+    """pandoc itself if installed; else the copy bundled with Quarto. `quarto pandoc`
+    also works but starts Quarto's runtime on every call, which is slow here."""
+    exe = shutil.which("pandoc")
+    if exe:
+        return [exe]
+    quarto = shutil.which("quarto")
+    if quarto:
+        for cand in Path(quarto).resolve().parent.parent.glob("**/tools/*/pandoc"):
+            if cand.is_file():
+                return [str(cand)]
+        return [quarto, "pandoc"]
+    sys.exit("export_crucible: needs pandoc (or quarto) on PATH")
+
+
+PANDOC = None
+
+
 def org_to_md(text):
-    r = subprocess.run(["quarto", "pandoc", "-f", "org", "-t", "gfm", "--wrap=none"],
+    global PANDOC
+    PANDOC = PANDOC or find_pandoc()
+    r = subprocess.run(PANDOC + ["-f", "org", "-t", "gfm", "--wrap=none"],
                        input=text, capture_output=True, text=True, check=True)
     return r.stdout.replace(f"]({SITE}/", "](/")
 
@@ -188,6 +209,15 @@ def main(project):
         dest = PAPERS / "topics" / f.stem / "index.qmd"
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text("\n".join(out) + "\n")
+
+    # Topic links for papers/index.qmd: a plain list (a listing of cards would
+    # put <h5> headings straight after an <h2>)
+    topics = []
+    for f in sorted((wiki / "concepts").glob("*.org"), key=lambda f: parse_org(f)[0].lower()):
+        topics.append(f'<li><a href="topics/{f.stem}/">{parse_org(f)[0]}</a></li>')
+    (ROOT / "_generated").mkdir(exist_ok=True)
+    (ROOT / "_generated" / "topics.md").write_text(
+        "```{=html}\n<ul class=\"topic-list\">\n" + "\n".join(topics) + "\n</ul>\n```\n")
 
     (ROOT / "data" / "papers-index.json").write_text(json.dumps(index, indent=1, sort_keys=True) + "\n")
     n_topics = len(list((wiki / "concepts").glob("*.org")))
