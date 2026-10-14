@@ -1,0 +1,156 @@
+* Machine-gradable quizzes in emacs+org-modex
+  :PROPERTIES:
+  :categories: org,emacs,education
+  :date:     2014/11/23 16:49:52
+  :updated:  2014/11/23 16:49:52
+  :END:
+
+In a previous [[http://kitchingroup.cheme.cmu.edu/blog/2014/01/01/Interactive-quizzes-with-feedback-in-org-mode/][post]], we considered interactive quizzes in emacs and org-mode. Here we consider a variation of that idea with the aim of creating a machine-gradable quiz, i.e. a modern version of a scantron.
+
+The idea is simple, we will let each question be represented by an org headline, and the choices will be clickable links that store the answer as a property in the headline. Each headline will have a unique id. The grading key will contain these ids and the correct answer, and a function will determine if the right answer was selected for each question.
+
+Here is a simple link that will store the value of the link as a property. Note that the path must be at least two characters long to be recognized as a link, unless you wrap the link in double brackets. We will have the link insert a comment to indicate to the user what they chose. We do that because the PROPERTIES drawer is usually hidden, and it is not obvious it was changed.
+
+#+BEGIN_SRC emacs-lisp :results silent
+(org-add-link-type 
+ "mc" 
+ (lambda (link)
+   (save-restriction
+     (org-narrow-to-subtree)
+     (goto-char (point-max))
+     (insert (concat
+	      (unless (bolp) "\n")
+	      (format "# you chose %s" link))))
+       
+   (org-entry-put (point) "ANSWER" link)))
+#+END_SRC
+
+Next, we add a subheading with some questions to test the link.
+** Some questions
+*** question 1
+    :PROPERTIES:
+    :ID:       19C7BA30-A761-4C94-9F3B-E6010E263949
+    :ANSWER:   c
+    :END:
+What is 2 + 2?
+
+[[mc:a]] 1
+
+[[mc:b]] 2
+
+[[mc:c]] 4
+
+# you chose a
+# you chose c
+*** question 2
+    :PROPERTIES:
+    :ID:       38FCCF3D-7FC5-49BF-BB77-486BBAA17CD9
+    :ANSWER:   a
+    :END:
+What is 2 - 2?
+
+[[mc:a]] 0
+
+[[mc:b]] 2
+
+[[mc:c]] 4
+# you chose c
+# you chose a
+** Grading
+
+We will store an alist of id and answer for each problem. To grade, we simple map over the alist, go to the section with the id, and compare the answers. When the answer is correct, we save a point, and when not, no point. We can use the org-mode machinery to jump to the problems and get the stored answer. We put some feedback at the end of the file to see what was right, and what was wrong.
+
+#+BEGIN_SRC emacs-lisp
+(let* ((key '(("19C7BA30-A761-4C94-9F3B-E6010E263949" . "c")
+	      ("38FCCF3D-7FC5-49BF-BB77-486BBAA17CD9" . "a")))
+       (MAX (length key))
+       (points 0)
+       (answer))
+  
+  (dolist (tup key)
+    (save-excursion
+      (org-open-link-from-string
+       (format "id:%s" (car tup)))
+      (setq answer (org-entry-get (point) "ANSWER"))
+      (if (string= answer (cdr tup))
+	  (progn
+	    (setq points (+ 1 points))
+	    (goto-char (point-max))
+	    (insert (format "# id:%s: %s correct\n" (car tup) answer)))
+        (goto-char (point-max))
+	(insert (format "# id:%s: %s wrong (%s is correct)\n"
+			(car tup)
+			answer
+			(cdr tup))))))
+  (goto-char (point-max))
+  (insert (format
+	   "#+GRADE: %s" (/ (float points) (float MAX)))))
+#+END_SRC
+
+That works pretty well. I need to think about how to codify the key, since this would usually be stored in some file. We would also need to wrap the code block in a function that we could call easily. The org-id key is easy, but not very readable. It would make it easy to keep a database of these problems though. 
+# id:19C7BA30-A761-4C94-9F3B-E6010E263949: a wrong (c is correct)
+# id:38FCCF3D-7FC5-49BF-BB77-486BBAA17CD9: a correct
+#+GRADE: 0.5
+
+Just for completeness, I want to save the key to a file, and use it. We simply write the alist in a file. Here are the contents, which are tangled to key.el. One alternative might be to have a solution copy of the quiz which has the answers in it, and we read the answers from the file.
+
+#+BEGIN_SRC emacs-lisp :tangle key.el
+(("19C7BA30-A761-4C94-9F3B-E6010E263949" . "c")
+ ("38FCCF3D-7FC5-49BF-BB77-486BBAA17CD9" . "a"))
+#+END_SRC
+
+Now, we read it in like this. The rest of the code is basically the same.
+
+#+BEGIN_SRC emacs-lisp
+(let* ((key (with-temp-buffer 
+              (insert-file-contents "key.el")
+	      (read (current-buffer))))
+       (MAX (length key))
+       (points 0)
+       (answer))
+  
+  (dolist (tup key)
+    (save-excursion
+      (org-open-link-from-string
+       (format "id:%s" (car tup)))
+      (setq answer (org-entry-get (point) "ANSWER"))
+      (if (string= answer (cdr tup))
+	  (progn
+	    (setq points (+ 1 points))
+	    (goto-char (point-max))
+	    (insert (format "# id:%s: %s correct\n" (car tup) answer)))
+        (goto-char (point-max))
+	(insert (format "# id:%s: %s wrong (%s is correct)\n"
+			(car tup)
+			answer
+			(cdr tup))))))
+  (goto-char (point-max))
+  (insert (format
+	   "#+GRADE: %s" (/ (float points) (float MAX)))))
+#+END_SRC
+
+# id:19C7BA30-A761-4C94-9F3B-E6010E263949: a wrong (c is correct)
+# id:38FCCF3D-7FC5-49BF-BB77-486BBAA17CD9: a correct
+#+GRADE: 0.5
+
+It is probably much easier to have a solution version of the quiz, and generate the key from it. For example, we can collect the ID and ANSWER from the problems in this file like this.
+
+#+BEGIN_SRC emacs-lisp :results code
+(let ((key '()))
+  (org-map-entries
+   (lambda ()
+     (let ((id) (ans))
+       (when (and
+	      (setq id (org-entry-get (point) "ID"))
+	      (setq ans (org-entry-get (point) "ANSWER")))
+	 (add-to-list 'key (cons id ans))))))
+key)
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC emacs-lisp
+(("38FCCF3D-7FC5-49BF-BB77-486BBAA17CD9" . "a")
+ ("19C7BA30-A761-4C94-9F3B-E6010E263949" . "c"))
+#+END_SRC
+
+So, if we had a master solution file, we could read the key from there. That is the way to do this.

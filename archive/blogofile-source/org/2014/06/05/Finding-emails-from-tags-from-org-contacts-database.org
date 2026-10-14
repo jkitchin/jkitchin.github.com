@@ -1,0 +1,81 @@
+* Finding emails from tags from org-contacts database
+  :PROPERTIES:
+  :categories: org-mode
+  :date:     2014/06/05 14:42:21
+  :updated:  2014/06/05 14:42:21
+  :END:
+
+Org-mode has a contacts manager called org-contacts. If you set it up, you can use it to insert email addresses using a tag in message-mode. Out of the box though, it only works on one tag. You cannot do something like +group-phd to get entries tagged group but not tagged phd. Here we develop a function to do that for us. 
+
+We could use the org-files and map the headings to do this, but org-contacts has already done this and has a database we can use instead. We get the database from org-contacts-filter. Here is the first entry.
+
+#+BEGIN_SRC emacs-lisp :results raw
+(car (org-contacts-filter))
+#+END_SRC
+
+#+RESULTS:
+(Chris Jones #<marker at 1 in contacts.org> ((FILE . c:/Users/jkitchin/Dropbox/org-mode/contacts.org) (TAGS . :co2:) (ALLTAGS . :co2:) (BLOCKED . ) (COMPANY . Georgia Tech, Chemical Engineering) (EMAIL . Christopher.Jones@chbe.gatech.edu) (CATEGORY . contacts)))
+
+It looks like we have (name marker (cons cells)) for each entry. We can get the tags associated with that entry like this.
+
+We can get the tags for an entry with this code:
+#+BEGIN_SRC emacs-lisp
+(let ((entry (car (org-contacts-filter))))
+  (cdr (assoc "TAGS" (nth 2 entry))))
+#+END_SRC
+
+#+RESULTS:
+: :co2:
+
+We will use some code for org tags. Notably, from a tags expression, we can automatically generate code that tells us if we have a match. Here we generate the code to test for a match on "+co2-group".
+
+#+BEGIN_SRC emacs-lisp :results raw
+(let ((todo-only nil))
+  (cdr (org-make-tags-matcher "+co2-group")))
+#+END_SRC
+
+#+RESULTS:
+(and (progn (setq org-cached-props nil) (and (not (member group tags-list)) (member co2 tags-list))) t)
+
+Note we will have to bind tags-list before we eval this.
+
+So to use it, we need to split the tags from an org-contacts entry into a list of strings. It appears each entry just has the tag string, so we split the substring (skipping first and last characters) by ":" to get the list. We do that here, and test if a list of tags containing "co2" is matched by the expression "co2-junior".
+
+#+BEGIN_SRC emacs-lisp
+(let* ((tags-list (split-string (substring ":co2:" 1 -1) ":"))
+       (todo-only nil))
+  (eval (cdr (org-make-tags-matcher "co2-junior"))))
+#+END_SRC
+
+#+RESULTS:
+: t
+
+It is. So, now we just need to loop through the database, and collect entries that match.
+
+#+BEGIN_SRC emacs-lisp
+(defun insert-emails-from-tags (tag-expression)
+  "insert emails from org-contacts that match the tags expression. For example:
+group-phd will match entries tagged with group but not with phd."
+  (interactive "sTags: ")
+  (insert
+   (mapconcat 'identity
+	      (loop for contact in (org-contacts-filter)
+		    for contact-name = (car contact)
+		    for email = (org-contacts-strip-link (car (org-contacts-split-property
+							       (or
+								(cdr (assoc-string org-contacts-email-property
+										   (caddr contact)))
+								""))))
+		    for tags = (cdr (assoc "TAGS" (nth 2 contact)))
+		    for tags-list = (if tags
+					(split-string (substring (cdr (assoc "TAGS" (nth 2 contact))) 1 -1) ":")
+				      '())
+		    if (let ((todo-only nil))
+			 (eval (cdr (org-make-tags-matcher tag-expression))))
+		    
+		    collect (org-contacts-format-email contact-name email))
+	      ",")))
+#+END_SRC
+
+This is not quite completion in message-mode, but it is good enough. You put your cursor in the To field, and run that command, enter the tag expression, and you will get your emails!
+

@@ -1,0 +1,136 @@
+* Serializing an Atoms object in xml
+  :PROPERTIES:
+  :categories: python,xml,ase
+  :date:     2015/06/28 12:26:00
+  :updated:  2015/06/28 12:26:00
+  :END:
+I have a future need to serialize an Atoms object from [[https://wiki.fysik.dtu.dk/ase/][ase]] as XML. I would use json usually, but I want to use a program that will index xml. I have previously used [[https://pypi.python.org/pypi/pyxser/1.5.2-r2][pyxser]] for this, but I recall it being difficult to install, and it does not pip install on my Mac. So, here we look at [[https://pypi.python.org/pypi/xmlwitch/0.2.1][xmlwitch]] which does pip install ;). This package does some serious magic with context managers.
+
+One thing I am not sure about here is the best way to represent numbers and lists/arrays. I am using repr here, and assuming you would want to read this back in to Python where this could simply be eval'ed. Some alternatives would be to convert them to lists, or save them as arrays of xml elements.
+
+#+BEGIN_SRC python
+from ase.data.g2 import data
+from ase.structure import molecule
+import xmlwitch
+
+atoms = molecule('H2O')
+
+def serialize_atoms(atoms):
+    'Return an xml string of an ATOMS object.'
+    xml = xmlwitch.Builder(version='1.0', encoding='utf-8')
+
+    with xml.atoms():
+        for atom in atoms:
+            with xml.atom(index=repr(atom.index)):
+                xml.symbol(atom.symbol)
+                xml.position(repr(atom.position))
+                xml.magmom(repr(atom.magmom))
+                xml.mass(repr(atom.mass))
+                xml.momentum(repr(atom.momentum))
+                xml.number(repr(atom.number))
+        xml.cell(repr(atoms.cell))
+        xml.pbc(repr(atoms.pbc))
+    return xml
+
+atoms_xml = serialize_atoms(atoms)
+print atoms_xml
+
+with open('atoms.xml', 'w') as f:
+    f.write(str(atoms_xml))
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+<?xml version="1.0" encoding="utf-8"?>
+<atoms>
+  <atom index="0">
+    <symbol>O</symbol>
+    <position>array([ 0.      ,  0.      ,  0.119262])</position>
+    <magmom>0.0</magmom>
+    <mass>15.9994</mass>
+    <momentum>array([ 0.,  0.,  0.])</momentum>
+    <number>8</number>
+  </atom>
+  <atom index="1">
+    <symbol>H</symbol>
+    <position>array([ 0.      ,  0.763239, -0.477047])</position>
+    <magmom>0.0</magmom>
+    <mass>1.0079400000000001</mass>
+    <momentum>array([ 0.,  0.,  0.])</momentum>
+    <number>1</number>
+  </atom>
+  <atom index="2">
+    <symbol>H</symbol>
+    <position>array([ 0.      , -0.763239, -0.477047])</position>
+    <magmom>0.0</magmom>
+    <mass>1.0079400000000001</mass>
+    <momentum>array([ 0.,  0.,  0.])</momentum>
+    <number>1</number>
+  </atom>
+  <cell>array([[ 1.,  0.,  0.],
+       [ 0.,  1.,  0.],
+       [ 0.,  0.,  1.]])</cell>
+  <pbc>array([False, False, False], dtype=bool)</pbc>
+</atoms>
+#+end_example
+
+Now, we can try reading that file. I am going to use emacs-lisp here for fun, and compute the formula.
+
+#+BEGIN_SRC emacs-lisp
+(let* ((xml (car (xml-parse-file "atoms.xml")))
+       (atoms (xml-get-children xml 'atom))
+       (symbol-elements (mapcar (lambda (atom)
+				  (car (xml-get-children atom 'symbol)))
+				atoms))
+       (symbols (mapcar (lambda (x)
+			  (car (xml-node-children x)))
+			symbol-elements)))
+  (mapconcat (lambda (c)
+	       (format "%s%s" (car c)
+		       (if (= 1 (cdr c))
+			   ""
+			 (cdr c))))
+	     (loop for sym in (-uniq symbols)
+		   collect (cons
+			    sym
+			    (-count (lambda (x) (string= x sym)) symbols)))
+	     ""))
+#+END_SRC
+
+#+RESULTS:
+: OH2
+
+Here is a (misleadingly) concise way to do this in Python. It is so short thanks to there being a Counter that does what we want, and some pretty nice list comprehension!
+
+#+BEGIN_SRC python
+import xml.etree.ElementTree as ET
+from collections import Counter
+with open('atoms.xml') as f:
+    xml = ET.fromstring(f.read())
+
+counts = Counter([el.text for el in xml.findall('atom/symbol')])
+
+print ''.join(['{0}{1}'.format(a,b) if b>1 else a for a,b in counts.iteritems()])
+#+END_SRC
+
+#+RESULTS:
+: H2O
+
+And finally a test on reading a unit cell.
+
+#+BEGIN_SRC python
+import xml.etree.ElementTree as ET
+from numpy import array
+
+with open('atoms.xml') as f:
+    xml = ET.fromstring(f.read())
+
+print eval(xml.find('cell').text)
+#+END_SRC
+
+#+RESULTS:
+: [[ 1.  0.  0.]
+:  [ 0.  1.  0.]
+:  [ 0.  0.  1.]]
+
+That seems to work but, yeah, you won't want to read untrusted xml with that! See http://stupidpythonideas.blogspot.com/2013/11/repr-eval-bad-idea.html. It might be better (although not necessarily more secure) to use pickle or some other serialization strategy for this.

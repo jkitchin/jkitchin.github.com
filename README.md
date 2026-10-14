@@ -28,7 +28,8 @@ assets/ask/               Ask widget: BM25 search + optional in-browser WebLLM a
 posts/<slug>/index.qmd    a post (or index.ipynb)
 _freeze/                  stored results of executed code (commit this)
 _generated/               built from data/ by scripts/prerender.py (commit this)
-legacy/                   the frozen old site
+legacy/                   the frozen old site (built HTML, served as is)
+archive/                  sources of the old site, for reference only (not built)
 scripts/
   prerender.py            data/*.yml -> _generated/*.md (runs before render)
   merge_legacy.py         copies legacy/ into _site (runs after render)

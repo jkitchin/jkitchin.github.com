@@ -1,0 +1,148 @@
+---
+title: Creating a transportable zip-archive of an org-file
+date: 2014/03/05 10:49:14
+updated: 2014/03/05 12:31:34
+categories: org-mode
+tags: 
+---
+
+
+
+<p>
+This post explores a method to save an org-buffer to a zip archive, with all the referencing files. The challenge is that you may want to share the org-file with someone, but the links break if you send them the file, and it is not that trivial to find all the links and change them, and to copy the files to a place where the new links work. 
+</p>
+
+<p>
+The idea is to export the buffer to an org-file and process all the links to copy the files to a new directory, and change the links to point to these new files. For example, <a href="/media/2014-03-05-Creating-a-transportable-zip-archive-of-an-org-file/blog.pdf">blog.pdf</a> would be copied to the temporary directory, given a unique name, and then relinked. The text below includes some examples of the links that need to be modified.
+</p>
+
+<p>
+A figure looks like:
+</p>
+
+
+<div class="figure">
+<p><img src="/media/2014-03-05-Creating-a-transportable-zip-archive-of-an-org-file/cos-plot.png"> 
+</p>
+</div>
+
+<p>
+Alternatively, we might use a <img src="/media/2014-03-05-Creating-a-transportable-zip-archive-of-an-org-file/eos.png"> to a file. We do not want to change urls, such as this one: <a href="http://kitchingroup.cheme.cmu.edu/blog/2013/09/28/Changing-links-to-files-so-they-work-in-a-blog/">http://kitchingroup.cheme.cmu.edu/blog/2013/09/28/Changing-links-to-files-so-they-work-in-a-blog/</a> . As in that example, we will create a list of all the links in the buffer, but only modify the links that are files. We can parse the buffer and get the links like this.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(<span style="color: #8b0000;">let</span> ((parsetree (org-element-parse-buffer))
+      (counter 0))
+  (org-element-map parsetree 'link
+    (<span style="color: #8b0000;">lambda</span> (link) 
+      (<span style="color: #8b0000;">let</span> ((type (nth 0 link))
+            (plist (nth 1 link))
+            (content (nth 2 link)))
+        (princ (format <span style="color: #228b22;">"%s %s: %s %s\n"</span> 
+                       counter 
+                       (plist-get plist '<span style="color: #cd0000;">:type</span>) 
+                       (plist-get plist <span style="color: #cd0000;">:path</span>) 
+                       content))
+        (setq counter (+ counter 1))))))
+</pre>
+</div>
+<pre class="example">
+0 file: ./blog.pdf nil
+1 file: ./images/cos-plot.png nil
+2 file: ./images/eos.png link
+3 http: //kitchingroup.cheme.cmu.edu/blog/2013/09/28/Changing-links-to-files-so-they-work-in-a-blog/ nil
+</pre>
+
+<p>
+So, our overall strategy will be to create a new directory to store the new versions of the files in. Then, we will copy the files that links point to into that directory, and give them new unique names. We will rename the links to point to these new names. We do this because you may, for some reason have links to files with the same name but in different directories. We want to make sure we do not clobber the files by overwriting them. We use a simple method here, based on unique, temporary filenames. There are other ways to do it to, this way worked first. Finally, we will zip that new directory, and delete the new directory.
+</p>
+
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp"><span style="color: #ff0000; font-weight: bold;">;; </span><span style="color: #ff0000; font-weight: bold;">directory to save all exports in, using the current date</span>
+(setq org-archive (concat <span style="color: #228b22;">"org-archive-"</span> (format-time-string <span style="color: #228b22;">"%Y-%m-%d"</span> (current-time))))
+
+<span style="color: #ff0000; font-weight: bold;">;; </span><span style="color: #ff0000; font-weight: bold;">delete directory and zip file if it exists</span>
+(<span style="color: #8b0000;">when</span> (file-exists-p (concat org-archive <span style="color: #228b22;">".zip"</span>)) 
+    (delete-file (concat org-archive <span style="color: #228b22;">".zip"</span>) t))
+
+(<span style="color: #8b0000;">when</span> (file-exists-p org-archive) 
+    (delete-directory org-archive t))
+
+<span style="color: #ff0000; font-weight: bold;">;; </span><span style="color: #ff0000; font-weight: bold;">make directory</span>
+(make-directory org-archive t)
+
+<span style="color: #ff0000; font-weight: bold;">;; </span><span style="color: #ff0000; font-weight: bold;">get list of links, copy files and save names</span>
+(setq link-list (<span style="color: #8b0000;">let</span> ((parsetree (org-element-parse-buffer))
+                     (counter 0))
+                 (org-element-map parsetree 'link
+                   (<span style="color: #8b0000;">lambda</span> (link) 
+                     (<span style="color: #8b0000;">let*</span> ((type (nth 0 link))
+                            (plist (nth 1 link))
+                            (content (nth 2 link))
+                            (path (plist-get plist <span style="color: #cd0000;">:path</span>))
+                            (type (plist-get plist '<span style="color: #cd0000;">:type</span>))
+                            (fname (car (last (split-string path <span style="color: #228b22;">"/"</span>))))
+                            (temporary-file-directory org-archive)
+                            (new-file)
+                            )     
+                       (<span style="color: #8b0000;">cond</span>
+                        <span style="color: #ff0000; font-weight: bold;">;; </span><span style="color: #ff0000; font-weight: bold;">regular file with content</span>
+                        ((and (string= type <span style="color: #228b22;">"file"</span>)  content)
+                         (setq new-file  (make-temp-file (file-name-sans-extension fname) nil 
+                                                         (concat <span style="color: #228b22;">"."</span> (file-name-extension fname))))
+                         (<span style="color: #8b0000;">with-temp-file</span> new-file
+                           (insert-file-contents path))
+                         (format <span style="color: #228b22;">"[[./%s][%s]] "</span> (file-name-nondirectory new-file) content))
+                        <span style="color: #ff0000; font-weight: bold;">;; </span><span style="color: #ff0000; font-weight: bold;">regular file with no content</span>
+                        ((and (string= type <span style="color: #228b22;">"file"</span>))
+                         (setq new-file  (make-temp-file (file-name-sans-extension fname) nil 
+                                                         (concat <span style="color: #228b22;">"."</span> (file-name-extension fname))))
+                         (<span style="color: #8b0000;">with-temp-file</span> new-file
+                           (insert-file-contents path))
+                         (format <span style="color: #228b22;">"[[./%s]] "</span> (file-name-nondirectory new-file)))
+                        (t nil)))))))
+
+<span style="color: #ff0000; font-weight: bold;">;; </span><span style="color: #ff0000; font-weight: bold;">save current buffer name</span>
+(setq current-name (buffer-name))
+
+<span style="color: #ff0000; font-weight: bold;">;; </span><span style="color: #ff0000; font-weight: bold;">create filter for links and export org buffer</span>
+(<span style="color: #8b0000;">let</span> ((counter 0))
+  (<span style="color: #8b0000;">defun</span> <span style="color: #8b2323;">ox-mrkup-filter-link</span> (text back-end info)
+    (<span style="color: #8b0000;">let</span> ((link (nth counter link-list)))
+      (<span style="color: #8b0000;">if</span> (not (string= link <span style="color: #228b22;">"nil"</span>)) (setq output   (format <span style="color: #228b22;">"%s"</span> link))
+        (setq output (format <span style="color: #228b22;">"%s"</span> text)))
+      (setq counter (+ counter 1))
+      output))
+
+  (<span style="color: #8b0000;">let</span> ((org-export-filter-link-functions '(ox-mrkup-filter-link)))
+    (org-org-export-as-org)))
+
+(switch-to-buffer <span style="color: #228b22;">"*Org ORG Export*"</span>)
+(write-file (expand-file-name current-name org-archive))
+(shell-command (concat <span style="color: #228b22;">"zip -R "</span> org-archive <span style="color: #228b22;">".zip  *"</span>))
+(rename-file (concat org-archive <span style="color: #228b22;">".zip"</span>) (concat <span style="color: #228b22;">"../"</span>org-archive <span style="color: #228b22;">".zip"</span>))
+(kill-buffer)
+
+(switch-to-buffer current-name)
+(delete-directory org-archive t)  <span style="color: #ff0000; font-weight: bold;">;; </span><span style="color: #ff0000; font-weight: bold;">get rid of temp-dir</span>
+</pre>
+</div>
+
+
+
+<p>
+This example works fine! The result is here: <a href="/media/2014-03-05-Creating-a-transportable-zip-archive-of-an-org-file/org-archive-2014-03-05.zip">org-archive-2014-03-05.zip</a> This code would ideally be put into a function, and cleaned up a little so there are not global variables being set here and there. A subsequent function might make it easy to attach this file to an email. That code might look something like this:
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-emacs-lisp">(mail)
+(mail-to)
+(insert <span style="color: #228b22;">"jkitchin@andrew.cmu.edu"</span>)
+(mml-attach-file <span style="color: #228b22;">"./org-archive-2014-03-05.zip"</span>)
+</pre>
+</div>
+<p>Copyright (C) 2014 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p><p><a href="/org/2014/03/05/Creating-a-transportable-zip-archive-of-an-org-file.org">org-mode source</a><p><p>Org-mode version = 8.2.5h</p>

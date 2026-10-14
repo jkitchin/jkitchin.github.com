@@ -1,0 +1,132 @@
+* Code completion in HyDE
+  :PROPERTIES:
+  :categories: hylang
+  :date:     2016/04/18 11:24:13
+  :updated:  2016/04/18 11:24:13
+  :END:
+
+Code completion is often useful in an editor. Today, we add some code completion to Emacs for [[http://hylang.org][hy]]. It isn't that hard; we get a list of known keywords from the hy language, a list of functions and macros, and a list of variables from the current buffer. If you are following this line of development, the code can be found here: https://github.com/jkitchin/jmax/blob/master/mile-hy.el
+
+If not, there might be some interesting tips here on getting completion in Emacs ;)
+
+We will use auto-complete (http://auto-complete.org/doc/manual.html#extend) for now. First, we can add hy-mode to the list of ac-modes:
+
+#+BEGIN_SRC emacs-lisp
+;; * auto-complete
+(add-to-list 'ac-modes 'hy-mode)
+#+END_SRC
+
+Next, we need to define some sources and functions for completion. Over at https://github.com/jkitchin/hyve/blob/master/hylp.hy#L65 I defined a function that returns a list of all hy core functions and macros that Emacs can directly read.
+
+#+BEGIN_SRC hy
+(defn hy-all-keywords-emacs-completion []
+  "Return a string for Emacs completion suitable for read in Emacs.
+We unmangle the names and replace _ with -."
+  (str
+   (+ "("
+      (.join " " (list-comp (.format "\"{}\"" (.replace x "_" "-"))
+                            [x (hy-all-keywords)]))
+      ")")))
+#+END_SRC
+
+
+Here, we define a source that gets that information from the hy repl using the lispy--eval-hy function. This has the downside of calling the repl, but it seems fast, and I haven't noticed any lags so far. The upside is it only gets called once and has everything hy knows about, i.e. i don't have to update this for new core functions/macros.
+
+#+BEGIN_SRC emacs-lisp
+(defvar ac-source-hy-keywords
+  `((candidates . ,(read (lispy--eval-hy "(hy-all-keywords-emacs-completion)"))))
+  "Keywords known from hy. The command is defined in hyve.hylp.")
+#+END_SRC
+
+It would also be nice to have the defns/macros in the current file available for completion. This hackery searches the current buffer for these with a pretty simple regex and accumulates the results.
+
+#+BEGIN_SRC emacs-lisp
+(defun hy-defns-macros ()
+  "Get a list of defns in the current file."
+  (let ((defns '()))
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward "\\(?:defn\\|defmacro\\)[[:space:]]+\\(.*?\\) "nil t)
+	(push (match-string 1) defns)))
+    defns))
+#+END_SRC
+
+Finally, we would also like the variable names from setv and let. Hy is lispy, so we use a hybrid regex search, followed by read to get every other name in the case of setv, and the vector expression in the let case.
+
+#+BEGIN_SRC emacs-lisp
+(defun hy-variables ()
+  "Collect the variable names in the current buffer.
+These are every other name after setv."
+  (let ((vars '())
+	expr
+	set-vars
+	let-vars)
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward "(setv" nil t)
+	(save-excursion
+	  (goto-char (match-beginning 0))
+	  (setq expr (read (current-buffer)))
+	  (setq set-vars (loop for x in (cdr expr) by #'cddr
+			       collect x)))))
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward "(let" nil t)
+	(save-excursion
+	  (goto-char (match-beginning 0))
+	  (setq expr (read (current-buffer)))
+	  ;; this is read as a vector, so we convert to a list.
+	  (setq let-vars
+		(loop for x in (append (nth 1 expr) nil)
+		      by #'cddr collect x)))))
+    (append set-vars let-vars)))
+#+END_SRC
+
+Next, we define two new sources for completion that use those two functions:
+
+#+BEGIN_SRC emacs-lisp
+(defvar ac-source-hy-defns
+  '((candidates . hy-defns-macros))
+  "Functions/macros defined in the file.")
+
+(defvar ac-source-hy-variables
+  '((candidates . hy-variables))
+  "Hy variables defined in the file.")
+#+END_SRC
+
+And finally add this to the hy-setup hook function:
+
+#+BEGIN_SRC emacs-lisp
+(setq ac-sources '(ac-source-hy-keywords
+		     ac-source-hy-defns
+		     ac-source-hy-variables))
+
+  (ac-set-trigger-key "TAB")
+  (auto-complete-mode 1)
+#+END_SRC
+
+And we should be good to go with completion. Let's try it out.
+
+Checkout the video here: https://www.youtube.com/watch?v=L6j5IWkpoz0
+
+#+BEGIN_SRC hy
+(let [some-long-name 5
+      boring-and-tedious "tree"]
+  (print boring-and-tedious))
+
+(setv another-var nil inline-name (+ 4 5)
+      hylarious-var 5)
+
+(+ hylarious-var 8 )
+
+(defn Some-long-function []
+  (print 6))
+
+(Some-long-function)
+#+END_SRC
+
+#+RESULTS:
+: tree
+: 6
+
+Sweet.

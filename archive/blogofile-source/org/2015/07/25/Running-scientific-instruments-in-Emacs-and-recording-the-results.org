@@ -1,0 +1,160 @@
+* Running scientific instruments in Emacs and recording the results
+  :PROPERTIES:
+  :categories: emacs,orgmode,notebook
+  :date:     2015/07/25 10:04:01
+  :updated:  2015/07/25 10:04:01
+  :END:
+
+Today we look at running a scientific instrument via http requests from Emacs and org-mode. We will use a Gamry Ref600 potentiostat because Gamry has very nicely provide a COM interface we can access via Python. This will be only a proof of concept to see what it is like. We will not consider any issues of security, etc..., only what is it like to do it.
+
+The setup will look like this: we will run a flask web app that uses python to control the instrument via http requests. Why? Because I want to run the instrument from my Mac ;) and so far there are only Windows drivers for the instrument. So, we run the flask app on the Windows machine, and I run it from here on my Mac by sending requests. Flask takes care of converting requests to action using Python. You can see the [[id:5EB72A19-B9D3-4ABA-975F-61ACE16E0D87][Flask app here]].
+
+Let's see what is online:
+#+BEGIN_SRC sh
+curl jkitchin-win.cheme.cmu.edu:5000/pstats
+#+END_SRC
+
+#+RESULTS:
+: (u'REF600-13089',)
+
+We have one potentiostat online with serial number 13089. I have a dummy cell connected to it which has a little resistor on it. So we can run a cyclic voltammogram and it should be a straight line. We have to know a bit about what is returned. We will get a json file back, and it will have the data in it. The data will be a list of lists. The data we want is in columns 1 and 3 (python indexing). Obviously you need some prior knowledge of what data comes back to use this. That would come from reading some documentation.
+
+#+BEGIN_SRC python
+import requests
+import numpy as np
+import matplotlib.pyplot as plt
+
+resp = requests.get('http://jkitchin-win.cheme.cmu.edu:5000/cv?endv=0.25&startv=-0.25')
+
+dj = resp.json()
+data = np.array(dj['data'])
+
+plt.plot(data[:, 1], data[:, 3])
+plt.xlabel('Voltage (V)')
+plt.ylabel('Current (A)')
+plt.tight_layout()
+plt.savefig('cv-1.png')
+#+END_SRC
+
+#+RESULTS:
+
+
+[[./cv-1.png]]
+Well, there you have it. Possibly the first Gamry Ref600 to ever have been driven from a Mac ;) Let me be more explicit about that; I could /also/ run this from Linux, an iPad, etc... You could do this in a browser, or in an IPython notebook, or in Matlab, among many other possibilities. You could write a script in perl, shell, ruby, emacs-lisp, or any other language that supports http requests.
+
+I am not sure why the graph is not perfectly linear, maybe there is some capacitive charging that starts out. The resistance based on the current at 0.2V is about 2000 ohms, which is in good agreement with what is listed on the board the dummy cell is on.
+
+** Summary thoughts
+There are a host of interesting issues one eventually has to consider here including security, but also error management and debugging. I hacked something like an http api here by running flask on the windows machine running the instrument. That is a layer of abstraction on an abstraction to start with. I think later instruments are likely to run these webservers themselves on small dedicated computers, e.g. via a Raspberry pi or Arduino chipset. It is not obvious how sophisticated you can make this with respect to triggering different instruments, etc...
+
+In running this, my "notebook" was blocked while the experiment ran. It is possible to run things asynchronously, and sometimes that would make sense. In the example here, we have provided a very limited set of functions to "run" the potentiostat. It was only a proof of concept to get a sense for what it is like. In practice a fuller set of functions would be implemented. Another point to consider is how the data comes back from the potentiostat. We used json here because it is convenient, but we could just as well send files, and other sorts of data too.
+
+This lays out the possibility to walk up to an instrument with an electronic notebook, setup and run the experiment, capture the results in the notebook and take it back to the office for analysis. Pretty cool.
+
+** Flask app
+   :PROPERTIES:
+   :ID:       5EB72A19-B9D3-4ABA-975F-61ACE16E0D87
+   :END:
+
+So, here is my flask app. We setup a few routes using get requests to do things like get a list of the potentiostats online, and to run a cyclic voltamogram. As a side note, after this post is over, I am turning off the app, so you won't be able to repeat the codes ;) This is not a beautiful, secure or error tolerant code. It works enough for a proof of concept of simple experiments.
+
+#+BEGIN_SRC python :tangle ~/Dropbox/python/gamry/gamry_flask.py
+from flask import Flask, request, jsonify
+import time
+
+app = Flask(__name__)
+
+@app.route('/')
+def hello_world():
+    return 'Hello World!'
+
+@app.route('/pstats')
+def get_pstats():
+    import win32com.client as client
+    devices = client.Dispatch('GamryCOM.GamryDeviceList')
+    result = str(devices.EnumSections())
+    return result
+
+@app.route('/close_pstat')
+def close():
+    import win32com.client as client
+    devicelist = client.Dispatch('GamryCOM.GamryDeviceList')
+
+    x = devicelist.EnumSections()[0]
+    pstat = client.Dispatch('GamryCOM.GamryPstat')
+    pstat.Init(x)
+
+    pstat.Close()
+
+
+def run_ramp(Sinit,  # start value
+             Sfinal, # end value
+             ScanRate=1,
+             SampleRate=0.01,
+             CtrlMode=1,  # GamryCOM.PstatMode
+             fname=None):
+    '''We assume the first device is the one you want.
+    '''
+    import win32com.client as client
+    import numpy as np
+    devicelist = client.Dispatch('GamryCOM.GamryDeviceList')
+
+    x = devicelist.EnumSections()[0]
+
+    pstat = client.Dispatch('GamryCOM.GamryPstat')
+    pstat.Init(x)
+
+    pstat.Open()
+
+    dtaqcpiv=client.Dispatch('GamryCOM.GamryDtaqCpiv')
+    dtaqcpiv.Init(pstat)
+
+    sigramp=client.Dispatch('GamryCOM.GamrySignalRamp')
+    sigramp.Init(pstat, Sinit, Sfinal, ScanRate, SampleRate, CtrlMode)
+
+    pstat.SetSignal(sigramp)
+    pstat.SetCell(1) # 1 == GamryCOM.CellOn
+
+    try:
+        dtaqcpiv.Run(True)
+    except Exception as e:
+        pstat.Close()
+        raise
+
+    # NOTE:  The comtypes example in this same directory illustrates the use of com
+    # notification events.  The comtypes package is recommended as an alternative
+    # to win32com.
+    time.sleep(2) # just wait sufficiently long for the acquisition to complete.
+
+    acquired_points = []
+    count = 1
+    while count > 0:
+        count, points = dtaqcpiv.Cook(10)
+        # The columns exposed by GamryDtaq.Cook vary by dtaq and are
+        # documented in the Toolkit Reference Manual.
+        acquired_points.extend(zip(*points))
+
+    acquired_points = np.array(acquired_points)
+    if fname is not None:
+        np.savetxt(fname, acquired_points)
+
+    pstat.Close()
+    return jsonify({'data': acquired_points.tolist()})
+
+@app.route('/cv')
+def run_cv():
+    result = str(request.values)
+    startv = float(request.values.get('startv', -0.1))
+    endv = float(request.values.get('endv', 0.1))
+    scanrate = float(request.values.get('scanrate', 1.0))
+    samplerate = float(request.values.get('samplerate', 0.01))
+
+    data = run_ramp(startv, endv, scanrate, samplerate)
+    return data
+
+
+if __name__ == '__main__':
+    app.run(host='jkitchin-win.cheme.cmu.edu', port=5000, debug=True)
+#+END_SRC
+
+#+RESULTS:

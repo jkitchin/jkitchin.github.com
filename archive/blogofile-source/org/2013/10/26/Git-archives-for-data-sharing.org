@@ -1,0 +1,120 @@
+* Git archives for data sharing
+  :PROPERTIES:
+  :categories: data
+  :date:     2013/10/26 18:49:02
+  :updated:  2013/10/26 18:49:02
+  :END:
+in some past posts we have looked at [[http://jkitchin.github.io/blog/2013/10/22/Sharing-data-via-JSON-files/][constructing]] JSON files for data sharing. While functional, that approach requires some extra work to create the data files for sharing, and may not be useful for all sorts of data. For instance you may not want to store electron density in a JSON file. 
+
+Here we consider using [[http://git-scm.com/book/ch5-3.html#Preparing-a-Release][git archives]] for packaging exactly the data you used in the same hierarchy as on your file system. The idea is to store your work in a git repository. You commit any data files you would want to share, and then create an archive of that data. This enables you to control what gets shared, while keeping the data that should not be shared out of the archive. 
+
+We will run a few VASP calculations, and summarize each one in a JSON file. We will commit those JSON files to the git repository, and finally make a small archive that contains them.
+
+** A molecule
+Calculate the total energy of a CO molecule.
+
+#+BEGIN_SRC python
+from ase import Atoms, Atom
+from jasp import *
+import numpy as np
+import json
+np.set_printoptions(precision=3, suppress=True)
+
+co = Atoms([Atom('C',[0,   0, 0]),
+            Atom('O',[1.2, 0, 0])],
+            cell=(6., 6., 6.))
+
+with jasp('molecules/simple-co', #output dir
+          xc='PBE',  # the exchange-correlation functional
+          nbands=6,  # number of bands
+          encut=350, # planewave cutoff
+          ismear=1,  # Methfessel-Paxton smearing
+          sigma=0.01,# very small smearing factor for a molecule
+          atoms=co) as calc:
+    print 'energy = {0} eV'.format(co.get_potential_energy())
+    print co.get_forces()
+    with open('JSON', 'wb') as f:
+        f.write(json.dumps(calc.dict))
+    os.system('git add JSON')
+#+END_SRC
+
+#+RESULTS:
+: energy = -14.687906 eV
+: [[ 5.095  0.     0.   ]
+:  [-5.095  0.     0.   ]]
+
+** A bulk calculation
+Now we run a bulk calculation
+#+BEGIN_SRC python
+from jasp import *
+
+from ase import Atom, Atoms
+
+atoms = Atoms([Atom('Cu',  [0.000,      0.000,      0.000])],
+              cell=  [[ 1.818,  0.000,  1.818],
+                      [ 1.818,  1.818,  0.000],
+                      [ 0.000,  1.818,  1.818]])
+
+with jasp('bulk/alloy/cu',
+          xc='PBE',
+          encut=350,
+          kpts=(13,13,13),
+          nbands=9,
+          ibrion=2,
+          isif=4,
+          nsw=10,
+          atoms=atoms) as calc:
+    print atoms.get_potential_energy()
+    with open('JSON', 'wb') as f:
+        f.write(json.dumps(calc.dict))
+    os.system('git add JSON')
+#+END_SRC
+
+#+RESULTS:
+: -3.723306
+
+** Analysis via the JSON files
+This analysis is independent of =jasp= and therefore is portable
+
+We can retrieve the bulk data
+
+#+BEGIN_SRC python
+import json
+
+with open('bulk/alloy/cu/JSON', 'rb') as f:
+    d = json.loads(f.read())
+    print d['data']['total_energy']
+#+END_SRC
+
+#+RESULTS:
+: -3.723306
+
+Or the molecule data:
+#+BEGIN_SRC python
+import json
+
+with open('molecules/simple-co/JSON', 'rb') as f:
+    d = json.loads(f.read())
+    print d['data']['total_energy']
+#+END_SRC
+
+#+RESULTS:
+: -14.687906
+
+
+** Create the archive file
+As you do your work, you add and commit files as needed. For this project all that needs to be shared are the JSON files, and the scripts (which are in this document) that we used to run the calculations and do the analysis. If we are satisfied with the state of the git repository, we create an archive like this:
+
+#+BEGIN_SRC sh
+git archive --format zip HEAD -o archive.zip
+#+END_SRC
+
+#+RESULTS:
+
+Here is the result: [[./archive.zip]].
+
+You can download the zip file, unzip it, and rerun the analysis to extract the total energies on any system with a modern Python installation.
+
+** Summary
+This seems to be an easy way to share data from a single project, i.e. a single git repository. It isn't obvious how you would package data from multiple projects, or how you would run multiple projects in a single directory.
+

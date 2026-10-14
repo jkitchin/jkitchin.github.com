@@ -1,0 +1,133 @@
+* Another alternative to string templates
+  :PROPERTIES:
+  :categories: emacs-lisp
+  :date:     2014/01/26 09:56:45
+  :updated:  2014/01/26 09:56:45
+  :END:
+
+In the [[http://kitchingroup.cheme.cmu.edu/blog/2014/01/20/Alternatives-to-long-complex-format-statements-in-emacs-lisp/][last post]] I explored a way to expand a string template that was
+more readable than the usual format. Today I look at another approach
+where I use sexp expansions to accomplish the same thing. The idea is
+to embed lisp expressions and replace them by what they evaluate to.
+
+In emacs-lisp, if we have a command in a string, we can "read" it, and
+then eval it. 
+
+Here we get the user-full-name:
+#+BEGIN_SRC emacs-lisp :results value
+(eval (read "user-full-name"))
+#+END_SRC
+
+#+RESULTS:
+: John Kitchin
+
+We can use this on variables too.
+#+BEGIN_SRC emacs-lisp :results value
+(setq some-variable "test")
+(eval (read "some-variable"))
+#+END_SRC
+
+#+RESULTS:
+: test
+
+So, if we use a syntax to identify what to replace, we can substitute
+in the values. Let us try %() as the syntax.
+
+#+BEGIN_SRC emacs-lisp :results value
+(defun expand-template (s)
+  "expand a template containing %() with the eval of its contents"
+  (replace-regexp-in-string "%(\\([^)]+\\))"
+			    (lambda (arg)
+			      (format "%s" (eval (read (substring arg 2 -1))))) s))
+
+
+(let ((key "kitchin-2014")
+      (author "Kitchin, J. R.")
+      (journal "HACS")
+      (year "2014")
+      (volume "1")
+      (pages "1--10")
+      (doi "10.1.1.109/hacs.1.10")
+      (url "http://hacs.org/10.1.1.109/hacs.1.10")
+      (pdf-dir "/home/jkitchin/pdfs")
+      (template "
+ :PROPERTIES:
+  :Custom_ID: %(key)
+  :AUTHOR: %(author
+  :JOURNAL: %(journal)
+  :YEAR: %(year)
+  :VOLUME: %(volume)
+  :PAGES: %(pages)
+  :DOI: %(doi)
+  :URL: %(url)
+ :END:
+[[cite:%(key)]] [[file:%(pdf-dir)/%(key).pdf][pdf]]\n\n"))
+
+(expand-template template))
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+
+ :PROPERTIES:
+  :Custom_ID: kitchin-2014
+  :AUTHOR: Kitchin, J. R.
+  :YEAR: 2014
+  :VOLUME: 1
+  :PAGES: 1--10
+  :DOI: 10.1.1.109/hacs.1.10
+  :URL: http://hacs.org/10.1.1.109/hacs.1.10
+ :END:
+[[cite:kitchin-2014]] [[file:/home/jkitchin/pdfs/kitchin-2014.pdf][pdf]]
+
+#+end_example
+
+That is pretty nice. I like it better than the plist expansion I used
+before. Presumably these variables would already be defined somewhere
+in your code.
+
+I thought of trying this on a more complex expansion, and discovered a
+weakness in the regexp that finds the expansion values. It turns out
+to be simpler to use %{} as the delimiter than %(), because you may
+want nested parentheses. The regexp above does not correctly match
+sets of parentheses.
+
+#+BEGIN_SRC emacs-lisp :results value
+(defun expand-template (s)
+  "expand a template containing %{} with the eval of its contents"
+  (replace-regexp-in-string "%{\\([^}]+\\)}"
+			    (lambda (arg)
+			      (let ((sexp (substring arg 2 -1)))
+				(format "%s" (eval (read sexp))))) s))
+
+(expand-template "2 * 2 = %{(* 2 2)}")
+#+END_SRC
+
+#+RESULTS:
+: 2 * 2 = 4
+
+
+I am not sure this is a desirable way to make a template, with
+multiline code to be expanded, but at least this works!
+
+#+BEGIN_SRC emacs-lisp :results value
+(defun expand-template (s)
+  "expand a template containing %{} with the eval of its contents"
+  (replace-regexp-in-string "%{\\([^}]+\\)}"
+			    (lambda (arg)
+			      (let ((sexp (substring arg 2 -1)))
+				(format "%s" (eval (read sexp))))) s))
+
+(expand-template "The result is %{(progn
+  (if (> 4 3)
+      'true
+    'false))}")
+#+END_SRC
+
+#+RESULTS:
+: The result is true
+
+The regexp used in the expansion is not very robust. In particular if
+there is a } in the code, it will probably fail because the regexp
+does not match closing } correctly. Fixing that is beyond me right
+now!

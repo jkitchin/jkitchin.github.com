@@ -1,0 +1,124 @@
+* Posting articles to CiteULike from bibtex
+  :PROPERTIES:
+  :date:     2013/10/20 15:33:08
+  :updated:  2013/10/20 19:35:35
+  :categories: citeulike, emacs, python
+  :END:
+
+I have been using [[http://www.citeulike.org/user/jkitchin][CiteULike]] for a while now to keep a list of articles that are probably worth reading. Basically, each month I get a table of contents from many journals, and as I read through them, if an article catches my attention I add it to my CiteULike account. 
+
+This list is not synchronized with my bibtex database however. These serve different purposes. The CiteULike list is for articles that are probably worth reading, while the bibtex file contains articles I am probably going to cite. It should be that every article in my bibtex file is on CiteULike, but not necessarily the other way around. The problem is I do not have a way to push files from my bibtex file to CiteULike easily.
+
+CiteULike allows you to [[http://www.citeulike.org/profile/jkitchin/import_go][import]] a bibtex file though. I want to explore automatically importing a bibtex file by simulating the form. We need a set of cookies to make this happen so CiteULike knows who we are. I stored my username and password in a file called citeulike.json and use them to get cookies that I save here in a pickle file. I think this cookie gives you access to your CiteULike account, so it should be kept secret.
+
+#+BEGIN_SRC python
+import json, pickle, requests
+
+with open('citeulike.json') as f:
+    d = json.loads(f.read())
+
+url = 'http://www.citeulike.org/login.do'
+
+data = "username={0}&password={1}&perm=1".format(d['username'], d['password'])
+
+r = requests.post(url, data=data, allow_redirects=False)
+
+with open('cookies.pckl', 'wb') as f:
+    pickle.dump(r.cookies, f)
+#+END_SRC
+
+#+RESULTS:
+
+By inspecting the [[http://www.citeulike.org/profile/jkitchin/import_go][import]] page with Firebug, I constructed this http request to upload a bibtex string.
+
+#+BEGIN_SRC python
+import pickle, requests
+
+# reload cookies
+with open('cookies.pckl', 'rb') as f:
+    cookies = pickle.load(f)
+
+url = 'http://www.citeulike.org/profile/jkitchin/import_do'
+
+bibtex = '''
+@article{zhuo-2010-co2-induc,
+  author =       {Zhuo, Shengchi and Huang, Yongmin and Peng, Changjun
+                  and Liu, Honglai and Hu, Ying and Jiang, Jianwen},
+  title =        {CO2-Induced Microstructure Transition of Surfactant
+                  in Aqueous Solution: Insight from Molecular Dynamics
+                  Simulation},
+  journal =      {The Journal of Physical Chemistry B},
+  volume =       114,
+  number =       19,
+  pages =        {6344-6349},
+  year =         2010,
+  doi =          {10.1021/jp910253b},
+  URL =          {http://pubs.acs.org/doi/abs/10.1021/jp910253b},
+  eprint =       {http://pubs.acs.org/doi/pdf/10.1021/jp910253b}
+}'''
+
+data = {'pasted':bibtex,
+        'to_read':2,
+        'tag_parsing':'simple',
+        'strip_brackets':'no',
+        'update_id':'bib-key',
+        'btn_bibtex':'Import BibTeX file ...'}
+
+headers = {'content-type': 'multipart/form-data',
+           'User-Agent':'jkitchin/johnrkitchin@gmail.com bibtexupload'}
+
+r = requests.post(url, headers=headers, data=data, cookies=cookies, files={})
+#+END_SRC
+
+#+RESULTS:
+
+The result is that article is now listed in my CiteULike at http://www.citeulike.org/user/jkitchin/article/12728895.  This opens the possibility of integrating this into my bibtex workflow. I could implement this in emacs-lisp, and have it automatically upload new entries in the bibtex file to CiteULike. 
+
+** Doing this in emacs
+I think the easiest thing to do here is to write a python script that takes the bibtex string and posts it. We will use emacs to get the bibtex string. We will use the example at  http://ergoemacs.org/emacs/elisp_perl_wrapper.html to put this together. This example uses an external script that takes a string on stdin, and returns a result on stdout.
+
+We will run the function in a bibtex buffer. We will narrow the buffer to the current entry, and use that to define the boundaries of the string. We do the command in a temp-buffer to prevent it from modifying our bibtex file. There is some way to make the command not do this with optional arguments, but I did not figure it out. It is a little ugly I had to use an absolute path below. An alternative would be to put the script into a directory on your path. Here is the function.
+
+#+BEGIN_SRC emacs-lisp
+(defun j/upload-bibtex-entry-to-citeulike ()
+  "get bibtex string and submit to citeulike"
+  (interactive)
+  (save-restriction
+    (bibtex-narrow-to-entry)
+    (let ((startpos (point-min))
+          (endpos (point-max))
+          (bibtex-string (buffer-string))
+          (script "python c:/Users/jkitchin/Dropbox/blogofile-jkitchin.github.com/_blog/upload_bibtex_citeulike.py"))
+      (with-temp-buffer (insert bibtex-string)
+                        (shell-command-on-region (point-min) (point-max) script t nil nil t)))))
+#+END_SRC
+
+Now, let us define the python script.
+
+#+BEGIN_SRC python  :tangle upload_bibtex_citeulike.py
+#!python
+import pickle, requests, sys
+
+# reload cookies
+with open('c:/Users/jkitchin/Dropbox/blogofile-jkitchin.github.com/_blog/cookies.pckl', 'rb') as f:
+    cookies = pickle.load(f)
+
+url = 'http://www.citeulike.org/profile/jkitchin/import_do'
+
+bibtex = sys.stdin.read()
+
+data = {'pasted':bibtex,
+        'to_read':2,
+        'tag_parsing':'simple',
+        'strip_brackets':'no',
+        'update_id':'bib-key',
+        'btn_bibtex':'Import BibTeX file ...'}
+
+headers = {'content-type': 'multipart/form-data',
+           'User-Agent':'jkitchin/johnrkitchin@gmail.com bibtexupload'}
+
+r = requests.post(url, headers=headers, data=data, cookies=cookies, files={})
+#+END_SRC
+
+That is it. Now, in my bibtex file with the cursor in an entry, I type M-x j/upload-bibtex-entry-to-citeulike, and a few seconds later the entry has been uploaded! 
+

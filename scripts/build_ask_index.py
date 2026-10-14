@@ -10,8 +10,9 @@ Sources, each a "kind" the widget can label:
   post   new posts (_site/posts/<slug>/index.html)
   blog   the frozen 2009-2025 posts (legacy/blog/YYYY/MM/DD/<slug>/index.html)
   pub    one passage per article in data/publications.yml (bibliographic record)
-  paper  summaries of the group's papers from the crucible wiki, if
-         data/papers.json exists (see scripts/export_crucible.py)
+  paper  summaries of the group's papers (papers/<key>/, from the crucible wiki
+         via scripts/export_crucible.py)
+  topic  research topics across those papers (papers/topics/<concept>/)
 
 Format (short keys keep the file small; the widget depends on t, h, u, k, x):
 
@@ -183,20 +184,26 @@ def publications(chunks):
 
 
 def papers(chunks):
-    """Crucible wiki summaries exported to data/papers.json by export_crucible.py."""
-    path = ROOT / "data" / "papers.json"
-    if not path.exists():
-        return
-    for a in json.loads(path.read_text()):
-        for sec in a["sections"]:
-            for piece in split(sec["text"]):
-                if len(piece) >= MIN_CHARS:
-                    c = {"t": a["title"], "h": " › ".join([a["title"]] + sec["trail"]),
-                         "u": a["url"] + (f"#{sec['anchor']}" if sec.get("anchor") else ""),
-                         "k": "paper", "x": piece}
-                    if a.get("citation"):
-                        c["c"] = a["citation"]
-                    chunks.append(c)
+    """Paper summaries and topic pages exported from the crucible (export_crucible.py)."""
+    for f in sorted(SITE.glob("papers/*/index.html")) + sorted(SITE.glob("papers/topics/*/index.html")):
+        doc = html.parse(str(f)).getroot()
+        main = doc.xpath('//main[@id="quarto-document-content"]')
+        if not main:
+            continue
+        main = main[0]
+        h1 = doc.xpath('//h1[contains(@class,"title")]')
+        title = ws(h1[0].text_content()) if h1 else f.parent.name
+        cite = main.xpath('.//div[contains(@class,"paper-citation")]')
+        citation = ws(cite[0].text_content()) if cite else ""
+        for bad in main.xpath('.//header[@id="title-block-header"] | .//div[contains(@class,"callout")]'
+                              ' | .//div[contains(@class,"paper-citation")]'):
+            bad.getparent().remove(bad)
+        rel = f.parent.relative_to(SITE).as_posix()
+        before = len(chunks)
+        add(chunks, "topic" if "/topics/" in f"/{rel}/" else "paper", title, f"/{rel}/", main)
+        for c in chunks[before:]:
+            if citation:
+                c["c"] = citation
 
 
 def main():

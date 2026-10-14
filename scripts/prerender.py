@@ -39,6 +39,8 @@ def scholar_url(title):
 
 def publications():
     pubs = yaml.safe_load((ROOT / "data/publications.yml").read_text())
+    idx = ROOT / "data" / "papers-index.json"  # written by export_crucible.py
+    summaries = json.loads(idx.read_text()) if idx.exists() else {}
     pubs.sort(key=lambda p: str(p.get("date", "")), reverse=True)
     by_year = defaultdict(list)
     for p in pubs:
@@ -51,6 +53,7 @@ def publications():
            '<div class="badges">'
            f'<a class="badge-link" href="{SCHOLAR_PROFILE}"><i class="bi bi-mortarboard"></i> Google Scholar</a>'
            f'<a class="badge-link" href="{ORCID}"><i class="bi bi-person-badge"></i> ORCID</a>'
+           '<a class="badge-link" href="papers/"><i class="bi bi-card-text"></i> Paper summaries</a>'
            '</div></div>',
            '<input type="search" id="pub-filter" class="form-control pub-filter" '
            'placeholder="Filter by title, author, journal or year" aria-label="Filter publications">',
@@ -71,6 +74,9 @@ def publications():
             if doi:
                 links.append(f'<a href="https://doi.org/{esc(doi)}"><i class="bi bi-journal-text"></i> Journal</a>')
             links.append(f'<a href="{esc(scholar_url(p.get("title", "")))}"><i class="bi bi-mortarboard"></i> Scholar</a>')
+            if doi.lower() in summaries:
+                links.append(f'<a class="summary-link" href="{esc(summaries[doi.lower()])}">'
+                             '<i class="bi bi-card-text"></i> Summary</a>')
             badge = (f'<div class="altmetric-lazy" data-badge-type="donut" data-badge-popover="left" '
                      f'data-hide-no-mentions="true" data-doi="{esc(doi)}"></div>') if doi else ""
             out.append(

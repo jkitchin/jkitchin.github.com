@@ -1,0 +1,76 @@
+* An org-mode filter for blogofile
+  :PROPERTIES:
+  :categories: python,blog,orgmode
+  :date:     2016/02/20 17:26:06
+  :END:
+For fun today I thought I would create a [[http://blogofile.readthedocs.org/en/latest/filters.html][filter]] for [[http://blogofile.readthedocs.org/][blogofile]] that would let me write posts directly in org-mode. I already more or less do that, and use [[https://github.com/jkitchin/jmax/blob/master/user/blogofile.el][this elisp module]] I wrote to export the org to html. I do that in another "hidden" directory I call _blog, which blogofile ignores. The export puts the rendered html into the _posts directory, and then when I build the blog, it is rerendered by blogofile to _site, and then copied to _deploy and pushed to the github site. My blogofile.el library does a lot more if there are images, files, etc... they get copied to the right place.
+
+When I started this blog, I did not have as good an understanding of how to convert org-mode to other formats as I have now. It turns out to be easy to write a filter that turns org-content to html here. Here is the simple filter. We just write the content to a file, use emacs to export it to html, delete the file, and return the html. I reuse the machinery of blogofile.el for the export, since it already handles links and files. I use emacsclient to do the conversion so that there is basically no startup cost for emacs (since I have the emacs daemon running already).
+
+Why would I want to do this? Lots of reasons ;) I might want a special org-link syntax to link to other posts that this would address, or an easier way to use the interactive plotting tools like bokeh that require injection of javascript into the html header, or because I had some important thing to do this morning and I did this instead ;)
+
+#+BEGIN_SRC python :tangle ../_filters/orgmode.py
+import os
+import tempfile
+
+config = {"name": "org-mode",
+        "author": "John Kitchin",
+        "description": "Renders org-mode formatted text to HTML"}
+
+# Directory where posts are stored
+_posts = "/Users/jkitchin/blogofile-jkitchin.github.com/_posts"
+
+def run(content):
+    # we need to write the content to a file
+    fid, tmp = tempfile.mkstemp(".org",
+                                dir=_posts)
+
+    html_file = tmp.replace('.org', '.html')
+
+    with open(tmp, 'w') as f:
+        f.write(content)
+
+    # run emacs to export it.
+    cmd = ("""emacsclient --eval """
+           """'(progn (with-current-buffer (find-file-noselect "{0}")"""
+           """   (re-search-forward "^*")"""
+           """   (let ((html (save-window-excursion (concat (bf-get-HTML) (bf-copyright)))))"""
+           """     (bf-copy-org-to-blog)"""
+           """     (save-buffer) (kill-buffer (find-buffer-visiting "{0}"))"""
+           """     (with-temp-file "{1}" """
+           """        (insert html)))))'""".format(tmp, html_file))
+
+    os.system(cmd)
+
+    # read the results in and return them
+    with open(html_file, 'r') as f:
+        html = f.read()
+
+    if os.path.exists(tmp): os.unlink(tmp)
+    if os.path.exists(html_file): os.unlink(html_file)
+    return html
+#+END_SRC
+
+One mildly annoying feature is you have to have a top headline for the export, or you get an error from org about being before the first headline. That is probably a bug. Here are few tests to see how well it works. I am not sure how often I will use this, as I currently have to manually generate the yaml header in the post to make it work, and give it a filename. That is only an emacs-lisp function away from not annoying me though.
+
+** An equation
+My favorite: \(e^{i\pi} + 1 = 0\).
+
+** An image
+#+BEGIN_SRC python
+import matplotlib.pyplot as plt
+import numpy as np
+
+x = np.linspace(0, 20 * np.pi, 200)
+
+f = 1e-3
+y1 = np.sin(x) * f / x
+y2 = np.cos(x) * f / x
+plt.plot(y1, y2)
+plt.savefig('../img/spiral.png')
+#+END_SRC
+
+#+RESULTS:
+
+
+[[../img/spiral.png]]

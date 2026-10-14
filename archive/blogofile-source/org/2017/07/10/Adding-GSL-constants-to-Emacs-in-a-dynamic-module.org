@@ -1,0 +1,123 @@
+* Adding GSL constants to Emacs in a dynamic module
+  :PROPERTIES:
+  :categories: emacs,dynamic-module
+  :date:     2017/07/10 09:38:21
+  :updated:  2017/07/10 09:38:21
+  :org-url:  http://kitchingroup.cheme.cmu.edu/org/2017/07/10/Adding-GSL-constants-to-Emacs-in-a-dynamic-module.org
+  :permalink: http://kitchingroup.cheme.cmu.edu/blog/2017/07/10/Adding-GSL-constants-to-Emacs-in-a-dynamic-module/index.html
+  :END:
+
+The GNU Scientific Library defines a lot of [[https://www.gnu.org/software/gsl/doc/html/const.html][physical constants]]. Since we are exploring how to make Emacs a more scientific environment to work in, it would be nice to import these constants to elisp. We do that through a dynamic module. This turned out to be tricky. I thought we could just use a funcall to defconst or defvar, but these are special forms and you cannot funcall them. @polizta on Stackoverflow [[https://emacs.stackexchange.com/questions/34049/how-do-you-define-constants-in-an-emacs-dynamic-module/34063#34063][pointed me to the path]] that led to success: You make a list like '(defconst sym val doc) and then eval it. That can be funcall'd, and it works nicely in the module below. It is a growing theme that it takes much hacking around to figure out how to do things like this.
+
+The only other notable feature of this module is that I created a defconst function to make adding multiple constants less verbose. Here I only add two constants. There are about 408 constants defined in gsl_const_*.h, so brevity might be a good idea! Here is the module.
+
+#+BEGIN_SRC c :tangle gsl-constants.c
+#include <gsl/gsl_const_mksa.h>
+#include <string.h>
+#include "emacs-module.h"
+
+int plugin_is_GPL_compatible;
+
+// I assume here that all values will be double. I can't think of any that would
+// be ints
+static void defconst (emacs_env *env, const char *name, double value, const char *doc)
+{
+  // These are functions we will call
+  emacs_value eval = env->intern(env, "eval");  
+  emacs_value list = env->intern(env, "list");
+
+  // These will make up the list we will eventally eval
+  emacs_value fdefconst = env->intern(env, "defconst");
+  emacs_value sym = env->intern(env, name);
+  emacs_value val = env->make_float(env, value);
+  emacs_value sdoc = env->make_string(env, doc, strlen(doc));
+
+  // make a list of (defconst sym val doc)
+  emacs_value largs[] = {fdefconst, sym, val, sdoc};
+  emacs_value qlist = env->funcall(env, list, 4, &largs);   
+
+  // now eval the list of symbols
+  emacs_value args[] = { qlist };  
+  env->funcall(env, eval, 1, &args);
+}
+
+int emacs_module_init(struct emacs_runtime *ert)
+{
+  emacs_env *env = ert->get_environment(ert);
+
+  defconst(env, "GSL-CONST-MKSA-SPEED-OF-LIGHT",
+	   GSL_CONST_MKSA_SPEED_OF_LIGHT,
+	   "Speed of light in vacuum (m/s).");
+  
+  defconst(env, "GSL-CONST-MKSA-PLANCKS-CONSTANT-H",
+	   GSL_CONST_MKSA_PLANCKS_CONSTANT_H,
+	   "Plank's constant, h");
+
+  // This is what allows the shared library to provide a feature 
+  emacs_value provide = env->intern(env, "provide");
+  emacs_value provide_args[] = { env->intern(env, "gsl-constants") };
+  env->funcall(env, provide, 1, provide_args);
+  
+  return 0;
+}
+#+END_SRC
+
+
+Regular gcc will work to compile this module. 
+
+#+BEGIN_SRC sh
+rm -f gsl-constants.so gsl-constants.o
+gcc -Wall -I/usr/local/include -fPIC -c gsl-constants.c
+gcc -shared -L/usr/local/include -lgsl -o gsl-constants.so gsl-constants.o
+#+END_SRC
+
+#+RESULTS:
+
+Here is in action. 
+
+#+BEGIN_SRC emacs-lisp
+(add-to-list 'load-path "/Users/jkitchin/vc/blogofile-jkitchin.github.com/_blog/dynamic-module/")
+(require 'gsl-constants)
+GSL-CONST-MKSA-SPEED-OF-LIGHT
+#+END_SRC
+
+#+RESULTS:
+: 299792458.0
+
+We can see there is a docstring on that constant:
+
+#+BEGIN_SRC emacs-lisp
+(describe-variable 'GSL-CONST-MKSA-SPEED-OF-LIGHT)
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+GSL-CONST-MKSA-SPEED-OF-LIGHT's value is 299792458.0
+
+
+  This variable can be risky when used as a file-local variable.
+
+Documentation:
+Speed of light in vacuum (m/s).
+
+For more information check the manuals.
+
+#+end_example
+
+
+It is worth thinking about what we accomplished here. The value of each constant in GSL is stored in a header file. The units are stored in a comment next to the value, and the documentation is in an html page somewhere. It is not easy to introspect that! Getting it all into an Emacs variable makes that more introspectable, and findable. That means while typing elisp code you will get completion on these variables. Check this out:
+
+#+BEGIN_SRC emacs-lisp
+(apropos-variable "GSL-*")
+(with-current-buffer "*Apropos*" (buffer-string))
+#+END_SRC
+
+#+RESULTS:
+: Type RET on a type label to view its full documentation.
+: 
+: GSL-CONST-MKSA-PLANCKS-CONSTANT-H
+:   Variable: Plank's constant, h
+: GSL-CONST-MKSA-SPEED-OF-LIGHT
+:   Variable: Speed of light in vacuum (m/s).
+
+It seems like it might be possible to partially automate creation of this module by parsing the gsl_const*.h files. There is no automating adding the doc strings though, I am pretty sure that will have to be done by hand ;(

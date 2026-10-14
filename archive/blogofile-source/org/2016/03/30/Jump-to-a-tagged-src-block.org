@@ -1,0 +1,124 @@
+* Jump to a tagged src block
+  :PROPERTIES:
+  :categories: emacs,orgmode
+  :date:     2016/03/30 14:26:35
+  :updated:  2016/03/30 14:26:35
+  :END:
+If you have a lot of src-blocks in your org-file, it might be nice to "tag" them and be able to jump around between them using tag expressions, or by the name of the block, language etc... Here we develop a way to do that and create a handy function to jump to blocks in the current buffer.
+
+First, we look at how to "tag" a src-block. One way is to use a header like this:
+
+#+BEGIN_EXAMPLE
+#+header: :tags cool idiom two
+#+END_EXAMPLE
+
+These are not tags in the usual org-mode sense, they are just a space separated list of words we will later treat as tags. We can get the tags on a src-block with this function.
+
+#+header: :tags cool idiom two
+#+BEGIN_SRC emacs-lisp
+(defun src-block-tags (src-block)
+  "Return tags for SRC-BLOCK (an org element)."
+  (let* ((headers (-flatten
+		   (mapcar 'org-babel-parse-header-arguments
+			   (org-element-property :header src-block))))
+	 (tags (cdr (assoc :tags headers))))
+    (when tags
+      (split-string tags))))
+#+END_SRC
+
+#+RESULTS:
+: src-block-tags
+
+Now, we make a src-block with the tags "test" "one" and "idiom", and see how to tell if the block matches the tag expression "test+idiom".
+
+#+header: :tags test one idiom
+#+name: tag-matcher
+#+BEGIN_SRC emacs-lisp
+(let* ((lexical-binding nil)
+       (todo-only nil)
+       (tags-list (src-block-tags (org-element-context)))
+       (tag-expression "test+idiom"))
+  (eval (cdr (org-make-tags-matcher tag-expression))))
+
+#+END_SRC
+#+RESULTS: tag-matcher
+: t
+
+It does, so we wrap that up into a function that tells us if a src-block matches some tag expression.
+
+#+header: :tags one
+#+BEGIN_SRC emacs-lisp
+(defun src-block-match-tag-expression-p (src-block tag-expression)
+  "Determine if SRC-BLOCK matches TAG-EXPRESSION."
+  (let* ((lexical-binding nil)
+	 (todo-only nil)
+	 (tags-list (src-block-tags src-block)))
+    (eval (cdr (org-make-tags-matcher tag-expression)))))
+#+END_SRC
+#+RESULTS:
+: src-block-match-tag-expression-p
+
+Here we test that on a block tagged "one three" on the expression "one-two" which means tagged one and not two.
+#+header: :tags one three
+#+BEGIN_SRC emacs-lisp
+(src-block-match-tag-expression-p (org-element-context) "one-two")
+#+END_SRC
+#+RESULTS:
+: t
+
+Those are the main pieces we need to jump around. We just need a selection tool with a list of filtered candidates. We get a list of src-block candidates to choose from in the next block as an example. Here we get blocks tagged one but not two. We can incorporate this into a selection backend like helm or ivy.
+
+#+BEGIN_SRC emacs-lisp :results code
+(org-element-map (org-element-parse-buffer) 'src-block
+  (lambda (src-block)
+    (when (src-block-match-tag-expression-p src-block "one-two")
+      ;; Get a string and marker
+      (cons
+       (format "%15s|%15s|%s"
+	       (org-element-property :name src-block)
+	       (org-element-property :language src-block)
+	       (org-element-property :header src-block))
+       (org-element-property :begin src-block)))))
+#+END_SRC
+#+RESULTS:
+
+#+BEGIN_SRC emacs-lisp
+(("    tag-matcher|     emacs-lisp|(:tags test one idiom)" . 1222)
+ ("            nil|     emacs-lisp|(:tags one)" . 1641)
+ ("            nil|     emacs-lisp|(:tags one three)" . 2120))
+#+END_SRC
+
+Now let us put that into ivy. We will ask for an expression to filter the blocks on, and then use ivy to narrow what is left, and the only action is to jump to the position of the selected block. You can start with a tag expression, or press enter to get all the tags. Then you can use ivy to further narrow by language, block name, or other tags.
+
+#+header: :tags three
+#+BEGIN_SRC emacs-lisp
+(defun ivy-jump-to-src (tag-expression)
+  (interactive "sTag expression: ")
+  (ivy-read "Select: "
+	    (org-element-map (org-element-parse-buffer) 'src-block
+	      (lambda (src-block)
+		(when (src-block-match-tag-expression-p src-block tag-expression)
+		  ;; Get a string and marker
+		  (cons
+		   (format "%15s|%15s|%s"
+			   (org-element-property :name src-block)
+			   (org-element-property :language src-block)
+			   (org-element-property :header src-block))
+		   (org-element-property :begin src-block)))))
+	    :require-match t
+	    :action '(1
+		      ("j" (lambda (pos) (interactive) (goto-char pos))))))
+#+END_SRC
+
+#+RESULTS:
+: ivy-jump-to-src
+
+For fun, here is a python block just for testing.
+#+BEGIN_SRC python
+print(42)
+#+END_SRC
+
+#+RESULTS:
+: 42
+
+That is it! It seems to work ok. There are some variations that might be preferrable, like putting the tags in as params in the src-block header to avoid needing a separate header line. It isn't clear how much I would use this, and it is slow if you have /a lot/ of src blocks in a /large/org-file because of the parsing. (how large? I noticed a notable lag on my 22,800 line org-file this is in ;).

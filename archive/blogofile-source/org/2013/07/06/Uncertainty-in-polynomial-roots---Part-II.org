@@ -1,0 +1,146 @@
+* Uncertainty in polynomial roots - Part II
+  :PROPERTIES:
+  :categories: data analysis, uncertainty
+  :date:     2013/07/06 15:31:38
+  :updated:  2013/07/06 15:31:38
+  :END:
+We previously looked at uncertainty in polynomial roots where we had an analytical formula for the roots of the polynomial, and we knew the uncertainties in the polynomial parameters. It would be inconvenient to try this for a cubic polynomial, although there may be formulas for the roots. I do not know of there are general formulas for the roots of a 4^{th} order polynomial or higher. 
+
+Unfortunately, we cannot use the uncertainties package out of the box directly here.
+
+#+BEGIN_SRC python :session
+import uncertainties as u
+import numpy as np
+c, b, a = [-0.99526746, -0.011546,    1.00188999]
+sc, sb, sa = [ 0.0249142,   0.00860025,  0.00510128]
+
+A = u.ufloat((a, sa))
+B = u.ufloat((b, sb))
+C = u.ufloat((c, sc))
+
+print np.roots([A, B, C])
+#+END_SRC
+
+#+RESULTS:
+: 
+: >>> >>> >>> >>> >>> >>> >>> >>> Traceback (most recent call last):
+:   File "<stdin>", line 1, in <module>
+:   File "c:\Users\jkitchin\AppData\Local\Enthought\Canopy\User\lib\site-packages\numpy\lib\polynomial.py", line 218, in roots
+:     p = p.astype(float)
+:   File "c:\Users\jkitchin\AppData\Local\Enthought\Canopy\User\lib\site-packages\uncertainties\__init__.py", line 1257, in raise_error
+:     % (self.__class__, coercion_type))
+: TypeError: can't convert an affine function (<class 'uncertainties.Variable'>) to float; use x.nominal_value
+
+To make some progress, we have to understand how the [[https://github.com/numpy/numpy/blob/v1.7.0/numpy/lib/polynomial.py#L149][numpy.roots]] function works. It constructs a [[http://en.wikipedia.org/wiki/Companion_matrix][Companion matrix]], and the eigenvalues of that matrix are the same as the roots of the polynomial.  
+
+#+BEGIN_SRC python
+import numpy as np
+
+c0, c1, c2 = [-0.99526746, -0.011546,    1.00188999]
+
+p = np.array([c2, c1, c0])
+N = len(p)
+
+# we construct the companion matrix like this
+# see https://github.com/numpy/numpy/blob/v1.7.0/numpy/lib/polynomial.py#L220
+# for this code.
+# build companion matrix and find its eigenvalues (the roots)
+A = np.diag(np.ones((N-2,), p.dtype), -1)
+A[0, :] = -p[1:] / p[0]
+
+print A
+
+roots = np.linalg.eigvals(A)
+print roots
+#+END_SRC
+
+#+RESULTS:
+: [[ 0.01152422  0.99338996]
+:  [ 1.          0.        ]]
+: [ 1.00246827 -0.99094405]
+
+This definition of the companion matrix is a little different than the one [[http://en.wikipedia.org/wiki/Companion_matrix][here]], but primarily in the scaling of the coefficients. That does not seem to change the eigenvalues, or the roots. 
+
+Now, we have a path to estimate the uncertainty in the roots. Since we know the polynomial coefficients and their uncertainties from the fit, we can use Monte Carlo sampling to estimate the uncertainty in the roots. 
+
+#+BEGIN_SRC python
+import numpy as np
+import uncertainties as u
+
+c, b, a = [-0.99526746, -0.011546,    1.00188999]
+sc, sb, sa = [ 0.0249142,   0.00860025,  0.00510128]
+
+NSAMPLES = 100000
+A = np.random.normal(a, sa, (NSAMPLES, ))
+B = np.random.normal(b, sb, (NSAMPLES, ))
+C = np.random.normal(c, sc, (NSAMPLES, ))
+
+roots = [[] for i in range(NSAMPLES)]
+
+for i in range(NSAMPLES):
+    p = np.array([A[i], B[i], C[i]])
+    N = len(p)
+    
+    M = np.diag(np.ones((N-2,), p.dtype), -1)
+    M[0, :] = -p[1:] / p[0]
+    r = np.linalg.eigvals(M)
+    r.sort()  # there is no telling what order the values come out in
+    roots[i] = r
+    
+avg = np.average(roots, axis=0)
+std = np.std(roots, axis=0)
+
+for r, s in zip(avg, std):
+    print '{0: f} +/- {1: f}'.format(r, s)
+#+END_SRC
+
+#+RESULTS:
+: -0.990949 +/-  0.013435
+:  1.002443 +/-  0.013462
+
+Compared to our previous approach with the uncertainties package where we got:
+
+#+begin_example
+: -0.990944048037+/-0.0134208013339
+:  1.00246826738 +/-0.0134477390832
+#+end_example
+
+the agreement is quite good! The advantage of this approach is that we do not have to know the formula for the roots of higher order polynomials to estimate the uncertainty in the roots. The downside is we have to evaluate the eigenvalues of a matrix a large number of times to get good estimates of the uncertainty. For high power polynomials this could be problematic. I do not currently see a way around this, unless it becomes possible to get the uncertainties package to propagate through the numpy.eigvals function. It is possible to [[http://pythonhosted.org/uncertainties/user_guide.html#making-custom-functions-accept-numbers-with-uncertainties][wrap]] some functions with uncertainties, but so far only functions that return a single number.
+
+There are some other potential problems with this approach.  It is assumed that the accuracy of the eigenvalue solver is much better than the uncertainty in the polynomial parameters. You have to use some judgment in using these uncertainties. We are approximating the uncertainties of a nonlinear problem. In other words, the uncertainties of the roots are not linearly dependent on the uncertainties of the polynomial coefficients.  
+
+It is possible to [[http://pythonhosted.org/uncertainties/user_guide.html#making-custom-functions-accept-numbers-with-uncertainties][wrap]] some functions with uncertainties, but so far only functions that return a single number. Here is an example of getting the n^{th} root and its uncertainty.
+
+#+BEGIN_SRC python
+import uncertainties as u
+import numpy as np
+
+@u.wrap
+def f(n=0, *P):
+    ''' compute the nth root of the polynomial P and the uncertainty of the root'''
+    p =  np.array(P)
+    N = len(p)
+    
+    M = np.diag(np.ones((N-2,), p.dtype), -1)
+    M[0, :] = -p[1:] / p[0]
+    r = np.linalg.eigvals(M)
+    r.sort()  # there is no telling what order the values come out in
+    return r[n]
+
+# our polynomial coefficients and standard errors
+c, b, a = [-0.99526746, -0.011546,    1.00188999]
+sc, sb, sa = [ 0.0249142,   0.00860025,  0.00510128]
+
+A = u.ufloat((a, sa))
+B = u.ufloat((b, sb))
+C = u.ufloat((c, sc))
+
+for result in [f(n, A, B, C) for n in [0, 1]]:
+    print result
+#+END_SRC
+
+#+RESULTS:
+: -0.990944048037+/-0.013420800377
+: 1.00246826738+/-0.0134477388218
+
+It is good to see this is the same result we got earlier, with /a lot less work/ (although we do have to solve it for each root, which is a bit redundant)! It is a bit more abstract though, and requires a specific formulation of the function for the wrapper to work.

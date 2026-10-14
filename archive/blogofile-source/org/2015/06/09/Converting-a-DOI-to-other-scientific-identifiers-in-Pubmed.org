@@ -1,0 +1,93 @@
+* Converting a DOI to other scientific identifiers in Pubmed
+  :PROPERTIES:
+  :categories: orgmode,ref
+  :date:     2015/06/09 07:29:08
+  :updated:  2015/06/09 07:29:08
+  :END:
+
+Sometimes it is useful to convert a DOI to another type of identifier. For example, in this [[http://kitchingroup.cheme.cmu.edu/blog/2015/06/07/Getting-a-Scopus-EID-from-a-DOI/][post]] we converted a DOI to a Scopus EID, and in this [[http://kitchingroup.cheme.cmu.edu/blog/2015/06/08/Getting-a-WOS-Accession-number-from-a-DOI/][one]] we got the WOS accession number from a DOI. Today, we consider how to get Pubmed identifiers. Pubmed provides an API for this purpose:
+
+http://www.ncbi.nlm.nih.gov/pmc/tools/id-converter-api/
+
+We will use the DOI tool. According to the documentation, we need to form a URL like this:
+
+DOI: http://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?tool=my_tool&email=my_email@example.com&ids=10.1093/nar/gks1195
+
+We will call our tool "org-ref" and use the value of user-mail-address. The URL above returns XML, so we can parse it, and then extract the identifiers. This is a simple http GET request, which we can construct using url-retrieve-synchronously. Here is what we get.
+
+#+BEGIN_SRC emacs-lisp :results value code
+(let* ((url-request-method "GET")
+       (doi"10.1093/nar/gks1195")
+       (my-tool "org-ref")
+       (url (format "http://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?tool=%s&email=%s&ids=%s"
+                    my-tool
+                    user-mail-address
+                    doi))
+       (xml (with-current-buffer  (url-retrieve-synchronously url)
+		(xml-parse-region url-http-end-of-headers (point-max)))))
+xml)
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC emacs-lisp
+((pmcids
+  ((status . "ok"))
+  "\n"
+  (request
+   ((idtype . "doi")
+    (dois . "")
+    (versions . "yes")
+    (showaiid . "no"))
+   "\n"
+   (echo nil "tool=org-ref;email=jkitchin%40andrew.cmu.edu;ids=10.1093%2Fnar%2Fgks1195")
+   "\n")
+  "\n"
+  (record
+   ((requested-id . "10.1093/NAR/GKS1195")
+    (pmcid . "PMC3531190")
+    (pmid . "23193287")
+    (doi . "10.1093/nar/gks1195"))
+   (versions nil
+	     (version
+	      ((pmcid . "PMC3531190.1")
+	       (current . "true")))))
+  "\n"))
+#+END_SRC
+
+The parsed xml is now just an emacs-lisp data structure. We need to get the record, and then get the attributes of it to extract the identifiers. Next, we create a plist of the identifiers. For fun, we add the Scopus EID and WOS accession number from the previous posts too.
+
+#+BEGIN_SRC emacs-lisp :results value code
+(let* ((url-request-method "GET")
+       (doi"10.1093/nar/gks1195")
+       (my-tool "org-ref")
+       (url (format "http://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?tool=%s&email=%s&ids=%s"
+                    my-tool
+                    user-mail-address
+                    doi))
+       (xml (car (with-current-buffer  (url-retrieve-synchronously url)
+		   (xml-parse-region url-http-end-of-headers (point-max)))))
+       (record (first  (xml-get-children xml 'record)))
+       (doi (xml-get-attribute record 'doi))
+       (pmcid (xml-get-attribute record 'pmcid))
+       (pmid (xml-get-attribute record 'pmid)))
+  (list :doi doi :pmid pmid :pmcid pmcid :eid (scopus-doi-to-eid doi) :wos (wos-doi-to-accession-number doi)))
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC emacs-lisp
+(:doi "10.1093/nar/gks1195" :pmid "23193287" :pmcid "PMC3531190" :eid "2-s2.0-80053651587" :wos "000312893300006")
+#+END_SRC
+
+Well, there you have it, four new scientific document ids from one DOI. /Of course/ we have defined org-mode links for each one of these:
+
+doi:10.1093/nar/gks1195
+
+pmid:23193287
+
+pmcid:PMC3531190
+
+eid:2-s2.0-80053651587
+
+wos:000312893300006
+
+I have not tested this on too many DOIs yet. Not all of them are indexed by Pubmed.

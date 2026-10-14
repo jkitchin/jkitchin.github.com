@@ -1,0 +1,165 @@
+* Restarting org-babel sessions in org-mode more effectively
+  :PROPERTIES:
+  :categories: orgmode
+  :date:     2015/03/19 18:53:18
+  :updated:  2015/03/19 18:53:18
+  :END:
+
+In a previous [[http://kitchingroup.cheme.cmu.edu/blog/2015/03/12/Making-org-mode-Python-sessions-look-better/][post]] I eliminated one annoying problem with sessions, which was getting rid of extraneous Python interpreter characters in the output. Another thing that has bothered me is when you close Emacs, or even the session buffer, the session is, of course, lost. That means when you reopen the file, you have to run each block in order to continue your work. There does not seem to be a selective way to do this in org. So, in this post, we consider a simple approach to automate that. We want a function that will run all the blocks in a current session that are above the current point.
+
+
+The idea is we will go to the beginning of the buffer, find all blocks that match the language of the block we are in, and in the session, and execute them. We can tell if a block is in a session by looking at the :parameters property of the block. Interestingly, if a block is not in a session, then session will be "none", if it is in an unnamed session, session will be nil, and otherwise, session will be the session name.
+
+| scenario        | :session value |
+|-----------------+----------------|
+| no session      | "none"         |
+| unnamed session | nil            |
+| named session   | "name"         |
+
+Here is a function for testing if a block is in a session.
+
+#+BEGIN_SRC emacs-lisp
+(defun src-block-in-session-p (&optional name)
+  "Return if src-block is in a session of NAME.
+NAME may be nil for unnamed sessions."
+  (let* ((info (org-babel-get-src-block-info))
+         (lang (nth 0 info))
+         (body (nth 1 info))
+         (params (nth 2 info))
+         (session (cdr (assoc :session params))))
+
+    (cond
+     ;; unnamed session, both name and session are nil
+     ((and (null session)
+	   (null name))
+      t)
+     ;; Matching name and session
+     ((and
+       (stringp name)
+       (stringp session)
+       (string= name session))
+      t)
+     ;; no match
+     (t nil))))
+#+END_SRC
+
+Now, we need to get some information about the current point and block. We will want to run blocks that start before the current point, but not after. We will use org-element-map to find code blocks, and when the language and session of a code block matches the current block, and the block starts at a point earlier than the current point, then we will go to that block, and run it. Here is that code.
+
+#+BEGIN_SRC emacs-lisp
+(defun org-babel-restart-session-to-point (&optional arg)
+  "Restart session up to the src-block in the current point.
+Goes to beginning of buffer and executes each code block with
+`org-babel-execute-src-block' that has the same language and
+session as the current block. ARG has same meaning as in
+`org-babel-execute-src-block'."
+  (interactive "P")
+  (unless (org-in-src-block-p)
+    (error "You must be in a src-block to run this command"))
+  (let* ((current-point (point-marker))
+	 (info (org-babel-get-src-block-info))
+         (lang (nth 0 info))
+         (params (nth 2 info))
+         (session (cdr (assoc :session params))))
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward org-babel-src-block-regexp nil t)
+	;; goto start of block
+        (goto-char (match-beginning 0))
+	(let* ((this-info (org-babel-get-src-block-info))
+	       (this-lang (nth 0 this-info))
+	       (this-params (nth 2 this-info))
+	       (this-session (cdr (assoc :session this-params))))
+	    (when
+		(and
+		 (< (point) (marker-position current-point))
+		 (string= lang this-lang)
+		 (src-block-in-session-p session))
+	      (org-babel-execute-src-block arg)))
+	;; move forward so we can find the next block
+	(forward-line)))))
+#+END_SRC
+
+
+In the course of testing this, I found this function a little helpful to kill the current session so we start fresh.
+
+#+BEGIN_SRC emacs-lisp
+(defun org-babel-kill-session ()
+  "Kill session for current code block."
+  (interactive)
+  (unless (org-in-src-block-p)
+    (error "You must be in a src-block to run this command"))
+  (save-window-excursion
+    (org-babel-switch-to-session)
+    (kill-buffer)))
+#+END_SRC
+
+And also this one to remove all results in the buffer. This not at all selective, it removes results for session and non-session blocks.
+
+#+BEGIN_SRC emacs-lisp
+(defun org-babel-remove-result-buffer ()
+  "Remove results from every code block in buffer."
+  (interactive)
+  (save-excursion
+    (goto-char (point-min))
+    (while (re-search-forward org-babel-src-block-regexp nil t)
+      (org-babel-remove-result))))
+#+END_SRC
+
+Ok, now for some testing. The rest of this post is pretty boring, just some blocks of mixed session and non-session to see if they get run. Skip to the [[*Summary]].
+
+#+BEGIN_SRC python :session test  :var d=4
+def f(x):
+    y = 4 * x
+    return y
+
+print(f(d))
+#+END_SRC
+
+#+RESULTS:
+: 16
+
+Let us put a non-session block in this buffer for testing.
+
+#+BEGIN_SRC python
+a = 5
+print(a)
+#+END_SRC
+
+Now, some more named session blocks.
+#+BEGIN_SRC python :session test
+print f(5)
+#+END_SRC
+
+#+RESULTS:
+: 20
+
+#+BEGIN_SRC python :session test
+print 'ok'
+#+END_SRC
+
+#+RESULTS:
+: ok
+
+#+BEGIN_SRC python :session test
+print 2
+#+END_SRC
+
+#+RESULTS:
+: 2
+
+An unnamed session that should not get run in restarting the named test session.
+
+#+BEGIN_SRC python :session
+print 886
+#+END_SRC
+
+
+#+BEGIN_SRC python :session test
+print f(6)
+#+END_SRC
+
+#+RESULTS:
+: 24
+
+** Summary
+This works pretty well so far.  It would be nice to consider making C-c C-c do this automatically, if the session does not exist, and maybe to take a prefix arg that would restart the session. Maybe on another day ;)

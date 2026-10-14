@@ -1,0 +1,179 @@
+* TODO LDAP lookups from Emacs
+  :PROPERTIES:
+  :categories: emacs,helm
+  :date:     2015/11/25 09:31:58
+  :updated:  2015/11/25 09:31:58
+  :END:
+
+Now that I have email and Cisco Jabber totally integrated into Emacs it would be nice to tap into the CMU LDAP (Lightweight Directory Access Protocol) service  to find emails and phone numbers. We to use the ldapsearch command-line utility to query our LDAP service like this to find an email address.
+
+You might like the video explanation here: https://www.youtube.com/watch?v=N7AaKHRd9uw
+
+#+BEGIN_SRC emacs-lisp
+(shell-command-to-string "ldapsearch -x -LLL -h ldap.andrew.cmu.edu -b ou=Person,dc=cmu,dc=edu cn=\"John Kitchin\"")
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+dn: guid=1976CCAA-B465-11D8-8000-080020CC75D3,ou=person,dc=cmu,dc=edu
+objectClass: cmuPerson
+eduPersonPrimaryAffiliation: Faculty
+guid: 1976CCAA-B465-11D8-8000-080020CC75D3
+cmuPrivate: homePostalAddress
+cmuPrivate: homePhone
+cn: John Kitchin
+givenName: John
+sn: Kitchin
+cmuPrimaryCampus: Pittsburgh
+cmuCampus: Pittsburgh
+cmuAndrewId: jkitchin
+cmueduId: jkitchin
+cmuAndrewCommonNamespaceId: jkitchin
+mail: jkitchin@cmu.edu
+eduPersonSchoolCollegeName: CIT - Consolidated
+cmuPersonPrincipalName: jkitchin@ANDREW.CMU.EDU
+postalAddress: DH A207F
+cmuDepartment: Chemical Engineering
+cmuDepartment: MSE: Materials Science & Engineering
+cmuPersonAffiliation: Tenure-Track Faculty
+eduPersonAffiliation: Faculty
+cmuAccount: uid=jkitchin,ou=account,dc=andrew,dc=cmu,dc=edu
+cmuAccount: uid=jkitchin,ou=account,dc=cmu,dc=edu
+cmuActiveDN: uid=jkitchin,ou=account,dc=andrew,dc=cmu,dc=edu
+cmuActiveDN: uid=jkitchin,ou=account,dc=cmu,dc=edu
+title: Professor
+telephoneNumber: +1 412 268 7803
+
+#+end_example
+
+We actually get LDIF data from ldapsearch with a lot of details. Next we wrap the output in a function that converts each result from ldapsearch into a p-list that we will use later in a helm function to help us select a match.
+
+#+BEGIN_SRC emacs-lisp
+(defun ldap-query (query-string)
+  "Send QUERY-STRING to our ldap server and parse results into a
+list of p-lists for each entry returned."
+  (interactive "sLDAP query: ")
+  (let ((output (butlast (split-string
+			  (shell-command-to-string
+			   (format (concat  "ldapsearch -x -LLL "
+					    "-h ldap.andrew.cmu.edu "
+					    "-b ou=Person,dc=cmu,dc=edu %s")
+				   query-string))
+			  "\n")))
+	(lines '())
+	(result '())
+	(results '(())))
+    ;; cleanup trailing lines and ignore initial lines
+    (loop for line in output
+	  do
+	  (cond
+	   ;; join lines that run over
+	   ((s-starts-with? " " line)
+	    (setf (car (last lines))
+		  (concat (car (last lines)) line)))
+	   ;; ignore this
+	   ((string-match "Size limit exceeded" line)
+	    nil)
+	   (t
+	    (add-to-list 'lines line t))))
+
+    ;; now we need to parse the lines. A new entry starts with a dn: line.
+    (dolist (line lines)
+      (cond
+       ((s-starts-with? "dn:" line)
+	;; add new entry
+	(add-to-list 'results `(:dn ,line)))
+       ((string-match ":" line)
+	(let* ((s (split-string line ":"))
+	       (prop (intern (concat ":" (s-trim (car s)))))
+	       (val (s-trim (cadr s))))
+	  (setf (car results) (plist-put (car results) prop val))))))
+    ;; last result seems to be nil so we drop it
+    (-filter (lambda (x) (not (null x))) results)))
+#+END_SRC
+
+#+RESULTS:
+: ldap-query
+
+Here is an example of that function:
+
+#+BEGIN_SRC emacs-lisp :results code pprint
+(ldap-query "cn=\"John Kitchin\"")
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC emacs-lisp
+((:dn "dn: guid=1976CCAA-B465-11D8-8000-080020CC75D3,ou=person,dc=cmu,dc=edu" :objectClass "cmuPerson" :eduPersonPrimaryAffiliation "Faculty" :guid "1976CCAA-B465-11D8-8000-080020CC75D3" :cmuPrivate "homePhone" :cn "John Kitchin" :givenName "John" :sn "Kitchin" :cmuPrimaryCampus "Pittsburgh" :cmuCampus "Pittsburgh" :cmuAndrewId "jkitchin" :cmueduId "jkitchin" :cmuAndrewCommonNamespaceId "jkitchin" :mail "jkitchin@cmu.edu" :eduPersonSchoolCollegeName "CIT - Consolidated" :cmuPersonPrincipalName "jkitchin@ANDREW.CMU.EDU" :postalAddress "DH A207F" :cmuDepartment "MSE" :cmuPersonAffiliation "Tenure-Track Faculty" :eduPersonAffiliation "Faculty" :cmuAccount "uid=jkitchin,ou=account,dc=cmu,dc=edu" :cmuActiveDN "uid=jkitchin,ou=account,dc=cmu,dc=edu" :title "Professor" :telephoneNumber "+1 412 268 7803"))
+#+END_SRC
+
+
+Now, we wrap a helm function around that to give us a nice menu to select entries from, and a few actions like sending an email, calling, copying the name and email, and seeing the information in a reasonable way. We also add a fallback method in case we don't find what we want and need to do a new search.
+
+#+BEGIN_SRC emacs-lisp
+(defun helm-ldap (query-string)
+  (interactive "sLDAP query: ")
+  (helm
+   :sources
+   `(((name . "HELM ldap")
+      (candidates . ,(mapcar
+		      (lambda (x)
+			(cons
+			 (format
+			  "%20s|%30s|%30s|%20s|%s"
+			  (s-truncate
+			   20
+			   (or (plist-get x :title) " "))
+			  (plist-get x :cn)
+			  (plist-get x :mail)
+			  (plist-get x :cmuDisplayAddress)
+			  (or (plist-get x :telephoneNumber) " "))
+			 x))
+		      (ldap-query
+		       (if (string-match "=" query-string)
+			   query-string
+			 (concat "cn=*" query-string "*")))))
+      (action . (("Email" . (lambda (x)
+			      (compose-mail)
+			      (message-goto-to)
+			      (insert (plist-get x :mail))
+			      (message-goto-subject)))
+		 ("Call" . (lambda (x)
+			     (cisco-call
+			      (plist-get x :telephoneNumber))))
+		 ("Copy Name and email address" . (lambda (x)
+						    (kill-new
+						     (format
+						      "%s <%s>"
+						      (plist-get x :cn)
+						      (plist-get x :mail)))))
+		 ("Information" . (lambda (x)
+				    (switch-to-buffer
+				     (get-buffer-create "*helm ldap*"))
+				    (erase-buffer)
+				    (dolist (key (cl-loop
+						  for key in x by #'cddr
+						  collect key))
+				      (insert (format "|%s | %s|\n"
+						      key (plist-get x key))))
+				    (org-mode)
+				    (goto-char 0)
+				    (org-ctrl-c-ctrl-c)
+				    (insert "press q to quit.\n\n")
+				    (setq buffer-read-only t)
+				    (use-local-map (copy-keymap org-mode-map))
+				    (local-set-key "q"
+						   #'(lambda ()
+						       (interactive)
+						       (quit-window t))))))))
+     ;; fallback action
+     ((name . "New search")
+      (dummy)
+      (action . (lambda (x) (helm-ldap x)))))))
+#+END_SRC
+
+#+RESULTS:
+: helm-ldap
+
+That is pretty convenient!
+
+John Kitchin <jkitchin@cmu.edu>

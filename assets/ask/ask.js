@@ -437,12 +437,13 @@
     post: "posts",
     blog: "archived blog posts",
     pub: "publication records",
-    paper: "paper summaries"
+    paper: "paper summaries",
+    topic: "research topics"
   };
 
   function describeCounts(c) {
     var parts = [];
-    ["paper", "pub", "page", "post", "blog"].forEach(function (k) {
+    ["paper", "topic", "pub", "page", "post", "blog"].forEach(function (k) {
       if (c[k]) parts.push(c[k] + " " + KIND_LABEL[k]);
     });
     return c.total + " passages: " + parts.join(", ");
@@ -699,7 +700,7 @@
       var a = el("a", "kg-ask-source-link", c.k === "pub" ? c.t : c.h);
       a.href = hrefFor(c);
       if (/^https?:/.test(c.u)) a.rel = "noopener";
-      var badge = { blog: "blog", post: "post", pub: "article", paper: "paper summary" }[c.k];
+      var badge = { blog: "blog", post: "post", pub: "article", paper: "paper summary", topic: "topic" }[c.k];
       if (badge) a.appendChild(el("span", "kg-ask-badge", badge + (c.d && c.k !== "paper" ? " " + c.d.slice(0, 4) : "")));
       li.appendChild(a);
       li.appendChild(el("p", "kg-ask-excerpt", excerpt(c.x)));
@@ -736,7 +737,7 @@
         var c = hit.chunk;
         var body = c.x;
         if (body.length > MAX_CTX_CHARS) body = body.slice(0, MAX_CTX_CHARS) + "…";
-        var src = { page: "site page", post: "post", blog: "blog post", pub: "publication", paper: "paper summary" }[c.k] || c.k;
+        var src = { page: "site page", post: "post", blog: "blog post", pub: "publication", paper: "paper summary", topic: "research topic" }[c.k] || c.k;
         var meta = src + (c.d ? ", " + c.d.slice(0, 10) : "") + (c.c && c.k === "paper" ? "; source: " + c.c : "");
         return "[" + (n + 1) + "] " + c.h + " (" + meta + ")\n" + body;
       })

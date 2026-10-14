@@ -1,0 +1,116 @@
+* Editing org-mode python source blocks in an external editor (Canopy)
+  :PROPERTIES:
+  :categories: orgmode,python
+  :date:     2014/09/28 14:41:49
+  :updated:  2014/09/28 14:41:49
+  :END:
+Continuing on the [[http://kitchingroup.cheme.cmu.edu/blog/2014/09/27/Improved-debugging-of-Python-code-blocks-in-org-mode/][last post]] about leveraging org-mode and python syntax checkers, here we consider using (heresy alert...) an external editor for Python src blocks in org-mode. Why would we consider such insanity? Because, for beginners, environments such as Canopy are (IMHO) easier to use, and better than anything I have used in Emacs. And, I still want the framework of org-mode for content, just a better Python code writing environment.
+
+This problem has some interesting challenges. I would like a command that opens a code block with its contents in the Canopy editor, or that creates a code block if needed. We need to figure out that context based on the cursor position. We will use the same temporary file strategy as used before, so Canopy has something to read and save to. We need to wait for Canopy to finish, which will be tricky because it returns as soon as you run it. Finally, I want the code block to run after it is put back in the org-file, so that the results are captured. 
+
+This code block implements the idea, and the comments in the code explain what each section is doing.
+
+#+BEGIN_SRC emacs-lisp
+(defun edit-in-canopy ()
+  (interactive)
+  (let* ((eop (org-element-at-point))
+	 ;; use current directory for temp file so relative paths work
+	 (temporary-file-directory ".")
+	 (tempfile))
+
+    ;; create a tempfile. 
+    (setq tempfile (make-temp-file "canopy" nil ".py"))
+
+    ;; figure out what to do
+    (when
+	;; in an existing source block. we want to edit it.
+	(and (eq 'src-block (car eop))
+	     (string= "python" (org-element-property :language eop)))
+          
+      ;; put code into tempfile
+      (with-temp-file tempfile
+        (insert (org-element-property :value eop))))
+
+    ;; open tempfile in canopy
+    (shell-command (concat "canopy " tempfile))
+    (sleep-for 2) ;; startup time. canopy is slow to showup in
+		  ;; ps. This gives it some time to do that. Canopy
+		  ;; returns right away, so we sleep while there is
+		  ;; evidence that it is open. We get that evidence
+		  ;; from ps by searching for canopy.app.main, which
+		  ;; seems to exist in the output while Canopy is
+		  ;; open.
+    (while
+	(string-match "canopy\.app\.main"
+		      (shell-command-to-string "ps aux"))
+      ;; pause a while, then check again.
+      (sleep-for 1))
+
+    ;; Canopy has closed, so we get the new script contents
+    (let ((new-contents (with-temp-buffer
+			  (insert-file-contents tempfile)
+			  (buffer-string))))
+      (cond
+       ;; replace existing code block contents
+       ((and (eq 'src-block (car eop))
+	     (string= "python" (org-element-property :language eop)))
+	(goto-char (org-element-property :begin eop))
+      	(search-forward (org-element-property :value eop))
+      	(replace-match (concat new-contents "\n")))
+       ;; create new code block
+       (t
+	(insert
+	 (format "\n#+BEGIN_SRC python
+%s
+,#+END_SRC
+" new-contents))
+	;; go into new block so we can run it.
+	(previous-line 2))))
+
+    ;; delete the tempfile so they do not accumulate
+    (delete-file tempfile)
+    ;; and run the new block to get the results
+    (org-babel-execute-src-block)))   	
+#+END_SRC
+
+#+RESULTS:
+: edit-in-canopy
+
+That seems to work. It is difficult to tell from this post the function works as advertised. You can see it in action here: http://www.youtube.com/watch?v=-noKrT1dfFE.
+
+
+#+BEGIN_SRC python
+from scipy.integrate import odeint
+
+
+def dydx(y, x):
+    k = 1
+    return -k * y
+
+print odeint(dydx, 1, [0, 1])
+
+import numpy as np
+print np.exp(-1)
+#+END_SRC
+
+#+RESULTS:
+: [[ 1.        ]
+:  [ 0.36787947]]
+: 0.367879441171
+
+
+
+We created this code block externally.
+
+#+BEGIN_SRC python
+print 'hello'
+#+END_SRC
+
+#+RESULTS:
+: hello
+
+
+** Summary thoughts
+Opening Canopy is a little slow (and that is coming from someone who opens Emacs ;). But, once it is open it is pretty nice for writing code, with the interactive Ipython console, and integrated help. Yes, it is probably possible to get Emacs to do that too, and maybe it will do that one day. Canopy does it today.
+
+Unfortunately, this code will not work on Windows, most likely, since it relies on the ps program. There does seem to be a tasklist function in Windows that is similar, but it seems that Canopy runs as pythonw in that function, which is not very specific.

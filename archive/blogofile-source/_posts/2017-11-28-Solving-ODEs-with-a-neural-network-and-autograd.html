@@ -1,0 +1,115 @@
+---
+title: Solving ODEs with a neural network and autograd
+date: 2017/11/28 07:23:03
+updated: 2017/11/28 07:23:59
+categories: autograd, ode
+tags: 
+---
+
+
+<p>
+In the last <a href="http://kitchingroup.cheme.cmu.edu/blog/2017/11/27/Solving-BVPs-with-a-neural-network-and-autograd/">post</a> I explored using a neural network to solve a BVP. Here, I expand the idea to solving an initial value ordinary differential equation. The idea is basically the same, we just have a slightly different objective function.
+</p>
+
+<p>
+\(dCa/dt = -k Ca(t)\) where \(Ca(t=0) = 2.0\).
+</p>
+
+<p>
+Here is the code that solves this equation, along with a comparison to the analytical solution: \(Ca(t) = Ca0 \exp -kt\).
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span style="color: #0000FF;">import</span> autograd.numpy <span style="color: #0000FF;">as</span> np
+<span style="color: #0000FF;">from</span> autograd <span style="color: #0000FF;">import</span> grad, elementwise_grad
+<span style="color: #0000FF;">import</span> autograd.numpy.random <span style="color: #0000FF;">as</span> npr
+<span style="color: #0000FF;">from</span> autograd.misc.optimizers <span style="color: #0000FF;">import</span> adam
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">init_random_params</span>(scale, layer_sizes, rs=npr.RandomState(0)):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #036A07;">"""Build a list of (weights, biases) tuples, one for each layer."""</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> [(rs.randn(insize, outsize) * scale,   <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">weight matrix</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>rs.randn(outsize) * scale)           <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">bias vector</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">for</span> insize, outsize <span style="color: #0000FF;">in</span> <span style="color: #006FE0;">zip</span>(layer_sizes[:-1], layer_sizes[1:])]
+
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">swish</span>(x):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #036A07;">"see https://arxiv.org/pdf/1710.05941.pdf"</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> x / (1.0 + np.exp(-x))
+
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">Ca</span>(params, inputs):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #036A07;">"Neural network functions"</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">for</span> W, b <span style="color: #0000FF;">in</span> params:
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">outputs</span> = np.dot(inputs, W) + b
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">inputs</span> = swish(outputs)    
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> outputs
+
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   
+<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">Here is our initial guess of params:</span>
+<span style="color: #BA36A5;">params</span> = init_random_params(0.1, layer_sizes=[1, 8, 1])
+
+<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">Derivatives</span>
+<span style="color: #BA36A5;">dCadt</span> = elementwise_grad(Ca, 1)
+
+<span style="color: #BA36A5;">k</span> = 0.23
+<span style="color: #BA36A5;">Ca0</span> = 2.0
+<span style="color: #BA36A5;">t</span> = np.linspace(0, 10).reshape((-1, 1))
+
+<span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">This is the function we seek to minimize</span>
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">objective</span>(params, step):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">These should all be zero at the solution</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #8D8D84;"># </span><span style="color: #8D8D84; font-style: italic;">dCadt = -k * Ca(t)</span>
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">zeq</span> = dCadt(params, t) - (-k * Ca(params, t))
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #BA36A5;">ic</span> = Ca(params, 0) - Ca0
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">return</span> np.mean(zeq**2) + ic**2
+
+<span style="color: #0000FF;">def</span> <span style="color: #006699;">callback</span>(params, step, g):
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">if</span> step % 1000 == 0:
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #0000FF;">print</span>(<span style="color: #008000;">"Iteration {0:3d} objective {1}"</span>.<span style="color: #006FE0;">format</span>(step,
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> objective(params, step)))
+
+<span style="color: #BA36A5;">params</span> = adam(grad(objective), params,
+<span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span>   <span style="color: #9B9B9B; background-color: #EDEDED;"> </span> step_size=0.001, num_iters=5001, callback=callback) 
+
+
+<span style="color: #BA36A5;">tfit</span> = np.linspace(0, 20).reshape(-1, 1)
+<span style="color: #0000FF;">import</span> matplotlib.pyplot <span style="color: #0000FF;">as</span> plt
+plt.plot(tfit, Ca(params, tfit), label=<span style="color: #008000;">'soln'</span>)
+plt.plot(tfit, Ca0 * np.exp(-k * tfit), <span style="color: #008000;">'r--'</span>, label=<span style="color: #008000;">'analytical soln'</span>)
+plt.legend()
+plt.xlabel(<span style="color: #008000;">'time'</span>)
+plt.ylabel(<span style="color: #008000;">'$C_A$'</span>)
+plt.xlim([0, 20])
+plt.savefig(<span style="color: #008000;">'nn-ode.png'</span>)
+</pre>
+</div>
+
+<pre class="example">
+Iteration   0 objective [[ 3.20374053]]
+Iteration 1000 objective [[  3.13906829e-05]]
+Iteration 2000 objective [[  1.95894699e-05]]
+Iteration 3000 objective [[  1.60381564e-05]]
+Iteration 4000 objective [[  1.39930673e-05]]
+Iteration 5000 objective [[  1.03554970e-05]]
+
+</pre>
+
+
+<p>
+<img src="/media/nn-ode.png"> 
+</p>
+
+<p>
+Huh. Those two solutions are nearly indistinguishable. Since we used a neural network, let's hype it up and say we learned the solution to a differential equation! But seriously, note that although we got an "analytical" solution, we should only rely on it in the region we trained the solution on. You can see the solution above is not that good past t=10, even perhaps going negative (which is not even physically correct). That is a reminder that the function we have for the solution <i>is not the same as the analytical solution</i>, it just approximates it really well over the region we solved over. Of course, you can expand that region to the region you care about, but the main point is don't rely on the solution outside where you know it is good.
+</p>
+
+<p>
+This idea isn't new. There are several papers in the literature on using neural networks to solve differential equations, e.g. <a href="http://www.sciencedirect.com/science/article/pii/S0255270102002076">http://www.sciencedirect.com/science/article/pii/S0255270102002076</a> and <a href="https://arxiv.org/pdf/physics/9705023.pdf">https://arxiv.org/pdf/physics/9705023.pdf</a>, and other blog posts that are similar (<a href="https://becominghuman.ai/neural-networks-for-solving-differential-equations-fa230ac5e04c">https://becominghuman.ai/neural-networks-for-solving-differential-equations-fa230ac5e04c</a>, even using autograd). That means to me that there is some merit to continuing to investigate this approach to solving differential equations.
+</p>
+
+<p>
+There are some interesting challenges for engineers to consider with this approach though. When is the solution accurate enough? How reliable are derivatives of the solution? What network architecture is appropriate or best? How do you know how good the solution is? Is it possible to build in solution features, e.g. asymptotes, or constraints on derivatives, or that the solution should be monotonic, etc. These would help us trust the solutions not to do weird things, and to extrapolate more reliably.
+</p>
+<p>Copyright (C) 2017 by John Kitchin. See the <a href="/copying.html">License</a> for information about copying.<p>
+<p><a href="/org/2017/11/28/Solving-ODEs-with-a-neural-network-and-autograd.org">org-mode source</a></p>
+<p>Org-mode version = 9.1.2</p>

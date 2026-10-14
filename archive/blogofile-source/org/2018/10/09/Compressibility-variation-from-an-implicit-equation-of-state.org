@@ -1,0 +1,124 @@
+* Compressibility variation from an implicit equation of state :thermodynamics:
+  :PROPERTIES:
+  :categories: python, autograd
+  :date:     2018/10/09 09:21:06
+  :updated:  2018/10/09 09:21:06
+  :org-url:  http://kitchingroup.cheme.cmu.edu/org/2018/10/09/Compressibility-variation-from-an-implicit-equation-of-state.org
+  :permalink: http://kitchingroup.cheme.cmu.edu/blog/2018/10/09/Compressibility-variation-from-an-implicit-equation-of-state/index.html
+  :END:
+
+In this [[http://kitchingroup.cheme.cmu.edu/blog/2018/10/07/Compressibility-factor-variation-from-the-van-der-Waals-equation-by-three-different-approaches/][post]] I explored using automatic differentiation to compute how the compressibility of a gas defined by the van der Waal equation varies with the reduced pressure. In that example we had an explicit function of the pressure as a function of the volume and temperature, and we could derive a differential equation that defines the variation we were interested in.
+
+I thought we should be able to derive the differential equation more directly, still using automatic differentiation and we explore that idea here. The general strategy to compute the compressibility as a function of pressure is to integrate $dV / dP_r$ over a range of $P_r$ to get the molar volume as a function of $P_r$, and then to directly compute the compressibility from $Z = PV/(RT)$.
+
+To use this approach we need to get $dV / dP_r$ from the van der Waal equation. Previously, we derived this in a round about way from the explicit form of the van der Waal equation. Here, we follow the work in this [[http://kitchingroup.cheme.cmu.edu/blog/2018/10/08/Getting-derivatives-from-implicit-functions-with-autograd/][post]] to get the derivative from the implicit form of the van der Waal equation:
+
+$f(V, P_r, T_r) = \frac{R Tr * Tc}{V - b} - \frac{a}{V^2} - P_r Pc = 0$
+
+Based on the work in this [[http://kitchingroup.cheme.cmu.edu/blog/2018/10/08/Getting-derivatives-from-implicit-functions-with-autograd/][post]], we can get
+
+$dV/dP_r = (-df/dP_r) / (df/dV)$
+
+and the two derivatives on the right can be found easily by automatic differentiation. First, we express the van der Waal equation in implicit form, with the variables as $V, P_r, T_r$. Only two of those variables are independent; if you define two of them you can compute the third one using a tool like fsolve.
+
+#+BEGIN_SRC ipython
+R = 0.08206
+Pc = 72.9
+Tc = 304.2
+
+a = 27 * R**2 * Tc**2 / (Pc * 64)
+b = R * Tc / (8 * Pc)
+
+Tr = 1.1  # Constant for this example
+
+def f(V, Pr, Tr):
+    return R * Tr * Tc / (V - b) - a / V**2 - Pr * Pc
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+# Out[29]:
+:END:
+
+Now, if we want to know how does the volume vary with $P_r$, we need to derive the derivative $dV/dP_r$, and then integrate it. Here we use autograd to define the derivatives, and then we define a function that uses them. Note the arguments in the function dVdPr are in an order that anticipates we want to integrate it in solve_ivp, to get a function $V(P_r)$.
+
+#+BEGIN_SRC ipython
+from autograd import grad
+
+dfdPr = grad(f, 1)  # derivative of f with respect to arg at index=1: Pr
+dfdV = grad(f, 0)  # derivative of f with respect to arg at index=0: V
+
+def dVdPr(Pr, V):
+    return -dfdPr(V, Pr, Tr) / dfdV(V, Pr, Tr)  # Tr is a constant in here
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+# Out[30]:
+:END:
+
+Now, we need an initial condition to start the integration from. We want the volume at $P_r=0.1$. We have to use fsolve for this, or some other method that tells you want is the volume at $P_r=0.1$. We can pass the values of $P_r$ and $T_R$ as arguments to our implicit function. Since $V$ is the first argument, we can directly solve our implicit function. Otherwise you would have to define a helper objective function to use with fsolve.
+
+#+BEGIN_SRC ipython
+from scipy.optimize import fsolve
+
+V0, = fsolve(f, 3.5, args=(0.1, 1.1))
+V0
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+# Out[25]:
+# text/plain
+: 3.6764763125625435
+:END:
+
+Finally, we are ready to integrate the ODE, and plot the solution.
+
+#+BEGIN_SRC ipython
+import numpy as np
+from scipy.integrate import solve_ivp
+
+Pr_span = (0.1, 10)
+Pr_eval, h = np.linspace(*Pr_span, retstep=True)
+
+sol = solve_ivp(dVdPr, Pr_span, (V0,), max_step=h)
+print(sol.message)
+
+%matplotlib inline
+import matplotlib.pyplot as plt
+
+Pr = sol.t  # the P_r steps used in the solution
+V = sol.y[0]  # V(P_r) from the solution
+
+Z = Pr * Pc * V / (R * Tr * Tc)  # Compressibility Z(P_r)
+
+plt.plot(Pr, Z)
+plt.xlabel('$P_r$')
+plt.ylabel('Z')
+plt.xlim([0, 10])
+plt.ylim([0, 2])
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+# Out[31]:
+# output
+: The solver successfully reached the end of the integration interval.
+:
+# text/plain
+: (0, 2)
+
+
+
+# image/png
+[[file:obipy-resources/0a06a9507e7d4f809f61d49b8988e2d1-90490gTZ.png]]
+:END:
+
+That is the same result as we got before.
+
+** Summary thoughts
+
+This method also worked successfully to solve this problem. In most ways, this method has less algebraic manipulations required to get to the solution. In [[http://kitchingroup.cheme.cmu.edu/blog/2018/10/07/Compressibility-factor-variation-from-the-van-der-Waals-equation-by-three-different-approaches/#orge63b16e][method 3]], we had to do some calculus that relied on a particular explicit form of the van der Waal equation. While those manipulations were not particularly difficulty, the leave opportunities for mistakes, and they will be more difficult for an implicit equation of state (e.g. if there was a $P$ on the right hand side).
+
+This approach also required some manipulation, but it is a standard one and that is how do you get a derivative from an implicit function. After that, it is straightforward to define the desired derivative as a function and then integrate it to get the solution. So, we still don't get a free pass on calculus, but we do reduce the number of manipulations required to get to the solution. I consider that a plus.

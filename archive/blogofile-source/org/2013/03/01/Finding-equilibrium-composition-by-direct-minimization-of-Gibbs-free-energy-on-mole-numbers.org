@@ -1,0 +1,152 @@
+** Finding equilibrium composition by direct minimization of Gibbs free energy on mole numbers
+   :PROPERTIES:
+   :date:     2013/03/01 12:27:48
+   :updated:  2014/09/10 13:15:30
+   :categories: optimization
+   :tags:     thermodynamics
+   :END:
+[[http://matlab.cheme.cmu.edu/2011/12/25/finding-equilibrium-composition-by-direct-minimization-of-gibbs-free-energy-on-mole-numbers/][Matlab post]]
+Adapted from problem 4.5 in Cutlip and Shacham
+Ethane and steam are fed to a steam cracker at a total pressure of 1 atm and at 1000K at a ratio of 4 mol H2O to 1 mol ethane. Estimate the equilibrium distribution of products (CH4, C2H4, C2H2, CO2, CO, O2, H2, H2O, and C2H6).
+
+Solution method: We will construct a Gibbs energy function for the mixture, and obtain the equilibrium composition by minimization of the function subject to elemental mass balance constraints.
+
+#+BEGIN_SRC python :session
+import numpy as np
+
+R = 0.00198588 # kcal/mol/K
+T = 1000 # K
+
+species = ['CH4', 'C2H4', 'C2H2', 'CO2', 'CO', 'O2', 'H2', 'H2O', 'C2H6']
+
+# $G_^\circ for each species. These are the heats of formation for each
+# species.
+Gjo = np.array([4.61, 28.249, 40.604, -94.61, -47.942, 0, 0, -46.03, 26.13]) # kcal/mol
+#+END_SRC
+
+#+RESULTS:
+
+*** The Gibbs energy of a mixture
+
+We start with $G=\sum\limits_j n_j \mu_j$. Recalling that we define $\mu_j = G_j^\circ + RT \ln a_j$, and in the ideal gas limit, $a_j = y_j P/P^\circ$, and that $y_j = \frac{n_j}{\sum n_j}$. Since in this problem, P = 1 atm, this leads to the function $\frac{G}{RT} = \sum\limits_{j=1}^n n_j\left(\frac{G_j^\circ}{RT} + \ln \frac{n_j}{\sum n_j}\right)$.
+
+#+BEGIN_SRC python :session
+import numpy as np
+
+def func(nj):
+    nj = np.array(nj)
+    Enj = np.sum(nj);
+    G = np.sum(nj * (Gjo / R / T + np.log(nj / Enj)))
+    return G
+#+END_SRC
+
+#+RESULTS:
+
+*** Linear equality constraints for atomic mass conservation
+
+The total number of each type of atom must be the same as what entered the reactor. These form equality constraints on the equilibrium composition. We express these constraints as: $A_{eq} n = b$ where $n$ is a vector of the moles of each species present in the mixture. CH4 C2H4 C2H2 CO2 CO O2 H2 H2O C2H6
+
+#+BEGIN_SRC python :session
+Aeq = np.array([[0,   0,    0,   2,   1,  2,  0,  1,   0],      # oxygen balance
+                [4,   4,    2,   0,   0,  0,  2,  2,   6],      # hydrogen balance
+                [1,   2,    2,   1,   1,  0,  0,  0,   2]])     # carbon balance
+
+# the incoming feed was 4 mol H2O and 1 mol ethane
+beq = np.array([4,  # moles of oxygen atoms coming in
+                14, # moles of hydrogen atoms coming in
+                2]) # moles of carbon atoms coming in
+
+def ec1(n):
+    'equality constraint'
+    return np.dot(Aeq, n) - beq
+
+def ic1(n):
+    '''inequality constraint
+       all n>=0
+    '''   
+    return n
+#+END_SRC
+
+#+RESULTS:
+
+
+
+Now we solve the problem.
+
+#+BEGIN_SRC python :session
+# initial guess suggested in the example
+n0 = [1e-3, 1e-3, 1e-3, 0.993, 1.0, 1e-4, 5.992, 1.0, 1e-3] 
+
+n0 = [0.066, 8.7e-08, 2.1e-14, 0.545, 1.39, 5.7e-14, 5.346, 1.521, 1.58e-7]
+
+from scipy.optimize import fmin_slsqp
+
+X = fmin_slsqp(func, n0, f_eqcons=ec1,f_ieqcons=ic1, iter=300, acc=1e-12)
+
+for s,x in zip(species, X):
+    print '{0:10s} {1:1.4g}'.format(s, x)
+
+# check that constraints were met
+print np.dot(Aeq, X) - beq
+print np.all( np.abs( np.dot(Aeq, X) - beq) < 1e-12)
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+
+>>> >>> >>> >>> >>> >>> Optimization terminated successfully.    (Exit mode 0)
+            Current function value: -104.403951524
+            Iterations: 16
+            Function evaluations: 193
+            Gradient evaluations: 15
+>>> ... ... CH4        0.06644
+C2H4       9.48e-08
+C2H2       1.487e-13
+CO2        0.545
+CO         1.389
+O2         3.096e-13
+H2         5.346
+H2O        1.521
+C2H6       1.581e-07
+... [  0.00000000e+00   0.00000000e+00   4.44089210e-16]
+True
+#+end_example
+
+I found it necessary to tighten the accuracy parameter to get pretty good matches to the solutions found in Matlab. It was also necessary to increase the number of iterations. Even still, not all of the numbers match well, especially the very small numbers. You can, however, see that the constraints were satisfied pretty well.
+
+
+Interestingly there is a distribution of products! That is interesting because only steam and ethane enter the reactor, but a small fraction of methane is formed! The main product is hydrogen. The stoichiometry of steam reforming is ideally $C_2H_6 + 4H_2O \rightarrow 2CO_2 + 7 H2$. Even though nearly all the ethane is consumed, we do not get the full yield of hydrogen. It appears that another equilibrium, one between CO, CO2, H2O and H2, may be limiting that, since the rest of the hydrogen is largely in the water. It is also of great importance that we have not said anything about reactions, i.e. how these products were formed. 
+
+The water gas shift reaction is: $CO + H_2O \rightleftharpoons CO_2 + H_2$. We can compute the Gibbs free energy of the reaction from the heats of formation of each species. Assuming these are the formation energies at 1000K, this is the reaction free energy at 1000K.
+
+#+BEGIN_SRC python :session
+G_wgs = Gjo[3] + Gjo[6] - Gjo[4] - Gjo[7]
+print G_wgs
+
+K = np.exp(-G_wgs / (R*T))
+print K
+#+END_SRC
+
+#+RESULTS:
+: 
+: -0.638
+: >>> >>> 1.37887528109
+
+*** Equilibrium constant based on mole numbers
+
+One normally uses activities to define the equilibrium constant. Since there are the same number of moles on each side of the reaction all factors that convert mole numbers to activity, concentration or pressure cancel, so we simply consider the ratio of mole numbers here.
+
+#+BEGIN_SRC python :session
+print (X[3] * X[6]) / (X[4] * X[7])
+#+END_SRC
+
+#+RESULTS:
+: 1.37887525547
+
+This is very close to the equilibrium constant computed above. 
+
+Clearly, there is an equilibrium between these species that prevents the complete reaction of steam reforming.
+
+*** Summary
+
+This is an appealing way to minimize the Gibbs energy of a mixture. No assumptions about reactions are necessary, and the constraints are easy to identify. The Gibbs energy function is especially easy to code.

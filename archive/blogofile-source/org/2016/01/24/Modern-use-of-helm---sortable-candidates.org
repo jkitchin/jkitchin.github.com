@@ -1,0 +1,120 @@
+* Modern use of helm - sortable candidates
+  :PROPERTIES:
+  :categories: emacs,helm
+  :date:     2016/01/24 14:48:13
+  :updated:  2016/01/24 14:48:13
+  :END:
+[[https://github.com/emacs-helm/helm][helm]] continues to be my goto completion engine. I was perusing the source for helm-top, and noticed some cool new features, like sorting the candidates in the completion buffer! I also noticed that helm sources are preferably created with some new factory functions (as opposed to the a-lists I used to use). Here I explore some of these and illustrate how to make a sortable helm source.
+
+First, we need a function to give us some candidates we will select from. I will use a function that returns a list of cons cells from a variable containing some data where each element in the data is a plist containing a number and key. I list strings as the number and key  so we can see what sorting does later. The data is just a list of plists containing a "number" and a key that is a string. We will create a helm function with these as candidates, and an ability to sort them in ascending/descending order on either the number or key.
+
+#+BEGIN_SRC emacs-lisp :results output
+(setq h-data '((:num 1 :key "apple")
+	       (:num 9 :key "berry")
+	       (:num 2 :key "cactus")
+	       (:num 5 :key "dog")
+	       (:num 4 :key "frog")))
+
+(defun h-candidates ()
+  "Returns candidates for the helm source."
+  (loop for cand in h-data
+	collect (cons (format "%s %s"
+			      (plist-get cand :num)
+			      (plist-get cand :key))
+		      cand)))
+
+(print (h-candidates))
+#+END_SRC
+
+#+RESULTS:
+:
+: (("1 apple" :num 1 :key "apple") ("9 berry" :num 9 :key "berry") ("2 cactus" :num 2 :key "cactus") ("5 dog" :num 5 :key "dog") ("4 frog" :num 4 :key "frog"))
+
+
+Now, provide sorting, we need to create a candidate transformer function. This function will take the current candidates and source, and return a new list of candidates, possibly sorted. We use a variable to store how to sort the candidates. We also need a way to trigger the sorting. We will bind M-<down> to a function that will set the sort function, and refresh helm. Here is a keymap definition we will use later.
+
+#+BEGIN_SRC emacs-lisp
+(defvar h-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map helm-map)
+    (define-key map (kbd "M-<down>")   'h-sort)
+    map)
+  "keymap for a helm source.")
+#+END_SRC
+
+#+RESULTS:
+: h-map
+
+Now, we define the sort variable, a function that sets the variable, refreshes the candidates, and finally resets the sort variable. A key point here is the sort functions must take two arguments, which will be two candidates, and each candidate is of the form (string . data). We want to sort on one of the elements in the data plists for this example.
+#+BEGIN_SRC emacs-lisp
+(defvar h-sort-fn nil)
+
+(defun h-sort ()
+  (interactive)
+  (let ((action (read-char "#decreasing (d) | #increasing (i) | a-z (a) | z-a (z: ")))
+    (cond
+     ((eq action ?d)
+      (setq h-sort-fn (lambda (c1 c2) (> (plist-get (cdr c1) :num) (plist-get (cdr c2) :num)))))
+     ((eq action ?i)
+      (setq h-sort-fn (lambda (c1 c2) (< (plist-get (cdr c1) :num) (plist-get (cdr c2) :num)))))
+     ((eq action ?a)
+      (setq h-sort-fn (lambda (c1 c2) (string< (plist-get (cdr c1) :key) (plist-get (cdr c2) :key)))))
+     ((eq action ?z)
+      (setq h-sort-fn (lambda (c1 c2) (string> (plist-get (cdr c1) :key) (plist-get (cdr c2) :key)))))
+     (t (setq h-sort-fn nil)))
+     (helm-refresh)
+     (setq h-sort-fn nil)))
+#+END_SRC
+
+#+RESULTS:
+: h-sort
+
+Next, we define a candidate transformer. This function takes the list of candidates and the source. Here, if we have defined a sort function, we use it to sort the candidates, and if not, return the candidates. A subtle point here is the use of -sort from dash.el, which does not modify the original list at all. The build in function sort does modify the candidate list somehow, and it does not work the way you want it to here. This function gets run as the helm pattern changes.
+
+#+BEGIN_SRC emacs-lisp
+(defun h-candidate-transformer (candidates source)
+  (if h-sort-fn
+    (progn (message "Sorting with %s" h-sort-fn)
+    (-sort h-sort-fn candidates))
+  candidates))
+#+END_SRC
+
+#+RESULTS:
+: h-candidate-transformer
+
+Now, just for fun, we show that dynamically defined actions are possible. Here, we generate an action list that is different for even and odd numbers. These actions are pretty trivial, but give you an idea of what might be possible; custom, context specific actions.
+
+#+BEGIN_SRC emacs-lisp
+;; Make dynamic actions based on the candidate selected
+(defun h-action-transformer (actions candidate)
+  "Candidate is the result selected."
+  (if (evenp (plist-get candidate :num))
+      '(("Even" . identity))
+    '(("Odd" . identity))))
+#+END_SRC
+
+#+RESULTS:
+: h-action-transformer
+
+Finally, we are ready to create a helm source. We use the new factory function for creating the source with our keymap, candidates and transformer functions.
+#+BEGIN_SRC emacs-lisp
+(setq h-source
+      (helm-build-sync-source "number-selector"
+	:keymap h-map
+        :candidates #'h-candidates
+        :filtered-candidate-transformer #'h-candidate-transformer
+	:action-transformer #'h-action-transformer))
+#+END_SRC
+
+#+RESULTS:
+
+Now, you can run the helm source like this.
+#+BEGIN_SRC emacs-lisp
+(helm :sources 'h-source)
+#+END_SRC
+
+#+RESULTS:
+
+You can sort the numbers in descending order by typing M-<down> and pressing d. To get ascending order, press i instead. To sort on the keys, type a sort from a to z, and press z to sort on z to a. If you press tab on a selection, you will see that the actions you get depend on whether the selection is an even or odd number! So, you can get some context specific actions depending on your selection. Pretty awesome.
+
+

@@ -1,0 +1,246 @@
+* DONE Making org-mode links to files in Emacs packages
+  CLOSED: [2014-01-19 Sun 15:23]
+  :PROPERTIES:
+  :categories: org-mode
+  :date:     2014/01/19 12:42:27
+  :updated:  2014/01/19 15:27:48
+  :END:
+Today I will make a new org-mode link that lets me make links to files inside of Emacs packages. These files may be installed in different places on different systems (e.g. in the system directory, in ELPA directories, or in custom directories), so we need a way to construct paths to them. The application of this is eventually I hope to have some emacs packages of documentation, and I would like to have links between the packages that work no matter how they are installed.
+
+I want a syntax that looks like pkg:rainbow-mode==rainbow-mode-pkg.el. We will have a function that parses that to get the package, and the path to the file in the package. Emacs has a function to find the path to the file that defines a library. I chose == because it seems unlikely that would be a string in a package or path. 
+
+#+BEGIN_SRC emacs-lisp :results value
+(locate-library "rainbow-mode")
+#+END_SRC
+
+#+RESULTS:
+: c:/Users/jkitchin/Dropbox/kitchingroup/jmax/elpa/rainbow-mode-0.9/rainbow-mode.elc
+
+We can use that to construct the path to where we want. Say we want the file named "rainbow-mode-pkg.el"
+
+#+BEGIN_SRC emacs-lisp :results value
+(expand-file-name
+ "rainbow-mode-pkg.el"
+ (file-name-directory (locate-library "rainbow-mode")))
+#+END_SRC
+
+#+RESULTS:
+: c:/Users/jkitchin/Dropbox/kitchingroup/jmax/elpa/rainbow-mode-0.9/rainbow-mode-pkg.el
+
+In org-mode links, the link path gets passed to a function. We can split the string like this to get the package and relative path we are referring to.
+
+#+BEGIN_SRC emacs-lisp :results value 
+(split-string "rainbow-mode==rainbow-mode-pkg.el" "==")
+#+END_SRC
+
+#+RESULTS:
+| rainbow-mode | rainbow-mode-pkg.el |
+
+That is all of the pieces we need to construct the link function. Here it is.
+
+#+BEGIN_SRC emacs-lisp
+(org-add-link-type 
+ "pkg"
+ (lambda (path)
+   (let ((pkg) (relpath)
+	 (splitpath (split-string path "==")))
+     (setq pkg (car splitpath))
+     (setq relpath (nth 1 splitpath))
+     (find-file (expand-file-name 
+		 relpath 
+		 (file-name-directory (locate-library pkg)))))))
+#+END_SRC
+
+#+RESULTS:
+
+pkg:rainbow-mode==rainbow-mode-pkg.el  
+
+This works too, but you have to use auctex-pkg as the package name. 
+
+pkg:auctex-pkg==doc/intro.texi 
+
+I think that is because locate-library looks for the /file/ a library is defined in. That is not quite the same as the root directory of a package. It turns out to be a little more complicated to find that. Below is some code I hacked up looking at the package.el code. First let us examine some pieces.
+
+This gives us information about an installed package. 
+
+#+BEGIN_SRC emacs-lisp :results value
+(assq 'auctex package-alist)
+#+END_SRC
+
+#+RESULTS:
+: (auctex . [(11 87 2) nil Integrated environment for *TeX*])
+
+We can get the version of the package like this
+
+#+BEGIN_SRC emacs-lisp :results value
+(package-version-join (package-desc-vers (cdr (assq 'auctex package-alist))))
+#+END_SRC
+
+#+RESULTS:
+: 11.87.2
+
+Ok, finally, we get the directory where it is installed like this:
+
+#+BEGIN_SRC emacs-lisp :results value
+(package--dir "auctex" "11.87.2")
+#+END_SRC
+
+#+RESULTS:
+: c:/Users/jkitchin/Dropbox/kitchingroup/jmax/elpa/auctex-11.87.2
+
+Note that in some places we use a package symbol, and in other places a string name.Putting that together, we have this block to get the install-dir of a package. If we have a package symbol we can get the path like this.
+
+#+BEGIN_SRC emacs-lisp :results value
+(let* ((pkg 'auctex)
+       (pkg-name (symbol-name pkg)) ; convert symbol to string
+       (desc (cdr (assq pkg package-alist)))
+       (version (package-version-join (package-desc-vers desc)))
+       (pkg-dir (package--dir pkg-name version)))
+  pkg-dir)
+#+END_SRC
+
+#+RESULTS:
+: c:/Users/jkitchin/Dropbox/kitchingroup/jmax/elpa/auctex-11.87.2
+
+Usually, we will have a string though. We just have to make it a symbol with the =intern= function. 
+
+#+BEGIN_SRC emacs-lisp :results value
+(setq pkg-name "auctex")
+(setq pkg (intern pkg-name))
+(setq desc (cdr (assq pkg package-alist)))
+#+END_SRC
+
+#+RESULTS:
+: [(11 87 2) nil "Integrated environment for *TeX*"]
+
+Now, we have all the pieces to get the path from a package name in a string:
+ 
+#+BEGIN_SRC emacs-lisp :results value
+(let* ((pkg-name "auctex")
+       (pkg (intern pkg-name))
+       (desc (cdr (assq pkg package-alist)))
+       (version (package-version-join (package-desc-vers desc)))
+       (pkg-dir (package--dir pkg-name version)))
+  pkg-dir)
+#+END_SRC
+
+#+RESULTS:
+: c:/Users/jkitchin/Dropbox/kitchingroup/jmax/elpa/auctex-11.87.2
+
+Let us use that to rewrite the link, and address a few other limitations. We will  use =org-open-link-from-string= so we can use org-link syntax in the path part of the link, e.g. to open a file at a line, or headline. Here is our new link.
+
+#+BEGIN_SRC emacs-lisp
+(org-add-link-type 
+ "pkg2"
+ (lambda (path)
+   (let ((pkg) (relpath) (pkg-dir) (link-string)
+	 (splitpath (split-string path "==")))
+     (setq pkg-name (car splitpath))
+     (setq relpath (nth 1 splitpath))
+     (setq pkg-dir (let* ((pkg-symbol (intern pkg-name)) ;convert string to pkg			  
+			  (desc (cdr (assq pkg-symbol package-alist)))
+			  (version (package-version-join (package-desc-vers desc)))
+			  (pkg-dir (package--dir pkg-name version)))
+		     pkg-dir))
+     (setq link-string (format "[[file:%s/%s]]" pkg-dir relpath))
+     (message "link: %s" link-string)
+     (org-open-link-from-string link-string))))
+#+END_SRC
+
+Now, we can do all of these: 
+pkg2:auctex==doc/faq.texi   
+pkg2:auctex==doc/faq.texi::should 
+pkg2:auctex==doc/faq.texi::10 
+[[pkg2:auctex==doc/faq.texi::first place]]  
+
+Awesome!
+
+Just for fun, I made a toy package called =package1= in my elpa directory. That package has an org file in it. Now, I can test out the following links:
+
+pkg2:package1==intro.org 
+
+pkg2:package1==intro.org::*Miscellaneous
+
+[[pkg2:package1==intro.org::*subheading with words]]
+
+pkg2:package1==intro.org::#install-section
+
+pkg2:package1==intro.org::intro-target
+
+They all work! That works for packages installed via the package manager. However, when I try this with my custom installed org-mode, it does not work. If I run (describe-package 'org) I see that org is a build in package, and that there is an alternate version available. It does not point to my org-installation.
+
+pkg2:org==doc/library-of-babel.org 
+
+#+BEGIN_SRC emacs-lisp
+(princ (locate-library "org"))
+#+END_SRC
+
+#+RESULTS:
+: c:/Users/jkitchin/Dropbox/kitchingroup/jmax/org-mode/lisp/org.elc
+
+#+BEGIN_SRC emacs-lisp
+(princ (package-installed-p "org"))
+#+END_SRC
+
+#+RESULTS:
+: nil
+
+Obviously, we need to check if the package is installed via package.el, or if we should look somewhere else. Let us take a final stab at this. Let us review the challenge. 
+
+#+BEGIN_SRC emacs-lisp 
+(print (locate-library "auctex"))
+(print (locate-library "auctex-autoloads"))
+#+END_SRC
+
+#+RESULTS:
+: 
+: nil
+: 
+: "c:/Users/jkitchin/Dropbox/kitchingroup/jmax/elpa/auctex-11.87.2/auctex-autoloads.el"
+
+We may have to check for a package-autoloads. Ww can wrap that in an =or= macro, which will return the first non-nil result.
+
+#+BEGIN_SRC emacs-lisp :results value
+(let ((pkg-name "auctex"))
+   (file-name-directory 
+    (or (locate-library pkg-name)
+	(locate-library (format "%s-autoloads" pkg-name)))))
+#+END_SRC
+
+#+RESULTS:
+: c:/Users/jkitchin/Dropbox/kitchingroup/jmax/elpa/auctex-11.87.2/
+
+Doing this on the org package shows that this points to a lisp directory. 
+#+BEGIN_SRC emacs-lisp :results value
+(let ((pkg-name "org"))
+   (file-name-directory 
+    (or (locate-library pkg-name)
+	(locate-library (format "%s-autoloads" pkg-name)))))
+#+END_SRC
+
+#+RESULTS:
+: c:/Users/jkitchin/Dropbox/kitchingroup/jmax/org-mode/lisp/
+
+So, let's try a final link function.
+
+#+BEGIN_SRC emacs-lisp
+(org-add-link-type 
+ "pkg3"
+ (lambda (path)
+   (let ((pkg-name) (relpath)(pkg-dir) (link-string)
+	 (splitpath (split-string path "==")))
+     (setq pkg-name (car splitpath))
+     (setq relpath (nth 1 splitpath))
+     (setq pkg-dir (file-name-directory 
+		    (or (locate-library pkg-name)
+			(locate-library (format "%s-autoloads" pkg-name)))))
+(setq link-string (format "[[file:%s/%s]]" pkg-dir relpath))
+     (message "link: %s" link-string)
+     (org-open-link-from-string link-string))))
+#+END_SRC
+
+#+RESULTS:
+
+Now, we just have to make sure to use the right relative path. This link opens up an org-file in my installed version of org-mode: pkg3:org==../doc/library-of-babel.org   
+
+I don't know if there is a more clever way to create these links. There are two parts to them: 1) the package, and 2) the relative path. The link syntax isn't that rich to do it without parsing the linkpath.

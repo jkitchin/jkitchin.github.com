@@ -1,0 +1,314 @@
+* DONE Side by side figures in org-mode for different export outputs
+  CLOSED: [2016-01-17 Sun 21:03]
+  :PROPERTIES:
+  :ID:       9F7C8565-AB1F-46C6-AA13-FA730CCDE3B1
+  :categories: emacs,orgmode
+  :date:     2016/01/17 21:03:13
+  :updated:  2016/01/17 21:18:18
+  :END:
+#+LATEX_CLASS: article
+#+OPTIONS: author:nil toc:nil
+#+LATEX_HEADER: \usepackage{graphicx}
+#+LATEX_HEADER: \usepackage{subfigure}
+
+Occasionally, someone wants side by side figures with subcaptions that have individually referenceable labels. This is not too hard in LaTeX, and there is a solution here:  http://www.johndcook.com/blog/2009/01/14/how-to-display-side-by-side-figurs-in-latex/.
+
+We can create side by side figures in raw LaTeX like this (note however, this will not show up in html export):
+
+#+BEGIN_LaTeX
+\begin{figure}
+  \subfigure[Left graph \label{fig:a}]
+    {\includegraphics[width=3in]{images/cos-plot.png}}
+\enskip % horizontal spacking. tex.stackexchange.com/questions/41476/lengths-and-when-to-use-them
+  \subfigure[Right graph. \label{fig:b}]
+    {\includegraphics[width=3in]{images/eos-uncertainty.png}}
+\caption{Text pertaining to both graphs,\ref{fig:a}and \ref{fig:b}. \label{fig12}}
+\end{figure}
+#+END_LaTeX
+
+And in our text we can refer to the overall Figure ref:fig12, or the subfigures Figure ref:fig:a or Figure ref:fig:b. This works fine if your end goal is LaTeX export. It does not work fine if you want to consider HTML or some other output.
+
+So, here we consider how we could remove the LaTeX dependency by representing the figures in a sexp data structure, for example something like this. I change the labels and captions a bit so they are actually distinguishable.
+
+#+BEGIN_SRC emacs-lisp
+(figure ()
+ (subfigure '("Left graph from sexp." (label "fig:sa"))
+	    (includegraphics '((width . "3in"))
+			     "images/cos-plot.png"))
+ (enskip)
+ (subfigure '("Right graph from sexp" (label "fig:sb"))
+	    (includegraphics '((width . "3in"))
+			     "images/eos-uncertainty.png"))
+ (caption
+  "Text pertaining to both graphs from a sexp, " (ref "fig:sa")
+  " and " (ref "fig:sb") "." (label "figs12")))
+#+END_SRC
+
+#+RESULTS:
+: "emacs-lisp"
+
+This doesn't look much worse than the LaTeX code itself. It might not seem useful right away, but imagine if this was really code that could evaluate to the format we want. Remember the [[http://kitchingroup.cheme.cmu.edu/blog/2015/06/10/A-sexp-version-of-a-bibtex-entry/][sexp bibtex entry]] that could evaluate to bibtex, json or xml? Let's look at this here. What we consider is kind of like http://oremacs.com/2015/01/23/eltex/, but we could include other kinds of exports if we wanted.
+
+Here is our special block in org-mode. It should render roughly as side by side images in LaTeX and HTML.
+
+#+begin_sexp
+(figure ()
+ (subfigure '("Left graph from sexp." (label "fig:sa"))
+	    (includegraphics '((width . "3in"))
+			     "images/cos-plot.png"))
+ (enskip)
+ (subfigure '("Right graph from sexp" (label "fig:sb"))
+	    (includegraphics '((width . "3in"))
+			     "images/eos-uncertainty.png"))
+ (caption
+  "Text pertaining to both graphs from a sexp, " (ref "fig:sa")
+  " and " (ref "fig:sb") "." (label "figs12")))
+#+end_sexp
+
+Now, we need a function to format the sexp block for export. It is easy, we just eval the contents of the block. We do assume here there is just one sexp to evaluate. This function will handle all special blocks, but we only want to do something different for the sexp blocks.
+
+#+BEGIN_SRC emacs-lisp
+(defun sb-format (sb contents info)
+  (cond
+     ((string= "SEXP" (org-element-property :type sb))
+      (eval (read (buffer-substring
+		   (org-element-property :contents-begin sb)
+		   (org-element-property :contents-end sb)))))
+     (t
+      contents)))))
+#+END_SRC
+
+#+RESULTS:
+: sb-format
+
+All that is left is to define the functions. We do that next.
+
+** Latex export
+We do LaTeX export first because we know what it should look like. We need to define a function for each piece of the data structure that will evaluate to a string. Here are three easy ones.
+
+#+BEGIN_SRC emacs-lisp
+(defun label (arg)
+  (format "\\label{%s}" arg))
+
+(defun ref (arg)
+  (format "\\ref{%s}" arg))
+
+(defun caption (&rest body)
+  (format "\\caption{%s}"
+	 (mapconcat 'eval body "")))
+
+(caption
+  "Text pertaining to both graphs, " (ref "fig:a")
+  " and " (ref "fig:b") "." (label "fig12"))
+#+END_SRC
+#+RESULTS:
+: \caption{Text pertaining to both graphs, \ref{fig:a} and \ref{fig:b}.\label{fig12}}
+
+Now, for includegraphics, we allow options and a path. The options we assume are in an a-list.
+
+#+BEGIN_SRC emacs-lisp
+(defun includegraphics (options path)
+  (format "\\includegraphics%s{%s}"
+	  (if options
+	      (format "[%s]"
+		      (mapconcat (lambda (ccell)
+				   (format "%s=%s"
+					   (car ccell)
+					   (cdr ccell)))
+				 options
+				 ","))
+	    "")
+	  path))
+
+(includegraphics '((width . "3in"))
+		 "images/eos-uncertainty.png")
+#+END_SRC
+#+RESULTS:
+: \includegraphics[width=3in]{images/eos-uncertainty.png}
+
+Similarly for subfigure, we have options, and then a body of expressions. The options here are just expressions that should evaluate to strings. This is not consistent with the way we do options in includegraphics. This is just proof of concept work, so I don't know if this inconsistency is really problematic yet, or insufficient for all options.
+
+#+BEGIN_SRC emacs-lisp
+(defun subfigure (options &rest body)
+  (format "\\subfigure%s{%s}"
+	  (if options
+	      (format "[%s]"
+		      (mapconcat 'eval options ""))
+	    "")
+	  (mapconcat 'eval body "")))
+
+(subfigure '("Right graph" (label "fig:b"))
+	    (includegraphics '((width . "3in"))
+			     "images/eos-uncertainty.png"))
+#+END_SRC
+#+RESULTS:
+: \subfigure[Right graph\label{fig:b}]{\includegraphics[width=3in]{images/eos-uncertainty.png}}
+
+Now, we put the whole figure together.
+
+#+BEGIN_SRC emacs-lisp
+(defun figure (options &rest body)
+  (format "\\begin{figure}
+%s
+\\end{figure}"
+(mapconcat 'eval body "\n")))
+
+(defun enskip () "\\enskip")
+#+END_SRC
+#+RESULTS:
+: enskip
+
+Now, we would have a block like this, and we can evaluate it.
+
+#+BEGIN_SRC emacs-lisp :results latex
+(figure ()
+ (subfigure '("Left graph from sexp." (label "fig:ssa"))
+	    (includegraphics '((width . "3in"))
+			     "images/cos-plot.png"))
+ (enskip)
+ (subfigure '("Right graph from sexp" (label "fig:ssb"))
+	    (includegraphics '((width . "3in"))
+			     "images/eos-uncertainty.png"))
+ (caption
+  "Text pertaining to both graphs from a sexp, " (ref "fig:ssa")
+  " and " (ref "fig:ssb") "." (label "figss12")))
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_LaTeX
+\begin{figure}
+\subfigure[Left graph from sexp.\label{fig:ssa}]{\includegraphics[width=3in]{images/cos-plot.png}}
+\enskip
+\subfigure[Right graph from sexp\label{fig:ssb}]{\includegraphics[width=3in]{images/eos-uncertainty.png}}
+\caption{Text pertaining to both graphs from a sexp, \ref{fig:ssa} and \ref{fig:ssb}.\label{figss12}}
+\end{figure}
+#+END_LaTeX
+
+Not the most beautiful LaTeX ever, but it works. Now, to get this to work, we need to handle our special sexp blocks differently. We do that with a new derived backend.
+
+#+BEGIN_SRC emacs-lisp
+(org-export-define-derived-backend 'my-latex 'latex
+  :translate-alist '((special-block . sb-format)))
+
+(org-latex-compile (org-export-to-file 'my-latex "custom-sb-export.tex"))
+(org-open-file "custom-sb-export.pdf")
+#+END_SRC
+
+It works, and here is the pdf: [[./custom-sb-export.pdf]].
+
+** HTML functions
+We can use the same sexp block to get figures side-by-side in HTML. We need to redefine each element and its HTML output.
+
+#+BEGIN_SRC emacs-lisp
+(defun label (arg)
+  (format "<a name=\"%s\"></a>" arg))
+
+(defun ref (arg)
+  (format "<a href=\"#%s\">%s</a>" arg arg))
+
+(defun caption (&rest body)
+  (format "<caption>%s</caption>"
+	 (mapconcat 'eval body "")))
+
+(caption
+  "Text pertaining to both graphs, " (ref "fig:a")
+  " and " (ref "fig:b") "." (label "fig12"))
+#+END_SRC
+
+#+RESULTS:
+: <caption>Text pertaining to both graphs, <a href="#fig:a">fig:a</a> and <a href="#fig:b">fig:b</a>.<a name="fig12"></a></caption>
+
+
+We will ignore options for the includegraphics html output. We would need to specify some way to do unit conversions for html. Here we fix the width.
+#+BEGIN_SRC emacs-lisp
+(defun includegraphics (options path)
+  (format "<img src=\"/media/%s\" width=\"300\">"
+	  path))
+
+(includegraphics '((width . "3in"))
+		 "images/eos-uncertainty.png")
+
+#+END_SRC
+
+#+RESULTS:
+: <img src="/media/images/eos-uncertainty.png" width="300">
+
+We wrap a subfigure in a table cell.
+#+BEGIN_SRC emacs-lisp
+(defun subfigure (options &rest body)
+  (format "<td>%s%s</td>"
+	  (mapconcat 'eval body "")
+	  (when options
+	    (concat "<br>"
+		    (mapconcat 'eval options "")))))
+
+(subfigure '("Right graph" (label "fig:b"))
+	    (includegraphics '((width . "3in"))
+			     "images/eos-uncertainty.png"))
+
+#+END_SRC
+
+#+RESULTS:
+: <td><img src="/media/images/eos-uncertainty.png" width="300"><br>Right graph<a name="fig:b"></a></td>
+
+We assume we can put the images in a single row.
+
+#+BEGIN_SRC emacs-lisp
+(defun figure (options &rest body)
+  (format "<span class=\"image\"><table>
+<tr>%s</tr>
+</table></span>"
+(mapconcat 'eval body "\n")))
+
+(defun enskip () "")
+#+END_SRC
+
+#+RESULTS:
+: enskip
+
+Now, here is our specification.
+#+BEGIN_SRC emacs-lisp :results html
+(figure ()
+ (subfigure '("Left graph" (label "fig:ha"))
+	    (includegraphics '((width . "3in"))
+			     "images/cos-plot.png"))
+ (enskip)
+ (subfigure '("Right graph" (label "fig:hb"))
+	    (includegraphics '((width . "3in"))
+			     "images/eos-uncertainty.png"))
+ (caption
+  "Text pertaining to both graphs, " (ref "fig:ha")
+  " and " (ref "fig:hb") "." (label "figh12")))
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_HTML
+<span class="image"><table>
+<tr><td><img src="/media/images/cos-plot.png" width="300"><br>Left graph<a name="fig:ha"></a></td>
+
+<td><img src="/media/images/eos-uncertainty.png" width="300"><br>Right graph<a name="fig:hb"></a></td>
+<caption>Text pertaining to both graphs, <a href="#fig:ha">fig:ha</a> and <a href="#fig:hb">fig:hb</a>.<a name="figh12"></a></caption></tr>
+</table></span>
+#+END_HTML
+
+
+And our derived backend for HTML.
+#+BEGIN_SRC emacs-lisp
+(org-export-define-derived-backend 'my-html 'html
+  :translate-alist '((special-block . sb-format)))
+
+(browse-url (org-export-to-file 'my-html "custom-sb-export.html"))
+#+END_SRC
+
+#+RESULTS:
+: #<process open custom-sb-export.html>
+
+
+** Summary thoughts
+I think I like the idea. Obviously there are differences between what is possible between LaTeX and HTML, notably the attributes that may or may not be supported between them, including the units of the width, labels, and references. I still have not figured out an elegant way to switch between LaTeX and HTML exports since there is basically one set of functions that need different outputs under different conditions; maybe each function could have backend specific output.
+
+For small things, you could achieve this with inline emacs-lisp src blocks, but I think those are limited to one liners. Alternatively, you could probably get by with output from an actual src block, but you would have to make sure it executed during export (I turn this off by default), and that it have backend specific output.
+
+Finally, the only other alternative is a preprocessor that finds the sexps that define the data and replaces them with output.
+
+The sexp block I described above is basically like a domain specific language (DSL). Something like this is described in "Practical Common Lisp" (http://www.gigamonkeys.com/book/practical-an-html-generation-library-the-interpreter.html). My version is not as sophisticated as the one there.  Notably, mine uses eval which has some limitations, such as no communication between sexp blocks.
