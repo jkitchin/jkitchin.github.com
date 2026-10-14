@@ -581,7 +581,7 @@
       el(
         "span",
         "kg-ask-note",
-        why + " — showing matching passages only. Written answers need WebGPU: " +
+        why + ", so showing matching passages only. Written answers need WebGPU: " +
           "a recent Chrome or Edge, Safari 26+, or Firefox with WebGPU enabled."
       )
     );
@@ -671,7 +671,7 @@
       } catch (e) {
         /* private mode: the model still works, it just is not remembered */
       }
-      setStatus("Model ready — answers will be written, with citations.", "ok");
+      setStatus("Model ready: answers will be written, with citations.", "ok");
       btn.textContent = "Model loaded";
       if (ui.modelSelect) ui.modelSelect.disabled = false;
     } catch (err) {

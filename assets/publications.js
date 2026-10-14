@@ -28,8 +28,15 @@
   const pending = [];
   let loading = false;
 
+  // embed.js loads a second script that defines _altmetric_embed_init, so the
+  // function can be missing for a moment after embed.js itself has loaded.
+  let waits = 0;
+
   function flush() {
-    if (!window._altmetric_embed_init) return;
+    if (!window._altmetric_embed_init) {
+      if (loading && waits++ < 50) setTimeout(flush, 200);
+      return;
+    }
     while (pending.length) {
       const el = pending.shift();
       el.classList.remove("altmetric-lazy");

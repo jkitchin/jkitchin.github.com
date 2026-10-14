@@ -168,7 +168,7 @@ def citation(p):
         ref += f" {p['volume']}"
     if p.get("pages"):
         ref += f", {p['pages']}"
-    return f"{au}. {p['title']}. {ref} ({str(p.get('date', ''))[:4]}). https://doi.org/{p['doi']}"
+    return f"{au.rstrip('.')}. {p['title']}. {ref} ({str(p.get('date', ''))[:4]}). https://doi.org/{p['doi']}"
 
 
 def publications(chunks):
