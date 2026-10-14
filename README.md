@@ -97,8 +97,13 @@ is fine. Run the notebook before exporting so outputs are present.
 
 ## Local build
 
+Quarto 1.10 or later is required: with 1.7 the dark-mode toggle silently fails
+(its script looks for a highlighting stylesheet 1.7 does not emit). The
+simplest way to get a matching Quarto is in a project venv:
+
 ```sh
-pip install pyyaml lxml jupyter   # plus whatever your posts import
+uv venv .venv && source .venv/bin/activate
+uv pip install pyyaml lxml jupyter "bibtexparser>=2" "quarto-cli>=1.10"   # plus whatever your posts import
 quarto render                     # output in _site/
 python3 scripts/verify_legacy.py  # every old URL present and unchanged
 ```

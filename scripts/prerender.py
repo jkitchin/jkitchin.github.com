@@ -110,6 +110,61 @@ def relative(iso):
     return f"{days // 365} years ago"
 
 
+# Research areas for the home page timeline, grouped from the OpenAlex field of
+# each paper's primary topic (data/publication-fields.json). Three areas plus
+# Other: a dot chart cannot keep more categories distinguishable.
+AREAS = [
+    ("materials", "Materials and catalysis", {"Materials Science", "Chemistry", "Physics and Astronomy"}),
+    ("energy", "Energy and process engineering", {"Engineering", "Energy", "Chemical Engineering"}),
+    ("computing", "Computing, data and optimization", {"Computer Science", "Decision Sciences", "Mathematics"}),
+]
+
+
+def timeline():
+    pubs = yaml.safe_load((ROOT / "data/publications.yml").read_text())
+    fpath = ROOT / "data" / "publication-fields.json"
+    fields = json.loads(fpath.read_text()) if fpath.exists() else {}
+    ipath = ROOT / "data" / "papers-index.json"
+    summaries = json.loads(ipath.read_text()) if ipath.exists() else {}
+    order = {key: n for n, (key, _, _) in enumerate(AREAS)}
+
+    def area(p):
+        field = (fields.get(p.get("doi", "").lower()) or {}).get("field")
+        return next((key for key, _, fs in AREAS if field in fs), "other")
+
+    by_year, counts = defaultdict(list), defaultdict(int)
+    for p in pubs:
+        y = str(p.get("date", ""))[:4]
+        if y.isdigit():
+            a = area(p)
+            by_year[int(y)].append((a, p))
+            counts[a] += 1
+    years = list(range(min(by_year), max(by_year) + 1))
+    legend = "".join(
+        f'<span class="tl-key"><i class="tl-dot tl-{key}"></i>{esc(label)} <b>{counts[key]}</b></span>'
+        for key, label, _ in AREAS + [("other", "Other", set())] if counts[key])
+    cols = []
+    for y in years:
+        dots = []
+        for a, p in sorted(by_year.get(y, []), key=lambda ap: (order.get(ap[0], 9), str(ap[1].get("date")))):
+            doi = p.get("doi", "").lower()
+            href = summaries.get(doi) or f"https://doi.org/{doi}"
+            dots.append(f'<a class="tl-dot tl-{a}" href="{esc(href)}" data-title="{esc(p["title"])}" '
+                        f'data-meta="{esc(p.get("journal", ""))} ({y})" aria-label="{esc(p["title"])} ({y})"></a>')
+        label = f'<span class="tl-year">{y}</span>' if y % 5 == 0 or y in (years[0], years[-1]) else ""
+        cols.append(f'<div class="tl-col" title="{y}: {len(dots)} paper{"" if len(dots) == 1 else "s"}">{"".join(dots)}{label}</div>')
+    return "\n".join([
+        "```{=html}",
+        f'<div class="tl-legend">{legend}</div>',
+        f'<div class="tl" role="group" aria-label="Publications by year, {len(pubs)} papers">{"".join(cols)}</div>',
+        '<p class="tl-caption">Each dot is one paper, colored by the OpenAlex field of its main topic. '
+        'Hover or focus a dot for the title, and click to open its summary or the paper. '
+        'The full list is on the <a href="publications.html">publications</a> page.</p>',
+        '<div class="tl-tip" hidden></div>',
+        "```",
+    ]) + "\n"
+
+
 def card(p, s):
     """One package card. s is the package's entry in software-stats.json."""
     gh = f"https://github.com/{p['repo']}"
@@ -202,3 +257,4 @@ if __name__ == "__main__":
     OUT.mkdir(exist_ok=True)
     write_if_changed(OUT / "publications.md", publications())
     write_if_changed(OUT / "software.md", software())
+    write_if_changed(OUT / "timeline.md", timeline())

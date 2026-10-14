@@ -850,6 +850,21 @@
     document.addEventListener("keydown", function (e) {
       if (e.key === "Escape" && ui.panel && !ui.panel.hidden) closePanel();
     });
+    // For other parts of the page (the home page search box): open the panel,
+    // optionally with a question to ask right away.
+    window.KGAsk = {
+      open: function (question) {
+        openPanel();
+        if (question) {
+          ui.input.value = question;
+          loadIndex().then(function () { ask(question); });
+        }
+      }
+    };
+    document.dispatchEvent(new Event("kgask:ready"));
+    // ask.html?q=... (the home page search box without JavaScript timing luck)
+    var q = new URLSearchParams(window.location.search).get("q");
+    if (q) window.KGAsk.open(q);
   }
 
   // Test seam. The retrieval half — tokenizer, stemmer, index, scorer — is
