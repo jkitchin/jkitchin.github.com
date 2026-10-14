@@ -104,58 +104,83 @@ def relative(iso):
     return f"{days // 365} years ago"
 
 
+def card(p, s):
+    """One package card. s is the package's entry in software-stats.json."""
+    gh = f"https://github.com/{p['repo']}"
+    status = p.get("status")
+    badge = f'<span class="status">{esc(status)}</span>' if status else ""
+    icon = (f'<img class="pkg-icon" src="{esc(p["icon"])}" alt="" loading="lazy">'
+            if p.get("icon") else mono(p["name"]))
+    versions = []
+    if p.get("pypi"):
+        versions.append(f'<a class="ver" href="https://pypi.org/project/{esc(p["pypi"])}/" '
+                        f'title="PyPI: {esc(p["pypi"])}"><span>PyPI</span>'
+                        f'<b data-k="pypi">{esc(s.get("pypi", "?"))}</b></a>')
+    if p.get("crate"):
+        versions.append(f'<a class="ver" href="https://crates.io/crates/{esc(p["crate"])}" '
+                        f'title="crates.io: {esc(p["crate"])}"><span>crates.io</span>'
+                        f'<b data-k="crate">{esc(s.get("crate", "?"))}</b></a>')
+    if not versions and s.get("release"):
+        versions.append(f'<a class="ver" href="{gh}/releases/latest"><span>release</span>'
+                        f'<b data-k="release">{esc(s["release"])}</b></a>')
+    links = [f'<a href="{gh}"><i class="bi bi-github"></i> GitHub</a>']
+    if p.get("docs"):
+        links.append(f'<a href="{esc(p["docs"])}"><i class="bi bi-book"></i> Docs</a>')
+    attrs = f'data-repo="{esc(p["repo"])}"'
+    if p.get("pypi"):
+        attrs += f' data-pypi="{esc(p["pypi"])}"'
+    if p.get("crate"):
+        attrs += f' data-crate="{esc(p["crate"])}"'
+    cls = "pkg" + (" pkg-deprecated" if status == "deprecated" else "") + (" pkg-featured" if p.get("featured") else "")
+    return (
+        f'<article class="{cls}" {attrs}>'
+        f'<div class="pkg-head">{icon}<div><h3>{esc(p["name"])}{badge}</h3>'
+        f'<div class="pkg-vers">{"".join(versions)}</div></div></div>'
+        f'<p>{esc(p["description"])}</p>'
+        f'<div class="pkg-stats">'
+        f'<span title="GitHub stars"><i class="bi bi-star-fill"></i> <b data-k="stars">{s.get("stars", "")}</b></span>'
+        f'<span title="Forks"><i class="bi bi-diagram-2"></i> <b data-k="forks">{s.get("forks", "")}</b></span>'
+        f'<span title="Last commit"><i class="bi bi-clock-history"></i> '
+        f'<b data-k="pushed" data-iso="{esc(s.get("pushed", ""))}">{relative(s.get("pushed"))}</b></span>'
+        f'</div>'
+        f'<div class="pkg-links">{" ".join(links)}</div></article>')
+
+
 def software():
     groups = yaml.safe_load((ROOT / "data/software.yml").read_text())
     path = ROOT / "data" / "software-stats.json"
     stats = json.loads(path.read_text()) if path.exists() else {}
-    total = sum(stats.get(p["repo"], {}).get("stars", 0) for g in groups for p in g["packages"])
+
+    # Featured packages go first, in one large card each, without a heading.
+    # Deprecated packages are pulled out of their groups into a final section.
+    featured = [p for g in groups for p in g["packages"] if p.get("featured")]
+    deprecated = [p for g in groups for p in g["packages"] if p.get("status") == "deprecated"]
+    sections = []
+    for g in groups:
+        pkgs = [p for p in g["packages"] if not p.get("featured") and p.get("status") != "deprecated"]
+        if pkgs:
+            sections.append({**g, "packages": pkgs})
+    if deprecated:
+        sections.append({"group": "Deprecated", "intro": "Superseded packages, kept here for reference.",
+                         "packages": deprecated})
+
+    current = featured + [p for g in sections if g["group"] != "Deprecated" for p in g["packages"]]
+    total = sum(stats.get(p["repo"], {}).get("stars", 0) for p in current)
     out = ["```{=html}",
            f'<p class="sw-summary"><i class="bi bi-star-fill"></i> <b id="sw-total">{total:,}</b> '
-           'GitHub stars across these packages. Numbers update live from GitHub, PyPI and crates.io.</p>',
-           "```\n"]
-    for g in groups:
+           'GitHub stars across these packages. Numbers update live from GitHub, PyPI and crates.io.</p>']
+    if featured:
+        out.append('<div class="pkg-featured-row">')
+        out += [card(p, stats.get(p["repo"], {})) for p in featured]
+        out.append("</div>")
+    out.append("```\n")
+    for g in sections:
         out.append(f"## {g['group']}\n")
+        if g.get("intro"):
+            out.append(f"{g['intro']}\n")
         out.append("```{=html}")
         out.append('<div class="pkg-grid">')
-        for p in g["packages"]:
-            s = stats.get(p["repo"], {})
-            gh = f"https://github.com/{p['repo']}"
-            status = p.get("status")
-            badge = f'<span class="status">{esc(status)}</span>' if status else ""
-            icon = (f'<img class="pkg-icon" src="{esc(p["icon"])}" alt="" loading="lazy">'
-                    if p.get("icon") else mono(p["name"]))
-            versions = []
-            if p.get("pypi"):
-                versions.append(f'<a class="ver" href="https://pypi.org/project/{esc(p["pypi"])}/" '
-                                f'title="PyPI: {esc(p["pypi"])}"><span>PyPI</span>'
-                                f'<b data-k="pypi">{esc(s.get("pypi", "?"))}</b></a>')
-            if p.get("crate"):
-                versions.append(f'<a class="ver" href="https://crates.io/crates/{esc(p["crate"])}" '
-                                f'title="crates.io: {esc(p["crate"])}"><span>crates.io</span>'
-                                f'<b data-k="crate">{esc(s.get("crate", "?"))}</b></a>')
-            if not versions and s.get("release"):
-                versions.append(f'<a class="ver" href="{gh}/releases/latest"><span>release</span>'
-                                f'<b data-k="release">{esc(s["release"])}</b></a>')
-            links = [f'<a href="{gh}"><i class="bi bi-github"></i> GitHub</a>']
-            if p.get("docs"):
-                links.append(f'<a href="{esc(p["docs"])}"><i class="bi bi-book"></i> Docs</a>')
-            attrs = f'data-repo="{esc(p["repo"])}"'
-            if p.get("pypi"):
-                attrs += f' data-pypi="{esc(p["pypi"])}"'
-            if p.get("crate"):
-                attrs += f' data-crate="{esc(p["crate"])}"'
-            out.append(
-                f'<article class="pkg{" pkg-deprecated" if status == "deprecated" else ""}" {attrs}>'
-                f'<div class="pkg-head">{icon}<div><h3>{esc(p["name"])}{badge}</h3>'
-                f'<div class="pkg-vers">{"".join(versions)}</div></div></div>'
-                f'<p>{esc(p["description"])}</p>'
-                f'<div class="pkg-stats">'
-                f'<span title="GitHub stars"><i class="bi bi-star-fill"></i> <b data-k="stars">{s.get("stars", "")}</b></span>'
-                f'<span title="Forks"><i class="bi bi-diagram-2"></i> <b data-k="forks">{s.get("forks", "")}</b></span>'
-                f'<span title="Last commit"><i class="bi bi-clock-history"></i> '
-                f'<b data-k="pushed" data-iso="{esc(s.get("pushed", ""))}">{relative(s.get("pushed"))}</b></span>'
-                f'</div>'
-                f'<div class="pkg-links">{" ".join(links)}</div></article>')
+        out += [card(p, stats.get(p["repo"], {})) for p in g["packages"]]
         out.append("</div>")
         out.append("```\n")
     return "\n".join(out)

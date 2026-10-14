@@ -46,7 +46,7 @@
 
   function updateTotal() {
     let total = 0;
-    document.querySelectorAll('.pkg [data-k="stars"]').forEach(function (el) {
+    document.querySelectorAll('.pkg:not(.pkg-deprecated) [data-k="stars"]').forEach(function (el) {
       total += parseInt(el.textContent.replace(/,/g, ""), 10) || 0;
     });
     const t = document.getElementById("sw-total");
