@@ -21,7 +21,10 @@ index.qmd research.qmd teaching.qmd 404.qmd
 publications.qmd          includes _generated/publications.md
 software.qmd              includes _generated/software.md
 data/publications.yml     publication list (edit by hand or update from OpenAlex)
-data/software.yml         software cards
+data/software.yml         software cards (logos in assets/software/)
+data/software-stats.json  stars/versions baked into the page (update_software_stats.py)
+data/publications-exclude.txt  DOIs update_publications.py must never add
+assets/ask/               Ask widget: BM25 search + optional in-browser WebLLM answers
 posts/<slug>/index.qmd    a post (or index.ipynb)
 _freeze/                  stored results of executed code (commit this)
 _generated/               built from data/ by scripts/prerender.py (commit this)
@@ -33,6 +36,8 @@ scripts/
   update_publications.py  adds new articles from OpenAlex by ORCID
   seed_publications.py    one-time seed of data/publications.yml from legacy/
   verify_legacy.py        checks _site/ against the old site's master branch
+  update_software_stats.py  GitHub/PyPI/crates.io numbers -> data/software-stats.json
+  build_ask_index.py      _site/ask-index.json for the Ask widget (runs after render)
 ```
 
 ## Writing a post
@@ -68,7 +73,12 @@ is fine. Run the notebook before exporting so outputs are present.
 - **Publications:** `python3 scripts/update_publications.py` lists articles on
   OpenAlex that are not in `data/publications.yml`; add `--write` to add them.
   It never changes existing entries, so hand corrections stick.
-- **Software:** edit `data/software.yml`.
+- **Software:** edit `data/software.yml`, then `GH_TOKEN=$(gh auth token)
+  python3 scripts/update_software_stats.py` to refresh the numbers shown
+  before the page's own live update.
+- **Ask widget:** the index is rebuilt on every render from the site pages,
+  posts, `legacy/blog/`, `data/publications.yml` and, when present,
+  `data/papers.json` (paper summaries from the crucible). Nothing to do by hand.
 - **Research / Teaching:** edit the `.qmd` files.
 
 ## Old URLs and feeds
