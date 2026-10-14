@@ -172,6 +172,30 @@ def timeline():
     ]) + "\n"
 
 
+TERMS = {"s": ("Spring", 0), "u": ("Summer", 1), "f": ("Fall", 2)}
+
+
+def courses():
+    rows = yaml.safe_load((ROOT / "data/courses.yml").read_text())
+
+    def term(c):
+        letter, year = c["repo"][0].lower(), 2000 + int(c["repo"][1:3])
+        name, order = TERMS.get(letter, ("", 3))
+        return year, order, f"{name} {year}"
+
+    rows.sort(key=lambda c: term(c)[:2])
+    out = ["```{=html}", '<ol class="course-list">']
+    for c in rows:
+        links = [f'<a href="https://github.com/jkitchin/{esc(c["repo"])}"><i class="bi bi-github"></i> materials</a>']
+        if c.get("site"):
+            links.insert(0, f'<a href="{esc(c["site"])}"><i class="bi bi-globe"></i> course site</a>')
+        out.append(f'<li><span class="course-term">{term(c)[2]}</span>'
+                   f'<span class="course-name"><b>{esc(c["number"])}</b> {esc(c["title"])}</span>'
+                   f'<span class="course-links">{" ".join(links)}</span></li>')
+    out += ["</ol>", "```"]
+    return "\n".join(out) + "\n"
+
+
 def card(p, s):
     """One package card. s is the package's entry in software-stats.json."""
     gh = f"https://github.com/{p['repo']}"
@@ -266,3 +290,4 @@ if __name__ == "__main__":
     write_if_changed(OUT / "publications.md", publications())
     write_if_changed(OUT / "software.md", software())
     write_if_changed(OUT / "timeline.md", timeline())
+    write_if_changed(OUT / "courses.md", courses())

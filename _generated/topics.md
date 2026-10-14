@@ -8,6 +8,7 @@
 <li><a href="topics/chiral-metal-surfaces/">Chiral Metal Surfaces</a></li>
 <li><a href="topics/cluster-expansion/">Cluster Expansion</a></li>
 <li><a href="topics/co2-capture/">CO2 Capture</a></li>
+<li><a href="topics/computational-hydrogen-electrode/">Computational Hydrogen Electrode</a></li>
 <li><a href="topics/coverage-dependent-adsorption/">Coverage-Dependent Adsorption</a></li>
 <li><a href="topics/critical-micelle-concentration/">Critical Micelle Concentration</a></li>
 <li><a href="topics/cross-validation/">Cross-Validation</a></li>
@@ -18,6 +19,7 @@
 <li><a href="topics/dft-convergence/">DFT Convergence</a></li>
 <li><a href="topics/differentiable-programming/">Differentiable Programming</a></li>
 <li><a href="topics/doped-oxides/">Doped Oxides</a></li>
+<li><a href="topics/electrochemical-stability/">Electrochemical Stability</a></li>
 <li><a href="topics/generative-models/">Generative Models</a></li>
 <li><a href="topics/graph-neural-networks/">Graph Neural Networks</a></li>
 <li><a href="topics/heteropolyacids/">Heteropolyacids</a></li>
@@ -32,10 +34,12 @@
 <li><a href="topics/ionic-liquids/">Ionic Liquids</a></li>
 <li><a href="topics/large-language-models/">Large Language Models</a></li>
 <li><a href="topics/magnetic-moments/">Magnetic Moments</a></li>
+<li><a href="topics/molecular-electrocatalysts/">Molecular Electrocatalysts</a></li>
 <li><a href="topics/negative-differential-resistance/">Negative Differential Resistance</a></li>
 <li><a href="topics/neural-network-potentials/">Neural Network Potentials</a></li>
 <li><a href="topics/oxide-polymorphs/">Oxide Polymorphs</a></li>
 <li><a href="topics/oxygen-evolution-reaction/">Oxygen Evolution Reaction</a></li>
+<li><a href="topics/oxygen-reduction-reaction/">Oxygen Reduction Reaction</a></li>
 <li><a href="topics/oxygen-vacancies-in-oxides/">Oxygen Vacancies in Oxides</a></li>
 <li><a href="topics/perovskite-oxides/">Perovskite Oxides</a></li>
 <li><a href="topics/reproducibility/">Reproducibility</a></li>
@@ -43,6 +47,7 @@
 <li><a href="topics/self-driving-laboratories/">Self-Driving Laboratories</a></li>
 <li><a href="topics/similarity-search/">Similarity Search</a></li>
 <li><a href="topics/single-atom-alloys/">Single-Atom Alloys</a></li>
+<li><a href="topics/solid-amine-sorbents/">Solid Amine Sorbents</a></li>
 <li><a href="topics/stokes-einstein-relation/">Stokes–Einstein Relation</a></li>
 <li><a href="topics/strain-and-ligand-effects/">Strain and Ligand Effects</a></li>
 <li><a href="topics/surface-segregation/">Surface Segregation</a></li>

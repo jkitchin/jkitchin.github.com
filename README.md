@@ -107,3 +107,12 @@ uv pip install pyyaml lxml jupyter "bibtexparser>=2" "quarto-cli>=1.10"   # plus
 quarto render                     # output in _site/
 python3 scripts/verify_legacy.py  # every old URL present and unchanged
 ```
+
+To work on pages locally, `python3 scripts/serve.py` serves `_site/` at
+http://localhost:4321 and re-renders a page when you save it (refresh the
+browser when it says so). `quarto preview` also works but is slow to start on
+this project because it watches `legacy/` and `_site/`.
+
+Don't run `scripts/export_crucible.py` while a render is in progress: it
+rewrites `papers/`, and a render that is listing files at that moment skips
+pages.
