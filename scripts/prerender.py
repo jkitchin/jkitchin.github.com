@@ -46,6 +46,10 @@ def publications():
     for p in pubs:
         by_year[str(p.get("date", ""))[:4] or "Undated"].append(p)
     years = sorted(by_year, reverse=True)
+    pre = ROOT / "data" / "preprints.yml"
+    preprints = (yaml.safe_load(pre.read_text()) or []) if pre.exists() else []
+    nav = ['<a href="#preprints">Preprints</a>'] if preprints else []
+    nav += [f'<a href="#y{y}">{y}</a>' for y in years]
 
     out = ["```{=html}",
            '<div class="pub-header">',
@@ -57,7 +61,32 @@ def publications():
            '</div></div>',
            '<input type="search" id="pub-filter" class="form-control pub-filter" '
            'placeholder="Filter by title, author, journal or year" aria-label="Filter publications">',
-           '<nav class="year-nav">' + " ".join(f'<a href="#y{y}">{y}</a>' for y in years) + "</nav>"]
+           '<nav class="year-nav">' + " ".join(nav) + "</nav>"]
+    if preprints:
+        out.append('<section class="pub-year-group" data-year="Preprints">')
+        out.append('<h2 class="pub-year" id="preprints">Preprints</h2>')
+        for p in preprints:
+            au = fmt_authors(p.get("authors", []))
+            sep = " " if re.search(r"[.…](</b>)?$", au) else ". "
+            year = f" ({p['year']})" if p.get("year") else ""
+            links = [f'<a href="{esc(p["url"])}"><i class="bi bi-file-earmark-text"></i> Preprint</a>',
+                     f'<a href="{esc(scholar_url(p.get("title", "")))}"><i class="bi bi-mortarboard"></i> Scholar</a>']
+            if p.get("arxiv"):
+                badge_id = f'data-arxiv-id="{esc(p["arxiv"])}"'
+            elif p.get("doi"):
+                badge_id = f'data-doi="{esc(p["doi"])}"'
+            else:
+                badge_id = ""
+            badge = (f'<div class="altmetric-lazy" data-badge-type="donut" data-badge-popover="left" '
+                     f'data-hide-no-mentions="true" {badge_id}></div>') if badge_id else ""
+            out.append(
+                f'<article class="pub">'
+                f'<div class="pub-body"><span class="ti">{esc(p.get("title"))}</span>'
+                f'<span class="au">{au}</span>{sep.strip()} '
+                f'<span class="ref"><em>{esc(p.get("server"))}</em>{year}.</span>'
+                f'<span class="links">{" ".join(links)}</span></div>'
+                f'<div class="pub-badge">{badge}</div></article>')
+        out.append("</section>")
     for y in years:
         out.append(f'<section class="pub-year-group" data-year="{y}">')
         out.append(f'<h2 class="pub-year" id="y{y}">{y}</h2>')
