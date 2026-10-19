@@ -1,0 +1,178 @@
+---
+title: "A zoo of differentiable surrogates that know their uncertainty"
+description: "Symbolic models, trees, neural networks and flows from jaxsr, jax-ibart, jax-ldt, jax-difftree and pycse.sklearn: what each is, how it gets its uncertainty, and where to find an example."
+date: 2026-10-18
+categories: [machine learning, uncertainty quantification, jax, surrogates]
+draft: true
+resources:
+  - zoo.html
+  - icons/*
+---
+
+```{=html}
+<iframe src="zoo.html" title="A zoo of differentiable surrogates"
+        style="width:100%; aspect-ratio:1240/976; border:0;" loading="lazy"></iframe>
+```
+
+[Open the graphic full-size](zoo.html).
+
+In the [last post](../differentiable-models/) I argued that one differentiable model can be reused for simulation, estimation, design of experiments, optimization and control. Often that model is not built solelyfrom first principles. It may also contain a surrogate fitted to data or to an expensive simulation. For a surrogate to fit that picture it has to do two things: give derivatives, so the tasks can work through it, and say how sure it is, so uncertainty quantification, experiment design and active learning have something to use. Over the past year we have built quite a few of these across five packages: [jaxsr](https://github.com/jkitchin/jaxsr), [jax-ibart](https://github.com/jkitchin/jax-ibart), [jax-ldt](https://github.com/jkitchin/jax-ldt), [jax-difftree](https://github.com/jkitchin/jax-difftree) and [pycse.sklearn](https://github.com/jkitchin/pycse/tree/master/src/pycse/sklearn). Nearly all of them follow the scikit-learn API: you call `fit`, then `predict(X, return_std=True)` for a prediction with a standard deviation. The graphic above is the map. This post is the guide.
+
+# How to choose
+
+Accuracy on a test set rarely decides which surrogate to use. What decides it is what you will do with the model afterwards. Start from that.
+
+| If you need…                                                 | Reach for                                                                                                                         | Why                                                                                                                       |
+|--------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------|
+| An equation you can read, check against physics, and publish | Symbolic regression ([jaxsr](#symbolic-regression)), [iBART](#ibart), [SISSO](#sisso), [regress / nlinfit](#regress-and-nlinfit) | The model is a short algebraic expression, not a black box.                                                               |
+| Sparse models: few terms, few inputs                         | [jaxsr](#symbolic-regression), [iBART](#ibart), [SISSO](#sisso)                                                                   | All three select a small number of terms from a large library.                                                            |
+| Exact representation in a mixed-integer program              | [Linear and hyperplane trees](#linear-and-hyperplane-trees), [hardened differentiable trees](#differentiable-trees)               | Piecewise-linear models embed in a MILP with no approximation, so a solver can certify a global optimum of the surrogate. |
+| Convexity, so a local optimum is the global one              | [ICNN](#convex-neural-networks-icnn)                                                                                              | Convex in x by construction.                                                                                              |
+| Monotonicity in some inputs                                  | [Monotonic NN](#monotonic-and-periodic-networks) (guaranteed), jaxsr constraints (enforced at chosen points)                      | Stops a surrogate from inventing physics you know is wrong.                                                               |
+| Periodicity: angles, time of day, seasons                    | [Periodic NN](#monotonic-and-periodic-networks)                                                                                   | Exactly periodic in the inputs you choose.                                                                                |
+| Uncertainty for a network you already trust                  | [LLPR](#llpr)                                                                                                                     | Computed from the trained last layer, with no retraining.                                                                 |
+| Noise that changes across the input space                    | [Differentiable trees](#differentiable-trees), [DPOSE](#dpose), [NN + GMM](#nn-bayesian-linear-and-nn-gmm)                        | The variance is learned as a function of x.                                                                               |
+| Several modes, or the whole distribution of y                | [Normalizing flow](#normalizing-flows), [NN + GMM](#nn-bayesian-linear-and-nn-gmm), [differentiable trees](#differentiable-trees) | A mean and a σ are not enough when p(y | x) has two peaks.                                                                |
+| To run the model backwards: which x gives this y?            | [Normalizing flow](#normalizing-flows), [differentiable trees](#differentiable-trees)                                             | Conditional density and gradient-based inverse design.                                                                    |
+| Very little data                                             | [regress / nlinfit](#regress-and-nlinfit), [response surfaces](#response-surfaces), symbolic regression                           | A few parameters can be estimated well from a few points, with honest intervals.                                          |
+| Classification                                               | [Symbolic classifier](#symbolic-classifier), differentiable tree classifier, ZENN                                                 | Readable boundary, uncertainty split into its parts, or a thermodynamic model.                                            |
+
+A few rules of thumb sit behind the table.
+
+- **Structure you can guarantee beats structure you hope the data teach.** If you know a response is monotonic or convex, use a model that cannot be otherwise. Constraints enforced only at training points can still be violated between them.
+- **If the surrogate goes into an optimizer, pick it for the optimizer.** For a MILP use piecewise-linear trees. For a convex problem use an ICNN. For a nonlinear program, any smooth model with good derivatives will do, and a short symbolic expression is easiest on the solver.
+- **Interpretability and flexibility trade off.** Symbolic models and linear trees can be read. Networks usually fit more but explain less. KANs sit in between, because you can plot each learned edge function.
+- **Check the uncertainty, not just the fit.** Each model gets its σ a different way, and they fail differently. The [UQ comparison](#comparing-uncertainty) is a good place to start.
+
+# The symbolic models
+
+## Symbolic regression
+
+`SymbolicRegressor` in [jaxsr](https://kitchingroup.cheme.cmu.edu/jaxsr/) builds a library of candidate basis functions of your inputs (powers, logs, exponentials, products, and any you add), then selects a sparse subset and fits the coefficients. The result is an equation of the form y = Σ βᵢ φᵢ(x) that you can read, differentiate, and write straight into an optimization model. Because the final fit is linear in the coefficients, the uncertainty is well grounded. You get prediction intervals from least squares, and also Pareto-front ensembles, conformal intervals and residual bootstraps when you trust the model form less. You can add domain knowledge as constraints: bounds, signs on coefficients, monotonicity, convexity. These are enforced at the training points and, if you ask, on a grid, which is not the same as a guarantee everywhere. `MultiOutputSymbolicRegressor` fits several targets at once.
+
+Examples: [basic usage](https://github.com/jkitchin/jaxsr/blob/main/docs/examples/basic_usage.ipynb), [uncertainty quantification](https://github.com/jkitchin/jaxsr/blob/main/docs/examples/uncertainty_quantification.ipynb), [constraint enforcement](https://github.com/jkitchin/jaxsr/blob/main/docs/examples/constraint_enforcement.ipynb), [multi-output](https://github.com/jkitchin/jaxsr/blob/main/docs/examples/multi_output.ipynb), [chemical kinetics](https://github.com/jkitchin/jaxsr/blob/main/docs/examples/chemical_kinetics.ipynb), [ODE discovery](https://github.com/jkitchin/jaxsr/blob/main/docs/examples/ode_discovery.ipynb), and the [comprehensive tutorial](https://github.com/jkitchin/jaxsr/blob/main/docs/examples/comprehensive_tutorial.ipynb).
+
+## Additive symbolic models
+
+Sometimes the best description is a sum of many small, simple terms rather than one clever expression. The stagewise, backfitting and recursive regressors in jaxsr build that sum one piece at a time. They do not report uncertainty yet. Example: [additive symbolic regression](https://github.com/jkitchin/jaxsr/blob/main/docs/examples/additive_symbolic_regression.ipynb).
+
+## Superposition
+
+Many experiments produce a family of curves, one per temperature or concentration, and the claim is that shifting the axes collapses them onto one master curve. That is time-temperature superposition in rheology, Larson-Miller curves in creep, isoconversional methods in kinetics. Usually you shift the curves by hand and then assume a form for the shift, such as Arrhenius or WLF. `SuperpositionRegressor` learns the shift law symbolically from a library of candidates, which lets you extrapolate to conditions you never measured. It gives intervals on the shift-law parameters, such as an activation energy; the predictions are point values. Example: [superposition master curves](https://github.com/jkitchin/jaxsr/blob/main/docs/examples/superposition_master_curves.ipynb).
+
+## Response surfaces
+
+`ResponseSurface` is classical response-surface methodology on top of the symbolic regressor: design generators, coded variables, ANOVA, and canonical analysis of the stationary point. It also lets the model leave the quadratic when the data clearly want something else. If you are running a designed experiment with a handful of factors, start here. Examples: [RSM formulation](https://github.com/jkitchin/jaxsr/blob/main/docs/examples/rsm_formulation.ipynb), [DOE study workflow](https://github.com/jkitchin/jaxsr/blob/main/docs/examples/doe_study_workflow.ipynb).
+
+## Model averaging
+
+When several equations fit about equally well, picking one hides real uncertainty about the model form. `BayesianModelAverage` keeps them all, weighted by how well the data support each one, so the disagreement between plausible models shows up in the prediction. Examples: [uncertainty quantification](https://github.com/jkitchin/jaxsr/blob/main/docs/examples/uncertainty_quantification.ipynb), [comparing isotherm models](https://github.com/jkitchin/jaxsr/blob/main/docs/examples/model_comparison_isotherms.ipynb).
+
+## Symbolic classifier
+
+`SymbolicClassifier` applies the same sparse selection to a logistic model, fitted by iteratively reweighted least squares, with one-vs-rest for more than two classes. You get a decision boundary you can write down. Example: [symbolic classification](https://github.com/jkitchin/jaxsr/blob/main/docs/examples/symbolic_classification.ipynb).
+
+## iBART
+
+[jax-ibart](https://kitchingroup.cheme.cmu.edu/jax-ibart/) is a JAX version of iBART, iterative Bayesian additive regression trees, from Liu et al. (J. Chem. Phys. 156, 164105, 2022). It goes after the same thing as SISSO, a compact descriptor built from the inputs, but it never writes down the whole candidate space. Each round applies the operators (products, ratios, powers, logs, exponentials and so on) to the features that survived the last round, and BART screening keeps only the few that matter. That keeps the pool small, where full enumeration can reach 10¹⁷ candidates. A sparse linear model is fitted on the survivors at the end. Every descriptor keeps its SymPy expression, and a unit filter throws out ones like volume + speed before they are ever screened. It is not on PyPI; install it from GitHub.
+
+Selection is the largest source of uncertainty here, because a different sample of data can pick a different descriptor. `jax_ibart.uncertainty` has split-conformal intervals that wrap the whole fit, selection included, and selection-stability counts across bootstrap resamples, which tell you whether the data pin the descriptor down. It also has OLS intervals on the final model, which are optimistic because they condition on the selection, and the BART posterior. These are functions you call, not `predict(X, return_std=True)`.
+
+Because the model is algebra, `model.to_discopt(m)` writes it into a [discopt](https://github.com/jkitchin/discopt) problem and you can optimize over it globally with a certificate. Bounds on the inputs default to the training range, and guards keep the solver away from poles and logs of negative numbers that the data never visited. Examples: [quickstart](https://github.com/jkitchin/jax-ibart/blob/main/docs/examples/01_quickstart.ipynb), [single-atom catalysis](https://github.com/jkitchin/jax-ibart/blob/main/docs/examples/02_catalysis.ipynb), [reaction kinetics](https://github.com/jkitchin/jax-ibart/blob/main/docs/examples/06_reaction_kinetics.ipynb), [uncertainty](https://github.com/jkitchin/jax-ibart/blob/main/docs/examples/08_uncertainty.ipynb), [optimizing over a model](https://github.com/jkitchin/jax-ibart/blob/main/docs/examples/09_optimization.ipynb).
+
+## SISSO
+
+SISSO (sure independence screening and sparsifying operator) takes a different route to the same goal. It composes the inputs into a very large space of candidate descriptors, screens them, and keeps the few that explain the data. It is popular in materials science for finding descriptors. The pycse wrapper sits on TorchSISSO. `SISSO` gives hat-matrix intervals for one equation, and `SISSOEnsemble` trains a shallow ensemble of equations with an NLL or CRPS loss. Examples: [SISSO](https://github.com/jkitchin/pycse/blob/master/src/pycse/examples/SISSO_Demo.ipynb), [SISSO ensemble](https://github.com/jkitchin/pycse/blob/master/src/pycse/examples/SISSOEnsemble_Demo.ipynb).
+
+## regress and nlinfit
+
+Do not skip the simplest option. If you know the form of the model, `pycse.regress` and `nlinfit` fit it by linear or nonlinear least squares and give confidence intervals on the parameters. `predict` and `nlpredict` carry those intervals through to the predictions. With few data points this is often the most honest model you can have. `LinearRegressionUQ` wraps the linear case as an sklearn estimator. Example: [regression functions](https://github.com/jkitchin/pycse/blob/master/src/pycse/examples/Regression_Functions_Demo.ipynb).
+
+# The trees
+
+## Linear and hyperplane trees
+
+[jax-ldt](https://github.com/jkitchin/jax-ldt) grows decision trees with a linear model in each leaf. `LinearTreeRegressor` splits on one input at a time. `HyperplaneTreeRegressor` splits on oblique hyperplanes w·x ≤ b, so it needs far fewer leaves when the real boundaries are not aligned with an axis. The model is piecewise linear, which is the point: it embeds exactly in a mixed-integer linear program, for example in [discopt](https://github.com/jkitchin/discopt), and the solver then optimizes the surrogate globally. Uncertainty comes from each leaf's parameter covariance, propagated linearly or to second order, or from conformal intervals computed per leaf. Trees also export to ONNX. Examples: [quickstart](https://github.com/jkitchin/jax-ldt/blob/main/examples/01_quickstart.ipynb), [uncertainty](https://github.com/jkitchin/jax-ldt/blob/main/examples/02_uncertainty.ipynb), [active learning](https://github.com/jkitchin/jax-ldt/blob/main/examples/03_active_learning.ipynb), [MIP optimization](https://github.com/jkitchin/jax-ldt/blob/main/examples/04_mip_optimization.ipynb), [ONNX export](https://github.com/jkitchin/jax-ldt/blob/main/examples/05_onnx_export.ipynb), [steam tables](https://github.com/jkitchin/jax-ldt/blob/main/examples/06_steam_tables.ipynb).
+
+## Differentiable trees
+
+[jax-difftree](https://kitchingroup.cheme.cmu.edu/jax-difftree/) makes the splits soft, so the whole tree trains end to end by gradient descent. Each input follows every path with some probability. Each leaf holds a Gaussian, multivariate if there are several outputs, so a prediction is a mixture of Gaussians. That gives a variance that changes with x, and it splits into a within-leaf (aleatoric) part and a between-leaf (routing) part. With several outputs you can condition on the ones you have measured to predict the rest, or ask which x would most likely give a target y. For optimization, affine leaves can be hardened into a crisp piecewise-affine model and exported for a MILP, so this sits between the smooth world and the mixed-integer world. `DifferentiableTreeClassifier` splits its predictive entropy into aleatoric and epistemic parts. It does not have a notebook yet. Examples: [heteroscedastic regression](https://github.com/jkitchin/jax-difftree/blob/main/docs/examples/heteroscedastic_demo.ipynb), [multivariate inverse design](https://github.com/jkitchin/jax-difftree/blob/main/docs/examples/multivariate_inverse_design.ipynb), [piecewise-linear MILP](https://github.com/jkitchin/jax-difftree/blob/main/docs/examples/piecewise_linear_milp.ipynb), [failure modes](https://github.com/jkitchin/jax-difftree/blob/main/docs/examples/failure_modes.ipynb), [scaling](https://github.com/jkitchin/jax-difftree/blob/main/docs/examples/scaling.ipynb).
+
+## Leaf-model trees
+
+`LeafModelRegressor` in pycse is the simplest version of the idea. An ordinary sklearn decision tree splits the data, then any sklearn model you like is fitted in each leaf, and its uncertainty is used if it has one. By default the splits are chosen as if the leaves were constant. `refine_splits=True` re-chooses them for the leaf model, in the style of M5 model trees. I think of it as a proof of concept and a quick baseline next to jax-ldt. Example: [leaf models](https://github.com/jkitchin/pycse/blob/master/src/pycse/examples/LeafModel_Demo.ipynb).
+
+# The neural networks
+
+The networks fall into two groups. Some build a property into the architecture so it holds everywhere. Others add a cheap uncertainty estimate to an otherwise ordinary network.
+
+## Convex neural networks (ICNN)
+
+An input-convex network keeps the weights on its hidden path non-negative and uses convex, non-decreasing activations, which makes f convex in x. If you minimize the surrogate, any local minimum you find is the global one. The [demo](https://github.com/jkitchin/pycse/blob/master/src/pycse/examples/JAXICNNRegressor_Demo.ipynb) also shows how to use one as a convex lower bound of a non-convex function. `JAXICNNRegressor` gives point predictions only, so pair it with another model when you need intervals.
+
+## Monotonic and periodic networks
+
+`JAXMonotonicRegressor` is guaranteed increasing or decreasing in the inputs you name. Use it when you know the sign of an effect, such as a rate that rises with temperature, and do not want the surrogate to wiggle against it where data are sparse. `JAXPeriodicRegressor` puts Fourier features on chosen inputs so the model is exactly periodic in them. Both get uncertainty from last-layer prediction rigidity (see [LLPR](#llpr)). Examples: [monotonic](https://github.com/jkitchin/pycse/blob/master/src/pycse/examples/JAXMonotonicRegressor_Demo.ipynb), [periodic](https://github.com/jkitchin/pycse/blob/master/src/pycse/examples/JAXPeriodicRegressor_Demo.ipynb).
+
+## KANs
+
+Kolmogorov-Arnold networks put learnable one-dimensional functions, here B-splines, on the edges instead of fixed activations on the nodes. You can plot each edge function, which makes them easier to inspect than an MLP. `KAN` gets uncertainty from an ensemble of output heads calibrated on a validation set. `KANLLPR` gets it from prediction rigidity instead. Examples: [KAN](https://github.com/jkitchin/pycse/blob/master/src/pycse/examples/KAN_Demo.ipynb), [KAN + LLPR](https://github.com/jkitchin/pycse/blob/master/src/pycse/examples/KANLLPR_Demo.ipynb).
+
+## ZENN
+
+The zentropy-enhanced neural network is a thermodynamics-inspired model for heterogeneous data from several sources. It predicts an energy at a temperature and can reconstruct the energy landscape. It reports epistemic and aleatoric uncertainty, and the NLL variant calibrates the aleatoric part to the noise. It is described in PNAS 123(1), e2511227122. The [code](https://github.com/jkitchin/pycse/tree/master/src/pycse/sklearn/zenn) is in pycse, but it has no example notebook yet.
+
+## LLPR
+
+Last-layer prediction rigidity is the cheapest way I know to add uncertainty to a network you have already trained. It uses the last-layer features and a covariance computed from them, with no retraining and no ensemble, and is calibrated on held-out data. `LLPRRegressor` is the standalone version, and the same idea gives the uncertainty in the monotonic, periodic and KAN-LLPR models. Examples: [LLPR demo](https://github.com/jkitchin/pycse/blob/master/src/pycse/examples/llpr_demo.ipynb), [LLPR study](https://github.com/jkitchin/pycse/blob/master/src/pycse/examples/llpr_study.ipynb).
+
+## DPOSE
+
+DPOSE (direct propagation of shallow ensembles) shares the whole network across ensemble members except the last layer, and trains with a CRPS or NLL loss so the spread is calibrated. It costs little more than a single network. Because you have the members, you can push any function of the prediction through them and get its uncertainty directly. Example: [DPOSE](https://github.com/jkitchin/pycse/blob/master/src/pycse/examples/DPOSE_Demo.ipynb).
+
+## k-fold networks
+
+`KfoldNN` trains each output neuron on a different fold of the data, so one network carries a k-member ensemble, and the spread across outputs is the uncertainty. Example: [k-fold NN](https://github.com/jkitchin/pycse/blob/master/src/pycse/examples/KfoldNN_Demo.ipynb).
+
+## NN + Bayesian linear and NN + GMM
+
+These two use an sklearn MLP as a feature generator and put a probabilistic model on top. `NeuralNetworkBLR` uses Bayesian linear regression as the last layer. `NeuralNetworkGMM` uses Gaussian mixture regression, which can represent noise that changes with x and predictions with more than one mode. They are not JAX models, so they do not fit the differentiable story as neatly, but they are simple and robust. Examples: [NN + Bayesian linear](https://github.com/jkitchin/pycse/blob/master/src/pycse/examples/NNBR_Demo.ipynb), [NN + GMM](https://github.com/jkitchin/pycse/blob/master/src/pycse/examples/NNGMM_Demo.ipynb).
+
+# Distributions
+
+## Normalizing flows
+
+`NFlowsRegressor` learns the whole conditional density p(y | x) as an invertible transformation of a simple distribution. You can sample from it and read off quantiles. Because the transformation is invertible, it also runs backwards to infer which inputs are consistent with an observed output. It is built on PyTorch (nflows), not JAX. Example: [normalizing flow regression](https://github.com/jkitchin/pycse/blob/master/src/pycse/examples/nflows_regressor_examples.ipynb), which includes a CSTR design problem.
+
+# Across the zoo
+
+## Active learning
+
+Uncertainty is not only for error bars. It tells you where to sample next. Any model above that returns a standard deviation can drive an active-learning loop that adds data where the surrogate is least sure. Examples: jaxsr [active learning](https://github.com/jkitchin/jaxsr/blob/main/docs/examples/active_learning.ipynb) and [Langmuir DOE](https://github.com/jkitchin/jaxsr/blob/main/docs/examples/langmuir_doe_active_learning.ipynb), jax-ldt [active learning](https://github.com/jkitchin/jax-ldt/blob/main/examples/03_active_learning.ipynb), pycse [active learning](https://github.com/jkitchin/pycse/blob/master/src/pycse/examples/ActiveLearning_pycse_Demo.ipynb) and [active surrogates](https://github.com/jkitchin/pycse/blob/master/src/pycse/examples/Active_Surrogate_Demo.ipynb).
+
+## Comparing uncertainty
+
+The methods do not agree, and they fail in different ways. The pycse [UQ comparison](https://github.com/jkitchin/pycse/blob/master/src/pycse/examples/UQ_Comparison_Demo.ipynb) runs conformal intervals (MAPIE), NN + Bayesian linear, NN + GMM and DPOSE on the same data and checks coverage and heteroscedastic noise. The jax-difftree [failure modes](https://github.com/jkitchin/jax-difftree/blob/main/docs/examples/failure_modes.ipynb) notebook shows where soft trees go wrong. What we do not have yet is one study that puts the symbolic models, the trees and the networks side by side on the same problems. That is next.
+
+<!--
+Draft notes, not rendered.
+
+A surrogate is only useful in the "one model, many tasks" picture if it is
+differentiable (so the tasks can take derivatives through it) and knows its
+uncertainty (so UQ, DOE and active learning have something to work with).
+The zoo, by family:
+
+- symbolic: jaxsr (SymbolicRegressor, additive, superposition, RSM, BMA,
+  classifier), jax-ibart, pycse SISSO, pycse regress/nlinfit
+- trees: jax-ldt linear and hyperplane trees, jax-difftree, pycse LeafModelRegressor
+- neural nets with structure: ICNN, monotonic, periodic, KAN, KAN+LLPR, ZENN
+- neural nets with UQ heads: LLPR, DPOSE, k-fold NN, NN+BLR, NN+GMM
+- distributions: normalizing flows
+
+Notebooks to write:
+- ZENN (no example at all)
+- jax-difftree classifier
+- pycse LinearRegressionUQ
+- a cross-family comparison: same data, every family, coverage and calibration
+- Additive symbolic models have no uncertainty yet
+-->

@@ -9,6 +9,11 @@ It looks up works by ORCID, keeps journal articles and reviews, and adds any
 whose DOI is not already listed. It never edits or deletes existing entries, so
 corrections you make by hand stick. Uses only the standard library and PyYAML.
 
+Each new entry gets a permanent key, first author's surname + year with a
+letter suffix if needed (smith2026, smith2026a, ...). Keys already in the file
+or under papers/ are never reused. Name the paper's crucible summary the same
+way; the export matches by DOI, so the page lands at this key regardless.
+
 OpenAlex requires a free API key to page past the first 200 results; set
 OPENALEX_API_KEY in the environment (https://openalex.org/settings/api).
 """
@@ -19,6 +24,7 @@ import os
 import re
 import sys
 import time
+import unicodedata
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -72,6 +78,18 @@ def short_name(display):
     return f"{last} {initials}"
 
 
+def new_key(entry, taken):
+    """'Nunes-Alves A.', 2026 -> 'nunesalves2026', or the next free suffix."""
+    surname = (entry["authors"] or ["x"])[0].split()[0]
+    surname = unicodedata.normalize("NFKD", surname).encode("ascii", "ignore").decode()
+    base = re.sub(r"[^a-z]", "", surname.lower()) + str(entry["date"])[:4]
+    for suffix in [""] + [chr(c) for c in range(ord("a"), ord("z") + 1)]:
+        if base + suffix not in taken:
+            taken.add(base + suffix)
+            return base + suffix
+    raise ValueError(f"no free key for {base}")
+
+
 def to_entry(w):
     loc = w.get("primary_location") or {}
     src = loc.get("source") or {}
@@ -85,6 +103,7 @@ def to_entry(w):
     if b.get("first_page") and b.get("first_page") == b.get("last_page"):
         pages = b["first_page"]
     return {
+        "key": "",
         "title": re.sub(r"<[^>]+>", "", w.get("title") or "").strip(),
         "authors": [short_name(a["author"]["display_name"]) for a in w.get("authorships", [])],
         "journal": src.get("display_name", ""),
@@ -104,6 +123,7 @@ def main():
     header = "".join(line for line in text.splitlines(True) if line.startswith("#"))
     pubs = yaml.safe_load(text)
     have = {p["doi"].lower() for p in pubs} | excluded()
+    taken = {p["key"] for p in pubs} | {d.name for d in (DATA.parent.parent / "papers").iterdir()}
 
     new = []
     for w in fetch_works():
@@ -111,11 +131,12 @@ def main():
         if not e or e["doi"].startswith(SKIP_DOI) or SKIP_TITLE.match(e["title"]):
             continue
         if e["doi"] not in have:
+            e["key"] = new_key(e, taken)
             new.append(e)
             have.add(e["doi"])
 
     for e in sorted(new, key=lambda e: e["date"], reverse=True):
-        print(f"+ {e['date'][:4]}  {e['title'][:90]}  ({e['doi']})")
+        print(f"+ {e['key']:<20} {e['title'][:90]}  ({e['doi']})")
     print(f"{len(new)} new of {len(pubs) + len(new)} total", file=sys.stderr)
 
     if args.write and new:

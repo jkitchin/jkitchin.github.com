@@ -7,6 +7,7 @@ Outputs go to _generated/, which Quarto does not render on its own.
 import html
 import json
 import re
+import sys
 import urllib.parse
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -37,10 +38,35 @@ def scholar_url(title):
     return "https://scholar.google.com/scholar?" + urllib.parse.urlencode({"q": f'"{title}"'})
 
 
+KEY = re.compile(r"^[a-z][a-z0-9]*$")
+
+
+def check_keys(pubs, summaries):
+    """Every publication needs a unique, permanent key (see data/publications.yml).
+
+    The key is the paper's permalink, /papers/<key>/ and /publications.html#<key>,
+    so a missing, duplicate or mismatched key stops the build instead of
+    silently moving a page.
+    """
+    seen = {}
+    for p in pubs:
+        key = p.get("key")
+        if not key or not KEY.match(key):
+            sys.exit(f"publications.yml: bad or missing key {key!r} for {p.get('title')!r}")
+        if key in seen:
+            sys.exit(f"publications.yml: duplicate key {key!r}")
+        seen[key] = p
+        url = summaries.get(str(p.get("doi", "")).lower())
+        if url and url != f"/papers/{key}/":
+            sys.exit(f"publications.yml: key {key!r} but its summary is at {url}; "
+                     "the crucible renamed a published paper. Rename it back there, not here.")
+
+
 def publications():
     pubs = yaml.safe_load((ROOT / "data/publications.yml").read_text())
     idx = ROOT / "data" / "papers-index.json"  # written by export_crucible.py
     summaries = json.loads(idx.read_text()) if idx.exists() else {}
+    check_keys(pubs, summaries)
     pubs.sort(key=lambda p: str(p.get("date", "")), reverse=True)
     by_year = defaultdict(list)
     for p in pubs:
@@ -103,13 +129,16 @@ def publications():
             if doi:
                 links.append(f'<a href="https://doi.org/{esc(doi)}"><i class="bi bi-journal-text"></i> Journal</a>')
             links.append(f'<a href="{esc(scholar_url(p.get("title", "")))}"><i class="bi bi-mortarboard"></i> Scholar</a>')
-            if doi.lower() in summaries:
-                links.append(f'<a class="summary-link" href="{esc(summaries[doi.lower()])}">'
+            key = p["key"]
+            if (ROOT / "papers" / key / "index.qmd").exists():
+                links.append(f'<a class="summary-link" href="/papers/{esc(key)}/">'
                              '<i class="bi bi-card-text"></i> Summary</a>')
+            links.append(f'<a class="permalink" href="#{esc(key)}" title="Permanent link to this paper">'
+                         f'<i class="bi bi-link-45deg"></i> {esc(key)}</a>')
             badge = (f'<div class="altmetric-lazy" data-badge-type="donut" data-badge-popover="left" '
                      f'data-hide-no-mentions="true" data-doi="{esc(doi)}"></div>') if doi else ""
             out.append(
-                f'<article class="pub">'
+                f'<article class="pub" id="{esc(key)}">'
                 f'<div class="pub-body"><span class="ti">{esc(p.get("title"))}</span>'
                 f'<span class="au">{au}</span>{sep.strip()} '
                 f'<span class="ref">{ref}{" (" + y + ")" if y != "Undated" else ""}.</span>'
