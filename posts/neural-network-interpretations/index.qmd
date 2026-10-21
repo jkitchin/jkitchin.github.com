@@ -1,6 +1,6 @@
 ---
 title: "Interpretations of what a neural network is"
-description: "A Fourier series is a one-hidden-layer neural network, and every neural network is a learned nonlinear feature transform followed by linear regression."
+description: "A Fourier series is a one-hidden-layer neural network, and every neural network is a learned nonlinear feature transform followed by a linear model."
 date: 2026-10-21
 categories: [machine learning, python]
 draft: false
@@ -105,7 +105,7 @@ print(f'<script type="application/json" id="fourier-data">{json.dumps(fourier_da
 
 *Top: f(x) and its Fourier partial sum. Bottom: the coefficients, each one computed from a single integral. Move the slider and the faded bars join the sum without any of the bars changing height.*
 
-With eight terms the series is indistinguishable from the function. Every coefficient came from a single integral, and adding a term just adds a bar to the chart; it never changes the ones already there.
+With eight terms the series is indistinguishable from the function (the largest error is about 0.0015). It converges this quickly partly because $f$ almost vanishes at $\pm\pi$, so its periodic extension is smooth. A function that does not match up at the ends would show Gibbs ringing near them and converge much more slowly. Every coefficient came from a single integral, and adding a term just adds a bar to the chart; it never changes the ones already there.
 
 ## Adding terms does not change the coefficients
 
@@ -134,6 +134,8 @@ for name, basis, Ns in [("Fourier", fourier_basis, (3, 6)),
 
 The first four Fourier coefficients are the same whether we keep 3 harmonics or 6 (and they are the projections $a_0/2$, $a_1$, $b_1$, $a_2$ from before). The first four polynomial coefficients all change when we add $x^4, x^5, x^6$, because those functions overlap with the ones already in the expansion. With a non-orthogonal basis, every time you add a function you have to solve for all the coefficients again.
 
+One caveat: the grid matters. The sines and cosines are orthogonal as integrals, and they stay orthogonal as sums only on a uniform grid that covers exactly one period. That is why the last point is dropped with `[:-1]`, since $-\pi$ and $\pi$ are the same point on the circle. On that grid the largest off-diagonal entry of $\mathbf{H}^T\mathbf{H}$ is below $10^{-12}$. On a non-uniform or non-periodic grid the discrete Fourier basis is not orthogonal, and the least squares coefficients would shift when you add terms too.
+
 ## The Fourier series as a network
 
 Now let's draw the Fourier series the way we usually draw a neural network. There is one input, $x$. It feeds a layer of "hidden units", each of which computes $\cos(n x)$ or $\sin(n x)$. The outputs of those units are multiplied by the coefficients and summed to give $f(x)$.
@@ -155,7 +157,9 @@ with weight $w_k = n$ and bias $\beta_k \in \{0, -\pi/2\}$. The output is a line
 1. The first-layer weights and biases are *fixed*. We chose them ahead of time (integer frequencies, two phases) rather than learning them.
 2. Because of that choice the hidden units are orthogonal, so the output weights can be computed one at a time by projection, and they never change when we add more hidden units.
 
-A typical neural network uses something like $\tanh$ or ReLU instead of $\cos$. That is historical, $\tanh$ is like a smooth step function that represents a neuron firing. We also give up the integrality of the Fourier basis. This gives us even more flexibility, but it comes at a cost: the hidden units are no longer orthogonal, and the first-layer weights now have to be fitted instead of computed. We have to find all the weights together by regression, and when we add more hidden units the old weights change.
+A typical neural network uses something like $\tanh$ or ReLU instead of $\cos$. The logistic sigmoid, and later $\tanh$, came from the picture of a neuron firing: each is a smooth step. ReLU is a more modern choice, made because it makes deep networks easier to optimize. We also give up the integer frequencies of the Fourier basis. This gives us even more flexibility, but it comes at a cost: the hidden units are no longer orthogonal, and the first-layer weights now have to be fitted instead of computed. We have to find all the weights together by regression, and when we add more hidden units the old weights change.
+
+There is a middle ground that makes the point even more clearly. In random-feature models and extreme learning machines, the first-layer weights are drawn at random and then frozen, and only the output weights are fitted. It is the same picture as the Fourier series, with a random basis in place of an orthogonal one. Because the basis is not orthogonal, the output weights come from least squares instead of projection.
 
 
 
@@ -191,7 +195,7 @@ $$
 f(x) = \mathbf{c} \cdot \mathbf{h}(x).
 $$
 
-If we have $n$ data points, we stack the feature vectors as rows of a matrix $\mathbf{H}$ ($n \times 7$), and finding $\mathbf{c}$ is the linear least squares problem $\min_\mathbf{c} \| \mathbf{H}\mathbf{c} - \mathbf{y} \|^2$, with solution $\mathbf{c} = (\mathbf{H}^T\mathbf{H})^{-1}\mathbf{H}^T\mathbf{y}$. That is exactly what `np.linalg.lstsq` did with `fourier_basis` in Part 1. In the Fourier case $\mathbf{H}^T\mathbf{H}$ happens to be diagonal, which is why the integrals were enough.
+If we have $n$ data points, we stack the feature vectors as rows of a matrix $\mathbf{H}$ ($n \times 7$), and finding $\mathbf{c}$ is the linear least squares problem $\min_\mathbf{c} \| \mathbf{H}\mathbf{c} - \mathbf{y} \|^2$, with solution $\mathbf{c} = (\mathbf{H}^T\mathbf{H})^{-1}\mathbf{H}^T\mathbf{y}$. That is the problem `np.linalg.lstsq` solved with `fourier_basis` in Part 1. It uses an SVD rather than forming that inverse, but the answer is the same. In the Fourier case $\mathbf{H}^T\mathbf{H}$ happens to be diagonal, which is why the integrals were enough.
 
 Here are the three steps written as a network layer, with matrices instead of loops.
 
@@ -211,7 +215,7 @@ These are the same coefficients as before.
 
 ## The output is linear in the new space
 
-The point of the transformation is that a function which is nonlinear in $x$ becomes linear in $\mathbf{h}$. It is the same trick as linearizing the Arrhenius equation: $k = k_0 e^{-E_a/RT}$ is nonlinear in $T$, but $\ln k = \ln k_0 - \frac{E_a}{R}\frac{1}{T}$ is linear in the feature $1/T$, and then we fit a line.
+The point of the transformation is that a function which is nonlinear in $x$ becomes linear in $\mathbf{h}$. It is the same trick as fitting $y = a + b/T$: the model is nonlinear in $T$, but it is linear in the feature $1/T$, so we compute that feature and fit a line. (Linearizing the Arrhenius equation, $\ln k = \ln k_0 - \frac{E_a}{R}\frac{1}{T}$, is a close cousin. There we transform the output to $\ln k$ as well, while a network only transforms the input.)
 
 We can see this geometrically with only one harmonic, so the feature space is small enough to draw. Take $y = 0.5 + 0.8\cos x - 0.6 \sin x$. As a function of $x$ it is a wave. In the feature space $(h_1, h_2) = (\cos x, \sin x)$, the input interval is mapped onto a circle, and the data lie exactly on a flat plane $y = c_0 + c_1 h_1 + c_2 h_2$ above that circle.
 
@@ -235,25 +239,25 @@ $$
 \end{aligned}
 $$
 
-Each hidden layer is a linear map to a new dimension followed by an elementwise nonlinearity, just like Step 1 and Step 2 above. Stacking them is function composition: the features at the end are
+Each hidden layer is a linear map to a new dimension followed by an elementwise nonlinearity, just like Step 1 and Step 2 above. Stacking them is function composition. Call the layer maps $\mathbf{g}_1(\mathbf{x}) = \sigma(\mathbf{x}\mathbf{W}_1 + \mathbf{b}_1)$ and $\mathbf{g}_2(\mathbf{u}) = \sigma(\mathbf{u}\mathbf{W}_2 + \mathbf{b}_2)$. The features at the end are
 
 $$
-\mathbf{h}_2(\mathbf{x}) = \sigma\big(\sigma(\mathbf{x}\mathbf{W}_1 + \mathbf{b}_1)\mathbf{W}_2 + \mathbf{b}_2\big) = (\mathbf{h}_2 \circ \mathbf{h}_1)(\mathbf{x}),
+\mathbf{h}_2(\mathbf{x}) = \sigma\big(\sigma(\mathbf{x}\mathbf{W}_1 + \mathbf{b}_1)\mathbf{W}_2 + \mathbf{b}_2\big) = (\mathbf{g}_2 \circ \mathbf{g}_1)(\mathbf{x}),
 $$
 
-and the output is still
+and the output is still linear in them,
 
 $$
-f(\mathbf{x}) = \mathbf{c} \cdot \mathbf{h}_2(\mathbf{h}_1(\mathbf{x})) + c_0 .
+f(\mathbf{x}) = \mathbf{c} \cdot \mathbf{h}_2(\mathbf{x}) + c_0 .
 $$
 
-However many layers there are, the last one is linear regression. The columns of $\mathbf{H}_2$ are $m_2$ basis functions, each one a composition of the layers before it. The only difference from the Fourier series is that these basis functions are not chosen in advance; their shapes are set by $\mathbf{W}_1, \mathbf{b}_1, \mathbf{W}_2, \mathbf{b}_2$, which are fitted along with $\mathbf{c}$.
+However many layers there are, the last one is a linear model on the features, and with a squared-error loss, fitting it is linear regression. The columns of $\mathbf{H}_2$ are $m_2$ basis functions, each one a composition of the layers before it. The only difference from the Fourier series is that these basis functions are not chosen in advance; their shapes are set by $\mathbf{W}_1, \mathbf{b}_1, \mathbf{W}_2, \mathbf{b}_2$, which are fitted along with $\mathbf{c}$.
 
 ```{=html}
 <div class="nn-fig" data-nnfig="deepNetwork"></div>
 ```
 
-*A network with two hidden layers in graph form (top) and matrix form (bottom). The hidden layers transform n inputs into n rows of 3 features, the columns of H₂. The output layer is linear regression on them.*
+*A network with two hidden layers in graph form (top) and matrix form (bottom). The hidden layers transform n inputs into n rows of 3 features, the columns of H₂. The output layer is linear regression on them. (Three features keep the drawing small; the trained example below uses six.)*
 
 ## Checking that the last layer is linear regression
 
@@ -309,9 +313,12 @@ c_lstsq = np.linalg.lstsq(A, yt, rcond=None)[0]
 *_, c_nn, c0_nn = unpack(sol.x)
 print("network:", np.round(np.append(c_nn, c0_nn), 3))
 print("lstsq:  ", np.round(c_lstsq, 3))
+print(f"cond(A) = {np.linalg.cond(A):.0f}")
 ```
 
-They agree to within the tolerance the optimizer stopped at. At the optimum, the output weights have to satisfy the normal equations of the linear regression on $\mathbf{H}_2$, because the gradient of the loss with respect to $\mathbf{c}$ is exactly $\mathbf{H}_2^T(\mathbf{H}_2\mathbf{c} - \mathbf{y})$.
+If you run this yourself, expect different numbers. The path BFGS takes depends on the numpy, scipy and BLAS versions, so the trained weights will differ. What should reproduce is that the two rows agree.
+
+They agree to within the tolerance the optimizer stopped at, and that is not a coincidence. Write $\mathbf{A} = [\mathbf{H}_2 \;\; \mathbf{1}]$ and $\boldsymbol{\theta} = (\mathbf{c}, c_0)$. With the hidden weights held fixed, the loss $\frac{1}{n}\|\mathbf{A}\boldsymbol{\theta} - \mathbf{y}\|^2$ is a convex quadratic in $\boldsymbol{\theta}$. Its gradient, $\frac{2}{n}\mathbf{A}^T(\mathbf{A}\boldsymbol{\theta} - \mathbf{y})$, vanishes at a stationary point of the full training problem, and that condition is exactly the normal equations. As long as $\mathbf{A}$ has full rank (its condition number is modest here), the network's output weights are the least squares solution on its own features.
 
 Finally, here are the six basis functions the network built, the columns of $\mathbf{H}_2$. Compare them to the sines and cosines in Part 1: these are not orthogonal and they are not pretty, but a weighted sum of them reproduces $f(x)$.
 
@@ -332,8 +339,8 @@ print(f'<script type="application/json" id="basis-data">{json.dumps(basis)}</scr
 
 So a neural network does the same two things as the Fourier series: it transforms the input into a new vector space with a nonlinear function, and it does linear regression in that space. The Fourier series fixes the transformation in advance and gets the regression for free. A neural network learns the transformation, and pays for it with a nonlinear optimization over all the weights at once.
 
-You can see from the learned basis functions there is a lot of cancellation of terms, i.e. each function value is a sum of positive and negative contributions from the hidden units. That is a common property of learned features: they are not orthogonal, and they are rarely interpretable on their own. The only thing that matters is the linear combination of them that gives the output.
+You can see from the learned basis functions that there is a lot of cancellation: each value of the output is a sum of positive and negative contributions from the hidden units. That is a common property of learned features. They are not orthogonal, and they are rarely interpretable on their own; individually they mean little, and only their linear combination reproduces the output.
 
-Now, we would never use words like "What did the Fourier series learn about our data?", and with these viewpoints we should not use words like "What did the neural network learn about our data?" either. The Fourier series is a fixed transformation, and the neural network is a learned transformation. In both cases, the only thing that matters is the linear combination of the features that gives the output. The neural network is not a black box, it is a learned nonlinear feature transform followed by linear regression. 
+We would never ask "What did the Fourier series learn about our data?" The Fourier basis is fixed, and all the data-dependence is in the coefficients. A neural network is different in exactly one place: the features are learned too, so that is where most of what it "learned" lives. That is also why transfer learning works, since features learned on one problem are often a good basis for another. So these viewpoints do not make a network fully transparent, but they do make its structure transparent. It is a learned nonlinear feature transform followed by a linear model. The structure is simple; the learned features usually are not.
 
-We used a simple dense neural network here, but the same interpretation applies to convolutional networks, recurrent networks, transformers, graph neural networks, and many other architectures. The only difference is the way the features are generated. 
+We used a simple dense network with a squared-error loss here, which makes the last layer linear regression. The same reading applies to other heads with a small change. A classifier with a softmax output is doing multinomial logistic regression on its features, so in general the last layer is a generalized linear model. It also applies to convolutional networks, recurrent networks, transformers, graph neural networks and many other architectures. What differs is how the features are generated. 
