@@ -1,0 +1,392 @@
+---
+title: "How a neural network builds features"
+description: "A neuron makes a linear combination of its inputs and bends it. That is the whole vocabulary, and it has consequences for products, ratios, units and depth."
+date: 2026-10-23
+categories: [machine learning, python]
+draft: false
+resources:
+  - feat.js
+  - feat.css
+---
+
+```{=html}
+<link rel="stylesheet" href="feat.css">
+<script src="feat.js" defer></script>
+```
+
+Feature engineering is an old habit in science and engineering. We fit $\ln k$ against $1/T$ instead of $k$ against $T$, we correlate heat transfer data with the Reynolds and Prandtl numbers instead of velocity and viscosity, and we model rate laws as products of concentrations raised to powers. In each case we transform the raw measurements into quantities that make the model simple.
+
+Neural networks are often described as doing this automatically: "the network learns the features." In the [last post](../neural-network-interpretations/) we saw that a network really is a learned feature transform followed by linear regression. In this post we look at what kind of features a network can actually build, and how it builds them. The short answer is that every feature is made with only two operations, a linear combination and a fixed one-dimensional bend. Neither operation multiplies or divides two inputs, and that has consequences for products, ratios and physical units.
+
+A note on notation: in this post an input is a column vector $\mathbf{x}$ and a layer computes $\mathbf{W}\mathbf{x} + \mathbf{b}$. The last post used row vectors ($\mathbf{x}\mathbf{W}$); it is the same thing transposed.
+
+# One layer: combine, then activate
+
+A single neuron $j$ in the first layer does two things. It forms a weighted sum of the inputs plus a bias, and then it applies an activation function $\sigma$:
+
+$$
+z_j = \sum_i W_{ji} x_i + b_j,
+\qquad
+h_j = \sigma(z_j).
+$$
+
+Let's draw that. In the figures below the colored squares are input features and the grey squares are weights. A grey square next to a colored square means "multiply," and the plus signs mean "add."
+
+```{=html}
+<div class="fe-fig" data-fefig="neuron"></div>
+```
+
+*One neuron. Every colored square is multiplied by a grey square, the products are added to a bias, and the sum is bent by σ.*
+
+A layer is many neurons that look at the same inputs with different weights. In matrix form $\mathbf{z} = \mathbf{W}\mathbf{x} + \mathbf{b}$, and $\mathbf{h} = \sigma(\mathbf{z})$ is applied element by element. Each $z_j$ is a mixture of the inputs, and we draw it as a square striped with the colors of the inputs in proportion to how strongly it weights each one.
+
+```{=html}
+<div class="fe-fig" data-fefig="layer"></div>
+```
+
+*A layer with three inputs and four neurons. Hover over (or tap) a neuron to see the row of weights it uses. Each pre-activation zⱼ is a different blend of the same three inputs.*
+
+That is everything a layer can do. Notice what is *not* in the picture. There is no square where $x_1$ meets $x_2$, so nothing like $x_1 x_2$, $x_1/x_2$ or $x_1^2$ is ever formed by the linear part. The pre-activations are exactly linear in the inputs, and so is any linear combination of them. We can check that with a random layer.
+
+```{python}
+import numpy as np
+
+rng = np.random.default_rng(0)
+X = rng.uniform(-1, 1, size=(500, 3))  # 500 samples, 3 inputs
+W = rng.normal(size=(4, 3))            # 4 neurons
+b = rng.normal(size=4)
+
+Z = X @ W.T + b                        # pre-activations
+H = np.tanh(Z)                         # features
+
+def r2(A, y):
+    "R² of a least squares fit of y on A plus a constant."
+    A = np.column_stack([A, np.ones(len(y))])
+    c = np.linalg.lstsq(A, y, rcond=None)[0]
+    return 1 - (y - A @ c).var() / y.var()
+
+x1, x2 = X[:, 0], X[:, 1]
+tests = [("each z_j from x1, x2, x3", min(r2(X, z) for z in Z.T)),
+         ("x1*x2 from the z's", r2(Z, x1 * x2)),
+         ("x1/(x2+2) from the z's", r2(Z, x1 / (x2 + 2))),
+         ("x1*x2 from the h's", r2(H, x1 * x2))]
+for name, val in tests:
+    print(f"{name:24s} R² = {val:.6f}")
+```
+
+The pre-activations are perfectly linear in $\mathbf{x}$. No combination of them explains *any* of the variance of $x_1 x_2$. (The ratio scores well only because $x_1/(x_2 + 2)$ is nearly linear on this range.) After the activation, the features explain a little of the product, and that little bit is the subject of the next section.
+
+There is a geometric way to say the same thing. A neuron's output $\sigma(\mathbf{w}_j \cdot \mathbf{x} + b_j)$ depends on $\mathbf{x}$ only through the single number $\mathbf{w}_j \cdot \mathbf{x}$. It is constant along every line (in 3D, every plane) perpendicular to $\mathbf{w}_j$. Functions like that are called *ridge functions*: they look like a wave, a step or a ramp that is perfectly straight in one direction. A product and a ratio are not ridge functions. Their contours are hyperbolas and rays.
+
+```{=html}
+<div class="fe-fig" data-fefig="ridge"></div>
+```
+
+*Left: one neuron σ(w₁x₁ + w₂x₂ + b). Its contours are always parallel straight lines, whatever the weights, bias and activation. Middle and right: the contours of x₁x₂ are hyperbolas and the contours of x₁/x₂ are rays from the origin. No single neuron can look like either one.*
+
+# Where the nonlinearity comes from
+
+If the linear part never multiplies inputs, a network must get products from the activation function. We can make that precise. For a network with one hidden layer,
+
+$$
+f(\mathbf{x}) = \sum_j c_j \, \sigma(z_j) + c_0,
+\qquad
+z_j = \sum_i W_{ji} x_i + b_j,
+$$
+
+take two derivatives. The chain rule gives
+
+$$
+\frac{\partial f}{\partial x_k}= \sum_j c_j\, \sigma'(z_j)\, W_{jk},
+\qquad
+\frac{\partial^2 f}{\partial x_k \partial x_l} = \sum_j c_j\, \sigma''(z_j)\, W_{jk}\, W_{jl}.
+$$
+
+The mixed partial derivative $\partial^2 f / \partial x_1 \partial x_2$ is a good measure of how much "product" there is in a function. It is exactly 1 everywhere for $f = x_1 x_2$, and exactly 0 for anything of the form $g(x_1) + h(x_2)$, and in particular for anything linear. The formula says that every bit of it in a neural network comes from $\sigma''$, the curvature of the activation function. The weights only decide where that curvature is applied and how it is shared between the inputs.
+
+There are two common ways for $\sigma''$ to be nonzero, and they lead to quite different networks.
+
+## Mechanism 1: kinks (ReLU)
+
+The rectified linear unit $\sigma(z) = \max(0, z)$ is made of two straight lines. Its second derivative is zero everywhere except at $z = 0$, where all of its curvature is concentrated in a kink (formally, $\sigma''$ is a delta function there). A ReLU network is therefore piecewise linear. In one dimension it is a polyline, and each neuron contributes one kink at $x = -b_j / w_j$ whose size is the change in slope there.
+
+Here is the simplest curved function, $x^2$, built from ReLUs. Each unit adds a kink, and the polyline gets closer to the parabola as the kinks get closer together.
+
+```{=html}
+<div class="fe-fig" data-fefig="relu"></div>
+```
+
+*Top: x² (thick grey) and a sum of ReLU units (dark), with the individual weighted units in color. Bottom: the slopes. The slope of x² changes smoothly; the network's slope is a staircase, and each step is one kink. Move the slider to add units.*
+
+With $n$ units, and so $n$ evenly spaced pieces on $[-1, 1]$, the largest error is $1/n^2$. The error falls quickly, but the curvature is never smooth: the slope changes only in jumps, and between the jumps $\sigma'' = 0$.
+
+Once you can make a square, you can make a product, because of the polarization identity
+
+$$
+x_1 x_2 = \tfrac{1}{4}\left[(x_1 + x_2)^2 - (x_1 - x_2)^2\right].
+$$
+
+The right side is a difference of two squares of *linear combinations of the inputs*. That is exactly what neurons can see. Neurons with weights proportional to $(1, 1)$ build the first square as a function of $x_1 + x_2$, neurons with weights proportional to $(1, -1)$ build the second, and the output layer subtracts them. The network never multiplies $x_1$ by $x_2$. It approximates two one-dimensional parabolas along two diagonal directions, and their difference happens to be a product.
+
+This should give you pause about what a neural network "learns". It is learning some equivalent looking representation of a function that goes through the data. 
+
+## Mechanism 2: curvature (tanh, sigmoid, softplus, GELU)
+
+Smooth activations like $\tanh$ bend everywhere, so $\sigma''$ is nonzero almost everywhere. How much a neuron bends depends on where it operates on the curve, and the bias sets that operating point. Expand $\tanh$ around an operating point $b$:
+
+$$
+\tanh(b + \delta) \approx \tanh b + \operatorname{sech}^2 b \;\delta - \tanh b \,\operatorname{sech}^2 b \;\delta^2 + \cdots
+$$
+
+At $b = 0$ the quadratic term vanishes (tanh is odd, so it is locally a straight line with a cubic correction). On the shoulders of the curve the quadratic term is largest; $|\tanh''|$ peaks near $b \approx \pm 0.66$. Now let $\delta = w_1 x_1 + w_2 x_2$ be the neuron's input. Then
+
+$$
+\delta^2 = w_1^2 x_1^2 + 2 w_1 w_2 \, x_1 x_2 + w_2^2 x_2^2,
+$$
+
+and there is the product. The curvature of the activation turns a sum into a square, and the square of a sum contains a cross term. It always comes bundled with $x_1^2$ and $x_2^2$ terms, though, and with all the higher order terms of the series. To isolate the cross term we use the polarization identity again. With $g(s) = \tanh(b + \varepsilon s)$, four neurons give
+
+$$
+x_1 x_2 \approx \frac{g(x_1 + x_2) + g(-x_1 - x_2) - g(x_1 - x_2) - g(-x_1 + x_2)}{4 \varepsilon^2 \tanh''(b)} .
+$$
+
+Adding $g(s)$ and $g(-s)$ cancels the odd terms (including the linear one), and subtracting the two pairs cancels the squares, leaving $4\varepsilon^2 \tanh''(b)\,x_1 x_2$ plus terms of order $\varepsilon^4$.
+
+```{=html}
+<div class="fe-fig" data-fefig="tanh"></div>
+```
+
+*Left: tanh, the operating point set by the bias, and the local parabola there. The curvature is what makes products possible. Right: four tanh neurons combined as above, compared with the hyperbolic contours of x₁x₂ (green dashes). Small ε is accurate but needs enormous output weights.*
+
+There is a catch, and the right panel shows it. The approximation is only good when $\varepsilon$ is small, so that each neuron stays in the region where the parabola describes it. But the output weights are $1/(4\varepsilon^2 \tanh''(b))$, which become huge. The network makes a product by taking the difference of four large, nearly equal numbers. Here is the same thing in code.
+
+```{python}
+def g(s, eps, b=0.66):
+    return np.tanh(b + eps * s)
+
+def tanh2(b):
+    "Second derivative of tanh."
+    t = np.tanh(b)
+    return -2 * t * (1 - t**2)
+
+grid = np.linspace(-1, 1, 101)
+x1, x2 = np.meshgrid(grid, grid)
+u, v = x1 + x2, x1 - x2
+for eps in [1.0, 0.3, 0.1, 0.03]:
+    c = 1 / (4 * eps**2 * tanh2(0.66))
+    approx = c * (g(u, eps) + g(-u, eps)
+                  - g(v, eps) - g(-v, eps))
+    err = np.abs(approx - x1 * x2).max()
+    print(f"eps = {eps:4.2f}  |output weight| = {abs(c):6.1f}"
+          f"  max error = {err:.1e}")
+```
+
+This is typical of what a trained network does too: hidden units with large outputs of opposite sign that mostly cancel. We saw that cancellation in the learned basis functions of the last post.
+
+Ratios are harder than products. Over a range where $x_2$ stays away from zero, $1/x_2$ is just another smooth curved function of one linear combination, and it can be approximated with kinks or curvature like $x^2$ was. Near $x_2 = 0$ it has a pole, and $\tanh$ units are bounded and ReLU units grow only linearly, so no finite network gets close there. Then the ratio has to be assembled from that and a product, so it costs at least two of the tricks above.
+
+One activation function would make all of this easy. If the inputs were $\ln x_1$ and $\ln x_2$ and the activation were $\exp$, a single neuron would compute $\exp(a \ln x_1 + b \ln x_2) = x_1^a x_2^b$, with products, ratios and powers all exact. We will come back to that at the end, because it is really a statement about features.
+
+# The sin of adding kelvins to pascals
+
+Let's give the inputs physical meaning. Suppose a neuron sees a temperature $T$ in kelvin, a pressure $P$ in pascal and a concentration $C$ in mol/L:
+
+$$
+z = W_T\, T + W_P\, P + W_C\, C + b .
+$$
+
+In physics you cannot add quantities with different units. "300 K + 101325 Pa" is not a number; it is an error. A neural network adds them anyway, because all it sees are the numbers 300 and 101325. The only way the sum makes sense is if each weight carries units that convert its term into a common unit:
+
+$$
+[W_T] = \frac{[z]}{\mathrm{K}}, \qquad [W_P] = \frac{[z]}{\mathrm{Pa}}, \qquad [W_C] = \frac{[z]}{\mathrm{mol/L}}, \qquad [b] = [z].
+$$
+
+What is $[z]$? It is the argument of $\sigma$. A transcendental function like $\tanh$ needs a dimensionless argument, which you can see from its series $z - z^3/3 + \ldots$: you cannot add $z$ and $z^3$ unless $z$ is a pure number. So $z$ is dimensionless, the bias is dimensionless, and every weight has the inverse units of its input:
+
+$$
+W_T = \frac{1}{T^*}, \qquad W_P = \frac{1}{P^*}, \qquad W_C = \frac{1}{C^*} .
+$$
+
+Each weight is a reciprocal *characteristic scale*. A neuron is implicitly asking "how many $T^*$ is this temperature, how many $P^*$ is this pressure," and adding the answers. Learning the weights means learning those scales, one set per neuron.
+
+```{=html}
+<div class="fe-fig" data-fefig="units"></div>
+```
+
+*The neuron from before with units. Each grey square must carry the inverse units of the colored square it multiplies, so that every product is dimensionless and the sum is legal.*
+
+The same bookkeeping goes through the whole network. The features $h_j$ are dimensionless, so the output weights $c_j$ carry the units of $y$. In the mixed partial derivative $\sum_j c_j \sigma''(z_j) W_{jT} W_{jP}$, the units are $[y]/(\mathrm{K}\cdot\mathrm{Pa})$, exactly the units of $\partial^2 y / \partial T \partial P$. The network is dimensionally consistent, but only because the weights silently carry units. ReLU is slightly more forgiving because $\max(0, \lambda z) = \lambda \max(0, z)$ for $\lambda > 0$, so its argument may have units, but the terms of the sum still have to agree, so the weights still convert between input units.
+
+The software does not know any of this, and three things go wrong when we forget it.
+
+**Initialization.** Weights are usually initialized as random numbers of order one. With raw inputs, that means $T^* \sim 1$ K and $P^* \sim 1$ Pa. A pressure of a few bar is then hundreds of thousands of "characteristic pressures," and every neuron is saturated before training starts.
+
+```{python}
+n = 500
+T = rng.uniform(300, 500, n)    # K
+P = rng.uniform(1e5, 1e6, n)    # Pa
+X = np.column_stack([T, P])
+
+W = rng.normal(size=(2, 100))   # 100 neurons, weights ~ 1
+b = rng.normal(size=100)
+
+Xs = (X - X.mean(axis=0)) / X.std(axis=0)
+for name, A in [("raw (K, Pa)", X), ("standardized", Xs)]:
+    sat = np.mean(np.abs(A @ W + b) > 3)
+    print(f"{name:13s} saturated (|z| > 3): {sat:.2f}")
+```
+
+A saturated tanh unit has $\sigma' \approx 0$ and $\sigma'' \approx 0$: it contributes no gradient and none of the curvature we needed for products.
+
+**Regularization.** Weight decay adds $\lambda \sum W^2$ to the loss. With mixed inputs that is a sum of terms with units of $1/\mathrm{K}^2$ and $1/\mathrm{Pa}^2$, which is another sin. In practice it means the answer depends on your choice of units. Here is ridge regression (the linear model is enough to show it) fitted to the same data with pressure in Pa, bar and MPa, and with temperature in K and °C.
+
+```{python}
+y = 2 + 0.01 * T + 3e-6 * P + rng.normal(0, 0.1, n)
+
+def ridge(X, y, lam=100.0):
+    A = np.column_stack([X, np.ones(len(y))])
+    I = np.eye(A.shape[1])
+    I[-1, -1] = 0                  # do not penalize the bias
+    theta = np.linalg.solve(A.T @ A + lam * I, A.T @ y)
+    return A @ theta
+
+for name, Tu, Pu in [("K, Pa", T, P),
+                     ("K, bar", T, P / 1e5),
+                     ("°C, bar", T - 273.15, P / 1e5),
+                     ("K, MPa", T, P / 1e6)]:
+    yp = ridge(np.column_stack([Tu, Pu]), y)
+    print(f"{name:8s} first predictions:", np.round(yp[:3], 3))
+```
+
+The same data and the same model give different predictions when we change the pressure units. Changing kelvin to Celsius does nothing, because a shift of origin is absorbed by the bias, which is not penalized. A change of *scale* is not absorbed by anything.
+
+**Standardization is a units fix.** Replacing each input by $(x - \mu)/s$ divides it by a scale with the same units, so the network sees dimensionless numbers and the weights become dimensionless too. That is why standardizing inputs helps so much. It is worth being clear about what it does, though: it chooses the characteristic scales from the spread of the training data, not from the physics. A dimensionless group chosen from the physics, such as $T/T_c$, $P/P_c$ or a Reynolds number, does the same job with scales that mean something and that transfer to new conditions.
+
+There is one more consequence. Physical laws are full of products and ratios ($PV = nRT$, $k = A e^{-E_a/RT}$, a rate $r = k C_A C_B$), and products and ratios are dimensionally fine: K·Pa is a perfectly good unit. Sums are what require matching units. So the network's single native operation, the sum, is the one operation physics constrains most, and the operations physics uses most freely are the ones the network has to approximate.
+
+# Composition: features of features
+
+A deep network stacks layers. The second layer does exactly what the first one did, with the first layer's features as its inputs:
+
+$$
+\mathbf{z}^{(2)} = \mathbf{W}^{(2)} \mathbf{h}^{(1)} + \mathbf{b}^{(2)},
+\qquad
+\mathbf{h}^{(2)} = \sigma\big(\mathbf{z}^{(2)}\big),
+\qquad
+\mathbf{h}^{(1)} = \sigma\big(\mathbf{W}^{(1)} \mathbf{x} + \mathbf{b}^{(1)}\big).
+$$
+
+In the square picture, each colored input square of the second layer is a whole first-layer neuron. The structure repeats: grey times feature, add, bend.
+
+```{=html}
+<div class="fe-fig" data-fefig="compose"></div>
+```
+
+*A second-layer neuron (top). Its colored squares are first-layer features, and each of those is itself a bent sum of grey-times-color terms (below). However deep the nesting goes, every colored square sits next to a grey square and never next to another colored square. The product and ratio at the bottom are the patterns that never appear.*
+
+Written out, a second-layer pre-activation is
+
+$$
+z^{(2)}_k = \sum_j W^{(2)}_{kj} \, \sigma\Big(\sum_i W^{(1)}_{ji} x_i + b^{(1)}_j\Big) + b^{(2)}_k .
+$$
+
+There is still no $x_1 x_2$ anywhere in it. Depth does not add a new operation; it applies the same two operations again. What depth changes is how the bends combine. Take two derivatives of a two-layer network:
+
+$$
+\frac{\partial^2 z^{(2)}_k}{\partial x_1 \partial x_2} = \sum_j W^{(2)}_{kj}\, \sigma''\big(z^{(1)}_j\big)\, W^{(1)}_{j1} W^{(1)}_{j2},
+$$
+
+$$
+\frac{\partial^2 f}{\partial x_1 \partial x_2} = \sum_k c_k \left[ \sigma''\big(z^{(2)}_k\big) \frac{\partial z^{(2)}_k}{\partial x_1} \frac{\partial z^{(2)}_k}{\partial x_2} + \sigma'\big(z^{(2)}_k\big) \frac{\partial^2 z^{(2)}_k}{\partial x_1 \partial x_2} \right].
+$$
+
+Every term still contains a $\sigma''$, either from the second layer acting on its (now curved) inputs, or passed through from the first layer. Depth gives the network more ways to place curvature, but curvature is still the only source of interaction between inputs. Let's check the formula against finite differences for a random network, and also try the same network with ReLU.
+
+```{python}
+W1, b1 = rng.normal(size=(5, 2)), rng.normal(size=5)  # 2 -> 5
+W2, b2 = rng.normal(size=(4, 5)), rng.normal(size=4)  # 5 -> 4
+c = rng.normal(size=4)
+
+relu = lambda z: np.maximum(0, z)
+
+def f(x, act=np.tanh):
+    return c @ act(W2 @ act(W1 @ x + b1) + b2)
+
+def mixed_fd(x, act=np.tanh, h=1e-4):
+    "∂²f/∂x1∂x2 by central differences."
+    e1, e2 = np.array([h, 0]), np.array([0, h])
+    return (f(x + e1 + e2, act) - f(x + e1 - e2, act)
+            - f(x - e1 + e2, act) + f(x - e1 - e2, act)
+            ) / (4 * h**2)
+
+def mixed_formula(x):
+    "∂²f/∂x1∂x2 for tanh from the chain rule above."
+    a1 = np.tanh(W1 @ x + b1)
+    s1, s1pp = 1 - a1**2, -2 * a1 * (1 - a1**2)   # σ', σ''
+    a2 = np.tanh(W2 @ a1 + b2)
+    s2, s2pp = 1 - a2**2, -2 * a2 * (1 - a2**2)
+    dz2 = W2 @ (s1[:, None] * W1)              # ∂z2/∂x
+    d2z2 = W2 @ (s1pp * W1[:, 0] * W1[:, 1])   # ∂²z2/∂x1∂x2
+    return c @ (s2pp * dz2[:, 0] * dz2[:, 1] + s2 * d2z2)
+
+print("x               tanh formula  tanh FD    relu FD")
+for x in rng.uniform(-1, 1, size=(3, 2)):
+    print(f"{np.round(x, 2)!s:14s}  {mixed_formula(x):+.6f}  "
+          f"{mixed_fd(x):+.6f}  {mixed_fd(x, relu):+.6f}")
+```
+
+For tanh the formula and the finite differences agree. For ReLU the mixed partial is zero, at these points and almost everywhere else, because $\sigma'' = 0$ between the kinks. A ReLU network of any depth is still piecewise linear. What depth buys it is the number of pieces: each layer can fold the regions created by the layer before, so the number of linear regions can grow much faster with depth than with width. A ReLU network that approximates $x_1 x_2$ does so by tiling the plane with many small flat facets that bend along creases.
+
+# Feature engineering, revisited
+
+Put the pieces together. A neuron can only add scaled inputs and bend the sum. Products and ratios have to be approximated with kinks or curvature, using many neurons, large canceling weights, or both, and only over the range where the network was trained. Units are carried silently by the weights, and the software does not check them.
+
+So what does "the network learns the features" mean? It learns features in the vocabulary of sums and bends. If the relationship you are modeling is naturally written in that vocabulary, the network will find it efficiently. If it is naturally a product of powers, which describes a lot of physical science, you can change the vocabulary for it. Take logarithms of positive inputs (after dividing by reference values, so the logarithms are dimensionless):
+
+$$
+\ln\frac{y}{y^\circ} = a \ln\frac{x_1}{x_1^\circ} + b \ln\frac{x_2}{x_2^\circ} + \ldots
+\quad\Longleftrightarrow\quad
+y \propto x_1^a\, x_2^b \cdots
+$$
+
+A product of powers is a *linear combination* of logarithms, which is the one thing the network does exactly. Here is a small test: learn $y = x_1 x_2 / x_3$ from 300 samples with $x_i \in [1, 3]$, once with a tanh network on the (standardized) raw inputs and once with plain linear regression on $\ln x_i$. Then test both outside the training range, on $x_i \in [3, 5]$.
+
+```{python}
+from scipy.optimize import minimize
+
+def sample(lo, hi, n):
+    X = rng.uniform(lo, hi, size=(n, 3))
+    return X, X[:, 0] * X[:, 1] / X[:, 2]
+
+Xtr, ytr = sample(1, 3, 300)
+Xte, yte = sample(3, 5, 200)
+mu, sd = Xtr.mean(0), Xtr.std(0)
+ym, ys = ytr.mean(), ytr.std()
+
+m = 10                                  # hidden neurons
+def net(p, X):
+    W, b = p[:3 * m].reshape(m, 3), p[3 * m:4 * m]
+    c, c0 = p[4 * m:5 * m], p[5 * m]
+    H = np.tanh((X - mu) / sd @ W.T + b)
+    return (H @ c + c0) * ys + ym
+
+loss = lambda p: np.mean(((net(p, Xtr) - ytr) / ys)**2)
+p0 = 0.5 * rng.normal(size=5 * m + 1)
+p = minimize(loss, p0, method="BFGS",
+             options={"maxiter": 3000}).x
+
+A = lambda X: np.column_stack([np.log(X), np.ones(len(X))])
+theta = np.linalg.lstsq(A(Xtr), np.log(ytr), rcond=None)[0]
+loglin = lambda X: np.exp(A(X) @ theta)
+
+rmse = lambda a, b: np.sqrt(np.mean((a - b)**2))
+print("model           params  train RMSE  test RMSE")
+models = [("tanh network", 5 * m + 1, lambda X: net(p, X)),
+          ("log-linear", 4, loglin)]
+for name, k, model in models:
+    print(f"{name:14s}  {k:6d}  {rmse(model(Xtr), ytr):10.1e}"
+          f"  {rmse(model(Xte), yte):9.1e}")
+print("exponents:", np.round(theta[:3], 6))
+```
+
+Both models fit the training data well. The network, with 51 parameters, built an approximation to the product out of curvature, and it degrades as soon as it leaves the region where that approximation was built. The log-linear model has four parameters, recovers the exponents $(1, 1, -1)$ exactly, and extrapolates perfectly, because in log space the true function is a linear combination of the features. Of course this example was chosen to make the point, and a real problem will not be an exact power law. The lesson is not "always use logarithms." It is that feature engineering and neural networks are not alternatives. The network builds features from sums and bends, and a good input representation (log transforms for multiplicative effects, dimensionless groups for units, physically meaningful scales) puts the structure you already know into the one operation the network does exactly. Then the network can spend its neurons and its curvature on the parts you do not know.
