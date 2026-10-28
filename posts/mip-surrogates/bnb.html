@@ -1,0 +1,527 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Local Search versus Branch and Bound</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --ink: #1b1f3b;
+    --muted: #5d6280;
+    --rule: #e3e5ef;
+    --card: #ffffff;
+    --card-edge: #c9cde0;
+    --soft: #f4f5fa;
+    --surr: #2a78d6;        /* the surrogate */
+    --local: #eb6834;       /* local search */
+    --bnb: #1baf7a;         /* branch and bound */
+    --pruned: #b6bacb;
+    --tip-bg: #ffffff;
+    --tip-shadow: 0 6px 24px rgba(20, 24, 60, .18);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12131c; --ink: #e8e9f3; --muted: #a2a6c2; --rule: #262939;
+      --card: #1c1e2c; --card-edge: #393c56; --soft: #191b28;
+      --surr: #3987e5; --local: #d95926; --bnb: #199e70; --pruned: #4a4e66;
+      --tip-bg: #1f2130; --tip-shadow: 0 6px 24px rgba(0, 0, 0, .5);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12131c; --ink: #e8e9f3; --muted: #a2a6c2; --rule: #262939;
+    --card: #1c1e2c; --card-edge: #393c56; --soft: #191b28;
+    --surr: #3987e5; --local: #d95926; --bnb: #199e70; --pruned: #4a4e66;
+    --tip-bg: #1f2130; --tip-shadow: 0 6px 24px rgba(0, 0, 0, .5);
+  }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); }
+  body { font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { position: relative; max-width: 900px; margin: 0 auto; padding: 8px 16px 12px; }
+  header h1 { font-size: 19px; margin: 0; }
+  header p { margin: 2px 0 10px; color: var(--muted); font-size: 13.5px; }
+
+  .controls { display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: flex-end; }
+  .group h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
+              color: var(--muted); margin: 0 0 4px; font-weight: 650; }
+  .group .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: 0; }
+  .btn { border: 1px solid var(--ink); background: var(--card); color: var(--ink);
+         border-radius: 8px; padding: 5px 12px; font: inherit; font-size: 13.5px; font-weight: 650; cursor: pointer; }
+  .btn.primary { background: var(--ink); color: var(--bg); }
+  .btn:disabled { opacity: .4; cursor: default; }
+  .btn:focus-visible { outline: 2px solid var(--surr); outline-offset: 2px; }
+  .hint { color: var(--muted); font-size: 12px; }
+  .reset { margin-left: auto; }
+
+  .status { display: grid; gap: 2px; margin: 10px 0 2px; font-size: 13px; color: var(--muted); min-height: 40px; }
+  .status b { color: var(--ink); font-weight: 650; }
+  .status .proved { color: var(--ink); }
+
+  svg { display: block; width: 100%; height: auto; touch-action: manipulation; }
+  svg text { fill: var(--muted); font-family: inherit; font-size: 12px; }
+  svg .ink { fill: var(--ink); }
+  svg .lbl-strong { fill: var(--ink); font-weight: 650; stroke: var(--bg); stroke-width: 4px;
+                    stroke-linejoin: round; paint-order: stroke; }
+  .grid line { stroke: var(--rule); stroke-width: 1; }
+  .axis line, .axis path { stroke: var(--muted); stroke-width: 1; }
+  .hit { cursor: crosshair; }
+
+  .tip { position: absolute; pointer-events: none; background: var(--tip-bg); color: var(--ink);
+         border: 1px solid var(--card-edge); border-radius: 8px; padding: 6px 9px; font-size: 12.5px;
+         box-shadow: var(--tip-shadow); opacity: 0; transition: opacity .1s; white-space: nowrap; z-index: 2; }
+  .tip b { font-weight: 650; }
+  .tip .m { color: var(--muted); }
+
+  details { margin-top: 6px; font-size: 13px; color: var(--muted); }
+  summary { cursor: pointer; }
+  table { border-collapse: collapse; margin-top: 6px; font-size: 12.5px; color: var(--ink);
+          font-variant-numeric: tabular-nums; }
+  th, td { padding: 3px 10px 3px 0; text-align: right; border-bottom: 1px solid var(--rule); }
+  th { color: var(--muted); font-weight: 650; }
+  td:last-child, th:last-child { text-align: left; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Local search versus branch and bound</h1>
+    <p>A one-hidden-layer ReLU network with 17 units, so the surrogate is piecewise linear with one kink per unit. Where is its minimum?</p>
+  </header>
+
+  <div class="controls">
+    <div class="group">
+      <h3><span class="swatch" style="background:var(--local)"></span>Local search</h3>
+      <div class="row">
+        <button class="btn" id="starts">5 random starts</button>
+        <span class="hint">or click the plot to start there</span>
+      </div>
+    </div>
+    <div class="group">
+      <h3><span class="swatch" style="background:var(--bnb)"></span>Branch and bound</h3>
+      <div class="row">
+        <button class="btn primary" id="step">Step</button>
+        <button class="btn" id="run">Run</button>
+      </div>
+    </div>
+    <button class="btn reset" id="reset">Reset</button>
+  </div>
+
+  <div class="status" aria-live="polite">
+    <div id="sLocal">Local search follows the slope downhill from each start and stops in the first valley it reaches.</div>
+    <div id="sBnb">Branch and bound splits the input at a kink, bounds each piece from below, and discards pieces that cannot beat the best point found.</div>
+  </div>
+
+  <svg id="fig" viewBox="0 0 760 480" role="img"
+       aria-label="A piecewise-linear surrogate on x from 0 to 10 with four valleys. The deepest valley, at x = 8.85, is narrow.">
+    <defs>
+      <pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <rect width="6" height="6" fill="var(--soft)"></rect>
+        <line x1="0" y1="0" x2="0" y2="6" stroke="var(--pruned)" stroke-width="2"></line>
+      </pattern>
+    </defs>
+    <g id="gGrid" class="grid"></g>
+    <g id="gPruneCols"></g>
+    <g id="gCurrent"></g>
+    <g id="gAxes" class="axis"></g>
+    <g id="gCurve"></g>
+    <g id="gBounds"></g>
+    <g id="gInc"></g>
+    <g id="gLocal"></g>
+    <g id="gTree"></g>
+    <g id="gCross"></g>
+    <g id="gLegend"></g>
+    <rect id="hit" class="hit" fill="transparent"></rect>
+  </svg>
+  <div class="tip" id="tip"></div>
+
+  <details>
+    <summary>Branch-and-bound node log</summary>
+    <table>
+      <thead><tr><th>node</th><th>interval</th><th>lower bound</th><th>best found</th><th>action</th></tr></thead>
+      <tbody id="log"></tbody>
+    </table>
+  </details>
+</div>
+
+<script>
+(() => {
+  // ---- the surrogate: f(x) = c + a x + sum_j v_j relu(x - k_j) -------------
+  const XS = [0, 0.6, 1.3, 1.9, 2.6, 3.1, 3.7, 4.4, 4.9, 5.6, 6.2, 6.9, 7.4, 8.0, 8.5, 8.85, 9.2, 9.6, 10];
+  const YS = [0.35, 0.05, -0.45, -0.62, -0.2, 0.15, -0.25, -0.88, -0.6, 0.05, -0.35, -0.72, -0.5, -0.05, 0.25, -1.35, -0.4, 0.2, 0.45];
+  const SL = XS.slice(0, -1).map((x, i) => (YS[i + 1] - YS[i]) / (XS[i + 1] - x));
+  const A0 = SL[0], C0 = YS[0] - A0 * XS[0];
+  const UNITS = XS.slice(1, -1).map((k, j) => ({ k, v: SL[j + 1] - SL[j] }));
+  const f = x => C0 + A0 * x + UNITS.reduce((s, h) => s + h.v * Math.max(0, x - h.k), 0);
+  const LO = 0, HI = 10, EPS = 1e-9;
+
+  // Lower bound on [l, u]. Units whose kink is outside the interval are fixed
+  // (their binary is decided) and fold into one linear piece; the rest are relaxed.
+  function bound(l, u) {
+    let A = A0, C = C0, relax = 0;
+    const free = [];
+    for (const h of UNITS) {
+      if (u <= h.k) continue;
+      if (l >= h.k) { A += h.v; C -= h.v * h.k; continue; }
+      free.push(h);
+      relax += h.v > 0 ? 0 : h.v * (u - h.k);
+    }
+    return { lb: Math.min(A * l + C, A * u + C) + relax, free };
+  }
+
+  // ---- layout ----------------------------------------------------------------
+  // the viewBox width follows the container (never below 480, so text stays legible on phones)
+  let W = 760;
+  const P = { l: 56, r: 740, t: 34, b: 292 };
+  const YMIN = -1.9, YMAX = 0.7;
+  const X = x => P.l + (x - LO) / (HI - LO) * (P.r - P.l);
+  const Y = y => P.b - (y - YMIN) / (YMAX - YMIN) * (P.b - P.t);
+  const invX = px => LO + (px - P.l) / (P.r - P.l) * (HI - LO);
+  const TREE_T = 352, ROW = 15;
+
+  const NS = "http://www.w3.org/2000/svg";
+  const $ = id => document.getElementById(id);
+  const el = (tag, attrs = {}, parent) => {
+    const e = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+    if (parent) parent.appendChild(e);
+    return e;
+  };
+  const txt = (s, attrs, parent) => { const t = el("text", attrs, parent); t.textContent = s; return t; };
+  const clear = g => { while (g.firstChild) g.removeChild(g.firstChild); };
+  const fmt = v => (v < 0 ? "−" : "") + Math.abs(v).toFixed(2);
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // ---- static layer ----------------------------------------------------------
+  const LEGEND = [["surrogate", "var(--surr)", "line"], ["ReLU kink", "var(--surr)", "kink"], ["local search", "var(--local)", "dot"],
+                  ["lower bound", "var(--bnb)", "line"], ["best found", "var(--ink)", "dash"]];
+  const itemW = name => 30 + name.length * 6.6;
+
+  function drawStatic() {
+    const g = $("gGrid"), ax = $("gAxes"), cv = $("gCurve");
+    [g, ax, cv, $("gLegend")].forEach(clear);
+    P.r = W - 20;
+    let rows = 1, acc = 0;
+    for (const [name] of LEGEND) { if (acc && acc + itemW(name) > P.r - P.l) { rows++; acc = 0; } acc += itemW(name); }
+    P.t = 34 + (rows - 1) * 18;
+    $("fig").setAttribute("viewBox", `0 0 ${W} 480`);
+    for (let y = -1.5; y <= 0.51; y += 0.5) {
+      el("line", { x1: P.l, x2: P.r, y1: Y(y), y2: Y(y) }, g);
+      txt(fmt(y).replace(".00", ""), { x: P.l - 8, y: Y(y) + 4, "text-anchor": "end" }, ax);
+    }
+    el("line", { x1: P.l, x2: P.r, y1: P.b, y2: P.b }, ax);
+    for (let x = 0; x <= 10; x += 2) {
+      el("line", { x1: X(x), x2: X(x), y1: P.b, y2: P.b + 5 }, ax);
+      txt(String(x), { x: X(x), y: P.b + 18, "text-anchor": "middle" }, ax);
+    }
+    txt("x", { x: P.r, y: P.b + 32, "text-anchor": "end" }, ax);
+    txt("f(x)", { x: P.l - 8, y: P.t - 14, "text-anchor": "end" }, ax);
+    el("polyline", { points: XS.map((x, i) => `${X(x)},${Y(YS[i])}`).join(" "), fill: "none",
+                     stroke: "var(--surr)", "stroke-width": 2.5, "stroke-linejoin": "round" }, cv);
+    // one kink per ReLU unit
+    for (const h of UNITS) el("circle", { cx: X(h.k), cy: Y(f(h.k)), r: 2.5, fill: "var(--surr)" }, cv);
+
+    // legend (identity is never color alone: every mark is also labeled in the status text)
+    const lg = el("g", { transform: `translate(${P.l}, 14)` }, $("gLegend"));
+    let ox = 0, oy = 0;
+    for (const [name, col, kind] of LEGEND) {
+      if (ox && ox + itemW(name) > P.r - P.l) { ox = 0; oy += 18; }
+      const it = el("g", { transform: `translate(0, ${oy})` }, lg);
+      if (kind === "dot") el("circle", { cx: ox + 7, cy: 0, r: 4.5, fill: col }, it);
+      else if (kind === "kink") el("circle", { cx: ox + 7, cy: 0, r: 2.5, fill: col }, it);
+      else el("line", { x1: ox, x2: ox + 16, y1: 0, y2: 0, stroke: col, "stroke-width": 2.5,
+                        "stroke-dasharray": kind === "dash" ? "5 4" : null }, it);
+      txt(name, { x: ox + 22, y: 4 }, it);
+      ox += itemW(name);
+    }
+
+    txt("Branch-and-bound tree (row = depth; each split is at a kink)", { x: P.l, y: TREE_T - 10 }, $("gLegend"));
+
+    const hit = $("hit");
+    hit.setAttribute("x", P.l); hit.setAttribute("y", P.t);
+    hit.setAttribute("width", P.r - P.l); hit.setAttribute("height", P.b - P.t);
+  }
+
+  // ---- local search: exact steepest descent on the piecewise-linear curve -----
+  function descentPath(x0) {
+    const path = [x0];
+    let x = x0;
+    for (let it = 0; it < 50; it++) {
+      const i = XS.findIndex(k => Math.abs(k - x) < 1e-12);
+      let next = null;
+      if (i < 0) {                          // inside a segment
+        const s = XS.findIndex((k, j) => j < XS.length - 1 && x > k && x < XS[j + 1]);
+        if (SL[s] < 0) next = XS[s + 1]; else if (SL[s] > 0) next = XS[s];
+      } else {                              // at a kink or the boundary
+        const sR = i < SL.length ? SL[i] : null, sL = i > 0 ? SL[i - 1] : null;
+        if (sR !== null && sR < 0) next = XS[i + 1];
+        else if (sL !== null && sL > 0) next = XS[i - 1];
+      }
+      if (next === null) break;
+      path.push(next); x = next;
+    }
+    return path;
+  }
+
+  let rng = mulberry32(3);
+  function mulberry32(s) {
+    return () => { s |= 0; s = s + 0x6D2B79F5 | 0; let t = Math.imul(s ^ s >>> 15, 1 | s);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  }
+
+  let runs = [];          // {path, len, t (distance travelled along the path), svg elements}
+  let anim = null;
+  function addRun(x0) {
+    const path = descentPath(x0);
+    let len = 0; for (let i = 1; i < path.length; i++) len += Math.abs(path[i] - path[i - 1]);
+    const r = { path, len, t: reduced ? len : 0, done: false };
+    runs.push(r); drawRun(r);
+    if (!anim) anim = requestAnimationFrame(tick);
+  }
+  function drawRun(r) {
+    const g = el("g", {}, $("gLocal")), x0 = r.path[0];
+    el("circle", { cx: X(x0), cy: Y(f(x0)), r: 5, fill: "var(--bg)", stroke: "var(--local)", "stroke-width": 2 }, g);
+    r.trail = el("polyline", { fill: "none", stroke: "var(--local)", "stroke-width": 2, "stroke-linejoin": "round", opacity: .85 }, g);
+    r.dot = el("circle", { r: 5.5, fill: "var(--local)", stroke: "var(--bg)", "stroke-width": 2 }, g);
+    placeRun(r);
+  }
+  function placeRun(r) {
+    const pts = pointAt(r, r.t);
+    r.trail.setAttribute("points", pts.map(x => `${X(x)},${Y(f(x))}`).join(" "));
+    const xe = pts[pts.length - 1];
+    r.dot.setAttribute("cx", X(xe)); r.dot.setAttribute("cy", Y(f(xe)));
+  }
+  function pointAt(run, t) {
+    const pts = [run.path[0]];
+    let rem = t;
+    for (let i = 1; i < run.path.length; i++) {
+      const d = Math.abs(run.path[i] - run.path[i - 1]);
+      if (rem >= d) { pts.push(run.path[i]); rem -= d; continue; }
+      pts.push(run.path[i - 1] + Math.sign(run.path[i] - run.path[i - 1]) * rem);
+      break;
+    }
+    return pts;
+  }
+  let last = null;
+  function tick(ts) {
+    const dt = last === null ? 0 : Math.min(0.05, (ts - last) / 1000);
+    last = ts;
+    let active = false;
+    for (const r of runs) {
+      if (r.done) continue;
+      r.t = Math.min(r.len, r.t + dt * 3.2);
+      placeRun(r);
+      if (r.t >= r.len) { r.done = true; r.end = r.path[r.path.length - 1]; } else active = true;
+    }
+    updateLocalStatus();
+    if (active) anim = requestAnimationFrame(tick); else { anim = null; last = null; }
+  }
+  function updateLocalStatus() {
+    const done = runs.filter(r => r.done);
+    if (!runs.length) return;
+    if (done.length < runs.length) { $("sLocal").innerHTML = `Local search: running ${runs.length - done.length} of ${runs.length} starts…`; return; }
+    const best = done.reduce((b, r) => f(r.end) < f(b.end) ? r : b);
+    const valleys = new Set(done.map(r => r.end.toFixed(2))).size;
+    $("sLocal").innerHTML = `<span class="swatch" style="background:var(--local)"></span>Local search: ` +
+      `${runs.length} start${runs.length > 1 ? "s" : ""} reached ${valleys} valley${valleys > 1 ? "s" : ""}. ` +
+      `Best <b>f = ${fmt(f(best.end))}</b> at x = ${best.end.toFixed(2)}. Is that the global minimum? Local search cannot tell you.`;
+  }
+
+  // ---- branch and bound --------------------------------------------------------
+  let nodes, open, inc, incX, nProcessed, current, finished, timer = null, logRows;
+  function resetBnb() {
+    const r = bound(LO, HI);
+    nodes = [{ id: 0, l: LO, u: HI, d: 0, lb: r.lb, free: r.free, st: "open" }];
+    open = [nodes[0]]; inc = Infinity; incX = null; nProcessed = 0; current = null; finished = false;
+    logRows = [];
+    stopRun();
+    $("step").disabled = false; $("run").disabled = false;
+    $("sBnb").innerHTML = "Branch and bound splits the input at a kink, bounds each piece from below, and discards pieces that cannot beat the best point found.";
+  }
+  function step() {
+    if (finished) return;
+    open.sort((p, q) => p.lb - q.lb);           // best-bound first
+    const nd = open.shift();
+    current = nd; nProcessed++;
+    nd.order = nProcessed;
+    let improved = false;
+    for (const x of [nd.l, nd.u, (nd.l + nd.u) / 2]) {   // cheap feasible points
+      const y = f(x);
+      if (y < inc - EPS) { inc = y; incX = x; improved = true; }
+    }
+    let action;
+    if (nd.lb >= inc - EPS) { nd.st = "pruned"; action = "discard: bound ≥ best found"; }
+    else if (!nd.free.length) { nd.st = "solved"; action = "solved: no kinks left, it is linear"; }
+    else {
+      const m = (nd.l + nd.u) / 2;
+      const h = nd.free.reduce((b, h) => Math.abs(h.k - m) < Math.abs(b.k - m) ? h : b);
+      for (const [l, u] of [[nd.l, h.k], [h.k, nd.u]]) {
+        const r = bound(l, u);
+        const ch = { id: nodes.length, l, u, d: nd.d + 1, lb: r.lb, free: r.free, st: "open" };
+        nodes.push(ch); open.push(ch);
+      }
+      nd.st = "branched"; nd.split = h.k;
+      action = `branch at the kink x = ${h.k.toFixed(2)}`;
+    }
+    const prunedNow = [];
+    open = open.filter(o => { if (o.lb >= inc - EPS) { o.st = "pruned"; prunedNow.push(o); return false; } return true; });
+    if (prunedNow.length) action += `; discard ${prunedNow.length} more`;
+    logRows.push([nProcessed, `[${nd.l.toFixed(2)}, ${nd.u.toFixed(2)}]`, fmt(nd.lb), fmt(inc), action]);
+    finished = open.length === 0;
+    if (finished) { current = null; stopRun(); $("step").disabled = true; $("run").disabled = true; }
+    drawBnb(improved);
+  }
+  function bestBound() { return open.length ? Math.min(...open.map(o => o.lb)) : inc; }
+
+  function drawBnb() {
+    const gb = $("gBounds"), gp = $("gPruneCols"), gc = $("gCurrent"), gi = $("gInc"), gt = $("gTree");
+    [gb, gp, gc, gi, gt].forEach(clear);
+
+    if (current) el("rect", { x: X(current.l), y: P.t, width: X(current.u) - X(current.l), height: P.b - P.t,
+                             fill: "var(--bnb)", opacity: .08 }, gc);
+
+    for (const n of nodes) {
+      if (n.st === "pruned") {
+        el("rect", { x: X(n.l), y: P.t, width: X(n.u) - X(n.l), height: P.b - P.t, fill: "var(--pruned)", opacity: .16 }, gp);
+      }
+    }
+    // lower-bound segments for the open nodes (leaves of the current tree)
+    for (const n of open) {
+      const off = n.lb < YMIN;
+      const y = off ? P.b - 5 : Y(n.lb);
+      el("line", { x1: X(n.l) + 2, x2: X(n.u) - 2, y1: y, y2: y, stroke: "var(--bnb)", "stroke-width": 2.5, "stroke-linecap": "round" }, gb);
+      const w = X(n.u) - X(n.l);
+      if (w > 34) txt(off ? `▼ ${fmt(n.lb)}` : fmt(n.lb), { x: (X(n.l) + X(n.u)) / 2, y: y - 6, "text-anchor": "middle",
+                                                          "font-size": 11, class: "lbl-strong" }, gb);
+    }
+
+    if (isFinite(inc)) {
+      el("line", { x1: P.l, x2: P.r, y1: Y(inc), y2: Y(inc), stroke: "var(--ink)", "stroke-width": 1.5, "stroke-dasharray": "5 4", opacity: .7 }, gi);
+      const yIncX = X(incX);
+      el("path", { d: `M ${yIncX} ${Y(inc) - 7} l 7 7 l -7 7 l -7 -7 Z`, fill: "var(--ink)", stroke: "var(--bg)", "stroke-width": 2 }, gi);
+      const lbl = finished ? `global minimum, proved: f* = ${fmt(inc)} at x = ${incX.toFixed(2)}` : `best found ${fmt(inc)}`;
+      const anchorEnd = yIncX > P.r - 260;
+      txt(lbl, { x: anchorEnd ? yIncX - 12 : yIncX + 12, y: Y(inc) + 18, "text-anchor": anchorEnd ? "end" : "start", class: "lbl-strong" }, gi);
+    }
+
+    // the tree as an icicle: one row per depth, each node spans its interval
+    for (const n of nodes) {
+      const x = X(n.l) + 1, w = Math.max(1, X(n.u) - X(n.l) - 2), y = TREE_T + n.d * ROW;
+      const style = {
+        open:     { fill: "var(--bg)", stroke: "var(--bnb)", "stroke-width": 1.5 },
+        branched: { fill: "var(--bnb)", opacity: .35 },
+        solved:   { fill: "var(--bnb)" },
+        pruned:   { fill: "url(#hatch)", stroke: "var(--pruned)", "stroke-width": 1 },
+      }[n.st];
+      const r = el("rect", { x, y, width: w, height: ROW - 3, rx: 3, ...style }, gt);
+      r.dataset.node = n.id;
+      if (current && n.id === current.id) el("rect", { x: x - 1.5, y: y - 1.5, width: w + 3, height: ROW, rx: 4, fill: "none", stroke: "var(--ink)", "stroke-width": 1.5 }, gt);
+    }
+    const ly = TREE_T + 7 * ROW + 6;
+    const keys = [["open", { fill: "var(--bg)", stroke: "var(--bnb)", "stroke-width": 1.5 }], ["branched", { fill: "var(--bnb)", opacity: .35 }],
+                  ["solved", { fill: "var(--bnb)" }], ["discarded", { fill: "url(#hatch)", stroke: "var(--pruned)" }]];
+    let ox = P.l;
+    for (const [name, st] of keys) {
+      if (name === "solved" && !nodes.some(n => n.st === "solved")) continue;
+      el("rect", { x: ox, y: ly - 9, width: 18, height: 11, rx: 3, ...st }, gt);
+      txt(name, { x: ox + 24, y: ly }, gt);
+      ox += 34 + name.length * 6.6;
+    }
+
+    const bb = bestBound();
+    if (!nProcessed) return;
+    $("sBnb").innerHTML = finished
+      ? `<span class="swatch" style="background:var(--bnb)"></span><span class="proved">Branch and bound: <b>proved</b> the global minimum ` +
+        `<b>f* = ${fmt(inc)}</b> at x = ${incX.toFixed(2)} after ${nProcessed} nodes. Every other piece of the domain has a lower bound above it.</span>`
+      : `<span class="swatch" style="background:var(--bnb)"></span>Branch and bound, node ${nProcessed}: best found <b>${isFinite(inc) ? fmt(inc) : "none"}</b>, ` +
+        `best bound <b>${fmt(bb)}</b>, gap <b>${isFinite(inc) ? (inc - bb).toFixed(2) : "∞"}</b>. The true minimum lies between the two.`;
+
+    const tb = $("log"); clear(tb);
+    for (const row of logRows) {
+      const tr = document.createElement("tr");
+      for (const c of row) { const td = document.createElement("td"); td.textContent = c; tr.appendChild(td); }
+      tb.appendChild(tr);
+    }
+  }
+
+  function stopRun() { if (timer) { clearInterval(timer); timer = null; } $("run").textContent = "Run"; }
+  function toggleRun() {
+    if (timer) { stopRun(); return; }
+    $("run").textContent = "Pause";
+    step();
+    timer = setInterval(() => { if (finished) stopRun(); else step(); }, reduced ? 120 : 650);
+  }
+
+  // ---- hover and click ---------------------------------------------------------
+  const svg = $("fig"), tip = $("tip"), wrap = document.querySelector(".wrap");
+  function svgPoint(evt) {
+    const pt = svg.createSVGPoint(); pt.x = evt.clientX; pt.y = evt.clientY;
+    return pt.matrixTransform(svg.getScreenCTM().inverse());
+  }
+  function showTip(evt, html) {
+    tip.innerHTML = html; tip.style.opacity = 1;
+    const wr = wrap.getBoundingClientRect();
+    let left = evt.clientX - wr.left + 14, top = evt.clientY - wr.top + 14;
+    const tw = tip.offsetWidth;
+    if (left + tw > wr.width - 8) left = evt.clientX - wr.left - tw - 14;
+    tip.style.left = left + "px"; tip.style.top = top + "px";
+  }
+  function hideTip() { tip.style.opacity = 0; clear($("gCross")); }
+
+  $("hit").addEventListener("pointermove", evt => {
+    const p = svgPoint(evt), x = Math.min(HI, Math.max(LO, invX(p.x))), y = f(x);
+    const g = $("gCross"); clear(g);
+    el("line", { x1: X(x), x2: X(x), y1: P.t, y2: P.b, stroke: "var(--muted)", "stroke-width": 1, "stroke-dasharray": "2 3" }, g);
+    el("circle", { cx: X(x), cy: Y(y), r: 4.5, fill: "var(--surr)", stroke: "var(--bg)", "stroke-width": 2 }, g);
+    let extra = "";
+    const leaf = open && open.find(n => x >= n.l && x <= n.u);
+    if (leaf) extra = `<br><span class="m">open piece [${leaf.l.toFixed(2)}, ${leaf.u.toFixed(2)}], bound</span> ${fmt(leaf.lb)}`;
+    else if (nodes && nodes.some(n => n.st === "pruned" && x >= n.l && x <= n.u)) extra = `<br><span class="m">discarded by branch and bound</span>`;
+    showTip(evt, `<b>x = ${x.toFixed(2)}</b> <span class="m">f(x) =</span> ${fmt(y)}${extra}<br><span class="m">click to start local search here</span>`);
+  });
+  $("hit").addEventListener("pointerleave", hideTip);
+  $("hit").addEventListener("click", evt => { const p = svgPoint(evt); addRun(Math.min(HI, Math.max(LO, invX(p.x)))); });
+
+  $("gTree").addEventListener("pointermove", evt => {
+    const id = evt.target.dataset && evt.target.dataset.node;
+    if (id === undefined) { hideTip(); return; }
+    const n = nodes[+id];
+    const what = { open: "open, waiting", branched: `branched at x = ${n.split?.toFixed(2)}`, solved: "solved exactly", pruned: "discarded" }[n.st];
+    showTip(evt, `<b>[${n.l.toFixed(2)}, ${n.u.toFixed(2)}]</b> <span class="m">depth ${n.d}</span><br>` +
+                 `<span class="m">lower bound</span> ${fmt(n.lb)}<br><span class="m">${what}</span>`);
+  });
+  $("gTree").addEventListener("pointerleave", hideTip);
+
+  $("starts").addEventListener("click", () => { for (let i = 0; i < 5; i++) addRun(LO + rng() * (HI - LO)); });
+  $("step").addEventListener("click", () => { stopRun(); step(); });
+  $("run").addEventListener("click", toggleRun);
+  $("reset").addEventListener("click", () => {
+    runs = []; clear($("gLocal")); rng = mulberry32(3);
+    $("sLocal").textContent = "Local search follows the slope downhill from each start and stops in the first valley it reaches.";
+    resetBnb(); drawBnb();
+  });
+
+  // tell an embedding page how tall we are
+  const report = () => parent !== window &&
+    parent.postMessage({ mipBnbHeight: Math.ceil(wrap.getBoundingClientRect().height) }, "*");
+  let pending = false;
+  new ResizeObserver(() => {
+    report();
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(() => {        // redraw outside the observer callback
+      pending = false;
+      const w = Math.round(Math.max(480, Math.min(760, svg.clientWidth)));
+      if (w !== W) {
+        W = w; drawStatic(); drawBnb();
+        clear($("gLocal")); runs.forEach(drawRun);
+      }
+      report();
+    });
+  }).observe(wrap);
+  document.querySelector("details").addEventListener("toggle", report);
+
+  drawStatic(); resetBnb(); drawBnb();
+})();
+</script>
+</body>
+</html>

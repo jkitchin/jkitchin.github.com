@@ -1,0 +1,579 @@
+---
+title: "Surrogate models you can optimize globally"
+description: "Piecewise-linear surrogates from pycse, jax-ldt, jax-difftree and jaxsr can be written exactly as mixed-integer programs, so a MIP solver can find their global optimum with a certificate."
+date: 2026-10-28
+draft: false
+categories: [python, pycse, optimization, surrogates]
+bibliography: references.bib
+---
+
+<!-- DRAFT. TODO markers flag things to confirm before publishing. -->
+
+We often fit surrogate models so that we can use them in optimization problems. We want the conditions that
+maximize a predicted yield, the design that minimizes a predicted cost, or the next
+experiment to run. With a black-box model that usually means a local optimizer and
+some restarts, and at the end you have an answer with no way to know whether a better
+one exists somewhere you did not look. This is a well-known weak point of
+surrogate-based optimization [@bhosekar2018surrogate; @cozad2014alamo].
+
+There is a class of models where you can do much better. Some surrogates are
+*piecewise linear* once they are trained: networks built from affine maps and ReLUs,
+Kolmogorov-Arnold networks with linear splines, regression trees with linear leaves,
+and sparse regressions on hinge functions. A piecewise-linear function can be written
+*exactly* as a set of mixed-integer linear constraints. The trained model then becomes
+part of a mixed-integer linear program (MILP), and a MILP solver returns the **global**
+optimum of the model together with a proof that nothing better exists inside the input
+box. Better still, the surrogate is now just one block in an optimization model, so you
+can add your own constraints, integer decisions and other models around it.
+
+Over the past few months we have added this capability to four of our packages:
+[pycse](https://github.com/jkitchin/pycse) (most of the `pycse.sklearn` models),
+[jax-ldt](https://github.com/jkitchin/jax-ldt) (linear and hyperplane decision trees),
+[jax-difftree](https://github.com/jkitchin/jax-difftree) (differentiable soft trees),
+and [jaxsr](https://github.com/jkitchin/jaxsr) (symbolic regression). This post
+explains why you would want it, how the models get into a solver, and what each package
+offers, including the limitations.
+
+The figure below shows the problem and the solution on a small example. The surrogate
+is a ReLU network with one input and 17 hidden units, so it is piecewise linear with one
+kink per unit, and it has four valleys. The deepest one is narrow. Press *5 random
+starts* to run local search (here, exact steepest descent along the curve): each start
+slides into the nearest valley and stops, and with these starts none of them finds the
+deepest one. Nothing in the result tells you that a better answer exists. Then *Step*
+through branch and bound. In the MILP, each ReLU has a binary variable, and in one
+dimension deciding a binary is the same as deciding which side of that unit's kink $x$
+lies on, so each branch splits the interval at a kink. On each piece, the units whose
+kink is outside the piece are fixed and the rest are relaxed, which gives a lower bound
+(the green segments). Any piece whose bound is above the best point found so far
+cannot contain the minimum, so it is discarded. When no pieces are left, the best
+point is proved to be the global minimum. Real MILP solvers bound with LP relaxations,
+which are tighter than the interval bounds used here, but the logic is the same.
+
+```{=html}
+<iframe id="bnb-fig" src="bnb.html" title="Local search versus branch and bound on a piecewise-linear surrogate"
+        style="width:100%; height:720px; border:0;" loading="lazy"></iframe>
+<script>
+  window.addEventListener("message", e => {
+    const h = e.data && e.data.mipBnbHeight;
+    if (h) document.getElementById("bnb-fig").style.height = (h + 4) + "px";
+  });
+</script>
+```
+
+## Why global optimization of the surrogate matters
+
+The usual way to optimize a neural network or a smooth tree is gradient-based:
+start somewhere, follow the gradient, restart a few times. That works when the
+surrogate is nearly convex. When the surrogate has several basins, which is
+common for exactly the response surfaces we care about (selectivity versus
+temperature and pressure, cost versus a handful of design variables) you have
+little control over which one you find. The jax-difftree docs say it plainly:
+inverse design over a soft tree is local, and multistart is the practical
+fallback.
+
+A MIP solver works differently. It bounds the objective over regions of the input
+space and discards regions that cannot contain the optimum. When it finishes, the
+optimality gap is zero (or a tolerance you chose), and that is a statement about the
+whole box, not about the neighborhood of a starting point. For smooth networks you can
+get the same guarantee from deterministic global MINLP solvers
+[@schweidtmann2019global], but for piecewise-linear models the problem is a MILP, and
+MILP solvers are fast, mature and free (HiGHS [@huangfu2018highs] solves every MILP in
+this post).
+
+There is a second reason that matters just as much in practice. A surrogate embedded
+as constraints composes with everything else. You can put two unit-operation
+surrogates in one flowsheet, add a budget constraint, choose between discrete
+equipment options, and still get a global optimum of the combined problem. A
+`predict` function cannot do that.
+
+## What "MIP-representable" means
+
+The building block is the ReLU, $y = \max(0, a)$. If you know bounds
+$L \le a \le U$ with $L < 0 < U$, one binary variable $d$ encodes it exactly:
+
+$$
+y \ge 0, \qquad y \ge a, \qquad y \le a - L(1 - d), \qquad y \le U d.
+$$
+
+When $d = 1$ the constraints force $y = a$, and when $d = 0$ they force $y = 0$. This
+is the big-M formulation, and it has been used for trained ReLU networks for some time
+[@fischetti2018deep; @tjeng2019evaluating; @grimstad2019relu]. Stronger formulations
+exist [@anderson2020strong], and @vielma2015mixed is a good general reference. The
+same idea covers hinge terms $\max(0, x - k)$, absolute values, linear splines (with
+SOS2 or segment binaries), and tree routing (one binary per leaf).
+
+Two consequences follow from that formulation and show up in every section below.
+First, **the bounds $L$ and $U$ come from bounds on the inputs**, propagated through the
+model. Every input must have finite bounds, and tight bounds give small big-M
+constants, which gives fast solves. Loose bounds are the most common cause of a slow
+MILP. Second, the formulation is exact only for piecewise-linear pieces. A SiLU, tanh
+or softplus activation, a cubic spline, or a polynomial term is not piecewise linear,
+and you either retrain with a piecewise-linear choice or move to a nonlinear solver.
+
+It helps to name the levels of representability, since not every model lands in the
+same place.
+
+| Level            | What it means                                                    | Examples                                                                |
+|------------------|------------------------------------------------------------------|-------------------------------------------------------------------------|
+| Exact LP         | No binaries needed                                               | Linear models; input-convex networks when the output is minimized       |
+| Exact MILP       | Reproduces the model to solver precision                         | ReLU networks, linear-spline KANs, linear-leaf trees, hinge regressions |
+| Approximate MILP | Some 1D nonlinearity interpolated on a grid, with an error bound | pycse's periodic network (sin/cos features)                             |
+| Exact MINLP      | The model is written as its own nonlinear equation               | SISSO equations, jaxsr models with `allow_nonlinear=True`               |
+
+Uncertainty adds one more ingredient. For several pycse models the predicted standard
+deviation is a second-order cone in the network's internal variables, so robust
+objectives like $\mu + 2\sigma$ become mixed-integer second-order cone programs. We come
+back to this in the pycse section.
+
+## Getting a surrogate into a solver
+
+There are three routes from a trained model to an optimization problem, and our
+packages use all of them.
+
+**Direct Pyomo embedding.** The model writes its own variables and constraints into a
+[Pyomo](https://www.pyomo.org/) `Block` [@bynum2021pyomo]. You pass in your own Pyomo
+variables as inputs, and the block links them to the surrogate. This is the most
+flexible route and the one every package here supports (`to_pyomo` in pycse, jaxsr and
+jax-difftree, `embed_in_pyomo_model` in jax-ldt). Any Pyomo MILP solver works: HiGHS,
+Gurobi, CPLEX, SCIP.
+
+**OMLT.** [OMLT](https://github.com/cog-imperial/OMLT) [@ceccon2022omlt] reads a neural
+network (usually from ONNX) and builds a Pyomo block with a choice of formulations, such
+as `ReluBigMFormulation`. OMLT also has tree formulations, including linear model
+decision trees [@ammari2023linear]. In our packages, pycse's `LLPRRegressor` exports to
+ONNX and directly to an OMLT `NetworkDefinition` (`to_onnx()`, `to_omlt()`). One
+caveat: jax-ldt also writes ONNX, but OMLT cannot read it. OMLT's ONNX reader
+understands neural-network layers (Gemm, MatMul, ReLU), and the tree-routing operations
+(Gather, LessOrEqual) are rejected. That is why the tree packages ship their own
+adapters.
+
+**discopt.** [discopt](https://github.com/jkitchin/discopt) is our hybrid MINLP solver
+with a JAX backend. jax-ldt (`embed_in_discopt_model`) and jaxsr (`to_discopt`) write
+directly into a `discopt.Model`, and jax-difftree reaches discopt through the jax-ldt
+spec (more on that below). The advantage of discopt is that the same model can hold
+MILP surrogate blocks and nonlinear constraints, which is where jaxsr's
+`allow_nonlinear=True` and pycse's SISSO export are headed. pycse itself writes
+Pyomo, but the ONNX file from `LLPRRegressor.to_onnx()` can also be read by
+`discopt.ml.load_onnx`.
+
+Whatever the route, the pattern is the same: declare bounded input variables, embed the
+surrogate, add your constraints, set an objective on the surrogate output, solve, and
+then check the answer against the model's own `predict`.
+
+## pycse.sklearn models
+
+pycse has the broadest coverage. A new module in pycse 2.13.0, `pycse.sklearn.mip`,
+holds the
+formulation machinery once, and each estimator only describes its trained weights. A
+model implements `mip_network()`, which returns its weights as plain numpy layer specs
+(`Affine`, `ReLU`, `PiecewiseLinear`), a `TreeModel` of leaf boxes, or a symbolic
+expression. A single function, `add_to_pyomo`, turns any of these into constraints, so
+the bound propagation, the big-M formulation and the tests are shared across models.
+For the user it is one call:
+
+```python
+import pyomo.environ as pyo
+from pycse.sklearn import DPOSE
+
+model = DPOSE(layers=(2, 32, 16)).fit(X, y)       # ReLU by default
+
+m = pyo.ConcreteModel()
+m.T = pyo.Var(bounds=(300, 500))
+m.P = pyo.Var(bounds=(1, 10))
+m.budget = pyo.Constraint(expr=m.T / 100 + m.P <= 12)   # your own constraints
+m.nn = pyo.Block()
+model.to_pyomo(block=m.nn, inputs=[m.T, m.P])        # input bounds come from your vars
+m.obj = pyo.Objective(expr=m.nn.y[0], sense=pyo.maximize)
+pyo.SolverFactory("highs").solve(m)
+```
+
+Internal input and output scaling is folded into the exported weights, so `m.T`, `m.P`
+and `m.nn.y` are in your units.
+
+### Which models, and what they need
+
+| Model | Requirement | Level | Binaries | Std exported |
+|---|---|---|---|---|
+| `DPOSE` [@kellner2024dpose] | `activation=nn.relu` (default) | MILP | ≤ 1 per ReLU unit | yes (ensemble) |
+| `LLPRRegressor` [@bigi2024llpr] | `activation="relu"` | MILP | ≤ 1 per ReLU unit | yes (LLPR) |
+| `NNBR` | `MLPRegressor(activation="relu")` | MILP | ≤ 1 per ReLU unit | yes (Bayesian ridge) |
+| `KfoldNN` | `activation="relu"` (default is swish) | MILP | ≤ 1 per ReLU unit | yes (ensemble) |
+| `JAXICNNRegressor` [@amos2017icnn] | `activation="relu"`, `strong_convexity_mu=0` | MILP, or LP | 0 with `formulation="convex"` | no |
+| `JAXMonotonicRegressor` | `activation="relu"` | MILP; LP if `convexity="convex"` | ≤ 1 per ReLU unit | yes (LLPR) |
+| `KAN` [@liu2024kan] | `spline_order=1`, `base_activation="linear"` | MILP | ~`grid_size` per layer input | with `n_ensemble > 1` |
+| `KANLLPR` | `spline_order=1`, `base_activation="linear"` | MILP | ~`grid_size` per layer input | yes (LLPR) |
+| `LeafModelRegressor` | a linear `leaf_model` | MILP | 1 per leaf in the box | no |
+| `LinearRegressionUQ` | none | LP | 0 | yes |
+| `JAXPeriodicRegressor` | `activation="relu"` | approximate MILP | grid segments + ReLUs | yes |
+| `SISSO` [@ouyang2018sisso] | none (TorchSisso to fit) | MINLP | 0, nonlinear | yes |
+
+"One binary per ReLU unit" is an upper bound. Units that are always on or always off
+over the input box need no binary, and interval bound propagation finds them. A DPOSE
+network with 32 hidden units needed 30 binaries in the docs notebook.
+
+A few of the formulations are worth a sentence each. KAN layers apply a 1D spline to
+every edge, but all the edges leaving one input share its breakpoints, so the MIP uses
+one SOS2 set per *input* rather than per edge. Trees use one binary to pick a leaf, and
+leaves that lie outside the input bounds are dropped before the MIP is built. Leaf
+models are recovered by probing `predict` and then checked at random points, so any
+linear scikit-learn pipeline works and a nonlinear one raises an error.
+
+Input-convex networks get special treatment. In an input-convex ReLU network every
+hidden unit reaches the output through nonnegative weights, so when the output is
+*minimized*, the two lower inequalities $y \ge 0, y \ge a$ are enough: the solver pushes
+each unit down to $\max(0, a)$ on its own. `formulation="convex"` drops all the
+binaries and the problem becomes an LP. pycse checks the weights first and refuses
+networks that are not convex.
+
+### How it performed
+
+To test the exports we fitted six models to the same 400 noisy samples of
+$f(x) = \tfrac14\lVert x\rVert^2 + \sin 3x_1 + \cos 2x_2 + 0.15x_2$ on the square
+$[-2, 2]^2$, then minimized each model with HiGHS. The function has one global minimum,
+$f^* = -1.599$ at $(-0.50, -1.43)$, and several local ones. The deepest of these is a
+mirror-image well at $(-0.50, 1.36)$ with $f = -1.181$, the obvious place for a model to
+go wrong. The results answer three questions. (They come from one run. Different
+training runs shift the numbers a little, but not the conclusions.)
+
+**Is the MIP exact?** Yes. For every model, the MIP minimum was equal to or slightly
+below the minimum of a 301×301 grid search on the same model, which is what a true
+global minimum must do. Evaluating the model with its own `predict` at the MIP's
+answer reproduced the MIP objective to $10^{-11}$ or better.
+
+**Is the answer right?** Yes, when the model is good. These fits have test RMSE between
+0.07 and 0.11, and every one of their MIP optima landed in the global well, within 0.14
+of $f^*$ when judged by the true function. None of them fell into the second well. The
+figure below shows where each one landed. A model has to be good enough for this. With
+300 training epochs `LLPRRegressor` underfit (RMSE 0.24), and its optimum missed $f^*$
+by 0.5, so we trained it for 1000. All six models predict a minimum slightly *deeper*
+than the true one (between $-1.69$ and $-1.83$). That is expected: a global optimizer seeks out the
+places where the model's error happens to be most negative, so the predicted value at
+the optimum is biased low. Check the optimum against the real function before you
+trust the number.
+
+**What does it cost?** The number of binaries grows with the size of the network, and
+the solve time grows faster than that:
+
+| Model | Binaries | Solve (s) |
+|---|---|---|
+| KfoldNN (32, 16) | 29 | 0.06 |
+| DPOSE (32 hidden units) | 29 | 0.10 |
+| KAN (2, 4, 1), grid 10 | 68 | 0.29 |
+| KANLLPR (2, 4, 1), grid 10 | 66 | 0.55 |
+| LLPRRegressor (32, 32) | 63 | 8.1 |
+| NNBR (32, 32) | 59 | 9.3 |
+
+The two networks with two hidden layers of 32 units are the slow ones. KANs have about
+as many binaries but solve much faster, because their binaries come from splines on the
+inputs rather than from stacked ReLU layers. The convex formulation is cheaper still: on
+a convex test function, `JAXICNNRegressor` (64, 64) took 0.47 s with 122 binaries as a
+MILP and 0.06 s with no binaries as an LP, and both found the same minimum.
+
+We left the tree (`LeafModelRegressor`) out of this comparison. On a smooth function
+like this one, 400 points are not enough for a tree to fit well (test RMSE 0.29 or
+more), and its optimum missed $f^*$ by 0.9 to 2.7 depending on the settings. The MIP
+still finds the tree's minimum exactly; the tree is just a poor model of $f$ here.
+
+Hover a point or its label in the figure to see which model it belongs to, and click it
+to show that model's surface.
+
+```{=html}
+<iframe id="optima-fig" src="optima.html?v=2" title="Where each model puts the minimum"
+        style="width:100%; height:640px; border:0;" loading="lazy"></iframe>
+<script>
+  window.addEventListener("message", e => {
+    const h = e.data && e.data.mipOptimaHeight;
+    if (h) document.getElementById("optima-fig").style.height = (h + 4) + "px";
+  });
+</script>
+```
+
+### Optimizing with uncertainty
+
+For every pycse model with a standard deviation, the std has the form
+$\sigma(x) = \sqrt{\lVert A z(x) + c \rVert^2 + d}$, where $z$ is one layer of the
+network (the ensemble members for DPOSE and KfoldNN, the last-layer features for the
+LLPR models). That is a second-order cone. `to_pyomo(include_std=True)` adds a
+variable with $s \ge \sigma(x)$, which is convex and exact whenever the objective
+*penalizes* the std, as in robust design ($\min\ \mu + 2\sigma$).
+`include_std="exact"` enforces $s^2 = \sigma(x)^2$ instead. It is nonconvex, and it is
+needed when the objective *rewards* the std, as in exploration for active learning
+($\min\ \mu - 2\sigma$), because with the cone alone that problem is unbounded.
+
+| Objective | Mean at x* | Std at x* | MIP objective | Grid | Solve |
+|---|---|---|---|---|---|
+| mean | -1.7826 | 0.1024 | -1.7826 | -1.7800 | 0.36 s |
+| robust: mean + 2 std | -1.7693 | 0.0932 | -1.5830 | -1.5792 | 0.21 s |
+| explore: mean - 2 std | -1.7769 | 0.1076 | -1.9923 | -1.9900 | 4.2 s |
+
+Penalizing the std trades a little mean for less uncertainty, and rewarding it does the
+opposite. Both std options need a solver with quadratic constraints (Gurobi, CPLEX,
+SCIP). These numbers are a separate DPOSE fit from the docs notebook, solved with Gurobi; `pip install gurobipy` includes a
+size-limited license that covers small examples like this.
+
+### Caveats
+
+You have to choose piecewise-linear options at training time. Several pycse defaults
+are smooth (LLPR, ICNN, monotonic, periodic and KfoldNN, plus KAN's cubic splines), and
+`to_pyomo()` raises a `ValueError` naming the setting to change. The accuracy cost of
+ReLU or linear splines is usually small, but it is a retraining step.
+
+MIP size grows with the network. Two hidden layers of 32 units solved in 7 to 15 s
+here, and much larger networks may not solve in reasonable time. KANs (binaries per
+input, not per unit) and the convex LP scale better.
+
+The convex LP is one-sided: it is exact only when the output is minimized or bounded
+above. To maximize an ICNN, use the MILP.
+
+Periodic models are approximate. The sin/cos features are interpolated on a grid, with
+a per-feature error of at most $(2\pi/n)^2/8$ for $n$ points per period (4.8e-3 at the
+default of 32). The MIP finds the global optimum of the *interpolated* model, which in
+the notebook landed 2.4e-3 above the grid-search minimum of the un-interpolated model at 8 to 32
+points. At 64 points it beat the grid search, at the cost of 288 binaries instead of
+160.
+
+Trees have a boundary problem. A tree sends $x \le t$ left, and a MIP cannot express the
+strict inequality on the other side, so a point exactly on a split can take either
+leaf's value. `split_gap=1e-4` excludes a thin slab above each split. The gap has to be
+well above the solver tolerances; at 1e-6 HiGHS still picked the wrong leaf.
+
+SISSO exports exactly, but the equation is nonlinear (division, exp, log), so it needs a
+global MINLP solver such as BARON, SCIP or Gurobi's nonlinear mode. Ipopt will only find
+a local optimum.
+
+`ZENNRegressor` and `ZENNClassifier` are not representable (their output is a
+log-sum-exp over sub-networks). `NNGMM`'s mean network could be exported but is not
+wired up yet, and `JAXICNNRegressor` with `strong_convexity_mu > 0` would be a MIQP but
+is not exported.
+
+The walkthrough is the pycse docs page
+[Optimizing over machine-learned models with MIP](https://kitchingroup.cheme.cmu.edu/pycse/docs/mip.html).
+The code is in [`mip.py`](https://github.com/jkitchin/pycse/blob/master/src/pycse/sklearn/mip.py)
+(its module docstring has a worked example), with tests in
+[`test_sklearn_mip.py`](https://github.com/jkitchin/pycse/blob/master/src/pycse/tests/test_sklearn_mip.py),
+and a KAN versus ReLU size comparison in
+[`KAN_Demo.ipynb`](https://github.com/jkitchin/pycse/blob/master/src/pycse/examples/KAN_Demo.ipynb).
+
+## jax-ldt: linear and hyperplane decision trees
+
+[jax-ldt](https://github.com/jkitchin/jax-ldt) fits linear-model decision trees, where
+every leaf holds a linear regression instead of a constant, and hyperplane trees, where
+the splits are oblique hyperplanes chosen from sparse combinations of the inputs. Both
+are piecewise linear by construction, so they were designed from the start to be
+embedded. The package was motivated by our work with the Laird group on hyperplane trees
+as surrogates for chemical process design [@sunshine2025hyperplane], which builds on
+linear model decision trees in OMLT [@ammari2023linear]. Optimization over tree models
+more generally goes back to @misic2020optimization and ENTMOOT
+[@thebelt2021entmoot].
+
+The MILP formulation lifts the features into the transformed (hyperplane) space, uses
+one binary per leaf, writes the routing as big-M constraints, and linearizes the leaf
+outputs with big-M as well. The result is an exact MILP. The same formulation is
+available in Pyomo and in discopt:
+
+```python
+import discopt
+from jax_ldt import HyperplaneTreeRegressor
+from jax_ldt.export import embed_in_discopt_model
+
+model = HyperplaneTreeRegressor(max_depth=4, max_bins=6, min_samples_leaf=15)
+model.fit(X, y)
+
+m = discopt.Model("min-y")
+x = m.continuous("x", shape=(2,), lb=-2, ub=2)
+y_expr = embed_in_discopt_model(model, m, x)
+m.minimize(y_expr[0])
+result = m.solve()
+```
+
+For Pyomo, `embed_in_pyomo_model(model, m, m.x)` builds the same formulation on a
+sub-block, so several trees can share one model. For axis-aligned trees with constant
+leaves there is also a lighter adapter, `to_discopt_decision_tree`, which uses discopt's
+built-in tree formulation.
+
+The canonical export is a JSON spec (`to_json` / `from_json`), and every other format is
+regenerated from it. That turns out to be useful beyond jax-ldt, because jax-difftree
+writes the same spec.
+
+**Caveats.** Big-M constants are derived per node and per leaf from the input bounds,
+so bounds are required. You can override them with `big_m=`, and they are validated
+when the inputs are bounded. The ONNX export is for inference with onnxruntime, not for
+OMLT, as noted above. The tree's uncertainty estimates are stored in the spec but are
+not part of the MILP.
+
+Docs: [MIP export](https://github.com/jkitchin/jax-ldt/blob/main/docs/mip_export.md),
+[discopt integration](https://github.com/jkitchin/jax-ldt/blob/main/docs/discopt_integration.md).
+Examples: [`04_mip_optimization.ipynb`](https://github.com/jkitchin/jax-ldt/blob/main/examples/04_mip_optimization.ipynb),
+[`07_pyomo_embedding.ipynb`](https://github.com/jkitchin/jax-ldt/blob/main/examples/07_pyomo_embedding.ipynb).
+
+## jax-difftree: differentiable soft trees
+
+[jax-difftree](https://github.com/jkitchin/jax-difftree) takes a different route to a
+tree. Instead of growing it greedily, it fits a fixed-depth *soft* tree end to end with
+gradients [@hehn2020end], with oblique splits and sigmoid routing. Soft trees are smooth
+and train well, and they can match derivative data (Jacobians from a simulator) as well
+as values. They are not piecewise linear, though, so getting a MILP takes one extra step.
+
+The workflow is to train with affine leaves, harden the tree so that each point routes
+to exactly one leaf, and then export the crisp piecewise-affine model:
+
+```python
+from difftree import DifferentiableTreeRegressor, export
+import pyomo.environ as pyo
+
+model = DifferentiableTreeRegressor(
+    depth=3, leaf_type="affine", jacobian_weight=1.0, hardening=True
+)
+model.fit(X_tr, Y_tr, dydx=J_tr)
+print(model.hardening_report_)            # soft vs hard error, before and after
+
+m = pyo.ConcreteModel()
+m.x = pyo.Var(range(2))
+m.y = pyo.Var(range(2))
+tree = export.to_pyomo(model, m, x=m.x, y=m.y, bounds=(lo, hi), method="bigm")
+m.obj = pyo.Objective(expr=m.y[0])
+pyo.SolverFactory("appsi_highs").solve(m)
+```
+
+The Pyomo export is written as a generalized disjunctive program: each leaf is a
+`Disjunct` holding its polytope and its affine model, and a `Disjunction` makes exactly
+one leaf active, which Pyomo then transforms (here with big-M). For discopt,
+`export.to_json` writes the jax-ldt v1 spec, so jax-ldt's `from_json` and
+`embed_in_discopt_model` consume a difftree model unchanged. All outputs share one
+partition, which means a multi-output tree for a unit operation needs only one set of
+binaries.
+
+**Caveats.** The *soft/hard gap* is the main one. The MILP optimizes the hardened tree,
+not the soft one you trained, so check `soft_hard_gap` (and train with `hardening=True`) before
+trusting the optimum. The leaf polytopes are closed, as usual in big-M formulations, so
+an optimum can sit on a split boundary using either neighbor's model;
+`export.repair_solution` moves such a point into the chosen leaf. Continuity across
+oblique splits needs `tied_splits=True`, which gives up flexibility (a depth-$D$ tree
+then has $D$ hyperplanes instead of $2^D - 1$). The fixed full-binary structure caps
+practical depth at around 10 to 12. A pruned export matches `predict(hard=True)` only
+inside the export box.
+
+Docs: [surrogates for MILP](https://github.com/jkitchin/jax-difftree/blob/main/docs/surrogates.md),
+[limitations](https://github.com/jkitchin/jax-difftree/blob/main/docs/limitations.md).
+Notebooks: [`piecewise_linear_milp`](https://github.com/jkitchin/jax-difftree/blob/main/notebooks/piecewise_linear_milp.ipynb),
+[`pyomo_embedding`](https://github.com/jkitchin/jax-difftree/blob/main/notebooks/pyomo_embedding.ipynb),
+[`multivariate_inverse_design`](https://github.com/jkitchin/jax-difftree/blob/main/notebooks/multivariate_inverse_design.ipynb).
+
+## jaxsr: symbolic regression with hinge functions
+
+[jaxsr](https://github.com/jkitchin/jaxsr) fits sparse symbolic models, a weighted sum
+of terms chosen from a basis library by an information criterion, in the spirit of ALAMO
+[@cozad2014alamo]. The new capability is a family of piecewise-linear basis terms,
+most usefully hinges $\max(0, x - k)$ and $\max(0, k - x)$, which give MARS-style fits
+[@friedman1991mars; @breiman1993hinging]. If every selected term is piecewise linear,
+the fitted model is an exact MILP, and unlike the other models in this post it is also a
+short, readable equation.
+
+```python
+from jaxsr import BasisLibrary, SymbolicRegressor, milp_incompatible_terms
+
+library = (
+    BasisLibrary(n_features=2, feature_names=["T", "P"], feature_bounds=[(0, 4), (0, 4)])
+    .add_constant()
+    .add_linear()
+    .add_hinges(X=X, n_knots=7)
+    .add_transcendental(["abs"])
+)
+model = SymbolicRegressor(basis_library=library, max_terms=6, information_criterion="bic")
+model.fit(X, cost)
+print(model.expression_)
+print(milp_incompatible_terms(model))   # [] means a pure MILP
+```
+
+The MILP-representable terms are constants and linear terms (written directly), hinges
+and `abs` (one binary each, big-M), categorical indicators (one-hot binaries), and
+categorical-continuous interactions (an exact McCormick product). The model then goes
+to either backend with one call, linked to your own variables:
+
+```python
+model.to_pyomo(m.sr, inputs={"T": m.T, "P": m.P}, output=m.cost)   # Pyomo block
+
+emb = model.to_discopt(dm_model)                                    # discopt
+dm_model.subject_to(emb.inputs["T"] + emb.inputs["P"] >= 5)
+dm_model.minimize(emb.output)
+```
+
+Polynomials, interactions, `log`, `exp` and the rest are not piecewise linear. You can
+still embed them with `allow_nonlinear=True`, which gives an MIQCP or MINLP for discopt,
+BARON, SCIP or Gurobi.
+
+**Caveats.** Bounds are required and are *enforced* on the embedded inputs, on purpose:
+outside the training range the model is extrapolating, and the right fix is more data,
+not wider bounds. Knot placement matters more than knot count, since the fit can only
+bend where a knot exists, so pass known breakpoints (a phase boundary, a saturation
+point) explicitly with `knots=`. Parametric and custom basis functions, rational forms
+and SISSO-style features cannot be embedded. `MultiOutputSymbolicRegressor` is not
+supported directly, but each `estimators_[i]` can be embedded separately. The embedding
+is built from the fitted coefficients, so rebuild it after a refit.
+
+Guide: [Embedding models in MILPs](https://github.com/jkitchin/jaxsr/blob/main/docs/guides/mip-embedding.md).
+Example: [`mip_surrogate_optimization.ipynb`](https://github.com/jkitchin/jaxsr/blob/main/docs/examples/mip_surrogate_optimization.ipynb),
+which includes a refine-and-resolve loop and a design problem solved in both backends.
+
+## Choosing a model
+
+<!-- TODO: optionally run one shared benchmark through all four packages for a fair
+comparison of fit error, MILP size and solve time. -->
+
+The packages overlap, but they are good at different things. If you want an
+interpretable equation, or you know where the response bends, jaxsr's hinge models are
+the natural choice, and they stay small. If you want a flexible fit with uncertainty and
+the option of a robust or exploratory objective, the pycse ReLU networks are the most
+complete, and the input-convex networks are the cheapest to optimize when convexity is
+physically justified. Trees are attractive when the response has genuinely different
+regimes: jax-ldt grows them greedily and exports directly, while jax-difftree trains
+them end to end, can use derivative data, and needs the hardening step before export.
+
+| | pycse ReLU nets | pycse KAN | jax-ldt | jax-difftree | jaxsr hinges |
+|---|---|---|---|---|---|
+| Binaries scale with | hidden units | grid × inputs | leaves | leaves ($2^D$) | hinge/abs terms |
+| Interpretable | no | partly | partly | partly | yes |
+| Std in the MIP | yes (SOCP) | with LLPR/ensemble | no | no | no |
+| Pyomo | yes | yes | yes | yes (GDP) | yes |
+| discopt | LLPR via ONNX | no | yes | via jax-ldt spec | yes |
+| OMLT | LLPR via ONNX | no | no | no | no |
+
+## The caveat that applies to all of them
+
+A global optimizer finds your model's mistakes. Our first run of the pycse benchmark
+used 150 samples and shorter training. Two of the models came out poorly fitted, and
+their global optima sat on the edge of the box, where there was little data and the
+models were extrapolating: one predicted $-1.58$ at a point where the true $f$ is
+$+1.07$. A local optimizer started in the middle might
+never go there, and the MIP always will. The global optimum of the *surrogate* is only
+as good as the surrogate is in that region. So validate the optimum against the true
+model, and then either add data there and refit (jaxsr's notebook has a refine-and-resolve
+loop, and our earlier [active-learning post](../surrogate-active-learning/) covers the
+data side), penalize the std, or tighten the bounds to the region you trust.
+
+## Installing
+
+The MIP export is in pycse 2.13.0 and later. Pyomo and HiGHS come with the `mip` extra;
+the ONNX and OMLT exports of `LLPRRegressor` also need `onnx` and `omlt`.
+
+```bash
+pip install "pycse[mip]"
+```
+
+jaxsr 0.3.0 is on PyPI, but the hinge terms and MILP embedding are newer than that
+release, so install from GitHub for now. jax-ldt and jax-difftree are not on PyPI. (The
+`difftree` package on PyPI is an unrelated project, so install jax-difftree from GitHub
+as shown.)
+
+```bash
+pip install "jaxsr[mip] @ git+https://github.com/jkitchin/jaxsr.git"
+pip install "jax-ldt[pyomo] @ git+https://github.com/jkitchin/jax-ldt.git"
+pip install "difftree[pyomo] @ git+https://github.com/jkitchin/jax-difftree.git"
+pip install discopt omlt onnx
+```
+
+
+## References
+
+::: {#refs}
+:::
