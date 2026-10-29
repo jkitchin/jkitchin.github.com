@@ -3,6 +3,7 @@
 #   make build     render the site into _site/
 #   make serve     serve _site/ at http://localhost:4321, re-rendering on save
 #   make preview   quarto preview (slower to start; watches everything)
+#   make talks     build new or changed Marp decks in talks/ (commit the output)
 #   make verify    check every legacy URL is present and unchanged
 #   make deploy    build, commit everything, push; the Action publishes
 #   make clean     remove _site/ and .quarto/
@@ -18,10 +19,10 @@ BRANCH := modern-site
 # The pre/post-render scripts call python3 and quarto by name.
 export PATH := $(abspath $(VENV)):$(PATH)
 
-.PHONY: build serve preview verify deploy clean help
+.PHONY: build serve preview talks verify deploy clean help
 
 help:
-	@sed -n '3,9s/^# *//p' Makefile
+	@sed -n '3,10s/^# *//p' Makefile
 
 build:
 	$(QUARTO) render
@@ -31,6 +32,9 @@ serve: $(if $(wildcard _site/index.html),,build)
 
 preview:
 	$(QUARTO) preview --port $(PORT)
+
+talks:
+	$(PYTHON) scripts/build_talks.py
 
 verify: build
 	$(PYTHON) scripts/verify_legacy.py

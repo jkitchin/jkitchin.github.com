@@ -337,6 +337,28 @@ def software():
     return "\n".join(out)
 
 
+def talks():
+    rows = yaml.safe_load((ROOT / "data/talks.yml").read_text()) or []
+    rows.sort(key=lambda t: str(t["date"]), reverse=True)
+    out = ["```{=html}", '<div class="talk-grid">']
+    for t in rows:
+        d = ROOT / "talks" / t["slug"]
+        if not (d / "index.html").exists():
+            sys.exit(f"talks.yml: {t['slug']} has no talks/{t['slug']}/index.html; run make talks")
+        date = datetime.strptime(str(t["date"]), "%Y-%m-%d").strftime("%B %-d, %Y")
+        sub = f'<p class="talk-sub">{esc(t["subtitle"])}</p>' if t.get("subtitle") else ""
+        href = f'talks/{esc(t["slug"])}/'
+        out.append(
+            f'<article class="talk">'
+            f'<a class="talk-thumb" href="{href}" tabindex="-1" aria-hidden="true">'
+            f'<img src="{href}thumb.webp" alt="" loading="lazy" width="640" height="360"></a>'
+            f'<div class="talk-body"><h2><a href="{href}">{esc(t["title"])}</a></h2>{sub}'
+            f'<p class="talk-meta">{esc(t.get("venue"))} · <time datetime="{t["date"]}">{date}</time></p>'
+            f'</div></article>')
+    out += ["</div>", "```"]
+    return "\n".join(out) + "\n"
+
+
 def write_if_changed(path, text):
     # Avoid touching unchanged files so `quarto preview` does not loop.
     if not path.exists() or path.read_text() != text:
@@ -349,3 +371,4 @@ if __name__ == "__main__":
     write_if_changed(OUT / "software.md", software())
     write_if_changed(OUT / "timeline.md", timeline())
     write_if_changed(OUT / "courses.md", courses())
+    write_if_changed(OUT / "talks.md", talks())
