@@ -174,8 +174,10 @@ def main(project):
         if doi.lower() in key_by_doi:
             SITE_KEY[f.stem] = key_by_doi[doi.lower()]
     produced = {site_key(s) for s in summaries}
+    # Hand-written pages (no GENERATED marker) are never removed, so they can't be lost.
     lost = sorted(k for k in key_by_doi.values()
-                  if (PAPERS / k / "index.qmd").exists() and k not in produced)
+                  if (PAPERS / k / "index.qmd").exists() and k not in produced
+                  and GENERATED in (PAPERS / k / "index.qmd").read_text())
     if lost:
         sys.exit("export_crucible: these published papers would lose their pages, so nothing "
                  "was changed. Restore their summaries in the crucible (matched by DOI):\n  "
@@ -253,6 +255,11 @@ def main(project):
     (ROOT / "_generated" / "topics.md").write_text(
         "```{=html}\n<ul class=\"topic-list\">\n" + "\n".join(topics) + "\n</ul>\n```\n")
 
+    # Keep "Summary" links for hand-written pages the crucible doesn't cover.
+    for doi, k in key_by_doi.items():
+        f = PAPERS / k / "index.qmd"
+        if doi and doi not in index and f.exists() and GENERATED not in f.read_text():
+            index[doi] = f"/papers/{k}/"
     (ROOT / "data" / "papers-index.json").write_text(json.dumps(index, indent=1, sort_keys=True) + "\n")
     n_topics = len(list((wiki / "concepts").glob("*.org")))
     print(f"export_crucible: {len(summaries)} paper summaries, {n_topics} topics -> {PAPERS}")
